@@ -1,0 +1,67 @@
+{
+  "meta": {
+    "backend": "diskcache",
+    "backend_version": "5.6.3",
+    "python": "3.14.10t",
+    "gil_enabled_at_runtime": false,
+    "machine": "mk-mac",
+    "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+    "cpu": "arm",
+    "cpu_count": 18,
+    "power": "battery",
+    "quick": false,
+    "trials": 5,
+    "batch": 1000,
+    "timestamp": "2026-10-27T23:11:15-0700"
+  },
+  "results": {
+    "get_hit_small": {
+      "p50_us": 1.7417710000000002,
+      "p99_us": 2.417
+    },
+    "get_miss": {
+      "p50_us": 1.4384795,
+      "p99_us": 1.958
+    },
+    "get_page_entry_450k": {
+      "p50_us": 29.959,
+      "p99_us": 39.334
+    },
+    "set_page_entry_450k": {
+      "p50_us": 468.333,
+      "p99_us": 614.291
+    },
+    "add_incr_counter": {
+      "p50_us": 20.909,
+      "p99_us": 36.25
+    },
+    "threads_8_mixed_ops_per_s": {
+      "ops_per_s": 183535.66666666666,
+      "threads": 8
+    },
+    "iterkeys_prefix_scan_100k": {
+      "median_ms": 1663.182167,
+      "min_ms": 1633.093292
+    },
+    "len_100k": {
+      "median_ms": 0.002708,
+      "min_ms": 0.002
+    },
+    "volume_100k": {
+      "median_ms": 0.003625,
+      "min_ms": 0.00325
+    },
+    "iterkeys_prefix_scan_400k": {
+      "median_ms": 26779.609959,
+      "min_ms": 26536.887334
+    },
+    "len_400k": {
+      "median_ms": 0.003,
+      "min_ms": 0.002
+    },
+    "volume_400k": {
+      "median_ms": 0.003417,
+      "min_ms": 0.003208
+    }
+  }
+}
