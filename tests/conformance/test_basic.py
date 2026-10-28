@@ -1,5 +1,7 @@
 """Core get/set/delete semantics, the mapping protocol, lifecycle, and settings persistence."""
 
+import os
+import stat
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -266,3 +268,50 @@ def test_timeout_bases_are_only_exception(backend: Backend) -> None:
 @pytest.mark.backend_only('oxide')
 def test_timeout_is_a_timeout_error(backend: Backend) -> None:
     assert issubclass(backend.timeout_error, TimeoutError)
+
+
+@pytest.mark.diverges(backend='oxide', ref='D-014', reason='oxide rejects bool timeout', raises=TypeError)
+def test_timeout_true_is_accepted(make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    cache = make_cache(cache_dir, timeout=True)
+    assert cache.set('k', 'v') is True
+
+
+@pytest.mark.backend_only('oxide')
+def test_oxide_rejects_bool_timeout(make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    with pytest.raises(TypeError):
+        make_cache(cache_dir, timeout=True)
+
+
+def _mode(path: Path) -> int:
+    return stat.S_IMODE(os.stat(path).st_mode)
+
+
+def _umask() -> int:
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
+@pytest.mark.diverges(backend='oxide', ref='D-015', reason='oxide creates the cache directory owner-only', raises=AssertionError)
+def test_new_directory_follows_the_umask(make_cache: Callable[..., Any], tmp_path: Path) -> None:
+    directory = tmp_path / 'parent' / 'cache'
+    make_cache(directory).set('k', 'v')
+    assert _mode(directory) == 0o777 & ~_umask()
+
+
+@pytest.mark.backend_only('oxide')
+def test_oxide_new_directory_is_owner_only(make_cache: Callable[..., Any], tmp_path: Path) -> None:
+    directory = tmp_path / 'parent' / 'cache'
+    make_cache(directory).set('big', b'x' * 1_000_000)
+    assert _mode(directory) == 0o700
+    # Intermediate parents follow the umask, like os.makedirs.
+    assert _mode(directory.parent) == 0o777 & ~_umask()
+
+
+@pytest.mark.backend_only('oxide')
+def test_oxide_existing_directory_permissions_are_left_alone(make_cache: Callable[..., Any], tmp_path: Path) -> None:
+    directory = tmp_path / 'shared'
+    directory.mkdir(mode=0o770)
+    os.chmod(directory, 0o770)
+    make_cache(directory).set('k', 'v')
+    assert _mode(directory) == 0o770

@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from tests.conformance.value_cases import CASES, DISKCACHE_QUIRKS, Color, Point, Priority, exact_equal
+from tests.conformance.value_cases import CASES, DISKCACHE_QUIRKS, Color, HomepageSnapshot, Point, Priority, exact_equal
 
 _LA = dt.datetime(2026, 10, 27, 13, 45, tzinfo=zoneinfo.ZoneInfo('America/Los_Angeles'))
 
@@ -147,3 +147,20 @@ def test_oxide_pickle_true_roundtrips(make_cache: Callable[..., Any], cache_dir:
     cache = make_cache(cache_dir, pickle=True)
     assert cache.set('k', value) is True
     assert exact_equal(cache.get('k'), value)
+
+
+@pytest.mark.backend_only('oxide')
+def test_oxide_pickle_false_handle_refuses_to_unpickle(make_cache: Callable[..., Any], cache_dir: Path, backend: Any) -> None:
+    # A pickle=True peer may store pickled rows; a pickle=False handle must never run pickle on them,
+    # and must leave the row alone rather than destroying the peer's data.
+    writer = make_cache(cache_dir, pickle=True)
+    snapshot = HomepageSnapshot('Talk Python', [500, 501], dt.datetime(2026, 10, 27))
+    writer.set('snapshot', snapshot)
+
+    reader = make_cache(cache_dir, pickle=False)
+    with pytest.raises(backend.unsafe_value_error):
+        reader.get('snapshot')
+    assert issubclass(backend.unsafe_value_error, TypeError)
+
+    assert 'snapshot' in reader
+    assert exact_equal(writer.get('snapshot'), snapshot)

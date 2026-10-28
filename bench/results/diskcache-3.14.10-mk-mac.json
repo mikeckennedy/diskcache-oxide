@@ -8,60 +8,61 @@
     "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
     "cpu": "arm",
     "cpu_count": 18,
-    "power": "battery",
+    "power": "ac",
     "quick": false,
     "trials": 5,
     "batch": 1000,
-    "timestamp": "2026-10-27T23:08:27-0700"
+    "timestamp": "2026-10-27T23:40:13-0700"
   },
   "results": {
+    "harness_loop_overhead_ns": 15.8955,
     "get_hit_small": {
-      "p50_us": 1.9646039999999998,
-      "p99_us": 2.667
+      "p50_us": 1.8909794999999998,
+      "p99_us": 2.458
     },
     "get_miss": {
-      "p50_us": 1.5225834999999999,
-      "p99_us": 1.958
+      "p50_us": 1.482021,
+      "p99_us": 1.917
     },
     "get_page_entry_450k": {
-      "p50_us": 30.208,
-      "p99_us": 39.708
+      "p50_us": 29.083,
+      "p99_us": 36.875
     },
     "set_page_entry_450k": {
-      "p50_us": 492.875,
-      "p99_us": 706.291
+      "p50_us": 465.458,
+      "p99_us": 597.583
     },
     "add_incr_counter": {
-      "p50_us": 21.706,
-      "p99_us": 37.959
+      "p50_us": 20.883229500000002,
+      "p99_us": 34.917
     },
     "threads_8_mixed_ops_per_s": {
-      "ops_per_s": 173144.0,
+      "ops_per_s": 172531.39363862725,
       "threads": 8
     },
     "iterkeys_prefix_scan_100k": {
-      "median_ms": 1712.908833,
-      "min_ms": 1666.64675
+      "median_ms": 1647.767041,
+      "min_ms": 1640.391333
     },
     "len_100k": {
-      "median_ms": 0.002833,
-      "min_ms": 0.002125
+      "median_ms": 0.0025,
+      "min_ms": 0.001875
     },
     "volume_100k": {
-      "median_ms": 0.003833,
-      "min_ms": 0.003459
+      "median_ms": 0.003625,
+      "min_ms": 0.003333
     },
     "iterkeys_prefix_scan_400k": {
-      "median_ms": 26963.7645,
-      "min_ms": 26757.809542
+      "median_ms": 26360.413083,
+      "min_ms": 26219.256917
     },
     "len_400k": {
-      "median_ms": 0.00875,
-      "min_ms": 0.002625
+      "median_ms": 0.004417,
+      "min_ms": 0.001875
     },
     "volume_400k": {
-      "median_ms": 0.003458,
-      "min_ms": 0.003291
+      "median_ms": 0.004042,
+      "min_ms": 0.003292
     }
   }
 }

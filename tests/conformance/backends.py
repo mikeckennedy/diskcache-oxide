@@ -27,6 +27,8 @@ OXIDE_SPILL_THRESHOLD = 32_768
 class Backend:
     name: str
     timeout_error: type[BaseException]
+    # Raised by a pickle=False handle reading a pickled row (D-001). diskcache has no such error.
+    unsafe_value_error: type[BaseException] | None = None
     db_filename: str
     # Values of at least this many bytes are stored in their own file instead of the database row.
     spill_threshold: int
@@ -102,6 +104,7 @@ class OxideBackend(Backend):
     def __init__(self) -> None:
         self._module = importlib.import_module('diskcache_oxide')
         self.timeout_error = self._module.Timeout
+        self.unsafe_value_error = self._module.UnsafeValueError
 
     def make_cache(
         self,

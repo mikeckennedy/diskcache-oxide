@@ -209,7 +209,7 @@ Rust code, CI workflows (Phase 1 sets them up with the build skeleton), and Phas
 **Surprising diskcache behavior** (each verified with a probe script):
 - A top-level NaN reads back as `None`, ignoring the default (D-008).
 - `expire()` stops after 100 rows that share one expire time (D-010).
-- `clear()` keeps deleting rows written while it runs, and never finishes against a writer that doesn't stop (D-011).
+- `clear()` also deletes rows written while it runs, so writes that already succeeded are lost and its running time grows with the write rate (D-011). In one repro it removed 133k rows from a 50k-row cache. An earlier note said it "never finishes"; a standalone repro didn't confirm that, but the data loss reproduces every time.
 - `set` sweeps up to `cull_limit` expired entries even with no size pressure. Once the cache is over its limit, one `set` evicts `cull_limit` of the oldest entries, sometimes including the value just stored.
 - A `size_limit` below the empty-database volume (about 32 KB) wipes the cache on every `set` (D-005).
 - `incr` on an expired or missing key creates a counter with no expiry. Talk Python has since fixed the app side with `incr(default=None)` and a retry.
@@ -217,23 +217,24 @@ Rust code, CI workflows (Phase 1 sets them up with the build skeleton), and Phas
 - `pop` on a missing key returns `None`; `touch` on an expired key returns False.
 - A closed cache reconnects silently when it's used again.
 - Spill files held up under concurrency: no torn reads and no orphaned files.
-- Fork safety held for both `os.fork()` and the multiprocessing fork context.
+- Fork safety held for both `os.fork()` and the multiprocessing fork context when the parent was otherwise idle. Forking while another thread is inside a write transaction makes the child's writes raise `Timeout` (D-012; upstream issue #300, fixed in the diskcache-community fork).
+- A deleted value file reads as a miss, but the row stays (`in` is True and `len` counts it).
 
-**Baselines** (`bench/results/`, on battery power):
+**Baselines** (`bench/results/`, re-recorded on AC power; the harness's ~16 ns loop overhead is subtracted from the batched p50s):
 
 | Workload | 3.14 | 3.14t |
 |---|---|---|
-| `get` hit, small (p50 / p99) | 1.96 / 2.67 µs | 1.74 / 2.42 µs |
-| `get` miss (p50) | 1.52 µs | 1.44 µs |
-| `get` 450 KB page entry (p50) | 30 µs | 30 µs |
-| `set` 450 KB page entry (p50 / p99) | 493 / 706 µs | 468 / 614 µs |
-| `add` + `incr` (p50) | 21.7 µs | 20.9 µs |
-| 8 threads, mixed load | 173k ops/s | 184k ops/s |
-| `iterkeys` prefix scan, 100k / 400k keys | 1.7 s / 27.0 s | 1.7 s / 26.8 s |
+| `get` hit, small (p50 / p99) | 1.89 / 2.46 µs | 1.76 / 2.54 µs |
+| `get` miss (p50) | 1.48 µs | 1.44 µs |
+| `get` 450 KB page entry (p50) | 29 µs | 30 µs |
+| `set` 450 KB page entry (p50 / p99) | 465 / 598 µs | 474 / 626 µs |
+| `add` + `incr` (p50) | 20.9 µs | 20.7 µs |
+| 8 threads, mixed load | 173k ops/s | 176k ops/s |
+| `iterkeys` prefix scan, 100k / 400k keys | 1.6 s / 26.4 s | 1.7 s / 26.7 s |
 | `len` / `volume`, 400k keys | ~0 ms | ~0 ms |
 
-On 3.14t diskcache gets almost nothing from free-threading: 8 threads are only 6% faster. That's a clear target for Phase 4.
+On 3.14t diskcache gets almost nothing from free-threading: 8 threads on 3.14t are about 2% faster than 8 threads on 3.14. That's a clear target for Phase 4.
 
 **Added after the plan was written:**
-- Divergences D-008 to D-011.
+- Divergences D-008 to D-012.
 - The built-in `NullCache` decision. It lands in the roadmap and is built in Phase 2; it isn't part of Phase 0.

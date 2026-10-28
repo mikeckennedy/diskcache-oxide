@@ -338,11 +338,18 @@ def _fork_children(cache: Any, mode: str) -> tuple[list[int | None], list[str]]:
     return exit_codes, failures
 
 
-def _fork_while_busy(cache: Any) -> tuple[list[int | None], list[str]]:
-    """Fork while another parent thread is mid-get/set on the same Cache.
+def _forked_get_and_set(cache: Any) -> None:
+    """The child's whole job in the thread modes: one read and one write on the inherited Cache."""
+    assert cache.get('before-fork') == 'parent'
+    assert cache.set('from-child', 'child') is True
+    assert cache.get('from-child') == 'child'
 
-    If the Cache (or SQLite under it) holds a mutex at the moment of the fork, the child inherits
-    it locked, with no thread left to release it, and its first operation deadlocks.
+
+def _fork_while_hammered(cache: Any, writes: bool) -> tuple[list[int | None], list[str]]:
+    """Fork while another parent thread is mid-get (and, with `writes`, mid-set) on the same Cache.
+
+    A child that inherits a mutex, or SQLite lock state, that a parent thread held at the moment of
+    the fork has no thread left to release it, and its first operation stalls.
     """
     stop = threading.Event()
     errors: list[BaseException] = []
@@ -351,17 +358,13 @@ def _fork_while_busy(cache: Any) -> tuple[list[int | None], list[str]]:
     def hammer() -> None:
         try:
             while not stop.is_set():
-                cache.set('busy', ops[0])
+                if writes:
+                    cache.set('busy', ops[0])
                 cache.get('busy')
                 cache.get('before-fork')
                 ops[0] += 1
         except BaseException as ex:
             errors.append(ex)
-
-    def child_body() -> None:
-        assert cache.get('before-fork') == 'parent'
-        assert cache.set('from-child', 'child') is True
-        assert cache.get('from-child') == 'child'
 
     thread = threading.Thread(target=hammer, name='hammer')
     thread.start()
@@ -372,7 +375,7 @@ def _fork_while_busy(cache: Any) -> tuple[list[int | None], list[str]]:
             start = ops[0]
             while ops[0] < start + 20 and thread.is_alive():
                 time.sleep(0.001)
-            exit_codes.append(_wait_or_kill(_os_fork(child_body)))
+            exit_codes.append(_wait_or_kill(_os_fork(lambda: _forked_get_and_set(cache))))
     finally:
         stop.set()
         thread.join(SYNC_TIMEOUT)
@@ -380,6 +383,43 @@ def _fork_while_busy(cache: Any) -> tuple[list[int | None], list[str]]:
     failures = [f'hammer thread failed: {ex!r}' for ex in errors]
     if thread.is_alive():
         failures.append('hammer thread hung')
+    if cache.get('from-child') != 'child':
+        failures.append('parent cannot read the child write')
+    return exit_codes, failures
+
+
+def _fork_in_write_transaction(cache: Any) -> tuple[list[int | None], list[str]]:
+    """Fork while another parent thread is inside cache.transact() (holding the write lock).
+
+    The deterministic worst case of _fork_while_hammered(writes=True). The holder commits right
+    after the fork, so a child that only waits on the real lock gets it almost at once.
+    """
+    inside, forked = threading.Event(), threading.Event()
+    errors: list[BaseException] = []
+
+    def holder() -> None:
+        try:
+            with cache.transact():
+                cache.set('busy', 1)
+                inside.set()
+                forked.wait(SYNC_TIMEOUT)
+        except BaseException as ex:
+            errors.append(ex)
+            inside.set()
+
+    thread = threading.Thread(target=holder, name='holder')
+    thread.start()
+    try:
+        assert inside.wait(SYNC_TIMEOUT), 'holder never entered its transaction'
+        pid = _os_fork(lambda: _forked_get_and_set(cache))
+    finally:
+        forked.set()
+        thread.join(SYNC_TIMEOUT)
+    exit_codes = [_wait_or_kill(pid)]
+
+    failures = [f'holder thread failed: {ex!r}' for ex in errors]
+    if cache.get('busy') != 1:
+        failures.append('the holder transaction did not commit')
     if cache.get('from-child') != 'child':
         failures.append('parent cannot read the child write')
     return exit_codes, failures
@@ -407,14 +447,21 @@ def _fork_child_closes(cache: Any) -> tuple[list[int | None], list[str]]:
 FORK_MODES = {
     'os-fork': lambda cache: _fork_children(cache, 'os-fork'),
     'fork-context': lambda cache: _fork_children(cache, 'fork-context'),
-    'fork-while-busy': _fork_while_busy,
+    'fork-while-reading': lambda cache: _fork_while_hammered(cache, writes=False),
+    'fork-while-writing': lambda cache: _fork_while_hammered(cache, writes=True),
+    'fork-in-write-txn': _fork_in_write_transaction,
     'child-closes': _fork_child_closes,
 }
+
+# The thread modes open the cache with a short timeout, so a child stuck behind a lock nobody will
+# release fails with the backend's Timeout in about a second instead of running into the deadline.
+THREAD_MODE_TIMEOUT = 1.0
+THREAD_MODES = frozenset({'fork-while-reading', 'fork-while-writing', 'fork-in-write-txn'})
 
 
 def fork_check(backend_name: str, directory: str, mode: str) -> int:
     backend = _backend(backend_name)
-    cache = backend.make_cache(Path(directory))
+    cache = backend.make_cache(Path(directory), **({'timeout': THREAD_MODE_TIMEOUT} if mode in THREAD_MODES else {}))
     # Use the cache before forking so the parent holds an open connection.
     cache.set('before-fork', 'parent')
     cache.incr('counter', 0)

@@ -34,6 +34,7 @@ A clean-room, pure-Rust reimplementation of [python-diskcache](https://grantjenk
 | Truthiness | `bool(Cache)` is always True (D-009, fixing diskcache's empty-cache-is-falsy gotcha). `bool(NullCache)` is False. Both have an `enabled` property. |
 | Async | A separate `AsyncCache`; it starts as a Python executor wrapper and moves into Rust only if measurements justify it. |
 | Network | Possible late phase: an HTTP + msgspec server, "Redis replacement backed by SQLite". |
+| Reference behavior | diskcache 5.6.3 is the baseline. The [diskcache-community](https://github.com/secondwindoss/diskcache-community) fork (5.8.x, actively maintained, `import diskcache_community`) keeps 5.6.3's semantics for everything in our suite, and serves as a second witness: it can run as an optional third conformance backend. We match the fork where it fixed real bugs: fork safety (its PR #13, our D-012), closing connections left behind by exited threads, and opening a cache never writes when nothing changed. Its `.pyi` stubs are a cross-check for our signatures; we compare against them, never copy them. The bugs we found in diskcache are logged with repros in `upstream/`. |
 
 ## What Talk Python actually needs (from the usage survey)
 
@@ -66,10 +67,23 @@ It also records baseline numbers for diskcache: `get` p50, `set` of a 450 KB val
 
 Deliverable: green against diskcache, with a written list of behaviors we intentionally diverge on.
 
+### Phase 0.5: Conformance follow-ups (before the oxide backend is wired in)
+
+Tests prompted by the diskcache-community fork and upstream issues, each verified against diskcache first:
+
+1. A reader racing an overwrite of a spilled value gets the old or the new value, never the default, `None`, or an error (upstream #258, #294).
+2. Many threads and processes open a brand-new directory at the same moment (upstream #266, #349).
+3. Two `Cache` instances on one directory, then a fork; both work in the child and in the parent (upstream #325).
+4. Many short-lived threads, then `close()`: no file-descriptor growth and no `ResourceWarning` (upstream #295, #336).
+5. Reopening and reading leaves the database file unchanged (its hash and mtime).
+6. A fork from a thread that is itself inside a transaction: define the behavior and pin it.
+7. A fork after the parent has used SQLite, on macOS. Our bundled SQLite must not hit the Apple system-libsqlite3 crash that the fork documents.
+8. Optional: a `community` backend in the adapter, so the suite also runs against diskcache-community.
+
 ### Phase 1: Foundation spikes (time-boxed, throwaway allowed)
 
 1. **Build skeleton**: Cargo workspace (`core` + `py`), maturin, and uv; `#[pymodule(gil_used = false)]`; CI that builds 3.14, 3.15, 3.14t, and 3.15t from day one. Check whether the free-threaded stable ABI works with PyO3/maturin.
-2. **Latency spike (go/no-go)**: a throwaway end-to-end `get` (PyO3 call, cached-statement SQLite SELECT, small-value decode) whose p50 must be no slower than diskcache's `get` measured on the same machine in the same session (the Phase 0 baselines are 1.96 µs on 3.14 and 1.74 µs on 3.14t, on battery power; re-record them on AC power first). The bar is relative, never an absolute number, on both the GIL and free-threaded builds. Measure what releasing the GIL / `py.detach` costs. The likely outcome is to release only for file-spill reads.
+2. **Latency spike (go/no-go)**: a throwaway end-to-end `get` (PyO3 call, cached-statement SQLite SELECT, small-value decode) whose p50 must be no slower than diskcache's `get` measured on the same machine in the same session (the Phase 0 AC-power baselines are 1.89 µs on 3.14 and 1.76 µs on 3.14t). The bar is relative, never an absolute number, on both the GIL and free-threaded builds. Measure what releasing the GIL / `py.detach` costs. The likely outcome is to release only for file-spill reads.
 3. **Codecs (JSON + msgpack)**: a custom serde visitor in the `py` crate that builds Python objects directly, with dict-key string caching, shared by both formats. Benchmark serde_json against sonic-rs for JSON, and rmp-serde for msgpack (with the timestamp extension for datetime), measuring the conversion rather than parse speed. Compare against pickle, orjson, and msgspec, using Talk Python-shaped values (including gzipped bytes inside dicts). Settle the tag format and its escape. Decide whether msgpack ships in Phase 2 or in Phase 6a.
 4. **Storage design**:
    - Connection strategy: a small per-`Cache` pool of `rusqlite::Connection`s behind an uncontended `Mutex` checkout, tagged with the pid so connections reopen after a fork.
@@ -82,6 +96,7 @@ Deliverable: green against diskcache, with a written list of behaviors we intent
    - Investigate why diskcache's prefix scan goes from 1.7 s at 100k keys to 27 s at 400k (16× for 4× the keys) before treating 400k as a target.
    - File spills: inline vs spill threshold. Write to a temp file and rename it, then commit the row; delete the file after the row is removed; a missing file on read is a miss; no fsync (same as diskcache, and documented).
    - Format version stamp and the mismatch policy.
+   - Fork barrier (D-012): a fork must never happen in the middle of a transaction. Every transaction holds a process-wide lock in shared mode; an `os.register_at_fork(before=...)` hook takes it exclusively, which waits for in-flight transactions and blocks new ones, and the `after_in_parent`/`after_in_child` hooks release it. The child then drops its inherited connections without closing them (to avoid SQLite's close-after-fork hazards) and opens new ones. Prove this out in the spike against the Phase 0 fork tests, including the case where fork is called from a thread that is itself inside a transaction (that must not deadlock).
    - Maintenance fairness: `clear()`/`expire()`/culling run in chunks bounded by a snapshot taken at the start (D-010, D-011). Between chunks they actually let a waiting writer in. SQLite's busy handler polls rather than queueing, so diskcache's writers often wait out the whole `clear()`. The target is that a writer with `timeout=1.0` gets in during a 50k-row `clear()`, on every run.
    - Leave room for encryption at rest (speculative Phase 8): all connections open through one function, so a key pragma can be applied there; spill-file reads and writes go through a single interface, so an encrypting implementation can plug in. Nothing about encryption is built yet.
 

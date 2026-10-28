@@ -100,11 +100,31 @@ def test_fork_safety(backend: Backend, make_cache: Callable[..., Any], cache_dir
     assert reopened.get('counter') == (proc_workers.FORK_CHILDREN + 1) * proc_workers.FORK_OPS
 
 
-def test_fork_while_another_thread_uses_the_cache(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path) -> None:
-    # A background thread hammers get/set on the shared Cache while the main thread forks. Each
-    # child does a get and a set and must exit within proc_workers.CHILD_DEADLINE; a child that
-    # inherited a held mutex deadlocks instead and is killed.
-    _fork_check(backend, cache_dir, 'fork-while-busy')
+def test_fork_while_another_thread_reads_the_cache(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    # A background thread hammers get on the shared Cache while the main thread forks. Each child
+    # does a get and a set and must exit within proc_workers.CHILD_DEADLINE; a child that inherited
+    # a held mutex deadlocks instead and is killed.
+    _fork_check(backend, cache_dir, 'fork-while-reading')
+    assert make_cache(cache_dir).get('from-child') == 'child'
+
+
+@pytest.mark.requires('transact')
+@pytest.mark.diverges(
+    backend='diskcache', ref='D-012', reason="a forked child's writes time out if another thread held a write transaction", raises=AssertionError
+)
+def test_fork_while_another_thread_holds_a_write_transaction(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    # Observed on diskcache, every time: the child's get works, but its set raises Timeout after the
+    # cache's timeout, though the parent thread committed right after the fork. The parent is fine.
+    _fork_check(backend, cache_dir, 'fork-in-write-txn')
+    assert make_cache(cache_dir).get('from-child') == 'child'
+
+
+@pytest.mark.backend_only('oxide')
+def test_fork_while_another_thread_writes_the_cache(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    # The same with a get/set hammer (D-012). Not run on diskcache: there the child's set times out
+    # only when the fork happens to land inside one of the hammer's writes (about 20-50% of forks),
+    # and a strict test can't pin a random outcome.
+    _fork_check(backend, cache_dir, 'fork-while-writing')
     assert make_cache(cache_dir).get('from-child') == 'child'
 
 

@@ -69,6 +69,7 @@ def test_volume_grows_and_shrinks_with_large_values(cache: Any, cache_dir: Path,
     assert not backend.spill_files(cache_dir)
 
 
+@pytest.mark.diverges(backend='oxide', ref='D-013', reason='oxide deletes the orphaned row', raises=AssertionError)
 def test_deleted_spill_file_reads_as_a_miss(cache: Any, cache_dir: Path, backend: Backend) -> None:
     cache.set('small', 'v')
     cache.set('big', payload(2 * backend.spill_threshold, 2))
@@ -185,3 +186,16 @@ def test_oxide_expire_removes_all_rows_that_share_one_expire_time(cache: Any, fa
     fake_clock.advance(11)
     assert cache.expire() == 250
     assert len(cache) == 0
+
+
+@pytest.mark.backend_only('oxide')
+def test_oxide_deleted_spill_file_is_a_miss_and_the_row_goes(cache: Any, cache_dir: Path, backend: Backend) -> None:
+    cache.set('small', 'v')
+    cache.set('big', payload(2 * backend.spill_threshold, 2))
+    backend.spill_files(cache_dir).pop().unlink()
+
+    assert cache.get('big', 'default') == 'default'
+    # With no lock contention, the orphaned row is removed on the spot.
+    assert 'big' not in cache
+    assert len(cache) == 1
+    assert cache.get('small') == 'v'

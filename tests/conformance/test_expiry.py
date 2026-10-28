@@ -124,3 +124,22 @@ def test_set_over_expired_entry_revives_it(cache: Any, fake_clock: FakeClock) ->
     assert cache.set('k', 'new') is True
     assert cache.get('k', expire_time=True) == ('new', None)
     assert len(cache) == 1
+
+
+@pytest.mark.diverges(backend='oxide', ref='D-014', reason='oxide rejects bool expire', raises=TypeError)
+def test_expire_true_means_one_second(cache: Any, fake_clock: FakeClock) -> None:
+    # Surprising: bool is an int subclass, so expire=True is silently a 1-second TTL.
+    assert cache.set('k', 'v', expire=True) is True
+    fake_clock.advance(0.5)
+    assert cache.get('k') == 'v'
+    fake_clock.advance(1.0)
+    assert cache.get('k') is None
+
+
+@pytest.mark.backend_only('oxide')
+@pytest.mark.parametrize('flag', [True, False])
+def test_oxide_rejects_bool_expire(cache: Any, flag: bool) -> None:
+    for call in (lambda: cache.set('k', 'v', expire=flag), lambda: cache.add('k', 'v', expire=flag), lambda: cache.touch('k', expire=flag)):
+        with pytest.raises(TypeError):
+            call()
+    assert 'k' not in cache
