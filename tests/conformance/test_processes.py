@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import multiprocessing
 import random
+import signal
+import stat
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -87,6 +90,8 @@ def _fork_check(backend: Backend, cache_dir: Path, mode: str) -> None:
         text=True,
         timeout=JOIN_TIMEOUT,
     )
+    # Echoed so diagnostics (e.g. fork-in-write-txn's timings) show up in a failure or XPASS(strict) report.
+    sys.stderr.write(proc.stderr)
     assert proc.returncode == 0, proc.stderr
     assert proc_workers.integrity(backend.db_path(cache_dir)) == 'ok'
 
@@ -108,17 +113,18 @@ def test_fork_while_another_thread_reads_the_cache(backend: Backend, make_cache:
     assert make_cache(cache_dir).get('from-child') == 'child'
 
 
-@pytest.mark.requires('transact')
 @pytest.mark.diverges(
     backend='diskcache', ref='D-012', reason="a forked child's writes time out if another thread held a write transaction", raises=AssertionError
 )
 def test_fork_while_another_thread_holds_a_write_transaction(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path) -> None:
     # Observed on diskcache, every time: the child's get works, but its set raises Timeout after the
     # cache's timeout, though the parent thread committed right after the fork. The parent is fine.
+    # The holder uses backend.hold_write_transaction, so this runs on oxide before transact() lands.
     _fork_check(backend, cache_dir, 'fork-in-write-txn')
     assert make_cache(cache_dir).get('from-child') == 'child'
 
 
+@pytest.mark.covers('D-012')
 @pytest.mark.backend_only('oxide')
 def test_fork_while_another_thread_writes_the_cache(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path) -> None:
     # The same with a get/set hammer (D-012). Not run on diskcache: there the child's set times out
@@ -149,7 +155,7 @@ def test_worker_overlap_sees_writes_from_a_process_that_exited(backend: Backend,
     writer_done.set()
     seen = results.get(timeout=JOIN_TIMEOUT)
     _join_all([holder])
-    assert seen == ('B', b'b' * proc_workers.SPILL_MIN, 3)
+    assert seen == ('B', b'b' * proc_workers.spill_min(backend), 3)
 
 
 def _spill_run(backend: Backend, cache: Any, cache_dir: Path, writers: int, readers: int, ops: int) -> list[str]:
@@ -190,3 +196,192 @@ def test_spill_files_concurrent_overwrite_and_delete(backend: Backend, cache: An
 def test_spill_files_concurrent_overwrite_and_delete_heavy(backend: Backend, cache: Any, cache_dir: Path) -> None:
     live = _spill_run(backend, cache, cache_dir, writers=8, readers=4, ops=4000)
     assert len(backend.spill_files(cache_dir)) == len(live)
+
+
+# ---------------------------------------------------------------------------
+# Phase 0.5
+# ---------------------------------------------------------------------------
+
+
+def _overwrite_race(backend: Backend, cache: Any, cache_dir: Path, readers: int, ops: int) -> list[tuple[int, int, list[str]]]:
+    key = 'hot'
+    min_size = proc_workers.spill_min(backend)
+    cache.set(key, proc_workers.make_blob(key, 0, 0, random.Random(0), min_size))
+    barrier = SPAWN.Barrier(readers + 1)
+    writer_done = SPAWN.Event()
+    results = SPAWN.Queue()
+    writer = _start(proc_workers.overwrite_writer, [(backend.name, str(cache_dir), barrier, key, ops)])
+    reader_procs = _start(proc_workers.overwrite_reader, [(backend.name, str(cache_dir), barrier, key, writer_done, results)] * readers)
+    _join_all(writer)
+    writer_done.set()
+    reports = [results.get(timeout=JOIN_TIMEOUT) for _ in range(readers)]
+    _join_all(reader_procs)
+
+    failures = [f for _, _, sample in reports for f in sample]
+    assert sum(n for _, n, _ in reports) == 0, f'reads of an always-present key failed: {failures}'
+    assert sum(hits for hits, _, _ in reports) > 0, 'readers never saw a value; the test proved nothing'
+    # A reader that "cleaned up" a row it thought was orphaned would have deleted the live value.
+    assert key in cache
+    assert len(cache) == 1
+    assert proc_workers.blob_ok(key, cache.get(key), min_size)
+    assert len(backend.spill_files(cache_dir)) == 1, 'orphaned value files'
+    return reports
+
+
+@pytest.mark.covers('D-016')
+@pytest.mark.backend_only('oxide')
+def test_reading_a_spilled_value_while_it_is_overwritten_never_misses(backend: Backend, cache: Any, cache_dir: Path) -> None:
+    # Test A (D-016, upstream #258, #294). One writer overwrites one spilled key over and over; readers
+    # get it with a sentinel default and must always see a whole value, old or new. Oxide-only: on
+    # diskcache and the community fork an occasional read returns the default instead (this
+    # variant catches it in about 15-45% of runs, the heavy one in every run), and a strict test
+    # can't pin a random outcome.
+    _overwrite_race(backend, cache, cache_dir, readers=4, ops=500)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(300)
+@pytest.mark.covers('D-016')
+@pytest.mark.backend_only('oxide')
+def test_reading_a_spilled_value_while_it_is_overwritten_never_misses_heavy(backend: Backend, cache: Any, cache_dir: Path) -> None:
+    _overwrite_race(backend, cache, cache_dir, readers=6, ops=3000)
+
+
+OPENERS = 8
+
+
+def _open_new_directory_in_processes(backend: Backend, cache_dir: Path) -> None:
+    barrier = SPAWN.Barrier(OPENERS)
+    results = SPAWN.Queue()
+    procs = _start(proc_workers.open_new_directory, [(backend.name, str(cache_dir), barrier, w, results) for w in range(OPENERS)])
+    outcomes = dict(results.get(timeout=JOIN_TIMEOUT) for _ in range(OPENERS))
+    _join_all(procs)
+    assert {w: err for w, err in outcomes.items() if err} == {}
+
+
+def _open_new_directory_in_threads(backend: Backend, cache_dir: Path) -> None:
+    barrier = threading.Barrier(OPENERS)
+    errors: dict[int, BaseException] = {}
+
+    def opener(worker: int) -> None:
+        try:
+            barrier.wait(JOIN_TIMEOUT)
+            with backend.make_cache(cache_dir) as cache:
+                cache.set(f'worker-{worker}', worker)
+                assert cache.get(f'worker-{worker}') == worker
+        except BaseException as ex:
+            errors[worker] = ex
+
+    threads = [threading.Thread(target=opener, args=(w,)) for w in range(OPENERS)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(JOIN_TIMEOUT)
+    assert not any(t.is_alive() for t in threads)
+    assert errors == {}
+
+
+@pytest.mark.parametrize('how', ['processes', 'threads'])
+def test_many_openers_racing_to_create_a_new_directory(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path, how: str) -> None:
+    # Test B (upstream #266, #349). Eight openers hit a directory that doesn't exist yet at the same
+    # moment, including the race to switch the new database to WAL. Nobody may fail, and every
+    # write must survive.
+    assert not cache_dir.exists()
+    if how == 'processes':
+        _open_new_directory_in_processes(backend, cache_dir)
+    else:
+        _open_new_directory_in_threads(backend, cache_dir)
+    assert proc_workers.integrity(backend.db_path(cache_dir)) == 'ok'
+    reopened = make_cache(cache_dir)
+    assert {k: reopened.get(k) for k in reopened.iterkeys()} == {f'worker-{w}': w for w in range(OPENERS)}
+
+
+@pytest.mark.backend_only('oxide', 'community')
+def test_racing_creators_still_make_an_owner_only_directory(backend: Backend, cache_dir: Path) -> None:
+    # Test B, D-015 side: the 0700 mode holds even when eight processes create the directory at once.
+    _open_new_directory_in_processes(backend, cache_dir)
+    assert stat.S_IMODE(cache_dir.stat().st_mode) == 0o700
+
+
+def test_two_caches_on_one_directory_survive_an_idle_fork(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    # Test C, variant 1 (upstream #325). Two Cache objects on one directory, both used, then a fork
+    # while neither is busy. The child reads and writes through both while the parent keeps going.
+    _fork_check(backend, cache_dir, 'two-caches-idle')
+    assert make_cache(cache_dir).get('counter') == 2 * proc_workers.FORK_OPS
+
+
+@pytest.mark.covers('D-012')
+@pytest.mark.backend_only('oxide', 'community')
+def test_fork_while_another_thread_writes_through_a_second_cache(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    # Test C, variant 2 (D-012, upstream #325). A thread hammers writes through `b` while the main
+    # thread forks using `a`, so the fork barrier must cover every Cache in the process. Not run on
+    # diskcache: a child's write times out when its fork lands inside one of b's writes, which
+    # happened in about half of the runs (two forks each).
+    _fork_check(backend, cache_dir, 'two-caches-other-writing')
+    reopened = make_cache(cache_dir)
+    assert reopened.get('from-child') == 'child'
+    assert reopened.get('from-child-b') == 'child'
+
+
+def test_forked_child_can_open_and_use_a_new_cache(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    # Test G. The parent used a cache, then forks; the child opens a brand-new Cache in another
+    # directory and uses it. Mostly a smoke test for SQLite initialization after fork.
+    _fork_check(backend, cache_dir, 'fork-then-new-cache')
+    assert make_cache(cache_dir.parent / f'{cache_dir.name}-forked-child').get('small') == 'child'
+
+
+@pytest.mark.backend_only('oxide')
+def test_oxide_uses_its_bundled_sqlite(backend: Backend) -> None:
+    # Test G, oxide side: guards against accidentally linking the system SQLite. The runtime version
+    # comes from sqlite3_libversion() and the compile version from the SQLITE_VERSION macro (see
+    # Backend.sqlite_info), so they differ if the extension loads a SQLite other than its own. The
+    # version floor is a Phase 1 decision; update it when the bundled build is pinned.
+    info = backend.sqlite_info()
+    assert info is not None, 'oxide must report which SQLite it runs on'
+    assert info['bundled'] is True
+    assert info['runtime_version'] == info['compile_version'], f'linked against another SQLite: {info}'
+    assert tuple(int(p) for p in info['runtime_version'].split('.')) >= (3, 45, 0)
+    assert info['compile_options'], 'no compile options reported'
+
+
+KILL_ROUNDS = 6
+
+
+def _kill_writers_mid_spill(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path, rounds: int) -> int:
+    keys = [f'blob-{i}' for i in range(6)]
+    min_size = proc_workers.spill_min(backend)
+    rng = random.Random(0)
+    for n in range(rounds):
+        started = SPAWN.Event()
+        (writer,) = _start(proc_workers.killable_spill_writer, [(backend.name, str(cache_dir), keys, n, started)])
+        assert started.wait(JOIN_TIMEOUT), 'writer never got going'
+        time.sleep(rng.uniform(0, 0.05))
+        writer.kill()
+        writer.join(JOIN_TIMEOUT)
+        assert writer.exitcode == -signal.SIGKILL
+
+    assert proc_workers.integrity(backend.db_path(cache_dir)) == 'ok'
+    cache = make_cache(cache_dir)
+    live = 0
+    for key in keys:
+        value = cache.get(key)  # must not raise
+        assert value is None or proc_workers.blob_ok(key, value, min_size), f'{key} reads back corrupt'
+        live += value is not None
+    assert live > 0, 'no write ever committed; the test proved nothing'
+    assert cache.set('after', b'a' * min_size) is True
+    assert cache.get('after') == b'a' * min_size
+    # Files the kill left behind (e.g. a value written but never committed) are allowed; Phase 6a's
+    # check() cleans them up. Each live key and 'after' own one file.
+    return len(backend.spill_files(cache_dir)) - (live + 1)
+
+
+def test_writer_killed_mid_spill_leaves_a_consistent_cache(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path, record_property: Any) -> None:
+    # Test I. A writer process overwriting spilled values is SIGKILLed at a random moment, several
+    # times (as deploy restarts do).
+    record_property('orphaned_files', _kill_writers_mid_spill(backend, make_cache, cache_dir, KILL_ROUNDS))
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(300)
+def test_writer_killed_mid_spill_leaves_a_consistent_cache_heavy(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path, record_property: Any) -> None:
+    record_property('orphaned_files', _kill_writers_mid_spill(backend, make_cache, cache_dir, 60))

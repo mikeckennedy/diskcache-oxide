@@ -88,7 +88,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - diskcache: when a process forks while another of its threads is inside a write transaction on the same `Cache`, the child's reads work but its first write raises `Timeout` after the cache's `timeout` (60 s by default), even though the parent thread commits right after the fork. The child inherits SQLite lock state for a lock nobody in the child will release. Under a get/set hammer this hits about 20-50% of forks; a reads-only hammer never triggers it. The parent is unaffected. Found by the Phase 0 review fixes.
 - oxide: a forked child can always read and write, whatever other threads were doing when the fork happened. How this is done is a Phase 1 storage decision. Discarding the inherited connections isn't enough on its own, because SQLite's per-file lock bookkeeping is shared by every connection in a process and the child inherits it. The leading approach is a before-fork hook (`os.register_at_fork`) that waits for in-flight transactions to finish and holds off new ones while the fork happens.
 - Why: pre-fork servers (gunicorn, Celery prefork) fork while background threads may be using the cache, and a 60 s stall in a fresh worker is hard to diagnose.
-- Tests: `test_processes.py` (`test_fork_while_another_thread_holds_a_write_transaction` is a strict xfail on diskcache; `test_fork_while_another_thread_writes_the_cache` is oxide-only)
+- Tests: `test_processes.py` (`test_fork_while_another_thread_holds_a_write_transaction` is a strict xfail on diskcache; `test_fork_while_another_thread_writes_the_cache` is oxide-only). The barrier must cover every `Cache` in the process, not just the one the fork goes through (upstream #325): `test_fork_while_another_thread_writes_through_a_second_cache` (oxide and community) hammers writes through a second `Cache` on the same directory while the main thread forks with the first. On diskcache a child's write timed out in 13/25 runs on 3.14 and 15/25 on 3.14t (two forks per run); one child on 3.14 hung until it was killed instead.
 
 ## D-013 A missing value file is a miss, and the row is removed
 
@@ -113,3 +113,50 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - oxide: a cache directory that diskcache-oxide creates, and any subdirectories it creates for value files, are 0700. Intermediate parents follow the umask, like `os.makedirs`. An existing directory's permissions are never changed.
 - Why: a cache directory is a security boundary. Anyone who can write to it can poison the cache, and its contents (e.g. keys containing IP addresses) can be private.
 - Tests: `test_basic.py`
+
+## D-016 A key that's present the whole time never reads as missing while its value is overwritten
+
+- Kind: test-visible
+- diskcache: while one process overwrites a spilled (file-backed) value and other processes `get` it, an occasional read returns the default, though the key is never deleted. No torn values, `None` or exceptions were seen, and afterwards the key, `len` and the value-file count are all correct. Measured with `test_processes.py`'s Test A: the default variant (4 reader processes, 500 overwrites of 100-400 KB values) failed in 5/20 runs on 3.14 and 3/20 on 3.14t (a lighter 3-reader, 150-overwrite version failed in 1/75 and 5/75); the heavy variant (6 readers, 3000 overwrites) failed in 10/10 runs on both. The standalone repro sees about 40 misses in 325k reads, every run. The diskcache-community fork has the same bug. Found by the Phase 0.5 tests (upstream #294, and #258 for threads).
+- oxide: a read of a spilled value that finds its file missing reads the row again and retries if the file reference or `store_seq` changed, so it always returns a whole value, old or new. It's a miss only when the row still points at the same missing file (D-013), and the D-013 cleanup is a compare-and-delete, so a reader can never delete a live row a writer just replaced.
+- Why: `get` with a default is how callers decide to recompute a value. Spurious misses on hot, large values cause needless recomputes, and a reader that "cleans up" after one would lose the live value.
+- Tests: `test_processes.py` (`test_reading_a_spilled_value_while_it_is_overwritten_never_misses` and its `slow` heavy variant are oxide-only, because the failure on diskcache and the fork is random)
+
+## D-017 Connections and fds are bounded by the pool
+
+- Kind: test-visible
+- diskcache: one shared `Cache` opens a SQLite connection for every thread that uses it, and each holds the database and its WAL open. With 64 threads held after one `get` and one `set` each, 131 fds are open inside the cache directory (2 × (threads + 1) + 1 for the shared `-shm`), on 3.14 and 3.14t. A server with many threads can run into the fd limit (upstream #295, #336).
+- oxide: connections come from a bounded pool, so the fd count inside the cache directory is at most 2 × pool size + 1, however many threads are alive (`OXIDE_FD_BUDGET` in `backends.py`; the pool size of 8 is a placeholder until Phase 1).
+- Why: the number of open fds should depend on configuration, not on how many threads happened to touch the cache.
+- Tests: `test_threads.py` (`test_peak_fds_bounded_by_the_pool` is a strict xfail on diskcache; `test_peak_fds_within_the_backend_budget` pins each adapter's `fd_budget`)
+
+## D-018 close() closes every connection
+
+- Kind: test-visible
+- diskcache: `close()` closes only the calling thread's connection. After 64 threads have used a shared `Cache` and exited, `close()` leaves 130 fds open inside the cache directory until a gc pass finalizes the connections, and each one then reports `ResourceWarning: unclosed database` (64 warnings, on 3.14 and 3.14t).
+- oxide: `close()` closes every connection the `Cache` opened, from any thread. No fd inside the cache directory stays open and nothing warns at finalization.
+- Why: after `close()` the directory must be safe to delete or move, and leaked connections hide in tests behind `ResourceWarning` noise.
+- Tests: `test_threads.py` (`test_close_releases_every_fd` and `test_threads_then_close_emit_no_resource_warning` are strict xfails on diskcache)
+
+## D-019 Opening with unchanged settings never writes
+
+- Kind: test-visible
+- diskcache: opening an existing cache with the same settings commits a write transaction (from outside it looks like the Settings rows being rewritten with the same values), so a peer connection's `PRAGMA data_version` goes from 2 to 3 on open, even when every operation afterwards is a read. The main database file's bytes don't change, so only `data_version` catches it.
+- oxide: opening with unchanged settings, then `get`, `in`, `len`, `iterkeys` and `volume`, never write: a peer's `data_version` is unchanged, and so are the main database file's hash and mtime.
+- Why: a read-mostly service (or a read-only replica of the directory) shouldn't take the write lock or dirty the WAL just by opening its cache.
+- Tests: `test_basic.py` (`test_open_and_read_never_write` is a strict xfail on diskcache)
+
+# Community fork differences
+
+How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.
+
+- **D-012 (fork during another thread's write transaction):** fixed in the fork. Its before-fork gate waits for the transaction, so the child can write. The D-012 test passes on community.
+- **D-015 (directory permissions):** the fork creates new cache directories as 0700, so `test_new_directory_follows_the_umask` fails on community. That matches oxide's behavior.
+- **D-008 (top-level NaN reads back as `None`):** the fork has the same bug. The `float-nan` round-trip cases fail on community, as they do (as strict xfails) on 5.6.3.
+- **D-017 (connections bounded by the pool):** the fork also keeps one connection per thread: 131 fds inside the cache directory with 64 threads, the same as 5.6.3, so `test_peak_fds_bounded_by_the_pool` fails on community.
+- **D-018 (close() closes every connection):** fixed in the fork. After 64 threads and `close()`, no fds remain inside the cache directory and nothing warns, so both D-018 tests pass on community.
+- **D-019 (opening never writes):** fixed in the fork, as its PR #17 ("no writes on open") claims. A peer's `data_version` and the main database file are unchanged, so `test_open_and_read_never_write` passes on community.
+- **D-016 (a spilled value read as missing while it's overwritten):** the fork has the same bug, so the Test A tests are oxide-only. The default variant failed on community in 4/20 runs on 3.14 and 9/20 on 3.14t, and the heavy variant in every run tried (4/4 on 3.14t).
+- **D-012 across two `Cache` objects (upstream #325):** fixed in the fork. Its fork gate also covers a second `Cache` on the same directory: `test_fork_while_another_thread_writes_through_a_second_cache` passed in 20/20 runs on 3.14 and on 3.14t.
+- **Phase 0.5 Tests B, C (idle fork), G and I** pass on the fork as on 5.6.3, including racing creators of a new directory still getting 0700 (D-015). After 6 SIGKILLs of a spill writer (Test I), the fork left 0-3 orphaned value files and 5.6.3 left 0-5 (20 runs each); after 60 kills, 11 and 10.
+- Everything else in the suite passes on the fork unchanged.

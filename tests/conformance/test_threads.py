@@ -1,20 +1,27 @@
 """Thread safety. Most meaningful on 3.14t (free-threaded), where the threads really run in parallel.
 
-Each scenario runs twice: every thread sharing one Cache object, and one Cache per thread on the
-same directory. Counts were calibrated on 3.14t (16 threads x 1000 ops is about 0.5 s per scenario).
+Each data-integrity scenario runs twice: every thread sharing one Cache object, and one Cache per
+thread on the same directory. The fd scenarios (Test D) use one shared Cache. Counts were calibrated on 3.14t (16 threads x 1000 ops is about 0.5 s per scenario).
 """
 
 from __future__ import annotations
 
+import contextlib
+import gc
+import os
+import subprocess
+import sys
 import threading
+import time
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests.conformance.backends import Backend
+from tests.conformance.backends import OXIDE_FD_BUDGET, Backend
+from tests.conformance.proc_workers import REPO_ROOT
 
 THREADS = 16
 INCR_OPS = 1000
@@ -23,7 +30,7 @@ MIXED_OPS = 1000
 MIXED_KEYS = 24
 JOIN_TIMEOUT = 30.0
 
-pytestmark = pytest.mark.parametrize('layout', ['shared', 'per-thread'])
+LAYOUTS = pytest.mark.parametrize('layout', ['shared', 'per-thread'])
 
 
 def _caches(layout: str, make_cache: Callable[..., Any], cache_dir: Path) -> list[Any]:
@@ -55,6 +62,7 @@ def _run(target: Callable[[int, Any], None], caches: list[Any]) -> None:
         raise errors[0]
 
 
+@LAYOUTS
 def test_incr_total_is_exact(layout: str, make_cache: Callable[..., Any], cache_dir: Path) -> None:
     caches = _caches(layout, make_cache, cache_dir)
 
@@ -66,6 +74,7 @@ def test_incr_total_is_exact(layout: str, make_cache: Callable[..., Any], cache_
     assert caches[0].get('counter') == THREADS * INCR_OPS
 
 
+@LAYOUTS
 def test_racing_add_has_exactly_one_winner(layout: str, make_cache: Callable[..., Any], cache_dir: Path) -> None:
     caches = _caches(layout, make_cache, cache_dir)
     wins: list[list[int]] = [[] for _ in range(ADD_ROUNDS)]
@@ -97,6 +106,7 @@ def _check_mixed_value(key: str, value: Any) -> None:
     assert f'{zlib.crc32(body.encode()):08x}' == checksum, f'{key}: checksum mismatch'
 
 
+@LAYOUTS
 def test_mixed_get_set_delete_never_corrupts(layout: str, make_cache: Callable[..., Any], cache_dir: Path, backend: Backend) -> None:
     caches = _caches(layout, make_cache, cache_dir)
     spill_size = 2 * backend.spill_threshold
@@ -123,3 +133,128 @@ def test_mixed_get_set_delete_never_corrupts(layout: str, make_cache: Callable[.
             _check_mixed_value(key, value)
             survivors += 1
     assert len(caches[0]) == survivors
+
+
+# ---------------------------------------------------------------------------
+# Connections and fds are bounded, and closing leaves nothing behind (Test D)
+# ---------------------------------------------------------------------------
+
+FD_THREADS = 64  # kept well under macOS's default soft limit of 256 fds
+FD_POLL_INTERVAL = 0.02
+FD_STABLE_SAMPLES = 3
+FD_DEADLINE = 5.0
+
+
+def _fd_path(fd: int) -> str | None:
+    try:
+        if sys.platform == 'darwin':
+            import fcntl
+
+            return fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b'\0').decode()
+        return os.readlink(f'/proc/self/fd/{fd}')
+    except OSError:
+        return None
+
+
+def _fds_inside(directory: Path) -> int:
+    """How many of this process's open fds point at a path inside `directory`."""
+    root = os.path.realpath(directory) + os.sep
+    fd_dir = '/dev/fd' if sys.platform == 'darwin' else '/proc/self/fd'
+    paths = (_fd_path(int(name)) for name in os.listdir(fd_dir))
+    return sum(1 for path in paths if path is not None and os.path.realpath(path).startswith(root))
+
+
+def _stable_fds_inside(directory: Path) -> int:
+    """The fd count once it has stopped changing for a few samples (or at the deadline)."""
+    deadline = time.monotonic() + FD_DEADLINE
+    samples = [_fds_inside(directory)]
+    while time.monotonic() < deadline:
+        if len(samples) >= FD_STABLE_SAMPLES and len(set(samples[-FD_STABLE_SAMPLES:])) == 1:
+            break
+        time.sleep(FD_POLL_INTERVAL)
+        samples.append(_fds_inside(directory))
+    return samples[-1]
+
+
+@contextlib.contextmanager
+def _threads_held(cache: Any, threads: int) -> Iterator[None]:
+    """`threads` threads each do one get and one set on `cache`, then stay alive until the block exits."""
+    ready = threading.Barrier(threads + 1)
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    def body(tid: int) -> None:
+        try:
+            cache.get('main')
+            assert cache.set(f'thread-{tid}', tid) is True
+            ready.wait(JOIN_TIMEOUT)
+            release.wait(JOIN_TIMEOUT)
+        except BaseException as ex:
+            errors.append(ex)
+            ready.abort()
+
+    workers = [threading.Thread(target=body, args=(tid,), name=f'fd-worker-{tid}') for tid in range(threads)]
+    for t in workers:
+        t.start()
+    try:
+        ready.wait(JOIN_TIMEOUT)
+        yield
+    finally:
+        release.set()
+        for t in workers:
+            t.join(JOIN_TIMEOUT)
+    assert not any(t.is_alive() for t in workers), 'a worker thread hung'
+    if errors:
+        raise errors[0]
+
+
+def _peak_fds(make_cache: Callable[..., Any], cache_dir: Path) -> int:
+    cache = make_cache(cache_dir)
+    cache.set('main', 0)
+    with _threads_held(cache, FD_THREADS):
+        return _stable_fds_inside(cache_dir)
+
+
+def test_peak_fds_within_the_backend_budget(make_cache: Callable[..., Any], cache_dir: Path, backend: Backend) -> None:
+    # Pins the adapter's budget to what the backend actually does.
+    assert _peak_fds(make_cache, cache_dir) <= backend.fd_budget(FD_THREADS)
+
+
+@pytest.mark.diverges(backend='diskcache', ref='D-017', reason='diskcache keeps one connection per thread', raises=AssertionError)
+def test_peak_fds_bounded_by_the_pool(make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    peak = _peak_fds(make_cache, cache_dir)
+    assert peak <= OXIDE_FD_BUDGET, f'{peak} fds open inside the cache directory with {FD_THREADS} threads'
+
+
+@pytest.mark.diverges(backend='diskcache', ref='D-018', reason="close() leaves other threads' connections open", raises=AssertionError)
+def test_close_releases_every_fd(make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    cache = make_cache(cache_dir)
+    cache.set('main', 0)
+    # A gc pass would finalize leaked connections and hide whether close() released them.
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        with _threads_held(cache, FD_THREADS):
+            pass
+        cache.close()
+        remaining = _stable_fds_inside(cache_dir)
+    finally:
+        if gc_was_enabled:
+            gc.enable()
+    assert remaining == 0, f'{remaining} fds still open inside the cache directory after close()'
+
+
+@pytest.mark.diverges(backend='diskcache', ref='D-018', reason='unclosed per-thread connections warn at finalization', raises=AssertionError)
+def test_threads_then_close_emit_no_resource_warning(backend: Backend, cache_dir: Path) -> None:
+    # In a subprocess: sqlite3 reports these from dealloc as unraisables, and catch_warnings is
+    # context-local on 3.14t, so an in-process check can't see them.
+    proc = subprocess.run(
+        [sys.executable, '-W', 'error::ResourceWarning', '-m', 'tests.conformance.proc_workers', 'threads-close', backend.name, str(cache_dir), str(FD_THREADS)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=JOIN_TIMEOUT,
+    )
+    assert proc.returncode == 0, proc.stderr
+    warnings = proc.stderr.count('ResourceWarning')
+    assert warnings == 0, f'{warnings} ResourceWarning(s), first: {proc.stderr[:400]}'

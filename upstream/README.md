@@ -14,7 +14,10 @@ Status checked on 2026-10-27, against open and closed issues and PRs in both rep
 | 4 | A `size_limit` below the empty-database volume silently evicts everything | `tiny_size_limit_wipes_cache.py` | not reported (related: #140) | not reported | refused with `ValueError` (D-005) |
 | 5 | Forking during another thread's write transaction makes the child's writes time out | `fork_during_write_transaction.py` | reported: #300, PR #299 (open), related #325 | fixed (PR #13) | fixed (D-012) |
 | 6 | `incr` on an expired or missing key creates a counter with no expiry | `incr_on_expired_key_has_no_expiry.py` | not reported (nearby: #340, PR #371) | not reported | kept for compatibility; documented |
-| 7 | A deleted value file reads as a miss, but the row stays (`in` and `len` still see it) | `missing_value_file_leaves_row.py` | not reported (related: #258, #294) | not reported; the fork's `on_error='miss'` deliberately excludes missing files | open decision |
+| 7 | A deleted value file reads as a miss, but the row stays (`in` and `len` still see it) | `missing_value_file_leaves_row.py` | not reported (related: #258, #294) | not reported; the fork's `on_error='miss'` deliberately excludes missing files | fixed: a miss, and the row is removed (D-013) |
+| 8 | A key that's never deleted sometimes reads as missing while its large value is being overwritten | `overwrite_spilled_value_reads_as_missing.py` | reported: #294 (open); #258 (closed) is the same symptom with threads | not reported; same bug in 5.8.1 | fixed: the read retries (D-016) |
+| 9 | `close()` leaves other threads' connections open | `close_leaves_other_threads_connections_open.py` | reported: #295, #336 (fd exhaustion) | fixed (PR #13 closes exited threads' connections) | fixed: pooled connections, all closed by `close()` (D-017, D-018) |
+| 10 | Opening a cache with unchanged settings writes to the database | `open_writes_unchanged_settings.py` | not reported (related: #113, read-only caches) | fixed (PR #17) | fixed (D-019) |
 
 ## 1. A top-level NaN reads back as None
 
@@ -34,7 +37,7 @@ An empty database already reports a `volume()` of about 32 KB. With `size_limit=
 
 ## 5. Fork during another thread's write transaction
 
-If a process forks while another of its threads is inside a write transaction on the same `Cache`, the child's reads work but its writes raise `Timeout` (after the cache's timeout, 60 s by default), even though the parent commits right after the fork. The child inherits SQLite's in-process lock state. Already reported upstream as #300 and fixed in diskcache-community by PR #13 (a before-fork gate). **Impact:** pre-fork servers (gunicorn, Celery prefork) can start workers whose cache writes stall.
+If a process forks while another of its threads is inside a write transaction on the same `Cache`, the child's reads work but its writes raise `Timeout` (after the cache's timeout, 60 s by default), even though the parent commits right after the fork. The child inherits SQLite's in-process lock state. Already reported upstream as #300 and fixed in diskcache-community by PR #13 (a before-fork gate). It also happens when the writing thread uses a different `Cache` object on the same directory than the one the fork goes through (upstream #325): in our Phase 0.5 test a child's write timed out in about half of the runs, and the fork's gate covers that case too. **Impact:** pre-fork servers (gunicorn, Celery prefork) can start workers whose cache writes stall.
 
 ## 6. incr on an expired or missing key creates a counter with no expiry
 
@@ -43,6 +46,18 @@ If a process forks while another of its threads is inside a write transaction on
 ## 7. A missing value file leaves an inconsistent row
 
 If a large value's file is removed from disk (by manual cleanup, a disk tool, or a crash between steps), `get` returns the default but the row stays: `in` is True and `len` counts it. Nothing removes the row except an explicit `delete` or `check()`. **Impact:** a "present" key that can never be read; `in`-then-`get` patterns misbehave.
+
+## 8. A large value reads as missing while it's being overwritten
+
+One process overwrites a single key with large values (stored in their own files), and other processes `get` it with a default. The key is never deleted, yet some reads return the default: about 40 in 325,000 reads in the repro, every run, on 3.14 and 3.14t. No torn values or exceptions were seen, and the cache is consistent afterwards. Presumably a reader picks up the old row and then finds that the overwrite has already removed the old file; that's an inference from behavior. The diskcache-community fork (5.8.1) has the same bug. **Impact:** spurious misses on hot, large values, so callers recompute them needlessly, and the cache looks flaky under exactly the load where it matters.
+
+## 9. close() leaves other threads' connections open
+
+diskcache keeps one SQLite connection per thread. `close()` closes only the calling thread's connection, so after 16 worker threads have used a shared `Cache`, `close()` leaves 16 connections (about 2 fds each) open until garbage collection. Garbage collection then reports a `ResourceWarning: unclosed database` for each one. With 64 threads, the Phase 0.5 test saw 130 fds still open after `close()`. While the threads are alive, the count grows with the thread count (131 fds at 64 threads). **Impact:** thread-pool servers leak fds and can hit the open-file limit (upstream #295, #336), and `-W error` test runs fail on the warnings. The diskcache-community fork closes exited threads' connections.
+
+## 10. Opening a cache with unchanged settings writes to the database
+
+Reopening an existing directory with the same settings and only reading still commits a write. Another connection's `PRAGMA data_version` changes, even though the main database file's hash and mtime may not. It looks as if the settings are rewritten on every open; that's an inference from behavior. **Impact:** every worker start takes the write lock, and read-only use of a cache (e.g. on a read-only mount, upstream #113) isn't possible. The diskcache-community fork fixed this (PR #17).
 
 ## Not bugs, but worth noting upstream
 

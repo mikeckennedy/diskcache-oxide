@@ -21,11 +21,24 @@ wheels = [
 ]
 
 [[package]]
+name = "diskcache-community"
+version = "5.8.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9a/b1/ef17a29956f0208c5acbc30247c742739d37135531a0facf26a5752f9382/diskcache_community-5.8.1.tar.gz", hash = "sha256:b780ed4b8381487c53cc778599f745784391c4c7af23c528ece049e008be6197", size = 110767, upload-time = "2026-10-19T02:55:55.94Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/54/82c3738aceba6f4687ba6c808970dbf1036581616e43ef69da6fbfdcd4ae/diskcache_community-5.8.1-py3-none-any.whl", hash = "sha256:4c18c3fec2451154f768764f0f3e97fdddfb2bb4fcff8754fc28fcc88ca1b2ea", size = 71990, upload-time = "2026-10-19T02:55:54.354Z" },
+]
+
+[[package]]
 name = "diskcache-oxide"
 version = "0.0.0"
 source = { virtual = "." }
+default-groups = ["community", "dev"]
 
 [package.dev-dependencies]
+community = [
+    { name = "diskcache-community" },
+]
 dev = [
     { name = "diskcache" },
     { name = "pytest" },
@@ -35,6 +48,7 @@ dev = [
 [package.metadata]
 
 [package.metadata.requires-dev]
+community = [{ name = "diskcache-community", specifier = "==5.8.1" }]
 dev = [
     { name = "diskcache", specifier = "==5.6.3" },
     { name = "pytest", specifier = ">=8" },

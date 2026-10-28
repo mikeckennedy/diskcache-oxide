@@ -1,7 +1,9 @@
 """Core get/set/delete semantics, the mapping protocol, lifecycle, and settings persistence."""
 
+import hashlib
 import os
 import stat
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -9,6 +11,7 @@ from typing import Any
 import pytest
 
 from tests.conformance.backends import Backend
+from tests.conformance.proc_workers import SqlitePeer, checkpoint
 
 NON_STR_KEYS = [
     pytest.param(1, id='int'),
@@ -315,3 +318,44 @@ def test_oxide_existing_directory_permissions_are_left_alone(make_cache: Callabl
     os.chmod(directory, 0o770)
     make_cache(directory).set('k', 'v')
     assert _mode(directory) == 0o770
+
+
+# ---------------------------------------------------------------------------
+# Opening and reading never modify the database (Test E, D-019)
+# ---------------------------------------------------------------------------
+
+READ_ONLY_ENTRIES = 50
+
+
+def _main_db_snapshot(db: Path) -> tuple[str, int, int]:
+    # The main database file only: the -shm file changes on any read and is never compared.
+    st = os.stat(db)
+    return hashlib.sha256(db.read_bytes()).hexdigest(), st.st_size, st.st_mtime_ns
+
+
+@pytest.mark.diverges(backend='diskcache', ref='D-019', reason='diskcache rewrites its Settings on open', raises=AssertionError)
+def test_open_and_read_never_write(make_cache: Callable[..., Any], cache_dir: Path, backend: Backend) -> None:
+    # Fixture: small values with no expiry, so no read has a legitimate reason to write.
+    with make_cache(cache_dir) as writer:
+        for i in range(READ_ONLY_ENTRIES):
+            writer.set(f'k{i}', f'v{i}')
+    db = backend.db_path(cache_dir)
+    wal = db.with_name(db.name + '-wal')
+    if wal.exists() and wal.stat().st_size:
+        checkpoint(db)
+    assert not wal.exists() or wal.stat().st_size == 0, 'the WAL still holds frames before the snapshot'
+
+    before = _main_db_snapshot(db)
+    with SqlitePeer(db) as peer:
+        version = peer.data_version()
+        # Make an mtime change visible even on a coarse-grained filesystem clock.
+        time.sleep(0.01)
+        with make_cache(cache_dir) as reader:
+            assert reader.get('k1') == 'v1'
+            assert 'k2' in reader
+            assert len(reader) == READ_ONLY_ENTRIES
+            assert len(list(reader.iterkeys())) == READ_ONLY_ENTRIES
+            reader.volume()
+        assert peer.data_version() == version, 'opening or reading wrote to the database'
+    # Checked after the peer closes too, so anything left in the WAL has been folded back in.
+    assert _main_db_snapshot(db) == before, 'the main database file changed'

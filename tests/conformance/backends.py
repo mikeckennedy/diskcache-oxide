@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+DISKCACHE_VERSION = '5.6.3'
+COMMUNITY_VERSION = '5.8.1'
 
 # Options only diskcache-oxide understands. Dropped when talking to diskcache.
 OXIDE_ONLY_OPTIONS = frozenset({'pickle', 'serializer', 'clock'})
@@ -23,6 +27,11 @@ OXIDE_SUPPORTED_FEATURES: frozenset[str] = frozenset()
 # TODO(Phase 1): placeholder until oxide's storage design fixes its spill threshold.
 OXIDE_SPILL_THRESHOLD = 32_768
 
+# TODO(Phase 1): placeholder until oxide's connection-pool design fixes the pool size.
+OXIDE_POOL_SIZE = 8
+# Each pooled connection holds the database and its WAL open; every connection shares one -shm.
+OXIDE_FD_BUDGET = 2 * OXIDE_POOL_SIZE + 1
+
 
 class Backend:
     name: str
@@ -32,6 +41,9 @@ class Backend:
     db_filename: str
     # Values of at least this many bytes are stored in their own file instead of the database row.
     spill_threshold: int
+    # True when the backend reads time via `time.time()`, so the fake clock monkeypatches it;
+    # False when the clock is passed in with `clock=`.
+    patches_time_time: bool = False
 
     def make_cache(
         self,
@@ -61,17 +73,46 @@ class Backend:
     def supports(self, feature: str) -> bool:
         raise NotImplementedError
 
+    def fd_budget(self, threads: int) -> int:
+        """The most fds inside the cache directory one shared Cache may hold with `threads` live threads using it."""
+        raise NotImplementedError
+
+    def hold_write_transaction(self, cache: Any) -> AbstractContextManager[Any]:
+        """A context manager that holds `cache`'s own write transaction open until it exits.
+
+        Operations the holding thread makes on `cache` inside it join that transaction, and it
+        commits on exit. Other threads and processes are locked out of writing meanwhile.
+        """
+        raise NotImplementedError
+
+    def sqlite_info(self) -> dict[str, Any] | None:
+        """Which SQLite the backend runs on, or None if it can't say.
+
+        Keys: `runtime_version` (the library actually loaded), `bundled` (True when the backend
+        ships its own SQLite), and for a bundled build `compile_version` and `compile_options`.
+        For oxide, `BUNDLED_SQLITE_VERSION` must be the compile-time `SQLITE_VERSION` macro of the
+        build it was compiled against, and `sqlite_version()` must call the runtime
+        `sqlite3_libversion()`. If the extension ever links the system library instead of its
+        bundled one, the two disagree, which is what test_oxide_uses_its_bundled_sqlite checks.
+        """
+        return None
+
 
 class DiskcacheBackend(Backend):
     name = 'diskcache'
+    module_name = 'diskcache'
     db_filename = 'cache.db'
     # Observed, not read from source: a 32767-byte str or bytes value stays in the row, and a
     # 32768-byte one adds a file to spill_files().
     spill_threshold = 32_768
+    patches_time_time = True
+    expected_version = DISKCACHE_VERSION
 
     def __init__(self) -> None:
-        self._module = importlib.import_module('diskcache')
+        self._module = importlib.import_module(self.module_name)
         self.timeout_error = self._module.Timeout
+        if self._module.__version__ != self.expected_version:
+            raise ImportError(f'the conformance suite expects {self.module_name} {self.expected_version}, found {self._module.__version__}')
 
     def make_cache(
         self,
@@ -94,6 +135,33 @@ class DiskcacheBackend(Backend):
 
     def supports(self, feature: str) -> bool:
         return True
+
+    def fd_budget(self, threads: int) -> int:
+        # Observed: one connection per thread that has used the cache, plus the opening thread's,
+        # each holding the database and its WAL, plus one shared -shm (64 threads -> 131 fds).
+        return 2 * (threads + 1) + 1
+
+    def hold_write_transaction(self, cache: Any) -> AbstractContextManager[Any]:
+        return cache.transact()
+
+    def sqlite_info(self) -> dict[str, Any] | None:
+        # diskcache runs on the stdlib sqlite3 module, i.e. whatever SQLite this Python links.
+        import sqlite3
+
+        return {'runtime_version': sqlite3.sqlite_version, 'bundled': False}
+
+
+class CommunityBackend(DiskcacheBackend):
+    """The diskcache-community fork (https://github.com/secondwindoss/diskcache-community), a second witness.
+
+    It keeps 5.6.3's semantics and on-disk format; where it differs, the suite reports a failure and
+    the difference is listed in KNOWN_COMMUNITY_DIFFERENCES (a strict xfail on this backend only)
+    and in DIVERGENCES.md.
+    """
+
+    name = 'community'
+    module_name = 'diskcache_community'
+    expected_version = COMMUNITY_VERSION
 
 
 class OxideBackend(Backend):
@@ -132,11 +200,55 @@ class OxideBackend(Backend):
     def supports(self, feature: str) -> bool:
         return feature in OXIDE_SUPPORTED_FEATURES
 
+    def fd_budget(self, threads: int) -> int:
+        # Bounded by the pool, whatever the thread count (D-017).
+        return OXIDE_FD_BUDGET
+
+    def hold_write_transaction(self, cache: Any) -> AbstractContextManager[Any]:
+        if self.supports('transact'):
+            return cache.transact()
+        # Phase 1 must provide this private test hook so the deterministic D-012 fork test runs
+        # before transact() lands in Phase 6b. Same contract as transact(): it holds the cache's
+        # own write transaction open, the holding thread's operations join it, and it commits on
+        # exit. Drop the hook once transact is supported.
+        return cache._hold_write_transaction()
+
+    def sqlite_info(self) -> dict[str, Any] | None:
+        mod = self._module
+        return {
+            'runtime_version': mod.sqlite_version(),
+            'compile_version': mod.BUNDLED_SQLITE_VERSION,
+            'compile_options': mod.sqlite_compile_options(),
+            'bundled': True,
+        }
+
 
 BACKENDS: dict[str, type[Backend]] = {
     'diskcache': DiskcacheBackend,
+    'community': CommunityBackend,
     'oxide': OxideBackend,
 }
+
+# Where the community fork (5.8.1) fails a test written against 5.6.3, keyed by test node id. A key
+# with no `[...]` part also matches every parametrized case of that test. conftest.py turns each
+# match into a strict xfail (raises=AssertionError) on the community backend only, and
+# test_registry.py checks every id still exists and every D-number is described in the
+# "Community fork differences" section of DIVERGENCES.md.
+KNOWN_COMMUNITY_DIFFERENCES: dict[str, str] = {
+    'tests/conformance/test_basic.py::test_new_directory_follows_the_umask': 'D-015',
+    'tests/conformance/test_threads.py::test_peak_fds_bounded_by_the_pool': 'D-017',
+    'tests/conformance/test_values.py::test_value_roundtrips[float-nan]': 'D-008',
+    'tests/conformance/test_values.py::test_value_roundtrips_across_reopen[float-nan]': 'D-008',
+}
+
+
+def community_difference(nodeid: str) -> str | None:
+    """The D-number KNOWN_COMMUNITY_DIFFERENCES lists for this node id, if any."""
+    if nodeid in KNOWN_COMMUNITY_DIFFERENCES:
+        return KNOWN_COMMUNITY_DIFFERENCES[nodeid]
+    base = nodeid.split('[', 1)[0]
+    return KNOWN_COMMUNITY_DIFFERENCES.get(base) if base != nodeid else None
+
 
 # Where tests/conftest.py stores the selected backend instance for the session.
 BACKEND_KEY = pytest.StashKey[Backend]()
