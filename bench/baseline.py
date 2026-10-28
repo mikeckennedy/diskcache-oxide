@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.conformance.backends import BACKENDS, Backend
+from tests.proctitle import set_title
 
 RESULTS_DIR = Path(__file__).parent / 'results'
 TRIALS = 5
@@ -136,6 +137,33 @@ def populate(cache: Any, count: int) -> None:
             write_chunk()
 
 
+# get_random_wide: uniform random reads over a database far larger than any page cache, the case
+# where the per-connection page cache (sqlite_cache_size) matters most. Hot and skewed reads don't
+# depend on it.
+WIDE_KEYS = 100_000
+
+
+def random_wide_gets(backend: Backend, directory: Path, opts: dict[str, Any], n_batches: int, n_samples: int) -> dict[str, float]:
+    cache = backend.make_cache(directory, timeout=10.0, size_limit=2**34, **opts)
+    transact = getattr(cache, 'transact', None)
+    body = 'x' * 1_000
+    for start in range(0, WIDE_KEYS, 10_000):
+        def write_chunk() -> None:
+            for i in range(start, start + 10_000):
+                cache.set(f'w:{i}', {'id': i, 'body': body})
+
+        if transact is not None:
+            with transact():
+                write_chunk()
+        else:
+            write_chunk()
+    rng = random.Random(11)
+    keys = [f'w:{rng.randrange(WIDE_KEYS)}' for _ in range(65_536)]
+    result = measure(lambda i: cache.get(keys[i & 65_535]), n_batches=n_batches // 4 or 1, n_samples=n_samples, warmup=5_000)
+    cache.close()
+    return result
+
+
 LOOP_OVERHEAD_NS = 0.0
 
 
@@ -154,10 +182,12 @@ WORKLOADS = (
     'get_hit_small_dict',
     'get_miss',
     'set_small',
+    'get_random_wide',
     'get_page_entry_450k',
     'set_page_entry_450k',
     'add_incr_counter',
-    'threads_8_mixed_ops_per_s',
+    'threads_99to1',
+    'threads_1000to1',
     'scans',
 )
 
@@ -194,6 +224,9 @@ def run(backend: Backend, quick: bool, only: set[str] | None = None, opts: dict[
                 lambda i: cache.set(f'small:{i % 1_000}', small), n_batches=n_batches // 4 or 1, n_samples=n_samples // 4, warmup=1_000
             )
 
+        if want('get_random_wide'):
+            results['get_random_wide'] = random_wide_gets(backend, Path(tmp) / 'wide', opts, n_batches, n_samples)
+
         if want('get_page_entry_450k') or want('set_page_entry_450k'):
             entry = page_entry()
             cache.set('page', entry, expire=3600)
@@ -213,8 +246,9 @@ def run(backend: Backend, quick: bool, only: set[str] | None = None, opts: dict[
 
         if want('add_incr_counter'):
             results['add_incr_counter'] = measure(rate_limit_bump, n_batches=n_batches // 4 or 1, n_samples=n_samples // 4, warmup=1_000)
-        if want('threads_8_mixed_ops_per_s'):
-            results['threads_8_mixed_ops_per_s'] = threaded_throughput(cache, seconds=1.0 if quick else 3.0)
+        for name, every in MIXES.items():
+            if want(name):
+                results[name] = threaded_throughput(cache, seconds=0.5 if quick else 1.5, every=every)
         cache.close()
 
         for size in scan_sizes if want('scans') else []:
@@ -229,40 +263,56 @@ def run(backend: Backend, quick: bool, only: set[str] | None = None, opts: dict[
     return results
 
 
-def threaded_throughput(cache: Any, *, seconds: float, threads: int = 8) -> dict[str, float]:
-    """8 threads sharing one cache, 90% get / 10% set of ~1 KB values, for `seconds`."""
+THREAD_COUNTS = (1, 2, 4, 8)
+# Read/write mixes for the threaded workloads: the 99:1 headline and the 1,000:1 Talk Python profile.
+MIXES = {'threads_99to1': 100, 'threads_1000to1': 1_000}
+
+
+def threaded_throughput(cache: Any, *, seconds: float, every: int) -> dict[str, float]:
+    """ops/s at 1, 2, 4 and 8 threads sharing one cache, one ~1 KB write in every `every` operations.
+
+    A share-nothing loop: each thread builds its own key strings and its operation plan, binds the
+    methods once and checks the stop flag only between rounds. On free-threaded builds, a loop that
+    shares Python objects across threads is contention-bound itself and measures the harness, not
+    the cache.
+    """
     value = 'v' * 1_024
     for i in range(1_000):
         cache.set(f't:{i}', value)
 
-    counts = [0] * threads
-    stop = threading.Event()
-    barrier = threading.Barrier(threads + 1)
+    results: dict[str, float] = {}
+    for threads in THREAD_COUNTS:
+        counts = [0] * threads
+        stop = threading.Event()
+        barrier = threading.Barrier(threads + 1)
 
-    def worker(n: int) -> None:
-        rng = random.Random(n)
+        def worker(n: int) -> None:
+            keys = [''.join(('t:', str(i))) for i in range(1_000)]
+            get, set_ = cache.get, cache.set
+            rng = random.Random(n)
+            plan = [(keys[rng.randrange(1_000)], i % every == 0) for i in range(every * max(1, 1_000 // every))]
+            barrier.wait()
+            ops = 0
+            while not stop.is_set():
+                for key, write in plan:
+                    if write:
+                        set_(key, value)
+                    else:
+                        get(key)
+                ops += len(plan)
+            counts[n] = ops
+
+        pool = [threading.Thread(target=worker, args=(n,)) for n in range(threads)]
+        for t in pool:
+            t.start()
         barrier.wait()
-        ops = 0
-        while not stop.is_set():
-            key = f't:{rng.randrange(1_000)}'
-            if rng.random() < 0.1:
-                cache.set(key, value)
-            else:
-                cache.get(key)
-            ops += 1
-        counts[n] = ops
-
-    pool = [threading.Thread(target=worker, args=(n,)) for n in range(threads)]
-    for t in pool:
-        t.start()
-    barrier.wait()
-    start = time.perf_counter()
-    time.sleep(seconds)
-    stop.set()
-    for t in pool:
-        t.join()
-    elapsed = time.perf_counter() - start
-    return {'ops_per_s': sum(counts) / elapsed, 'threads': threads}
+        start = time.perf_counter()
+        time.sleep(seconds)
+        stop.set()
+        for t in pool:
+            t.join()
+        results[str(threads)] = sum(counts) / (time.perf_counter() - start)
+    return results
 
 
 def power_source() -> str:
@@ -304,6 +354,7 @@ def main() -> None:
     parser.add_argument('--opt', action='append', default=[], metavar='NAME=VALUE', help='Extra cache option, e.g. spike_detach=true.')
     args = parser.parse_args()
 
+    set_title(f'bench[{args.backend}]')
     backend = BACKENDS[args.backend]()
     if getattr(getattr(backend, '_module', None), '_DEBUG_BUILD', False):
         raise SystemExit('refusing to benchmark a debug build of diskcache_oxide; rebuild in release mode')

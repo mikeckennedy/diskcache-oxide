@@ -36,6 +36,8 @@ import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from tests.proctitle import set_title, titled
+
 if TYPE_CHECKING:
     from multiprocessing.synchronize import Barrier, Event
 
@@ -175,12 +177,14 @@ def open_cache(backend_name: str, directory: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+@titled('race-add')
 def add_race(backend_name: str, directory: str, key: str, barrier: Barrier, results: Any) -> None:
     with open_cache(backend_name, directory) as cache:
         barrier.wait(SYNC_TIMEOUT)
         results.put((os.getpid(), cache.add(key, os.getpid())))
 
 
+@titled('race-incr')
 def incr_many(backend_name: str, directory: str, barrier: Barrier, ops: int) -> None:
     with open_cache(backend_name, directory) as cache:
         barrier.wait(SYNC_TIMEOUT)
@@ -188,6 +192,7 @@ def incr_many(backend_name: str, directory: str, barrier: Barrier, ops: int) -> 
             cache.incr('counter')
 
 
+@titled('overlap-holder')
 def overlap_holder(backend_name: str, directory: str, barrier: Barrier, writer_done: Event, results: Any) -> None:
     """Process A: opens the cache and uses it, then stays open while B writes and exits."""
     with open_cache(backend_name, directory) as cache:
@@ -199,6 +204,7 @@ def overlap_holder(backend_name: str, directory: str, barrier: Barrier, writer_d
         results.put((cache.get('from-b'), cache.get('from-b-large'), len(cache)))
 
 
+@titled('overlap-writer')
 def overlap_writer(backend_name: str, directory: str, barrier: Barrier) -> None:
     """Process B: opens the cache after A, writes, closes and exits."""
     barrier.wait(SYNC_TIMEOUT)
@@ -220,6 +226,7 @@ def blob_ok(key: str, blob: Any, min_size: int) -> bool:
     return body.startswith(f'{key}|'.encode()) and hashlib.sha256(body).digest() == digest
 
 
+@titled('spill-writer')
 def spill_writer(backend_name: str, directory: str, barrier: Barrier, writer: int, keys: list[str], ops: int) -> None:
     rng = random.Random(writer)
     min_size = spill_min(_backend(backend_name))
@@ -233,6 +240,7 @@ def spill_writer(backend_name: str, directory: str, barrier: Barrier, writer: in
                 cache.set(key, make_blob(key, writer, n, rng, min_size))
 
 
+@titled('spill-reader')
 def spill_reader(backend_name: str, directory: str, barrier: Barrier, keys: list[str], writers_done: Event, results: Any) -> None:
     """Reads every key in turn until the writers finish, then once more. Reports (hits, misses, torn)."""
     hits = misses = 0
@@ -256,6 +264,7 @@ def spill_reader(backend_name: str, directory: str, barrier: Barrier, keys: list
     results.put((hits, misses, torn))
 
 
+@titled('overwrite-writer')
 def overwrite_writer(backend_name: str, directory: str, barrier: Barrier, key: str, ops: int) -> None:
     """Test A: overwrites one spilled key `ops` times. Never deletes it."""
     rng = random.Random(1)
@@ -266,6 +275,7 @@ def overwrite_writer(backend_name: str, directory: str, barrier: Barrier, key: s
             cache.set(key, make_blob(key, 0, n, rng, min_size))
 
 
+@titled('overwrite-reader')
 def overwrite_reader(backend_name: str, directory: str, barrier: Barrier, key: str, writer_done: Event, results: Any) -> None:
     """Test A: reads one always-present key with a sentinel default until the writer finishes.
 
@@ -298,6 +308,7 @@ def overwrite_reader(backend_name: str, directory: str, barrier: Barrier, key: s
     results.put((hits, len(failures), failures[:5]))
 
 
+@titled('race-open')
 def open_new_directory(backend_name: str, directory: str, barrier: Barrier, worker: int, results: Any) -> None:
     """Test B: every worker opens the same not-yet-existing directory at once, then sets and gets.
 
@@ -314,6 +325,7 @@ def open_new_directory(backend_name: str, directory: str, barrier: Barrier, work
         results.put((worker, traceback.format_exc()))
 
 
+@titled('kill-target')
 def killable_spill_writer(backend_name: str, directory: str, keys: list[str], seed: int, started: Event) -> None:
     """Test I: overwrites spilled values forever, until the parent SIGKILLs it."""
     rng = random.Random(seed)
@@ -356,6 +368,8 @@ def _os_fork(body: Any) -> int:
     """os.fork() and run `body()` in the child, which exits 0 on success and 1 on any exception."""
     pid = os.fork()
     if pid == 0:
+        # No set_title() here: setproctitle hangs in a child forked from a multi-threaded process.
+        # The child keeps its parent's `dco-fork-check` title.
         code = 0
         try:
             body()
@@ -773,8 +787,19 @@ USAGE = f"""usage:
   {sys.argv[0]} integrity <db>"""
 
 
+# Process titles for the CLI commands. `peer`, `integrity` and `checkpoint` are stdlib sqlite3
+# helpers; the others exercise the cache under test.
+CLI_TITLES = {
+    'fork': 'fork-check',
+    'threads-close': 'threads-close',
+    'peer': 'sqlite-peer',
+    'integrity': 'sqlite-integrity',
+    'checkpoint': 'sqlite-checkpoint',
+}
+
 if __name__ == '__main__':
     args = sys.argv[1:]
+    set_title(CLI_TITLES.get(args[0] if args else '', 'proc-workers'))
     if args[:1] == ['fork'] and len(args) == 4 and args[3] in ALL_FORK_MODES:
         sys.exit(fork_check(args[1], args[2], args[3]))
     if args[:1] == ['peer'] and len(args) == 2:

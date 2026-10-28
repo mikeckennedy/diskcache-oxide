@@ -1,0 +1,13 @@
+[env]
+# Compile flags for the bundled SQLite:
+#
+# -USQLITE_ENABLE_STAT4: with STAT4, a statement that compares an indexed column with a bound
+# parameter (our `expire_time > ?now` on every read and write) is silently re-prepared whenever that
+# parameter's value changes, which is every call. Profiling showed sqlite3Reprepare taking about 30%
+# of a set. STAT4 only helps after ANALYZE, which a cache never runs.
+#
+# -DSQLITE_DEFAULT_MEMSTATUS=0: SQLite's global memory statistics take one process-wide mutex on
+# every allocation. Turning them off measured 2-10% more threaded throughput (most on 3.14t) and no
+# single-thread change. The memory-instrumented build (.venv-mem, scripts/check.sh) turns them back
+# on to measure memory, by setting LIBSQLITE3_FLAGS in the environment, which overrides this.
+LIBSQLITE3_FLAGS = "-USQLITE_ENABLE_STAT4 -DSQLITE_DEFAULT_MEMSTATUS=0"

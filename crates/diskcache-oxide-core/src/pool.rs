@@ -25,12 +25,24 @@ use crate::gate::{self, GATE, SharedGuard};
 pub struct PooledConn {
     conn: Connection,
     generation: u64,
+    /// The `PRAGMA cache_size` applied to it, in pages; 0 until the store sets one.
+    cache_pages: u64,
 }
 
 impl PooledConn {
     #[must_use]
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    /// The page-cache size the store last applied, in pages (0 if never).
+    #[must_use]
+    pub const fn cache_pages(&self) -> u64 {
+        self.cache_pages
+    }
+
+    pub const fn set_cache_pages(&mut self, pages: u64) {
+        self.cache_pages = pages;
     }
 
     /// True if the connection was inherited across `fork()` and must not be used.
@@ -130,7 +142,7 @@ impl Pool {
             return Ok(pooled);
         }
         match connect() {
-            Ok(conn) => Ok(PooledConn { conn, generation: current }),
+            Ok(conn) => Ok(PooledConn { conn, generation: current, cache_pages: 0 }),
             Err(error) => {
                 let mut state = self.shared.lock();
                 if state.generation == current {
@@ -242,7 +254,7 @@ mod tests {
         let gate = GATE.enter_shared();
         let pool = Pool::new(&gate, 2);
         let pooled = pool.checkout(&gate, memory).unwrap();
-        let stale = PooledConn { conn: pooled.conn, generation: gate::generation().wrapping_add(1) };
+        let stale = PooledConn { conn: pooled.conn, generation: gate::generation().wrapping_add(1), cache_pages: 0 };
         assert!(stale.is_stale());
         pool.checkin(&gate, stale);
         assert_eq!(pool.idle(&gate), 0);
@@ -251,7 +263,8 @@ mod tests {
     #[test]
     fn a_stale_pool_forgets_its_idle_connections_and_count() {
         let conn = Connection::open_in_memory().unwrap();
-        let mut state = PoolState { idle: vec![PooledConn { conn, generation: 7 }], generation: 7, checked_out: 3 };
+        let mut state =
+            PoolState { idle: vec![PooledConn { conn, generation: 7, cache_pages: 0 }], generation: 7, checked_out: 3 };
         reset_if_stale(&mut state, 8);
         assert_eq!((state.idle.len(), state.checked_out, state.generation), (0, 0, 8));
     }

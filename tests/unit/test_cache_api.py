@@ -1,0 +1,70 @@
+"""Cache, NullCache and CacheLike stay interchangeable: same public methods, same parameters."""
+
+from __future__ import annotations
+
+import inspect
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from diskcache_oxide import Cache, CacheLike, NullCache
+
+REPO = Path(__file__).resolve().parents[2]
+
+# Protocol members that are properties, not methods.
+PROPERTIES = {'directory', 'timeout', 'size_limit', 'cull_limit', 'enabled'}
+
+
+def protocol_methods() -> list[str]:
+    names = {n for n, v in vars(CacheLike).items() if callable(v) and (not n.startswith('_') or (n.startswith('__') and n.endswith('__')))}
+    return sorted(names - {'__init__', '__class_getitem__', '__subclasshook__', '__init_subclass__'} - PROPERTIES)
+
+
+def params(func: object) -> list[tuple[str, inspect._ParameterKind]]:
+    signature = inspect.signature(func)  # type: ignore[arg-type]
+    return [(p.name, p.kind) for p in signature.parameters.values() if p.name != 'self']
+
+
+@pytest.mark.parametrize('name', protocol_methods())
+def test_every_protocol_method_has_the_same_parameters_on_both_classes(name: str) -> None:
+    expected = params(getattr(CacheLike, name))
+    assert params(getattr(NullCache, name)) == expected, f'NullCache.{name}'
+    if name.startswith('__') and name not in {'__enter__', '__exit__'}:
+        return  # PyO3 dunder slots don't carry text signatures; mypy checks them below.
+    assert params(getattr(Cache, name)) == expected, f'Cache.{name}'
+
+
+@pytest.mark.parametrize('name', sorted(PROPERTIES))
+def test_every_protocol_property_exists_on_both_classes(name: str) -> None:
+    assert hasattr(Cache, name) and hasattr(NullCache, name)
+
+
+def test_constructors_take_the_same_arguments() -> None:
+    cache_params = [name for name, _ in params(Cache)]
+    null_params = [name for name, _ in params(NullCache.__init__)]
+    assert null_params == [*cache_params, 'invalidate']
+
+
+def test_mypy_sees_both_classes_as_cache_like(tmp_path: Path) -> None:
+    probe = tmp_path / 'probe.py'
+    probe.write_text(
+        'from diskcache_oxide import Cache, CacheLike, NullCache\n'
+        "real: CacheLike = Cache('/tmp/x')\n"
+        'null: CacheLike = NullCache()\n'
+        'forwarding: CacheLike = NullCache(invalidate=real)\n'
+    )
+    result = subprocess.run(
+        [sys.executable, '-m', 'mypy', '--strict', '--no-incremental', str(probe)], capture_output=True, text=True, cwd=REPO
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('timeout', [1e10, 1e19, 1e20, 1e300])
+def test_a_huge_timeout_works_instead_of_panicking(tmp_path: Path, timeout: float) -> None:
+    # Duration::from_secs_f64 panics above about 1.8e19 s, and Instant + Duration on overflow; a
+    # panic surfaces as PanicException, a BaseException that slips past `except Exception`.
+    with Cache(tmp_path / 'c', timeout=timeout) as cache:
+        assert cache.set('k', 1) is True and cache.get('k') == 1
+        assert cache.timeout > 1e9  # Clamped to about 100 years.

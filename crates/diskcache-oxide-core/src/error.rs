@@ -63,6 +63,22 @@ pub enum Error {
     #[error("this database can't be written in a process forked inside a transaction")]
     Unwritable,
 
+    /// `incr`/`decr` with `default=None` on a missing or expired key (Python `KeyError`).
+    #[error("key not found")]
+    KeyMissing,
+
+    /// `incr`/`decr` on a value that isn't a native int or float (Python `TypeError`).
+    #[error("the stored value is not a number")]
+    NotNumeric,
+
+    /// `incr`/`decr` past the 64-bit integer range (Python `OverflowError`), as diskcache does.
+    #[error("integer overflow")]
+    Overflow,
+
+    /// A setting the cache can't honor, such as a `size_limit` under the minimum (D-005).
+    #[error("{0}")]
+    InvalidSetting(String),
+
     /// The calling thread tried to start a write transaction while it already holds one.
     #[error("this thread already holds a write transaction on this cache")]
     NestedTransaction,

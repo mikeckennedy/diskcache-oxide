@@ -21,16 +21,39 @@ COMMUNITY_VERSION = '5.8.1'
 # Options only diskcache-oxide understands. Dropped when talking to diskcache.
 OXIDE_ONLY_OPTIONS = frozenset({'pickle', 'serializer', 'clock'})
 
-# Features scheduled for later oxide phases. The diskcache backend supports everything.
-OXIDE_SUPPORTED_FEATURES: frozenset[str] = frozenset()
+# The phase (plans/00-roadmap.md) each optional feature lands in. `requires(...)` must name one of
+# these; oxide skips the features from later phases than OXIDE_PHASE. The diskcache backend
+# supports everything.
+PHASE_ORDER = ('2', '2.5', '3', '4', '5', '6a', '6b', '6c', '6d', '6e', '7', '8')
+OXIDE_PHASE = '2'
+FEATURE_PHASES: dict[str, str] = {
+    'cull_limit': '2',
+    'eviction_policy': '6a',
+    'tags': '6a',
+    'statistics': '6a',
+    'memoize': '6a',
+    'peek_pull_push': '6a',
+    'read': '6a',
+    'check': '6a',
+    'transact': '6b',
+    'fanout': '6c',
+    'deque_index': '6d',
+    'recipes': '6e',
+}
+assert set(FEATURE_PHASES.values()) <= set(PHASE_ORDER)
+OXIDE_SUPPORTED_FEATURES: frozenset[str] = frozenset(
+    f for f, phase in FEATURE_PHASES.items() if PHASE_ORDER.index(phase) <= PHASE_ORDER.index(OXIDE_PHASE)
+)
 
 # Values of 64 KiB or more spill to their own file (04-design.md section 4, Spike 4a).
 OXIDE_SPILL_THRESHOLD = 65_536
 
-# The `max_connections` default: each `Cache` pools at most this many connections (04-design.md section 7).
+# The `max_connections` default: the connections pooled per database file, shared by every handle
+# on it (04-design.md section 7). The fd tests use the default.
 OXIDE_POOL_SIZE = 8
-# Each pooled connection holds the database and its WAL open; every connection shares one -shm.
-OXIDE_FD_BUDGET = 2 * OXIDE_POOL_SIZE + 1
+# Each pooled connection holds the database and its WAL open; every connection shares one -shm, and
+# the per-file store keeps one fd pinned on the database while any handle is open.
+OXIDE_FD_BUDGET = 2 * OXIDE_POOL_SIZE + 2
 
 
 class Backend:

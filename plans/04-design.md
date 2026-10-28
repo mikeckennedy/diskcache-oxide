@@ -36,6 +36,7 @@ class Cache:
         pickle: bool = False,
         clock: Callable[[], float] | None = None,
         max_connections: int = 8,
+        sqlite_cache_size: int = 256,  # pages per connection (added in Phase 2 step 9, D-023)
     ) -> Cache: ...
 ```
 
@@ -93,7 +94,8 @@ CREATE INDEX cache_expire ON cache (expire_time) WHERE expire_time IS NOT NULL;
 CREATE INDEX cache_filename ON cache (filename) WHERE filename IS NOT NULL;
 CREATE TABLE settings (name TEXT PRIMARY KEY, value) WITHOUT ROWID;
 -- Exactly one row. Updated in the same transaction as every row change.
-CREATE TABLE totals (only INTEGER PRIMARY KEY CHECK (only = 1), count INTEGER NOT NULL, size INTEGER NOT NULL, next_seq INTEGER NOT NULL);
+CREATE TABLE totals (only INTEGER PRIMARY KEY CHECK (only = 1), count INTEGER NOT NULL, size INTEGER NOT NULL,
+                     next_seq INTEGER NOT NULL, size_limit INTEGER NOT NULL, cull_limit INTEGER NOT NULL);
 -- PRAGMA user_version = 1
 ```
 
@@ -106,7 +108,7 @@ CREATE TABLE totals (only INTEGER PRIMARY KEY CHECK (only = 1), count INTEGER NO
   - A property test runs random operations, then recomputes `COUNT(*)` and `SUM(size)` and compares them with `totals`.
   - `volume()` is `page_count × page_size + totals.size`, the same idea as diskcache's. The exact numbers differ (D-006).
   - `len` counts expired-but-unswept rows, as diskcache does.
-- **Persisted settings:** `size_limit` and `cull_limit`. As in diskcache, these persist, and only values a caller explicitly passes overwrite them, so the last explicit opener wins. `serializer`, `timeout`, `pickle`, `clock` and `max_connections` are per handle and never persisted. Reads decode by each row's mode, so handles with different serializers interoperate.
+- **Persisted settings:** `size_limit` and `cull_limit`, stored in the `totals` row so each write transaction reads the current values. As in diskcache, these persist, and only values a caller explicitly passes overwrite them, so the last explicit opener wins. `serializer`, `timeout`, `pickle`, `clock`, `max_connections` and `sqlite_cache_size` are per handle and never persisted. Reads decode by each row's mode, so handles with different serializers interoperate.
 - **Open sequence** (it writes nothing when everything already matches, D-019):
   1. Create the directory with 0700 if it's missing (D-015); value-file subdirectories are also 0700.
   2. Open the connection with the custom busy handler (section 7).
@@ -213,7 +215,9 @@ CREATE TABLE totals (only INTEGER PRIMARY KEY CHECK (only = 1), count INTEGER NO
 ## 7. Concurrency
 
 **Pool**
-- Up to `max_connections` (default 8) connections per `Cache`, kept behind an uncontended `Mutex<Vec<_>>`.
+- Up to `max_connections` (default 8) connections per database file, shared by every handle on that file through the process-wide `Store`. The cap is the largest value any live handle asked for. The connections are kept behind an uncontended `Mutex<Vec<_>>`.
+- Memory: each connection's page cache is `sqlite_cache_size` pages (default 256, 1 MiB; the largest any handle asked for), applied when a connection is leased. A database file's SQLite memory is therefore bounded by about `max_connections` × (pages × about 5 KiB + about 330 KiB of fixed overhead per connection). `tests/unit/test_memory.py` holds the bound, and the `get_random_wide` benchmark measures its cost (D-023).
+- Two builds: the shipped one compiles SQLite with `SQLITE_DEFAULT_MEMSTATUS=0`, since the global memory statistics take a process-wide mutex on every allocation (2-10% of threaded throughput, most on 3.14t). Performance numbers come from it. A memory-instrumented build (`.venv-mem`: 3.14t, statistics on, a non-editable install with its own target dir) runs the memory tests and `bench/memory.py`. Its memory numbers are definitive, and its throughput is informational only.
 - A checkout tries without blocking first. If none is free and the pool is at its cap:
   - **At gate depth 0** (the usual case), it waits *before* entering the gate, polling every 1 ms with the interpreter released and bounded by `timeout`, and raises `Timeout` when that runs out. A pool `Condvar` isn't used, because a child would inherit its parent's waiters.
   - **At depth > 0** (a nested operation inside a held transaction, which can't release the gate), it opens a connection over the cap instead of waiting.
@@ -248,9 +252,53 @@ So waiting is split in two:
 
 Iteration fetches chunks of 512 keys and returns the connection between chunks.
 
-**Lock order:** the gate in shared mode, then pool checkout (section 8). Any blocking pool wait happens before entering the gate, never while holding it.
+**Lock order:** the in-process write lock (writes only), then the gate in shared mode, then pool checkout. No blocking wait on the write lock or the pool happens while holding the gate. At depth > 0, both are `try_*` only. The full rules, including the atomic generation-tagged write lock, `WriteToken`, fairness and the `Store` registry, are in [05-phase-2-core-cache.md](05-phase-2-core-cache.md), "Concurrency rules".
 
-**Free-threaded throughput** is below the GIL build's (Spike 2: 338-356k vs 404k ops/s with 8 threads). This is Phase 4 work. The candidates are SQLite's unix-VFS global mutex around WAL shared memory, pool contention, and `SQLITE_DEFAULT_MEMSTATUS=0` / `SQLITE_THREADSAFE=2`. Those last two are safe for us, since a connection is used by one thread at a time. Adopt them in Phase 2 via `.cargo/config.toml` `[env] LIBSQLITE3_FLAGS` only if Phase 2's gate confirms they help.
+**Free-threaded scaling (investigated 2026-10-28, after Michael asked about connections and the read/write mix).** The Spike 2 throughput numbers were misleading, for both diskcache and oxide. The benchmark loop shared key strings and a stop flag across threads, so on 3.14t it was itself contention-bound: even a plain dict lookup got slower with more threads. With a share-nothing loop (3.14t, read-only, kops/s for 1 / 2 / 4 / 8 threads; this machine has 6 performance cores):
+
+| Operation | 1 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| Python dict lookup | 41,554 | 81,838 | 161,024 | 213,663 |
+| no-op call into `_core` | 32,279 | 13,834 | 13,457 | 10,629 |
+| one shared `Cache.get` | 987 | 574 | 878 | 927 |
+| per-thread `Cache`, same directory | 976 | 549 | 1,063 | 1,272 |
+| per-thread `Cache`, own directory | 1,008 | 1,347 | 1,754 | 705 |
+
+With 10% writes, the old loop went from 397k (1 thread) to 144k (8 threads).
+
+At the standard **99:1** mix (share-nothing loop, one shared `Cache`, kops/s for 1 / 2 / 4 / 8 threads):
+
+| Backend | 1 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| diskcache, 3.14 (GIL) | 430 | 254 | 81 | 20 |
+| oxide, 3.14 (GIL) | 890 | 878 | 896 | 883 |
+| diskcache, 3.14t | 448 | 417 | 449 | 479 |
+| oxide, 3.14t | 878 | 674 | 791 | 601 |
+
+- On the GIL build, diskcache collapses 20× from 1 to 8 threads, even at 1% writes. The likely cause is that each thread has its own connection, and a thread that loses a lock race sleeps in SQLite's millisecond-scale busy handler while holding the GIL. Oxide stays flat.
+- On 3.14t, oxide is 1.3-2× faster than diskcache at every thread count, but it doesn't scale up yet (conclusion 1 below).
+
+Conclusions:
+1. **Calls through shared extension objects don't scale.** A no-op call gets 3× slower with more threads, most likely because of contended reference counts on shared objects (the module's function objects, the shared `Cache` instance).
+2. **The shared `-shm` file is a secondary limit.** Per-thread `Cache`s on separate directories scale furthest.
+3. **Writes collapse because same-process threads race on SQLite's write lock** and retry on a busy-handler interval far longer than a write.
+
+Actions:
+- **Phase 2:**
+  - Rewrite `bench/baseline.py`'s threaded workload as a share-nothing loop (per-thread key strings, the method bound once, the stop flag checked every 1,000 operations), at **99 reads : 1 write**, which is the standard (headline) mix for all threaded benchmarks (Michael, 2026-10-28). At 90/10 the workload is borderline for caching at all. Also report a **1,000 : 1 "Talk Python profile"** alongside it, since much of Talk Python's cache traffic is at that ratio or higher. Report 1, 2, 4 and 8 threads, and re-baseline diskcache.
+  - Add an **in-process write lock per database file**. Threads of one process queue on it, with the interpreter released and bounded by `timeout`, before `BEGIN IMMEDIATE`. Only other processes then meet SQLite's busy handler.
+  - Build `Cache` as a thin handle over a process-wide store shared by every handle on the same file (pool, write lock, settings), so extra handles are cheap.
+- **Phase 4 (top target, from Phase 2 profiling):** about 60% of a cached `get` is `__fcntl`. SQLite's unix VFS takes and releases a POSIX lock on a WAL read-mark slot in the `-shm` file for every read transaction (`walTryBeginRead` → `unixShmLock` → `fcntl`), under a process-wide `unixShmNode` mutex. diskcache pays the same cost, but it's also the most likely reason free-threaded reads don't scale: every reader thread serializes on that mutex and syscall. Candidates:
+  - a VFS shim that caches `-shm` read-lock state per process, so that only the first and last holder of a slot make the system call (SQLite already aggregates within a process; the cost is that each read transaction is the first and last holder);
+  - longer-lived read snapshots per connection, bounded so they don't starve checkpoints;
+  - measuring OFD locks (`F_OFD_SETLK`) on Linux.
+
+  Any of these must keep multi-process correctness, and the conformance and fork suites decide.
+- **Phase 4:**
+  - Try CPython 3.14's deferred reference counting (`PyUnstable_Object_EnableDeferredRefcount`) on `Cache` instances. It needs `unsafe` in the py crate, behind a local `allow`.
+  - Profile the no-op call path.
+  - Measure `SQLITE_DEFAULT_MEMSTATUS=0` / `SQLITE_THREADSAFE=2` again with the fixed benchmark.
+  - Look at the `-shm` lock path.
 
 ## 8. Fork safety
 
@@ -268,6 +316,7 @@ All 9 Phase 0.5 fork tests passed 20/20 with `--backend=oxide` on 3.14 and 3.14t
 - **Waiting:** every wait is a 1 ms sleep-poll with the interpreter released, both for the fork and for blocked entrants. Threads leaving the gate never notify anyone. With no mutex or condvar, a child, or a child that forks again, inherits no locked state and no waiter lists from the gate.
 - **Lock order:** the gate first, then the pool. Spike 5 found this simpler than the order the review proposed, and it's safe because checkout never blocks while the gate is held.
   - Phase 2's bounded pool wait (at `max_connections`) must therefore happen *before* entering the gate, or release and re-enter it, so a fork is never held up by a thread waiting for a connection.
+- **The `Store` registry and the write lock:** the registry mutex is only taken under the gate and is quiesced in `begin_fork`, like the pool registry. The write lock is atomic and generation-tagged, so a child resets it instead of inheriting a held lock.
 - **Pool mutexes:** they're only taken under the shared gate, so none can be locked at fork time; `begin_fork` locks and releases each one as a check. They aren't held across the fork, because safe Rust can't hold std guards across the hooks through a `Weak` registry.
 - **Generation:** a `GENERATION` atomic is bumped in the child. A pool that sees a stale generation `mem::forget`s its idle connections and resets its checked-out count. A stale connection that comes back is forgotten, never closed.
 - **Busy handler:** a deadline-based handler retries at most 200 µs apart (section 7 uses 100 µs). SQLite's default handler retries only about 20 times a second, so a forked child's first write timed out in 1-4% of forks under a parent's write hammer. With the custom handler that dropped to 0 in 800 forks.
@@ -324,6 +373,7 @@ All 9 Phase 0.5 fork tests passed 20/20 with `--backend=oxide` on 3.14 and 3.14t
   - the `HeldShare` cross-thread test;
   - the D-020 registry tests (a fresh `Cache` on the same directory in the child is poisoned too, and so are grandchildren);
   - the two-forkers test;
+  - write-lock tests: a fork while it's held (the child resets it), depth > 0 `try_lock`, cross-thread token drop, and same-process fairness during `clear()`;
   - an empty `BEGIN IMMEDIATE`/`COMMIT` leaves a peer's `data_version` unchanged (section 4, as a step-1 unit test);
   - the totals property test (section 3);
   - `incr` bumps `store_seq` (section 5).

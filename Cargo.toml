@@ -5,7 +5,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.99"
 license = "MIT"
 repository = "https://github.com/mikeckennedy/diskcache-oxide"
 # Distributed as a Python wheel, not on crates.io.
@@ -14,9 +14,15 @@ publish = false
 # One version per dependency, declared once. Crates opt in with `foo.workspace = true`.
 [workspace.dependencies]
 diskcache-oxide-core = { path = "crates/diskcache-oxide-core" }
+base64 = "0.22.1"
 libc = "0.2.191"
 pyo3 = "0.30.1"
+pyo3-build-config = "0.30.1"
+rmp = "0.8.15"
 rusqlite = { version = "0.41.0", features = ["bundled"] }
+serde = "1.0.229"
+# float_roundtrip is required: without it about 1 in 1,500 random floats decode one ULP off (Spike 3).
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 thiserror = "2"
 
 # Every crate opts in with:

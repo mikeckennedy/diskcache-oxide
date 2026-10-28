@@ -7,6 +7,7 @@ spawned children can import them. Fork tests run in a fresh interpreter (see pro
 
 from __future__ import annotations
 
+import contextlib
 import multiprocessing
 import random
 import signal
@@ -15,7 +16,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,23 @@ def _join_all(procs: list[Any]) -> None:
         if p.is_alive():
             p.kill()
     assert [p.exitcode for p in procs] == [0] * len(procs)
+
+
+@contextlib.contextmanager
+def _reaped(done: Any, *groups: list[Any]) -> Iterator[None]:
+    """Always set `done` and kill any process still running on the way out, however the body exits.
+
+    Readers loop until `done` is set, so a writer that dies (and makes `_join_all` raise) must not
+    leave them spinning: pytest couldn't exit past non-daemon children.
+    """
+    try:
+        yield
+    finally:
+        done.set()
+        for proc in (p for group in groups for p in group):
+            if proc.is_alive():
+                proc.kill()
+                proc.join(JOIN_TIMEOUT)
 
 
 def _start(target: Callable[..., None], args_list: list[tuple[Any, ...]]) -> list[Any]:
@@ -169,10 +187,11 @@ def _spill_run(backend: Backend, cache: Any, cache_dir: Path, writers: int, read
     results = SPAWN.Queue()
     writer_procs = _start(proc_workers.spill_writer, [(backend.name, str(cache_dir), barrier, w, keys, ops) for w in range(writers)])
     reader_procs = _start(proc_workers.spill_reader, [(backend.name, str(cache_dir), barrier, keys, writers_done, results)] * readers)
-    _join_all(writer_procs)
-    writers_done.set()
-    reports = [results.get(timeout=JOIN_TIMEOUT) for _ in range(readers)]
-    _join_all(reader_procs)
+    with _reaped(writers_done, writer_procs, reader_procs):
+        _join_all(writer_procs)
+        writers_done.set()
+        reports = [results.get(timeout=JOIN_TIMEOUT) for _ in range(readers)]
+        _join_all(reader_procs)
 
     torn = [t for _, _, report_torn in reports for t in report_torn]
     assert torn == [], 'torn reads'
@@ -212,10 +231,11 @@ def _overwrite_race(backend: Backend, cache: Any, cache_dir: Path, readers: int,
     results = SPAWN.Queue()
     writer = _start(proc_workers.overwrite_writer, [(backend.name, str(cache_dir), barrier, key, ops)])
     reader_procs = _start(proc_workers.overwrite_reader, [(backend.name, str(cache_dir), barrier, key, writer_done, results)] * readers)
-    _join_all(writer)
-    writer_done.set()
-    reports = [results.get(timeout=JOIN_TIMEOUT) for _ in range(readers)]
-    _join_all(reader_procs)
+    with _reaped(writer_done, writer, reader_procs):
+        _join_all(writer)
+        writer_done.set()
+        reports = [results.get(timeout=JOIN_TIMEOUT) for _ in range(readers)]
+        _join_all(reader_procs)
 
     failures = [f for _, _, sample in reports for f in sample]
     assert sum(n for _, n, _ in reports) == 0, f'reads of an always-present key failed: {failures}'

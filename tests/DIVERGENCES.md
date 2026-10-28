@@ -126,7 +126,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: test-visible
 - diskcache: one shared `Cache` opens a SQLite connection for every thread that uses it, and each holds the database and its WAL open. With 64 threads held after one `get` and one `set` each, 131 fds are open inside the cache directory (2 × (threads + 1) + 1 for the shared `-shm`), on 3.14 and 3.14t. A server with many threads can run into the fd limit (upstream #295, #336).
-- oxide: connections come from a bounded pool, so the fd count inside the cache directory is at most 2 × pool size + 1, however many threads are alive (`OXIDE_FD_BUDGET` in `backends.py`). The pool size is the `max_connections` setting, which defaults to 8 (04-design.md section 7). A nested operation inside a held transaction may open over the cap, and a forked child deliberately leaks the connections it inherited, so fd tests that combine forks must allow for that.
+- oxide: connections come from a bounded pool, so the fd count inside the cache directory is at most 2 × pool size + 1, however many threads are alive (`OXIDE_FD_BUDGET` in `backends.py`). The pool is per database file and shared by every handle on it. Its size is the largest `max_connections` any live handle asked for (default 8; 04-design.md section 7). A nested operation inside a held transaction may open over the cap, and a forked child deliberately leaks the connections it inherited, so fd tests that combine forks must allow for that.
 - Why: the number of open fds should depend on configuration, not on how many threads happened to touch the cache.
 - Tests: `test_threads.py` (`test_peak_fds_bounded_by_the_pool` is a strict xfail on diskcache; `test_peak_fds_within_the_backend_budget` pins each adapter's `fd_budget`)
 
@@ -134,7 +134,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: test-visible
 - diskcache: `close()` closes only the calling thread's connection. After 64 threads have used a shared `Cache` and exited, `close()` leaves 130 fds open inside the cache directory until a gc pass finalizes the connections, and each one then reports `ResourceWarning: unclosed database` (64 warnings, on 3.14 and 3.14t).
-- oxide: `close()` closes every connection the `Cache` opened, from any thread. No fd inside the cache directory stays open and nothing warns at finalization.
+- oxide: connections belong to a per-file `Store` shared by every handle on that file. When the last open handle calls `close()`, every connection is closed, whichever threads used it. No fd inside the cache directory stays open (apart from the one fd the `Store` keeps on the database file while any handle is alive; the tests count after the last close), and nothing warns at finalization.
 - Why: after `close()` the directory must be safe to delete or move, and leaked connections hide in tests behind `ResourceWarning` noise.
 - Tests: `test_threads.py` (`test_close_releases_every_fd` and `test_threads_then_close_emit_no_resource_warning` are strict xfails on diskcache)
 
@@ -166,6 +166,13 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - diskcache: accepts a `disk` class (also positionally, as the third argument) and `eviction_policy` (`least-recently-stored`, `least-recently-used`, `least-frequently-used`, `none`).
 - oxide: serialization is chosen with `serializer=` and `pickle=` instead of a `Disk` class, and there's no plan to support custom `Disk` subclasses. `eviction_policy` is always least-recently-stored until the other policies arrive in Phase 6a. Only `directory` and `timeout` can be passed positionally.
 - Why: a pluggable Python `Disk` would put Python code on every read and write in the Rust hot path.
+
+## D-023 sqlite_cache_size is a per-process memory budget, 1 MiB by default
+
+- Kind: note
+- diskcache: `sqlite_cache_size` (in pages, default 8192, so 32 MiB per connection) is a setting stored in the cache's `Settings` table, and it comes with a 64 MiB `sqlite_mmap_size`. Every thread opens its own connection, so SQLite's memory grows with the thread count.
+- oxide: `Cache(..., sqlite_cache_size=pages)` takes the same unit (4 KiB pages) but is a per-process option, not stored in the database. The default is 256 pages (1 MiB). Within one process, all handles on a directory share a pool of at most `max_connections` (default 8) connections, so SQLite's page caches for that directory stay at about `max_connections × sqlite_cache_size` pages (8 MiB by default). A held transaction or a nested operation can open one connection beyond the cap. The largest value any handle asks for applies, as with `max_connections`. There's no `sqlite_mmap_size`. `tests/unit/test_memory.py` and `bench/memory.py` hold and report the bound. They run on a memory-instrumented build, since the shipped one turns SQLite's memory statistics off for speed.
+- Why: bounded, predictable memory in long-running web workers. The default was the smallest size that kept hot and skewed reads, writes and the threaded mixes unchanged. It costs about 5% on the worst case (uniform random reads over a database much larger than the cache, the `get_random_wide` benchmark), where it's still about 0.8× diskcache's latency. Raise it for large, uniformly read caches: 2000 pages measured about 17% faster there.
 
 # Community fork differences
 

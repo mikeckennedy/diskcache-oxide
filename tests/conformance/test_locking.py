@@ -23,6 +23,7 @@ import pytest
 from tests.conformance.backends import BACKENDS, Backend
 from tests.conformance.conftest import FakeClock
 from tests.conformance.proc_workers import SqlitePeer
+from tests.proctitle import titled
 
 TIMEOUT = 0.05
 UPPER_BOUND = 0.5
@@ -168,6 +169,7 @@ def test_data_version_detects_a_cache_write(prepared: Any, cache_dir: Path, back
 # ---------------------------------------------------------------------------
 
 
+@titled('maintenance')
 def _run_maintenance(backend_name: str, directory: str, op: str, done: Any, result: Any) -> None:
     cache = BACKENDS[backend_name]().make_cache(Path(directory))
     try:

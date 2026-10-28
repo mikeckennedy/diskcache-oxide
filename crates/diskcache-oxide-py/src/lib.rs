@@ -3,13 +3,14 @@
 // PyO3 extracts Python arguments into owned values, so taking them by value is the normal shape here.
 #![allow(clippy::needless_pass_by_value)]
 
-mod spike;
+mod cache;
+mod codec;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use diskcache_oxide_core::{Error, gate, sqlite};
 use pyo3::create_exception;
-use pyo3::exceptions::{PyOSError, PyRuntimeError, PyRuntimeWarning, PyTimeoutError, PyTypeError};
+use pyo3::exceptions::{PyOSError, PyRuntimeError, PyRuntimeWarning, PyTimeoutError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -26,6 +27,18 @@ create_exception!(
     UnsafeValueError,
     PyTypeError,
     "A pickle=False cache read a value that was stored with pickle."
+);
+create_exception!(
+    diskcache_oxide,
+    FormatMismatchError,
+    PyRuntimeError,
+    "The cache directory holds a database in a format this version doesn't support."
+);
+create_exception!(
+    diskcache_oxide,
+    CorruptValueError,
+    PyValueError,
+    "A stored value couldn't be decoded: an unknown mode, or bytes that don't parse."
 );
 
 /// The SQLite version reported at runtime by `sqlite3_libversion()`.
@@ -54,6 +67,11 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
         Error::Unwritable | Error::ForkPoisoned | Error::NestedTransaction | Error::NoTransaction => {
             PyRuntimeError::new_err(message)
         }
+        Error::FormatMismatch { .. } => FormatMismatchError::new_err(message),
+        Error::InvalidSetting(_) => PyValueError::new_err(message),
+        Error::KeyMissing => pyo3::exceptions::PyKeyError::new_err(message),
+        Error::NotNumeric => PyTypeError::new_err(message),
+        Error::Overflow => pyo3::exceptions::PyOverflowError::new_err(message),
         _ => PyOSError::new_err(message),
     }
 }
@@ -126,6 +144,17 @@ fn register_fork_hooks(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
+/// Test hook: the bundled SQLite's (bytes in use now, high-water mark) across the whole process,
+/// optionally resetting the mark. Not part of the public API.
+#[pyfunction]
+#[pyo3(signature = (reset = false))]
+#[allow(unsafe_code)]
+fn _sqlite_memory(reset: bool) -> (i64, i64) {
+    // SAFETY: both functions only read (and optionally reset) SQLite's global memory counters;
+    // they take no pointers and are safe to call from any thread at any time.
+    unsafe { (rusqlite::ffi::sqlite3_memory_used(), rusqlite::ffi::sqlite3_memory_highwater(i32::from(reset))) }
+}
+
 #[pymodule(gil_used = false)]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
@@ -135,9 +164,15 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("_DEBUG_BUILD", cfg!(debug_assertions))?;
     m.add("Timeout", py.get_type::<Timeout>())?;
     m.add("UnsafeValueError", py.get_type::<UnsafeValueError>())?;
+    m.add("CorruptValueError", py.get_type::<CorruptValueError>())?;
     m.add_function(wrap_pyfunction!(sqlite_version, m)?)?;
     m.add_function(wrap_pyfunction!(sqlite_compile_options, m)?)?;
-    m.add_class::<spike::Cache>()?;
+    // Test hooks for the value codec; not part of the public API.
+    m.add_function(wrap_pyfunction!(codec::_encode, m)?)?;
+    m.add_function(wrap_pyfunction!(codec::_decode, m)?)?;
+    m.add_function(wrap_pyfunction!(_sqlite_memory, m)?)?;
+    m.add("FormatMismatchError", py.get_type::<FormatMismatchError>())?;
+    m.add_class::<cache::Cache>()?;
     install_fork_barrier(m)?;
     Ok(())
 }

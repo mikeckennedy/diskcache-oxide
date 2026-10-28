@@ -38,7 +38,7 @@ from typing import Any
 import pytest
 
 from tests.conformance.backends import BACKEND_KEY as _backend_key
-from tests.conformance.backends import Backend, community_difference
+from tests.conformance.backends import FEATURE_PHASES, Backend, community_difference
 
 DIVERGENCES_FILE = Path(__file__).parent.parent / 'DIVERGENCES.md'
 _REF_HEADING = re.compile(r'^##+\s+(D-\d{3})\b', re.MULTILINE)
@@ -81,8 +81,32 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
         for mark in item.iter_markers('requires'):
             feature = mark.args[0]
+            if feature not in FEATURE_PHASES:
+                raise pytest.UsageError(f'{item.nodeid}: requires({feature!r}) is not in backends.FEATURE_PHASES')
             if not backend.supports(feature):
-                item.add_marker(pytest.mark.skip(reason=f'{_NOT_YET_PREFIX}{feature}'))
+                item.add_marker(pytest.mark.skip(reason=f'{_NOT_YET_PREFIX}{feature} (Phase {FEATURE_PHASES[feature]})'))
+
+
+def _expected_skip(reason: str) -> bool:
+    # The skips the markers above add. Anything else (a pytest.skip() or importorskip inside a
+    # test, a missing fixture dependency) would quietly shrink the oxide run.
+    return _NOT_YET_PREFIX in reason or reason.endswith('-only behavior')
+
+
+_unexpected_skips: list[str] = []
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    if report.skipped and not hasattr(report, 'wasxfail'):
+        reason = str(report.longrepr[2]) if isinstance(report.longrepr, tuple) else str(report.longrepr)
+        if not _expected_skip(reason):
+            _unexpected_skips.append(f'{report.nodeid}: {reason}')
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    # On oxide every skip must come from a marker, so the "0 skipped" count can be trusted.
+    if session.config.stash[_backend_key].name == 'oxide' and _unexpected_skips and exitstatus == 0:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def pytest_terminal_summary(terminalreporter: Any) -> None:
@@ -90,6 +114,10 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
     not_yet = [r for r in skipped if _NOT_YET_PREFIX in str(r.longrepr)]
     if not_yet:
         terminalreporter.write_sep('=', f'{len(not_yet)} test(s) skipped as not yet supported by this backend')
+    if _unexpected_skips and terminalreporter.config.stash[_backend_key].name == 'oxide':
+        terminalreporter.write_sep('=', f'{len(_unexpected_skips)} unexpected skip(s) on oxide (this fails the run)', red=True)
+        for line in _unexpected_skips:
+            terminalreporter.write_line(line)
 
 
 # ---------------------------------------------------------------------------

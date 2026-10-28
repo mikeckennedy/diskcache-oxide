@@ -13,9 +13,19 @@ name = "_core"
 crate-type = ["cdylib"]
 
 [dependencies]
+base64.workspace = true
 diskcache-oxide-core.workspace = true
 libc.workspace = true
 pyo3 = { workspace = true, features = ["extension-module"] }
+rmp.workspace = true
+# Same crate instance as core's; used directly only for the `_sqlite_memory` test hook.
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+# Sets cfg(Py_GIL_DISABLED) for this crate, so the codec can snapshot dicts only on free-threaded builds.
+pyo3-build-config.workspace = true
 
 [lints]
 workspace = true
