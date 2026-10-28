@@ -1,0 +1,143 @@
+//! The `diskcache_oxide._core` extension module: a thin PyO3 layer over `diskcache-oxide-core`.
+
+// PyO3 extracts Python arguments into owned values, so taking them by value is the normal shape here.
+#![allow(clippy::needless_pass_by_value)]
+
+mod spike;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use diskcache_oxide_core::{Error, gate, sqlite};
+use pyo3::create_exception;
+use pyo3::exceptions::{PyOSError, PyRuntimeError, PyRuntimeWarning, PyTimeoutError, PyTypeError};
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
+
+// Created under the public package name so instances pickle across multiprocessing as
+// `diskcache_oxide.Timeout`; `diskcache_oxide/__init__.py` re-exports them.
+create_exception!(
+    diskcache_oxide,
+    Timeout,
+    PyTimeoutError,
+    "The database stayed locked for longer than the cache's timeout."
+);
+create_exception!(
+    diskcache_oxide,
+    UnsafeValueError,
+    PyTypeError,
+    "A pickle=False cache read a value that was stored with pickle."
+);
+
+/// The SQLite version reported at runtime by `sqlite3_libversion()`.
+#[pyfunction]
+fn sqlite_version() -> &'static str {
+    sqlite::runtime_version()
+}
+
+/// The compile-time options of the linked SQLite (`PRAGMA compile_options`).
+#[pyfunction]
+fn sqlite_compile_options() -> PyResult<Vec<String>> {
+    sqlite::compile_options().map_err(to_py_err)
+}
+
+/// Maps a core error to the Python exception the public API documents.
+pub(crate) fn to_py_err(error: Error) -> PyErr {
+    let message = error.to_string();
+    match error {
+        Error::Timeout { .. } => Timeout::new_err(message),
+        Error::DiskFull { .. } => PyOSError::new_err((libc::ENOSPC, message)),
+        Error::SqliteIo { errno: Some(errno), .. } => PyOSError::new_err((errno, message)),
+        Error::Io { source, .. } => match source.raw_os_error() {
+            Some(errno) => PyOSError::new_err((errno, message)),
+            None => PyOSError::new_err(message),
+        },
+        Error::Unwritable | Error::ForkPoisoned | Error::NestedTransaction | Error::NoTransaction => {
+            PyRuntimeError::new_err(message)
+        }
+        _ => PyOSError::new_err(message),
+    }
+}
+
+/// Runs a blocking fork-gate wait with the interpreter released, so the thread holding the gate
+/// can finish (on GIL builds it needs the GIL) and a stop-the-world isn't held up by the waiter.
+fn detached_wait(wait: &(dyn Fn() + Sync)) {
+    Python::attach(|py| py.detach(wait));
+}
+
+/// `os.register_at_fork(before=...)`: waits, with the interpreter released and no timeout, for every
+/// other thread's SQLite work in this process to finish, and holds off new work until the fork.
+#[pyfunction]
+fn _before_fork(py: Python<'_>) {
+    if gate::GATE.own_depth() > 0 {
+        // CPython ignores exceptions from before-fork hooks, so the fork can't be refused; the
+        // child sees the held transaction as poisoned. Ignore a warnings-as-errors failure too.
+        let _ = PyErr::warn(
+            py,
+            &py.get_type::<PyRuntimeWarning>(),
+            c"os.fork() called while this thread holds a diskcache_oxide transaction; it can't be used in the child",
+            1,
+        );
+    }
+    py.detach(gate::begin_fork);
+}
+
+#[pyfunction]
+fn _after_fork_in_parent() {
+    gate::end_fork_parent();
+}
+
+#[pyfunction]
+fn _after_fork_in_child() {
+    gate::end_fork_child();
+}
+
+/// Set once the fork hooks are registered. The gate is process-wide, so its hooks must be too: a
+/// second module init (a re-import after `_core` is removed from `sys.modules`) must not register a
+/// second set, which would run every hook twice per fork. PyO3 refuses subinterpreters, so the one
+/// interpreter that can fork is the one that registered them.
+static FORK_HOOKS_REGISTERED: AtomicBool = AtomicBool::new(false);
+
+/// Installs the fork barrier: the gate's blocker and the `os.register_at_fork` hooks. Registered
+/// from the module itself so importing `_core` directly is enough. Idempotent.
+fn install_fork_barrier(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    gate::set_blocker(detached_wait);
+    if FORK_HOOKS_REGISTERED.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
+    let registered = register_fork_hooks(m);
+    if registered.is_err() {
+        // Let a later init try again.
+        FORK_HOOKS_REGISTERED.store(false, Ordering::Release);
+    }
+    registered
+}
+
+fn register_fork_hooks(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = m.py();
+    let os = py.import("os")?;
+    if !os.hasattr("register_at_fork")? {
+        return Ok(()); // No fork() on this platform.
+    }
+    let hooks = PyDict::new(py);
+    hooks.set_item("before", wrap_pyfunction!(_before_fork, m)?)?;
+    hooks.set_item("after_in_parent", wrap_pyfunction!(_after_fork_in_parent, m)?)?;
+    hooks.set_item("after_in_child", wrap_pyfunction!(_after_fork_in_child, m)?)?;
+    os.call_method("register_at_fork", (), Some(&hooks))?;
+    Ok(())
+}
+
+#[pymodule(gil_used = false)]
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = m.py();
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add("BUNDLED_SQLITE_VERSION", sqlite::compile_version())?;
+    // Lets benchmarks refuse to measure an unoptimized build.
+    m.add("_DEBUG_BUILD", cfg!(debug_assertions))?;
+    m.add("Timeout", py.get_type::<Timeout>())?;
+    m.add("UnsafeValueError", py.get_type::<UnsafeValueError>())?;
+    m.add_function(wrap_pyfunction!(sqlite_version, m)?)?;
+    m.add_function(wrap_pyfunction!(sqlite_compile_options, m)?)?;
+    m.add_class::<spike::Cache>()?;
+    install_fork_barrier(m)?;
+    Ok(())
+}

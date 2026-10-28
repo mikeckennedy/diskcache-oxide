@@ -1,0 +1,124 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
+use rusqlite::ErrorCode;
+
+/// Every failure the storage engine reports. The py crate maps each variant to a Python exception.
+///
+/// There is deliberately no `From<rusqlite::Error>`: every rusqlite error goes through
+/// [`Error::from_sqlite`], so a plain `?` can't skip the busy classification.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum Error {
+    /// The database stayed locked for longer than the cache's timeout.
+    #[error("database timed out waiting for a lock after {seconds} s")]
+    Timeout { seconds: f64 },
+
+    #[error("I/O error on {path}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The disk or quota is full (`SQLITE_FULL`, or `ENOSPC` from a value-file write).
+    #[error("disk full: {source}")]
+    DiskFull {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    /// SQLite couldn't read or write the database files: `SQLITE_IOERR` and its extended codes,
+    /// `SQLITE_CANTOPEN`, `SQLITE_PERM` and `SQLITE_NOLFS`.
+    #[error("SQLite I/O error: {source}")]
+    SqliteIo {
+        /// The OS error behind it, where known. rusqlite has no safe `sqlite3_system_errno`, so
+        /// [`Error::from_sqlite`] leaves it `None`.
+        errno: Option<i32>,
+        #[source]
+        source: rusqlite::Error,
+    },
+
+    /// Any other SQLite failure.
+    #[error("SQLite error: {0}")]
+    Sqlite(#[source] rusqlite::Error),
+
+    /// The database was written by a format version this build doesn't know.
+    #[error("cache format version {found} is not supported (this build uses version {expected})")]
+    FormatMismatch { found: i64, expected: i64 },
+
+    /// SQLite refused WAL mode, e.g. on a network filesystem.
+    #[error("the cache requires WAL journal mode, but SQLite is using {mode:?}")]
+    NotWal { mode: String },
+
+    #[error("the cache is closed")]
+    Closed,
+
+    /// A forked child tried to use a transaction it inherited from its parent.
+    #[error("this transaction was inherited across fork() and can't be used in the child")]
+    ForkPoisoned,
+
+    /// A write in a child forked while its parent thread held a transaction on this database
+    /// (D-020). The inherited SQLite lock table means it could never succeed, so it fails at once.
+    #[error("this database can't be written in a process forked inside a transaction")]
+    Unwritable,
+
+    /// The calling thread tried to start a write transaction while it already holds one.
+    #[error("this thread already holds a write transaction on this cache")]
+    NestedTransaction,
+
+    /// The calling thread tried to end a write transaction it doesn't hold.
+    #[error("this thread holds no write transaction on this cache")]
+    NoTransaction,
+}
+
+impl Error {
+    /// Classifies a rusqlite error: busy or locked becomes [`Error::Timeout`] (SQLite only reports
+    /// them once the busy handler has waited out `timeout`), `SQLITE_FULL` [`Error::DiskFull`], the
+    /// I/O family [`Error::SqliteIo`], and anything else [`Error::Sqlite`].
+    #[must_use]
+    pub fn from_sqlite(error: rusqlite::Error, timeout: Duration) -> Self {
+        match error.sqlite_error_code() {
+            Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => {
+                Self::Timeout { seconds: timeout.as_secs_f64() }
+            }
+            Some(ErrorCode::DiskFull) => Self::DiskFull { source: Box::new(error) },
+            Some(
+                ErrorCode::SystemIoFailure
+                | ErrorCode::CannotOpen
+                | ErrorCode::PermissionDenied
+                | ErrorCode::NoLargeFileSupport,
+            ) => Self::SqliteIo { errno: None, source: error },
+            _ => Self::Sqlite(error),
+        }
+    }
+}
+
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::ffi;
+
+    use super::*;
+
+    fn failure(code: i32) -> rusqlite::Error {
+        rusqlite::Error::SqliteFailure(ffi::Error::new(code), None)
+    }
+
+    #[test]
+    fn sqlite_errors_are_classified() {
+        let timeout = Duration::from_secs(3);
+        assert!(matches!(Error::from_sqlite(failure(ffi::SQLITE_BUSY), timeout), Error::Timeout { .. }));
+        assert!(matches!(Error::from_sqlite(failure(ffi::SQLITE_LOCKED), timeout), Error::Timeout { .. }));
+        assert!(matches!(Error::from_sqlite(failure(ffi::SQLITE_BUSY_SNAPSHOT), timeout), Error::Timeout { .. }));
+        assert!(matches!(Error::from_sqlite(failure(ffi::SQLITE_FULL), timeout), Error::DiskFull { .. }));
+        assert!(matches!(
+            Error::from_sqlite(failure(ffi::SQLITE_IOERR_WRITE), timeout),
+            Error::SqliteIo { errno: None, .. }
+        ));
+        assert!(matches!(Error::from_sqlite(failure(ffi::SQLITE_CANTOPEN), timeout), Error::SqliteIo { .. }));
+        assert!(matches!(Error::from_sqlite(failure(ffi::SQLITE_CORRUPT), timeout), Error::Sqlite(_)));
+        assert!(matches!(Error::from_sqlite(rusqlite::Error::QueryReturnedNoRows, timeout), Error::Sqlite(_)));
+    }
+}

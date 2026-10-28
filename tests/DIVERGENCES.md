@@ -126,7 +126,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: test-visible
 - diskcache: one shared `Cache` opens a SQLite connection for every thread that uses it, and each holds the database and its WAL open. With 64 threads held after one `get` and one `set` each, 131 fds are open inside the cache directory (2 × (threads + 1) + 1 for the shared `-shm`), on 3.14 and 3.14t. A server with many threads can run into the fd limit (upstream #295, #336).
-- oxide: connections come from a bounded pool, so the fd count inside the cache directory is at most 2 × pool size + 1, however many threads are alive (`OXIDE_FD_BUDGET` in `backends.py`; the pool size of 8 is a placeholder until Phase 1).
+- oxide: connections come from a bounded pool, so the fd count inside the cache directory is at most 2 × pool size + 1, however many threads are alive (`OXIDE_FD_BUDGET` in `backends.py`). The pool size is the `max_connections` setting, which defaults to 8 (04-design.md section 7). A nested operation inside a held transaction may open over the cap, and a forked child deliberately leaks the connections it inherited, so fd tests that combine forks must allow for that.
 - Why: the number of open fds should depend on configuration, not on how many threads happened to touch the cache.
 - Tests: `test_threads.py` (`test_peak_fds_bounded_by_the_pool` is a strict xfail on diskcache; `test_peak_fds_within_the_backend_budget` pins each adapter's `fd_budget`)
 
@@ -145,6 +145,27 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - oxide: opening with unchanged settings, then `get`, `in`, `len`, `iterkeys` and `volume`, never write: a peer's `data_version` is unchanged, and so are the main database file's hash and mtime.
 - Why: a read-mostly service (or a read-only replica of the directory) shouldn't take the write lock or dirty the WAL just by opening its cache.
 - Tests: `test_basic.py` (`test_open_and_read_never_write` is a strict xfail on diskcache)
+
+## D-020 Forking inside your own transaction fails fast
+
+- Kind: note (pinned with a test when `transact()` lands in Phase 6b)
+- diskcache: forking from a thread that is inside its own `transact()` leaves the child stuck behind a write lock nobody will release. Its writes wait out the full timeout (60 s by default), and the parent gets no warning.
+- oxide: CPython can't be stopped from forking, and SQLite's inherited lock table means the child can never write to that database. So the child's inherited transaction is poisoned (operations inside it and its exit raise `RuntimeError`, and nothing commits), and its writes to that database raise `RuntimeError` at once instead of timing out. Reads, and other cache directories, keep working. The parent gets a `RuntimeWarning` when it forks inside a transaction.
+- Why: a clear error at the call site beats a 60-second stall in a fresh worker.
+
+## D-021 directory is required
+
+- Kind: note
+- diskcache: `Cache()` with no directory (or `directory=None`) creates a temporary directory.
+- oxide: `directory` is a required argument.
+- Why: a cache directory is a security boundary (D-015) and shared state across processes. An implicit temporary directory is almost never what a multi-process app wants, and it hides where the data lives.
+
+## D-022 No disk= or eviction_policy= (yet)
+
+- Kind: note
+- diskcache: accepts a `disk` class (also positionally, as the third argument) and `eviction_policy` (`least-recently-stored`, `least-recently-used`, `least-frequently-used`, `none`).
+- oxide: serialization is chosen with `serializer=` and `pickle=` instead of a `Disk` class, and there's no plan to support custom `Disk` subclasses. `eviction_policy` is always least-recently-stored until the other policies arrive in Phase 6a. Only `directory` and `timeout` can be passed positionally.
+- Why: a pluggable Python `Disk` would put Python code on every read and write in the Rust hot path.
 
 # Community fork differences
 

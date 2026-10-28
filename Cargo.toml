@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT"
+repository = "https://github.com/mikeckennedy/diskcache-oxide"
+# Distributed as a Python wheel, not on crates.io.
+publish = false
+
+# One version per dependency, declared once. Crates opt in with `foo.workspace = true`.
+[workspace.dependencies]
+diskcache-oxide-core = { path = "crates/diskcache-oxide-core" }
+libc = "0.2.191"
+pyo3 = "0.30.1"
+rusqlite = { version = "0.41.0", features = ["bundled"] }
+thiserror = "2"
+
+# Every crate opts in with:
+#   [lints]
+#   workspace = true
+[workspace.lints.rust]
+# deny, not forbid: the py crate's PyO3 macros expand to unsafe code. Core adds #![forbid(unsafe_code)].
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+dbg_macro = "deny"
+todo = "warn"
+# Pedantic lints that cost more than they give here.
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+# Keep the default panic = "unwind": PyO3 turns a panic into PanicException; abort would kill the interpreter.

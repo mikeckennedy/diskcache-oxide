@@ -89,11 +89,14 @@ CASES: list[tuple[str, Any, Outcome, Outcome]] = [
     ('datetime-naive', dt.datetime(2026, 10, 27, 13, 45, 30, 123456), 'roundtrip', 'roundtrip'),
     ('datetime-aware-utc', dt.datetime(2026, 10, 27, 13, 45, 30, tzinfo=dt.UTC), 'roundtrip', 'roundtrip'),
     ('datetime-aware-offset', dt.datetime(2026, 10, 27, 13, 45, tzinfo=dt.timezone(dt.timedelta(hours=-7))), 'roundtrip', 'roundtrip'),
-    ('date', dt.date(2026, 10, 27), 'TBD', 'roundtrip'),
-    ('decimal', Decimal('3.14159265358979323846'), 'TBD', 'roundtrip'),
-    ('set', {1, 2, 3}, 'TBD', 'roundtrip'),
+    ('date', dt.date(2026, 10, 27), 'roundtrip', 'roundtrip'),  # Settled in Phase 1 Spike 3.
+    ('decimal', Decimal('3.14159265358979323846'), 'roundtrip', 'roundtrip'),  # Settled in Phase 1 Spike 3.
+    ('set', {1, 2, 3}, 'roundtrip', 'roundtrip'),  # Settled in Phase 1 Spike 3.
     # User data that looks like a tag must not be decoded as one (the escape mechanism).
     ('dict-tag-shaped', {'__dco__': 'tuple', 'v': [1, 2]}, 'roundtrip', 'roundtrip'),
+    # Shaped like the real tag format settled in Phase 1 (`$`-prefixed single-key dicts).
+    ('dict-dollar-tag-shaped', {'$tuple': [1, 2]}, 'roundtrip', 'roundtrip'),
+    ('dict-dollar-esc-shaped', {'$esc': {'$set': [1]}}, 'roundtrip', 'roundtrip'),
     ('dict-tag-shaped-dollar', {'$t': 'datetime', '$v': '2026-10-27T00:00:00'}, 'roundtrip', 'roundtrip'),
     # A slots dataclass needs pickle.
     ('slots-dataclass', HomepageSnapshot('Talk Python', [500, 501], dt.datetime(2026, 10, 27)), 'TypeError', 'roundtrip'),
@@ -104,7 +107,7 @@ CASES: list[tuple[str, Any, Outcome, Outcome]] = [
     ('namedtuple', Point(1, 2), 'TypeError', 'roundtrip'),
     ('ordered-dict', collections.OrderedDict([('b', 1), ('a', 2)]), 'TypeError', 'roundtrip'),
     ('defaultdict', collections.defaultdict(list, {'a': [1]}), 'TypeError', 'roundtrip'),
-    ('datetime-zoneinfo', dt.datetime(2026, 10, 27, 13, 45, tzinfo=zoneinfo.ZoneInfo('America/Los_Angeles')), 'TBD', 'roundtrip'),
+    ('datetime-zoneinfo', dt.datetime(2026, 10, 27, 13, 45, tzinfo=zoneinfo.ZoneInfo('America/Los_Angeles')), 'roundtrip', 'roundtrip'),  # Settled in Phase 1 Spike 3.
 ]
 
 # Cases where diskcache 5.6.3 itself does not round-trip, keyed by case id, mapped to (divergence ref,

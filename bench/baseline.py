@@ -139,39 +139,85 @@ def populate(cache: Any, count: int) -> None:
 LOOP_OVERHEAD_NS = 0.0
 
 
-def run(backend: Backend, quick: bool) -> dict[str, Any]:
+def mcp_result() -> dict[str, Any]:
+    """A small structured value, shaped like the MCP results Talk Python caches (a few hundred bytes)."""
+    return {
+        'tool': 'search_episodes',
+        'ok': True,
+        'count': 3,
+        'results': [{'id': 500 + n, 'title': f'Episode {500 + n}: Python news', 'score': 0.9 - n / 10} for n in range(3)],
+    }
+
+
+WORKLOADS = (
+    'get_hit_small',
+    'get_hit_small_dict',
+    'get_miss',
+    'set_small',
+    'get_page_entry_450k',
+    'set_page_entry_450k',
+    'add_incr_counter',
+    'threads_8_mixed_ops_per_s',
+    'scans',
+)
+
+
+def run(backend: Backend, quick: bool, only: set[str] | None = None, opts: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Run the selected workloads (all by default); `opts` are passed to every make_cache call."""
     global LOOP_OVERHEAD_NS
     LOOP_OVERHEAD_NS = loop_overhead_ns()
     results: dict[str, Any] = {'harness_loop_overhead_ns': LOOP_OVERHEAD_NS}
     n_batches = 20 if quick else 100
     n_samples = 2_000 if quick else 10_000
     scan_sizes = [100_000] if quick else [100_000, 400_000]
+    opts = opts or {}
+
+    def want(name: str) -> bool:
+        return only is None or name in only
 
     with tempfile.TemporaryDirectory(prefix='dco-bench-') as tmp:
-        cache = backend.make_cache(Path(tmp) / 'latency', timeout=1.0, size_limit=2**30)
+        cache = backend.make_cache(Path(tmp) / 'latency', timeout=1.0, size_limit=2**30, **opts)
 
         small = 'x' * 100
         cache.set('small', small)
-        results['get_hit_small'] = measure(lambda i: cache.get('small'), n_batches=n_batches, n_samples=n_samples, warmup=5_000)
-        results['get_miss'] = measure(lambda i: cache.get('missing'), n_batches=n_batches, n_samples=n_samples, warmup=5_000)
+        if want('get_hit_small'):
+            results['get_hit_small'] = measure(lambda i: cache.get('small'), n_batches=n_batches, n_samples=n_samples, warmup=5_000)
+        if want('get_hit_small_dict'):
+            cache.set('small_dict', mcp_result())
+            results['get_hit_small_dict'] = measure(
+                lambda i: cache.get('small_dict'), n_batches=n_batches, n_samples=n_samples, warmup=5_000
+            )
+        if want('get_miss'):
+            results['get_miss'] = measure(lambda i: cache.get('missing'), n_batches=n_batches, n_samples=n_samples, warmup=5_000)
+        if want('set_small'):
+            results['set_small'] = measure(
+                lambda i: cache.set(f'small:{i % 1_000}', small), n_batches=n_batches // 4 or 1, n_samples=n_samples // 4, warmup=1_000
+            )
 
-        entry = page_entry()
-        cache.set('page', entry, expire=3600)
-        results['get_page_entry_450k'] = measure(lambda i: cache.get('page'), n_batches=0, n_samples=200 if quick else 1_000, warmup=50)
-        results['set_page_entry_450k'] = measure(
-            lambda i: cache.set(f'page:{i % 50}', entry, expire=3600), n_batches=0, n_samples=200 if quick else 1_000, warmup=50
-        )
+        if want('get_page_entry_450k') or want('set_page_entry_450k'):
+            entry = page_entry()
+            cache.set('page', entry, expire=3600)
+            if want('get_page_entry_450k'):
+                results['get_page_entry_450k'] = measure(
+                    lambda i: cache.get('page'), n_batches=0, n_samples=200 if quick else 1_000, warmup=50
+                )
+            if want('set_page_entry_450k'):
+                results['set_page_entry_450k'] = measure(
+                    lambda i: cache.set(f'page:{i % 50}', entry, expire=3600), n_batches=0, n_samples=200 if quick else 1_000, warmup=50
+                )
 
         def rate_limit_bump(i: int) -> None:
             key = f'h:{i % 1_000}:10.0.0.{i % 256}'
             cache.add(key, 0, expire=3600)
             cache.incr(key)
 
-        results['add_incr_counter'] = measure(rate_limit_bump, n_batches=n_batches // 4 or 1, n_samples=n_samples // 4, warmup=1_000)
-        results['threads_8_mixed_ops_per_s'] = threaded_throughput(cache, seconds=1.0 if quick else 3.0)
+        if want('add_incr_counter'):
+            results['add_incr_counter'] = measure(rate_limit_bump, n_batches=n_batches // 4 or 1, n_samples=n_samples // 4, warmup=1_000)
+        if want('threads_8_mixed_ops_per_s'):
+            results['threads_8_mixed_ops_per_s'] = threaded_throughput(cache, seconds=1.0 if quick else 3.0)
         cache.close()
 
-        for size in scan_sizes:
+        for size in scan_sizes if want('scans') else []:
             scan_cache = backend.make_cache(Path(tmp) / f'scan-{size}', timeout=10.0, size_limit=2**32)
             populate(scan_cache, size)
             label = f'{size // 1_000}k'
@@ -254,11 +300,18 @@ def main() -> None:
     parser.add_argument('--machine', default=platform.node().split('.')[0] or 'unknown', help='Label for the results file.')
     parser.add_argument('--quick', action='store_true', help='Smaller run for smoke-testing the script.')
     parser.add_argument('--out', type=Path, help='Override the output path.')
+    parser.add_argument('--only', action='append', choices=WORKLOADS, help='Run only these workloads (repeatable).')
+    parser.add_argument('--opt', action='append', default=[], metavar='NAME=VALUE', help='Extra cache option, e.g. spike_detach=true.')
     args = parser.parse_args()
 
     backend = BACKENDS[args.backend]()
+    if getattr(getattr(backend, '_module', None), '_DEBUG_BUILD', False):
+        raise SystemExit('refusing to benchmark a debug build of diskcache_oxide; rebuild in release mode')
+    opts = {name: json.loads(value) for name, _, value in (o.partition('=') for o in args.opt)}
     meta = metadata(backend, args.machine, args.quick)
-    results = run(backend, args.quick)
+    meta['only'] = sorted(args.only) if args.only else None
+    meta['opts'] = opts
+    results = run(backend, args.quick, set(args.only) if args.only else None, opts)
 
     out = args.out or RESULTS_DIR / f'{meta["backend"]}-{meta["python"]}-{meta["machine"]}{"-quick" if args.quick else ""}.json'
     out.parent.mkdir(parents=True, exist_ok=True)

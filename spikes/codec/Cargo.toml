@@ -1,0 +1,23 @@
+[package]
+name = "dco-codec-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "dco_codec_spike"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.30.1", features = ["extension-module"] }
+serde = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+sonic-rs = "0.5"
+rmp = "0.8"
+base64 = "0.22"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[workspace]

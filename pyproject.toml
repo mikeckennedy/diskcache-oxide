@@ -1,3 +1,7 @@
+[build-system]
+requires = ["maturin>=1.15,<2"]
+build-backend = "maturin"
+
 [project]
 name = "diskcache-oxide"
 version = "0.0.0"
@@ -5,12 +9,19 @@ description = "A clean-room Rust reimplementation of diskcache."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.14"
+classifiers = [
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Free Threading :: 3 - Stable",
+    "Programming Language :: Rust",
+    "Typing :: Typed",
+]
 
 [dependency-groups]
 dev = [
     "pytest>=8",
     "pytest-timeout>=2.3",
     "diskcache==5.6.3",
+    "mypy>=1.18",
 ]
 
 # The diskcache-community fork, run as a second witness with --backend=community. It installs as
@@ -21,8 +32,19 @@ community = [
 
 [tool.uv]
 default-groups = ["dev", "community"]
-# Maturin takes over the build in Phase 1; until then this is a test-only project.
-package = false
+# Rebuild the extension whenever the Rust sources change, not only when pyproject.toml does.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "crates/**/Cargo.toml" },
+    { file = "crates/**/*.rs" },
+]
+
+[tool.maturin]
+python-source = "python"
+module-name = "diskcache_oxide._core"
+manifest-path = "crates/diskcache-oxide-py/Cargo.toml"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

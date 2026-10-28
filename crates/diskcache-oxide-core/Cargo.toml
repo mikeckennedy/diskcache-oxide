@@ -1,0 +1,16 @@
+[package]
+name = "diskcache-oxide-core"
+description = "Storage engine for diskcache-oxide: SQLite-backed disk cache with no Python dependency."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

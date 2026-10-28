@@ -18,6 +18,7 @@ Status checked on 2026-10-27, against open and closed issues and PRs in both rep
 | 8 | A key that's never deleted sometimes reads as missing while its large value is being overwritten | `overwrite_spilled_value_reads_as_missing.py` | reported: #294 (open); #258 (closed) is the same symptom with threads | not reported; same bug in 5.8.1 | fixed: the read retries (D-016) |
 | 9 | `close()` leaves other threads' connections open | `close_leaves_other_threads_connections_open.py` | reported: #295, #336 (fd exhaustion) | fixed (PR #13 closes exited threads' connections) | fixed: pooled connections, all closed by `close()` (D-017, D-018) |
 | 10 | Opening a cache with unchanged settings writes to the database | `open_writes_unchanged_settings.py` | not reported (related: #113, read-only caches) | fixed (PR #17) | fixed (D-019) |
+| 11 | `iterkeys()` takes quadratic time | `iterkeys_is_quadratic.py` | not reported (Talk Python measured 23 s at 400k keys) | not reported | fixed: keyset-paged range scan, 10 ms at 400k keys (Spike 4a) |
 
 ## 1. A top-level NaN reads back as None
 
@@ -58,6 +59,10 @@ diskcache keeps one SQLite connection per thread. `close()` closes only the call
 ## 10. Opening a cache with unchanged settings writes to the database
 
 Reopening an existing directory with the same settings and only reading still commits a write. Another connection's `PRAGMA data_version` changes, even though the main database file's hash and mtime may not. It looks as if the settings are rewritten on every open; that's an inference from behavior. **Impact:** every worker start takes the write lock, and read-only use of a cache (e.g. on a read-only mount, upstream #113) isn't possible. The diskcache-community fork fixed this (PR #17).
+
+## 11. iterkeys() takes quadratic time
+
+Iterating keys over 20k entries takes 0.05 s; over 80k it takes 0.76 s, 16× the time for 4× the keys. At 400k keys a full `iterkeys()` takes about 26 s. Each page of keys is fetched with a query of the form `WHERE key = ? AND raw = ? OR key > ? ORDER BY key LIMIT 100`. With bound parameters, the `OR` keeps SQLite from using the key index, so every page scans the whole table (about 2M VM steps per page at 400k keys). Note that `EXPLAIN` on the same SQL with literal values reports an index search, which hides the problem. Rewriting the condition as a row-value comparison, `(key, raw) > (?, ?)`, lets SQLite use the index, and a keyset-paged range scan runs in 2.3 ms at 100k keys and 10.2 ms at 400k. **Impact:** any code that scans keys (prefix invalidation, admin pages) slows quadratically as the cache grows. Talk Python measured 1.3 s at 100k and 23 s at 400k keys.
 
 ## Not bugs, but worth noting upstream
 

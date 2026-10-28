@@ -24,10 +24,10 @@ OXIDE_ONLY_OPTIONS = frozenset({'pickle', 'serializer', 'clock'})
 # Features scheduled for later oxide phases. The diskcache backend supports everything.
 OXIDE_SUPPORTED_FEATURES: frozenset[str] = frozenset()
 
-# TODO(Phase 1): placeholder until oxide's storage design fixes its spill threshold.
-OXIDE_SPILL_THRESHOLD = 32_768
+# Values of 64 KiB or more spill to their own file (04-design.md section 4, Spike 4a).
+OXIDE_SPILL_THRESHOLD = 65_536
 
-# TODO(Phase 1): placeholder until oxide's connection-pool design fixes the pool size.
+# The `max_connections` default: each `Cache` pools at most this many connections (04-design.md section 7).
 OXIDE_POOL_SIZE = 8
 # Each pooled connection holds the database and its WAL open; every connection shares one -shm.
 OXIDE_FD_BUDGET = 2 * OXIDE_POOL_SIZE + 1
