@@ -61,6 +61,8 @@ tar -C /src -cf - \
 cd /work/repo
 printf "%s, %s CPUs, kernel %s\n" "$(. /etc/os-release && echo "$PRETTY_NAME")" "$(nproc)" "$(uname -r)"
 export CARGO_TARGET_DIR=/cache/target/soak
+# The caches under test on the container disk (soak.py links them into the run dir on /out).
+export DCO_SOAK_CACHE_ROOT=/work/caches
 exec soak/run.sh --out /out "$@"
 '
 

@@ -84,6 +84,15 @@ class Soak:
                 continue
         for sub in ('stats', 'logs', 'stalls'):
             (self.dir / sub).mkdir()
+        # The caches under test can live elsewhere (DCO_SOAK_CACHE_ROOT), linked in as chaos/ and
+        # ledger/: scripts/linux-soak.sh keeps them on the container's own disk, because SQLite on
+        # the host folder shared into the VM pays the file-sharing layer on every lock and fsync.
+        cache_root = os.environ.get('DCO_SOAK_CACHE_ROOT')
+        if cache_root:
+            for name in ('chaos', 'ledger'):
+                target = Path(cache_root) / self.dir.name / name
+                target.mkdir(parents=True)
+                (self.dir / name).symlink_to(target)
         # Point `latest` here atomically: a new link, renamed over the old one.
         link = out / f'.latest-{os.getpid()}'
         link.unlink(missing_ok=True)
