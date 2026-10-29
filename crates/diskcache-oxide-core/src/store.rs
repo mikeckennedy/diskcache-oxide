@@ -474,7 +474,7 @@ impl Store {
     /// close (D-018).
     fn give_back(&self, gate: &SharedGuard<'_>, pooled: PooledConn) {
         if self.is_retired() {
-            drop(pooled);
+            self.pool.discard(gate, pooled);
             return;
         }
         // Checked again after the checkin: a release that retired the store in between cleared the
@@ -1349,6 +1349,7 @@ mod tests {
         store.release_handle();
         drop(lease);
         assert_eq!(store.pool.idle(&gate), 0, "a connection pooled on a store with no handles (D-018)");
+        assert_eq!(store.pool.checked_out(&gate), 0, "the closed connection is still counted as out");
     }
 
     #[test]

@@ -210,6 +210,23 @@ impl Pool {
         drop(surplus);
     }
 
+    /// Takes back a checked-out connection without pooling it: closes it (or forgets it, if it was
+    /// inherited across `fork()`), and stops counting it as checked out.
+    pub fn discard(&self, _gate: &SharedGuard<'_>, pooled: PooledConn) {
+        let current = gate::generation();
+        {
+            let mut state = self.shared.lock();
+            reset_if_stale(&mut state, current);
+            if pooled.generation != current {
+                pooled.forget();
+                return;
+            }
+            state.checked_out = state.checked_out.saturating_sub(1);
+        }
+        // Closed outside the pool's mutex, still under the caller's gate level.
+        drop(pooled);
+    }
+
     /// Keeps at least `max_idle` idle connections from now on.
     pub fn raise_max_idle(&self, max_idle: usize) {
         self.max_idle.fetch_max(max_idle, Ordering::Relaxed);
