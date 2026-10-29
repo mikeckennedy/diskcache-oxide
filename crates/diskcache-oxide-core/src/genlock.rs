@@ -55,7 +55,7 @@ fn state_now(word: u64, generation: u64) -> u64 {
 ///
 /// **Starvation:** a free lock goes to whoever takes it first, so a thread that releases it and
 /// asks again at once (a tight `set()` loop) can win every time against a waiter that polls. A
-/// waiter that has waited [`STARVE_AFTER`] counts itself in `starving`; while that's non-zero,
+/// waiter that has waited `STARVE_AFTER` counts itself in `starving`; while that's non-zero,
 /// [`WriteLock::try_lock`] refuses and fresh callers queue, so the lock goes to a starving waiter.
 /// Without this, a `clear()` (which yields between chunks) timed out behind one writer thread on
 /// free-threaded Linux.
@@ -125,7 +125,7 @@ impl WriteLock {
 
     /// [`WriteLock::lock_until`] for a caller that just stepped aside for waiting writers (a
     /// maintenance loop between chunks). It has already waited its turn, so it starves at once
-    /// instead of after [`STARVE_AFTER`]: otherwise a steady writer would cost `clear()` 20 ms per
+    /// instead of after `STARVE_AFTER`: otherwise a steady writer would cost `clear()` 20 ms per
     /// chunk.
     pub fn lock_until_with_priority(&self, deadline: Instant) -> Option<WriteToken<'_>> {
         self.lock_until_after(deadline, Duration::ZERO)

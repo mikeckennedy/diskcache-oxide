@@ -26,6 +26,9 @@ cargo clippy --all-targets --quiet -- -D warnings
 step 'cargo test'
 cargo test --quiet
 
+step 'cargo doc (warnings are errors)'
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --quiet
+
 step 'cargo deny check'
 cargo deny --log-level error check
 

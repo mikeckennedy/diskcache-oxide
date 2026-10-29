@@ -14,7 +14,7 @@
 //!
 //! # Locking
 //!
-//! The pool's mutex is only ever taken by a thread that holds the fork [gate](crate::gate) in shared
+//! The pool's mutex is only ever taken by a thread that holds the fork [gate] in shared
 //! mode (every method takes a [`SharedGuard`] as proof), or by the forking thread while it holds the
 //! gate exclusively. So at the moment of a fork no other thread can be inside it, and the child never
 //! inherits it locked. Checkout never waits for a connection: an empty pool opens a new one.

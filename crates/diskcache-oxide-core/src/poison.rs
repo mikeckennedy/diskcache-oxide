@@ -2,7 +2,7 @@
 //!
 //! A thread that holds a write transaction across calls (a *hold*) records the database's
 //! [`FileId`] here for as long as the transaction is open. When the process forks, the child copies
-//! every live hold into its poisoned set ([`poison_live_holds`], run by the after-fork hook in the
+//! every live hold into its poisoned set (`poison_live_holds`, run by the after-fork hook in the
 //! child). SQLite's per-process lock table, inherited by the child, still records those write
 //! locks, and releasing them in the child would corrupt the parent's transactions, so the child can
 //! never write to those databases. Write paths call [`check_writable`] and fail at once with

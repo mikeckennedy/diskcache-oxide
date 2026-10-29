@@ -463,7 +463,7 @@ pub struct ForkGuard {
 }
 
 impl ForkGuard {
-    /// Ends the fork in the parent: lets blocked threads in (they notice within [`WAITER_POLL`]).
+    /// Ends the fork in the parent: lets blocked threads in (they notice within `WAITER_POLL`).
     pub fn end_parent(mut self) {
         self.finish(false);
     }
