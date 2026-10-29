@@ -21,8 +21,9 @@ const LOW: u64 = 0xFFFF_FFFF;
 /// How often a blocked [`WriteLock::lock_until`] or [`Slots::acquire_until`] re-checks.
 const POLL: Duration = Duration::from_micros(50);
 
-/// How long a [`WriteLock::lock_until`] waiter competes on equal terms before it starves. From then
-/// on, threads that didn't wait can't barge in ahead of it. Waiters find a freed lock by polling,
+/// How long a [`WriteLock::lock_until`] waiter competes on equal terms before it starves (or half
+/// its time to the deadline, if that's sooner). From then on, threads that didn't wait can't barge
+/// in ahead of it. Waiters find a freed lock by polling,
 /// so the lock goes briefly idle at each fair hand-off, and starving must stay rare. At 1 ms (Go's
 /// `sync.Mutex` value, which hands off directly), a 99:1 mix at 8 threads on free-threaded Linux
 /// stayed in starvation mode and fell from about 740k to 175k ops/s. At 20 ms it's back to 741k,
@@ -137,7 +138,9 @@ impl WriteLock {
         // Both counts are guards, so a wait that unwinds (a panic out of the blocker) takes them back:
         // a stuck `starving` would make every `try_lock` fail.
         let _waiting = Counted::new(&self.waiters);
-        let starve_at = now() + starve_after;
+        // No later than halfway to the deadline, so a short timeout still gets its turn.
+        let start = now();
+        let starve_at = start + starve_after.min(deadline.saturating_duration_since(start) / 2);
         let mut starving = None;
         loop {
             // A starving waiter ignores the starving count (its own included); others defer to it.
@@ -408,6 +411,37 @@ mod tests {
         }
         assert_eq!(state_now(lock.starving.load(Ordering::Acquire), current()), 0);
         assert_eq!(lock.waiters(), 0);
+    }
+
+    #[test]
+    fn a_waiter_with_a_short_deadline_still_starves_in_time() {
+        // As above, with a deadline shorter than STARVE_AFTER (a `Cache(timeout=0.01)`): the waiter
+        // must start starving early enough to win the lock back before its deadline.
+        let lock = WriteLock::new();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let mut got = Vec::new();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    if let Some(token) = lock.lock_until(soon(10_000)) {
+                        let busy = Instant::now();
+                        while busy.elapsed() < Duration::from_micros(20) {
+                            std::hint::spin_loop();
+                        }
+                        drop(token);
+                    }
+                }
+            });
+            for _ in 0..50 {
+                while lock.state() == 0 {
+                    std::hint::spin_loop();
+                }
+                got.push(lock.lock_until(soon(10)).is_some());
+            }
+            stop.store(true, Ordering::Relaxed);
+        });
+        let lost = got.iter().filter(|g| !**g).count();
+        assert_eq!(lost, 0, "{lost} of 50 waits with a 10 ms deadline timed out");
     }
 
     #[test]
