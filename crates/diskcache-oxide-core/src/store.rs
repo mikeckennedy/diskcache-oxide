@@ -16,16 +16,20 @@
 //! # Registry
 //!
 //! Stores are found by the database file's `(st_dev, st_ino)`. Each `Store` keeps one fd open on
-//! its database file for its whole life, so that inode can't be reused by a file recreated in the
-//! same process. The registry holds `Weak` references; dead entries are pruned when a store is
-//! inserted, never in `Drop`. The registry mutex is only taken under the gate, so a child never
-//! inherits it locked. Across `fork()`, the `Store` is reset in place: its pool, write lock and slot
-//! counter all recognize the new [process generation](crate::gate::generation).
+//! its database file while it has handles, so that inode can't be reused by a file recreated in
+//! the same process. When its last handle closes it is *retired*: it releases that fd, and is only
+//! handed out again (revived) to a handle on the same directory and the same file. Handles are
+//! registered and the last release is decided under the registry mutex, so an open never joins a
+//! store that's being retired, and a file never has two live stores. The registry holds `Weak`
+//! references; dead entries are pruned when a store is inserted, never in `Drop`. The registry
+//! mutex is only taken under the gate, so a child never inherits it locked. Across `fork()`, the
+//! `Store` is reset in place: its pool, write lock and slot counter all recognize the new
+//! [process generation](crate::gate::generation).
 
 use std::fs::File;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
@@ -88,10 +92,13 @@ pub struct OpenOptions {
 #[derive(Debug)]
 pub struct Store {
     directory: PathBuf,
+    /// `directory` resolved (symlinks, `..`, relative paths), for matching a retired store to a
+    /// later open of the same directory however it's spelled. Falls back to `directory`.
+    canonical: PathBuf,
     file_id: FileId,
     /// Held open so the inode stays reserved while any handle is open. Released when the last
-    /// handle closes (D-018: nothing left open); the store is then `retired` from the registry, so a
-    /// later open of the directory gets a fresh store even if the inode number has been reused.
+    /// handle closes (D-018: nothing left open); the store is then `retired`, and the registry only
+    /// revives it for the same directory, since the inode number may since have been reused.
     pin: Mutex<Option<File>>,
     retired: AtomicBool,
     pool: Pool,
@@ -109,8 +116,8 @@ pub struct Store {
     auto_checkpoint: AtomicBool,
     /// The `-wal` file, computed once: the WAL check runs after every write.
     wal_path: PathBuf,
-    /// Open handles. The pool drains when the last one closes.
-    handles: AtomicUsize,
+    /// Open handles. The pool drains when the last one closes. Signed: see [`Store::count_handle`].
+    handles: AtomicIsize,
     /// Cached copies of the persisted limits, for the attribute getters only. Write paths read the
     /// current values inside their transaction.
     size_limit: AtomicI64,
@@ -165,12 +172,16 @@ impl Store {
         })?;
         let pin = File::open(&db_path).map_err(|source| Error::Io { path: db_path.clone(), source })?;
         let file_id = file_id(&pin, &db_path)?;
+        let canonical = std::fs::canonicalize(&options.directory).unwrap_or_else(|_| options.directory.clone());
 
         let gate = GATE.enter_shared();
         let mut stores = registry(&gate);
-        if let Some(existing) =
-            stores.iter().filter_map(Weak::upgrade).find(|s| s.file_id == file_id && !s.is_retired())
-        {
+        // A live store for this file, or a retired one that a closed handle still holds: join it
+        // (reviving a retired one), so a file never has two stores, and two write locks, at once.
+        if let Some(existing) = Self::find(&stores, file_id, &canonical) {
+            if existing.claim(&stores, Some(pin)) {
+                existing.cache_limits(limits);
+            }
             drop(stores);
             drop(conn);
             drop(gate);
@@ -179,6 +190,7 @@ impl Store {
         }
         let store = Arc::new(Self {
             directory: options.directory.clone(),
+            canonical,
             file_id,
             pin: Mutex::new(Some(pin)),
             retired: AtomicBool::new(false),
@@ -191,7 +203,7 @@ impl Store {
             wal: crate::wal::WalState::new(),
             auto_checkpoint: AtomicBool::new(options.auto_checkpoint),
             wal_path: db_path.with_extension("sqlite-wal"),
-            handles: AtomicUsize::new(1),
+            handles: AtomicIsize::new(1),
             size_limit: AtomicI64::new(limits.size_limit),
             cull_limit: AtomicI64::new(limits.cull_limit),
             pinned: Mutex::new(None),
@@ -206,23 +218,94 @@ impl Store {
         Ok(store)
     }
 
+    /// A live store for `db_path`, with one more handle registered on it. A retired one is left to
+    /// the slow path, which has the pinned file to revive it with.
     fn lookup(db_path: &Path) -> Option<Arc<Self>> {
         let metadata = std::fs::metadata(db_path).ok()?;
         let id = (metadata.dev(), metadata.ino());
         let gate = GATE.enter_shared();
-        registry(&gate).iter().filter_map(Weak::upgrade).find(|s| s.file_id == id && !s.is_retired())
+        let stores = registry(&gate);
+        let store = stores.iter().filter_map(Weak::upgrade).find(|s| s.file_id == id && !s.is_retired())?;
+        store.claim(&stores, None);
+        Some(store)
     }
 
-    /// Registers another handle: raises the connection cap if asked, and applies explicitly
-    /// requested settings, writing only if they differ from what's stored.
+    /// The store for `file_id` in `stores`: a live one, else a retired one for the same directory
+    /// (`canonical`, resolved). A retired store no longer pins its inode, so a file elsewhere may
+    /// have reused the number; only the same directory makes it the same cache.
+    fn find(stores: &[Weak<Self>], file_id: FileId, canonical: &Path) -> Option<Arc<Self>> {
+        let mut retired = None;
+        for store in stores.iter().filter_map(Weak::upgrade).filter(|s| s.file_id == file_id) {
+            if !store.is_retired() {
+                return Some(store);
+            }
+            // Prefer one still in use by path (handles > 0), so it isn't left serving the file
+            // beside another.
+            let in_use = |s: &Arc<Self>| s.handles.load(Ordering::Acquire) > 0;
+            if store.canonical == canonical && !retired.as_ref().is_some_and(in_use) {
+                retired = Some(store);
+            }
+        }
+        retired
+    }
+
+    /// Registers one more handle (`delta` = 1) or releases one (`delta` = -1), and decides from the
+    /// resulting count whether the store is live. Called with the registry locked (`stores` is the
+    /// proof), so registering and the last release never interleave.
+    ///
+    /// The count is signed and the decision depends only on where it lands, so the order of a
+    /// handle's own add and release doesn't matter: a Python handle reused on one thread while it's
+    /// closed on another may release before it adds (the count dips to -1), and the store still
+    /// ends up retired with no handles. A store that goes from no handles to some is revived with
+    /// `pin` (its database file, freshly opened), unless another live store already serves that
+    /// file (the same directory reached by another path while this one was retired): then it stays
+    /// retired and keeps working by path (without pooling: each operation reconnects). With other
+    /// handles live, a release that lands first can retire the store for a moment (pin released,
+    /// pool cleared) until the matching add revives it. Returns whether it was revived, and the pin
+    /// it gave up if it retired (to be closed outside the registry).
+    fn count_handle(
+        &self,
+        stores: &MutexGuard<'_, Vec<Weak<Self>>>,
+        delta: isize,
+        pin: Option<File>,
+    ) -> (bool, Option<File>) {
+        let after = self.handles.fetch_add(delta, Ordering::AcqRel) + delta;
+        let mut slot = self.pin.lock().unwrap_or_else(PoisonError::into_inner);
+        if after <= 0 {
+            self.retired.store(true, Ordering::Release);
+            return (false, slot.take());
+        }
+        if !self.is_retired() {
+            return (false, None);
+        }
+        let other_live = stores
+            .iter()
+            .filter_map(Weak::upgrade)
+            .any(|s| !std::ptr::eq(Arc::as_ptr(&s), self) && s.file_id == self.file_id && !s.is_retired());
+        let Some(pin) = pin.filter(|_| !other_live) else {
+            return (false, None);
+        };
+        *slot = Some(pin);
+        self.retired.store(false, Ordering::Release);
+        (true, None)
+    }
+
+    /// Registers one more handle; see [`Store::count_handle`]. Returns whether it revived the store.
+    fn claim(&self, stores: &MutexGuard<'_, Vec<Weak<Self>>>, pin: Option<File>) -> bool {
+        self.count_handle(stores, 1, pin).0
+    }
+
+    /// Applies a joining handle's settings (its handle is already registered by [`Store::claim`]):
+    /// raises the connection cap if asked, and applies explicitly requested settings, writing only
+    /// if they differ from what's stored. On failure the handle is released again.
     fn join(&self, options: &OpenOptions) -> Result<()> {
         self.max_connections.fetch_max(options.max_connections, Ordering::AcqRel);
+        self.pool.raise_max_idle(usize::try_from(options.max_connections).unwrap_or(usize::MAX));
         self.cache_pages.fetch_max(options.cache_pages, Ordering::AcqRel);
         self.wal_size_limit.fetch_max(options.wal_size_limit, Ordering::AcqRel);
         if options.auto_checkpoint {
             self.auto_checkpoint.store(true, Ordering::Release);
         }
-        self.handles.fetch_add(1, Ordering::AcqRel);
         if options.requested == Requested::default() {
             return Ok(());
         }
@@ -247,26 +330,55 @@ impl Store {
                 Ok(())
             }
             Err(error) => {
-                self.handles.fetch_sub(1, Ordering::AcqRel);
+                self.release_handle();
                 Err(error)
             }
         }
     }
 
-    /// Registers one more handle (a closed handle that's used again rejoins its store).
+    /// Registers one more handle (a closed handle that's used again rejoins its store). A retired
+    /// store is revived if its database file is still the one it was opened on; otherwise it stays
+    /// retired and keeps working by path, and a new open of the directory gets a new store.
     pub fn add_handle(&self) {
-        self.handles.fetch_add(1, Ordering::AcqRel);
+        // Opened before taking the registry, which never waits on I/O.
+        let db_path = open::db_path(&self.directory);
+        let pin = File::open(&db_path).ok().filter(|f| file_id(f, &db_path).is_ok_and(|id| id == self.file_id));
+        let gate = GATE.enter_shared();
+        let stores = registry(&gate);
+        self.claim(&stores, pin);
     }
 
-    /// Unregisters a handle. When the last one closes, every pooled connection is closed (D-018).
-    /// The store itself stays usable: a later operation reopens connections.
+    /// Unregisters a handle. When the last one closes, every pooled connection is closed (D-018),
+    /// and the store is retired: it stops pinning its file, and the registry only hands it out
+    /// again to a handle on the same directory and file. The store itself stays usable: a later
+    /// operation reopens connections.
     pub fn release_handle(&self) {
-        if self.handles.fetch_sub(1, Ordering::AcqRel) == 1 {
-            let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared();
+        // Decided under the registry, like `claim`: an open that finds this store either registers
+        // its handle first (and this isn't the last), or finds it retired.
+        let stores = registry(&gate);
+        let (_, unpinned) = self.count_handle(&stores, -1, None);
+        let retired = self.is_retired();
+        drop(stores);
+        drop(unpinned);
+        if retired {
             self.pool.clear(&gate);
-            drop(gate);
-            self.retired.store(true, Ordering::Release);
-            self.pin.lock().unwrap_or_else(PoisonError::into_inner).take();
+        }
+    }
+
+    /// Returns a leased connection: to the pool, or closed if the store is retired (a lease or a
+    /// held transaction that outlived the last handle), so nothing stays open after the last
+    /// close (D-018).
+    fn give_back(&self, gate: &SharedGuard<'_>, pooled: PooledConn) {
+        if self.is_retired() {
+            drop(pooled);
+            return;
+        }
+        // Checked again after the checkin: a release that retired the store in between cleared the
+        // pool either before this checkin (then this clears it) or after (then it already did).
+        self.pool.checkin(gate, pooled);
+        if self.is_retired() {
+            self.pool.clear(gate);
         }
     }
 
@@ -675,7 +787,7 @@ impl Store {
                 crate::wal::autocheckpoint_pages(wal_limit),
             ));
             if let Err(error) = set {
-                self.pool.checkin(gate, pooled);
+                self.give_back(gate, pooled);
                 return Err(Error::from_sqlite(error, timeout));
             }
             pooled.set_applied(applied);
@@ -751,7 +863,7 @@ impl Lease<'_, '_> {
 impl Drop for Lease<'_, '_> {
     fn drop(&mut self) {
         if let Some(pooled) = self.pooled.take() {
-            self.store.pool.checkin(self.gate, pooled);
+            self.store.give_back(self.gate, pooled);
         }
     }
 }
@@ -792,7 +904,7 @@ impl HeldTransaction {
                     // Leave no half-open transaction on a pooled connection.
                     let _ = p.conn.conn().execute_batch("ROLLBACK");
                 }
-                self.store.pool.checkin(&gate, p.conn);
+                self.store.give_back(&gate, p.conn);
                 outcome
             }
             Some(inherited) => {
@@ -913,8 +1025,8 @@ mod tests {
     fn the_connection_cap_holds_under_load() {
         let tmp = TempDir::new("store-cap");
         let store = Store::open(&OpenOptions { max_connections: 2, ..options(tmp.path()) }).unwrap();
-        let peak = AtomicUsize::new(0);
-        let live = AtomicUsize::new(0);
+        let peak = std::sync::atomic::AtomicUsize::new(0);
+        let live = std::sync::atomic::AtomicUsize::new(0);
         std::thread::scope(|s| {
             for _ in 0..8 {
                 s.spawn(|| {
@@ -953,6 +1065,122 @@ mod tests {
         drop(gate);
         // Still usable afterwards: a later operation reopens a connection.
         assert_eq!(count(&b), 1);
+    }
+
+    #[test]
+    fn a_closed_store_still_held_is_revived_instead_of_duplicated() {
+        // A closed Python handle keeps its Arc<Store>. An open of the same directory after the last
+        // close must revive that store, not create a second one with its own write lock.
+        let tmp = TempDir::new("store-revive");
+        let first = Store::open(&options(tmp.path())).unwrap();
+        put(&first, "k", b"v");
+        first.release_handle();
+        assert!(first.is_retired());
+        let second = Store::open(&options(tmp.path())).unwrap();
+        assert!(Arc::ptr_eq(&first, &second), "a second store for the same file");
+        assert!(!first.is_retired());
+        // And the closed handle rejoining finds the same store too, and keeps it live.
+        second.release_handle();
+        first.add_handle();
+        assert!(!first.is_retired(), "a rejoining handle revives its store");
+        let third = Store::open(&options(tmp.path())).unwrap();
+        assert!(Arc::ptr_eq(&first, &third));
+        assert_eq!(first.handles.load(Ordering::Acquire), 2);
+        third.release_handle();
+        first.release_handle();
+    }
+
+    #[test]
+    fn racing_opens_and_closes_never_make_two_stores_for_one_file() {
+        let tmp = TempDir::new("store-race");
+        let keeper = Store::open(&options(tmp.path())).unwrap();
+        keeper.release_handle(); // Retired, but held: every open below must get this store back.
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    for _ in 0..200 {
+                        let store = Store::open(&options(tmp.path())).unwrap();
+                        assert!(Arc::ptr_eq(&store, &keeper), "an open got a second store for the file");
+                        store.release_handle();
+                    }
+                });
+            }
+        });
+        assert_eq!(keeper.handles.load(Ordering::Acquire), 0);
+        assert!(keeper.is_retired());
+        assert!(keeper.pin.lock().unwrap().is_none());
+        let gate = GATE.enter_shared();
+        assert_eq!(keeper.pool.idle(&gate), 0);
+    }
+
+    #[test]
+    fn a_retired_store_is_only_found_for_its_own_directory() {
+        let tmp = TempDir::new("store-retired-other");
+        let first = Store::open(&options(tmp.path())).unwrap();
+        first.release_handle();
+        let stores = [Arc::downgrade(&first)];
+        let elsewhere = tmp.path().join("elsewhere");
+        assert!(Store::find(&stores, first.file_id, &elsewhere).is_none(), "an inode number reused elsewhere");
+        assert!(Store::find(&stores, first.file_id, &first.canonical).is_some());
+    }
+
+    #[test]
+    fn the_same_directory_by_another_path_revives_the_same_store() {
+        let tmp = TempDir::new("store-alias");
+        let first = Store::open(&options(tmp.path())).unwrap();
+        first.release_handle();
+        let alias = tmp.path().join("sub").join("..");
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let second = Store::open(&options(&alias)).unwrap();
+        assert!(Arc::ptr_eq(&first, &second), "a second store for the same directory under another path");
+        second.release_handle();
+    }
+
+    #[test]
+    fn a_reused_handle_never_revives_its_store_beside_another_live_one() {
+        // A hard link gives the same file two directories, so `canonical` can't fold them together:
+        // a closed handle on the first must not come back live next to the second's store.
+        let tmp = TempDir::new("store-hardlink");
+        let (d1, d2) = (tmp.path().join("one"), tmp.path().join("two"));
+        let first = Store::open(&options(&d1)).unwrap();
+        first.release_handle();
+        std::fs::create_dir(&d2).unwrap();
+        std::fs::hard_link(open::db_path(&d1), open::db_path(&d2)).unwrap();
+        let second = Store::open(&options(&d2)).unwrap();
+        assert!(!Arc::ptr_eq(&first, &second));
+        first.add_handle();
+        assert!(first.is_retired(), "two live stores for one file");
+        assert!(first.pin.lock().unwrap().is_none());
+        assert!(!second.is_retired());
+        first.release_handle();
+        second.release_handle();
+    }
+
+    #[test]
+    fn a_release_that_lands_before_its_add_still_leaves_the_store_retired() {
+        // A Python handle reused on one thread while another closes it: the release can come first.
+        let tmp = TempDir::new("store-order");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        store.release_handle(); // Closed: retired, no handles.
+        store.release_handle(); // The racing close's release lands first: -1.
+        store.add_handle(); // Then the reuse's add: back to 0.
+        assert_eq!(store.handles.load(Ordering::Acquire), 0);
+        assert!(store.is_retired(), "revived with no handles");
+        assert!(store.pin.lock().unwrap().is_none(), "the file stays pinned with no handles");
+        store.add_handle();
+        assert!(!store.is_retired());
+        store.release_handle();
+    }
+
+    #[test]
+    fn a_lease_returned_after_the_last_close_is_closed_not_pooled() {
+        let tmp = TempDir::new("store-late-lease");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let gate = GATE.enter_shared();
+        let lease = store.lease(&gate, T).unwrap();
+        store.release_handle();
+        drop(lease);
+        assert_eq!(store.pool.idle(&gate), 0, "a connection pooled on a store with no handles (D-018)");
     }
 
     #[test]

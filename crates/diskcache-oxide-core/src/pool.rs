@@ -13,6 +13,7 @@
 //! gate exclusively. So at the moment of a fork no other thread can be inside it, and the child never
 //! inherits it locked. Checkout never waits for a connection: an empty pool opens a new one.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError, Weak};
 
 use rusqlite::Connection;
@@ -118,7 +119,8 @@ pub(crate) fn quiesce_all() {
 #[derive(Debug)]
 pub struct Pool {
     shared: Arc<PoolShared>,
-    max_idle: usize,
+    /// Idle connections kept; raised (never lowered) when a handle asks for more connections.
+    max_idle: AtomicUsize,
 }
 
 impl Pool {
@@ -131,7 +133,7 @@ impl Pool {
         pools.retain(|weak| weak.strong_count() > 0);
         pools.push(Arc::downgrade(&shared));
         drop(pools);
-        Self { shared, max_idle }
+        Self { shared, max_idle: AtomicUsize::new(max_idle) }
     }
 
     /// An idle connection of the current generation, or a new one from `connect`.
@@ -173,7 +175,7 @@ impl Pool {
                 return;
             }
             state.checked_out = state.checked_out.saturating_sub(1);
-            if state.idle.len() < self.max_idle {
+            if state.idle.len() < self.max_idle.load(Ordering::Relaxed) {
                 state.idle.push(pooled);
                 None
             } else {
@@ -182,6 +184,11 @@ impl Pool {
         };
         // Closed outside the pool's mutex, still under the caller's gate level.
         drop(surplus);
+    }
+
+    /// Keeps at least `max_idle` idle connections from now on.
+    pub fn raise_max_idle(&self, max_idle: usize) {
+        self.max_idle.fetch_max(max_idle, Ordering::Relaxed);
     }
 
     /// Closes every idle connection (forgetting any inherited across `fork()`).
@@ -256,6 +263,19 @@ mod tests {
         pool.checkin(&gate, c);
         assert_eq!((pool.checked_out(&gate), pool.idle(&gate)), (0, 2), "the surplus connection is closed");
         let _again = pool.checkout(&gate, || panic!("should reuse an idle connection")).unwrap();
+    }
+
+    #[test]
+    fn a_raised_idle_limit_keeps_more_connections() {
+        let gate = GATE.enter_shared();
+        let pool = Pool::new(&gate, 1);
+        pool.raise_max_idle(3);
+        pool.raise_max_idle(2); // Never lowered.
+        let conns: Vec<_> = (0..4).map(|_| pool.checkout(&gate, memory).unwrap()).collect();
+        for pooled in conns {
+            pool.checkin(&gate, pooled);
+        }
+        assert_eq!(pool.idle(&gate), 3);
     }
 
     #[test]
