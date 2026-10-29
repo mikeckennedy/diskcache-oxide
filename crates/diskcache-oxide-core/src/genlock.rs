@@ -118,36 +118,32 @@ impl WriteLock {
         if let Some(token) = self.try_lock() {
             return Some(token);
         }
-        Self::add(&self.waiters, 1);
+        // Both counts are guards, so a wait that unwinds (a panic out of the blocker) takes them back:
+        // a stuck `starving` would make every `try_lock` fail.
+        let _waiting = Counted::new(&self.waiters);
         let starve_at = Instant::now() + starve_after;
-        let mut starving = false;
-        let token = loop {
+        let mut starving = None;
+        loop {
             // A starving waiter ignores the starving count (its own included); others defer to it.
-            let token = if starving { self.take() } else { self.try_lock() };
+            let token = if starving.is_some() { self.take() } else { self.try_lock() };
             if token.is_some() || Instant::now() >= deadline {
-                break token;
+                return token;
             }
-            if !starving && Instant::now() >= starve_at {
-                starving = true;
-                Self::add(&self.starving, 1);
+            if starving.is_none() && Instant::now() >= starve_at {
+                starving = Some(Counted::new(&self.starving));
                 continue;
             }
             // Sleep with the interpreter released until the lock looks free, the deadline passes,
             // or it's time to start starving. The blocker can't hand a token out of its `Fn`, so
             // the next turn of the loop takes it.
-            let until = if starving { deadline } else { deadline.min(starve_at) };
+            let until = if starving.is_some() { deadline } else { deadline.min(starve_at) };
             gate::run_blocking(&|| {
                 std::thread::sleep(POLL);
                 while self.state() != 0 && Instant::now() < until {
                     std::thread::sleep(POLL);
                 }
             });
-        };
-        if starving {
-            Self::add(&self.starving, -1);
         }
-        Self::add(&self.waiters, -1);
-        token
     }
 
     /// Threads currently waiting in [`WriteLock::lock_until`] (in this process generation).
@@ -160,14 +156,40 @@ impl WriteLock {
     fn state(&self) -> u64 {
         state_now(self.word.load(Ordering::Acquire), current())
     }
+}
 
-    fn add(counter: &AtomicU64, delta: i64) {
+/// One count in a waiter counter ([`WriteLock`]'s `waiters` or `starving`), taken back on drop, so
+/// a wait that unwinds can't leave it raised. Keep it bound to a named variable (`let _ =` drops it
+/// at once). A forked child inherits a raised count but no guard, and reads it as 0. A guard only
+/// sees an older generation if its own thread forked mid-wait, which the gate rules out, so that
+/// check is defensive, as in [`SlotPermit`].
+struct Counted<'a> {
+    counter: &'a AtomicU64,
+    generation: u64,
+}
+
+impl<'a> Counted<'a> {
+    fn new(counter: &'a AtomicU64) -> Self {
         let generation = current();
         let _ = counter.try_update(Ordering::AcqRel, Ordering::Acquire, |word| {
-            let count = state_now(word, generation);
-            Some(pack(generation, count.saturating_add_signed(delta)))
+            Some(pack(generation, state_now(word, generation).saturating_add(1)))
         });
+        Self { counter, generation }
     }
+}
+
+impl Drop for Counted<'_> {
+    fn drop(&mut self) {
+        release_one(self.counter, self.generation);
+    }
+}
+
+/// Takes one off `counter` if its value is still from `generation`; an older generation's count
+/// (inherited across `fork()`) never included this one.
+fn release_one(counter: &AtomicU64, generation: u64) {
+    let _ = counter.try_update(Ordering::AcqRel, Ordering::Acquire, |word| {
+        (word >> 32 == generation).then(|| pack(generation, (word & LOW).saturating_sub(1)))
+    });
 }
 
 impl WriteToken<'_> {
@@ -255,12 +277,9 @@ impl Slots {
 
 impl Drop for SlotPermit<'_> {
     fn drop(&mut self) {
-        let generation = self.generation;
-        let _ = self.slots.word.try_update(Ordering::AcqRel, Ordering::Acquire, |word| {
-            // A permit from an older generation was inherited across fork(): the child's count
-            // never included it, so there's nothing to release.
-            (word >> 32 == generation).then(|| pack(generation, (word & LOW).saturating_sub(1)))
-        });
+        // A permit from an older generation was inherited across fork(): the child's count never
+        // included it, so there's nothing to release.
+        release_one(&self.slots.word, self.generation);
     }
 }
 
@@ -386,6 +405,33 @@ mod tests {
         let token = lock.try_lock().expect("a parent's hold is free in the child");
         assert!(lock.try_lock().is_none());
         drop(token);
+    }
+
+    #[test]
+    fn a_wait_that_unwinds_takes_its_counts_back() {
+        // Exercises the guards directly: the blocker is a process-wide `OnceLock`, so a test can't
+        // install one that panics inside `lock_until`.
+        let lock = WriteLock::new();
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _waiting = Counted::new(&lock.waiters);
+            let _starving = Counted::new(&lock.starving);
+            assert_eq!(lock.waiters(), 1);
+            assert!(lock.try_lock().is_none(), "a starving waiter must hold off try_lock");
+            panic!("the blocker unwound");
+        }));
+        assert!(unwound.is_err());
+        assert_eq!(lock.waiters(), 0);
+        assert!(lock.try_lock().is_some(), "a starving count leaked by the unwind blocks try_lock");
+    }
+
+    #[test]
+    fn a_count_inherited_across_fork_releases_nothing_in_the_child() {
+        let lock = WriteLock::new();
+        let older = current().wrapping_sub(1) & LOW;
+        let inherited = Counted { counter: &lock.waiters, generation: older };
+        let _mine = Counted::new(&lock.waiters);
+        drop(inherited);
+        assert_eq!(lock.waiters(), 1, "a parent's waiter took a count off the child's");
     }
 
     #[test]
