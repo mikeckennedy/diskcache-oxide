@@ -6,6 +6,25 @@
 
 display_name: diskcache-oxide
 
+# The original logo has dark strokes; the -dark navbar copy lightens them so they show on
+# the dark theme. The orange block is unchanged.
+logo:
+  light: assets/diskcache-oxide-logo.png
+  dark: assets/diskcache-oxide-logo-dark.png
+  alt: diskcache-oxide
+  show_title: true
+favicon: assets/diskcache-oxide-logo.png
+
+hero:
+  enabled: true
+  logo: assets/diskcache-oxide-slogan.jpg
+  logo_height: 220px
+
+social_cards:
+  # Absolute: with a relative path, great-docs 0.13.0 points og:image at the site root, where
+  # the image is never published (404).
+  image: https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg
+
 module: diskcache_oxide
 parser: google
 dynamic: false

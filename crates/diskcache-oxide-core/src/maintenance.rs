@@ -279,6 +279,7 @@ mod tests {
             max_connections: DEFAULT_MAX_CONNECTIONS,
             cache_pages: DEFAULT_CACHE_PAGES,
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
+            auto_checkpoint: false,
         })
         .unwrap()
     }
@@ -374,6 +375,7 @@ mod tests {
             max_connections: DEFAULT_MAX_CONNECTIONS,
             cache_pages: DEFAULT_CACHE_PAGES,
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
+            auto_checkpoint: false,
         })
         .unwrap();
         let blob = vec![1u8; 30_000];

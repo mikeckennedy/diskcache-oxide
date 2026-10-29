@@ -133,6 +133,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.checkpoint.html</loc>
+    <lastmod>2026-10-28</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.clear.html</loc>
     <lastmod>2026-10-28</lastmod>
     <changefreq>monthly</changefreq>
@@ -296,6 +302,12 @@
   </url>
   <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.add.html</loc>
+    <lastmod>2026-10-28</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.checkpoint.html</loc>
     <lastmod>2026-10-28</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -488,6 +500,12 @@
   </url>
   <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.add.html</loc>
+    <lastmod>2026-10-28</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.checkpoint.html</loc>
     <lastmod>2026-10-28</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>

@@ -200,7 +200,8 @@ class Soak:
     # -- chaos --------------------------------------------------------------------------------
 
     def chaos(self) -> None:
-        action = self.rng.choice(['kill', 'kill', 'fork', 'fork', 'clear', 'expire', 'cull'])
+        # 'checkpoint' is the cookbook pattern for long-running apps: call Cache.checkpoint() now and then.
+        action = self.rng.choice(['kill', 'kill', 'fork', 'fork', 'clear', 'expire', 'cull', 'checkpoint'])
         if action == 'kill':
             victims = [w for w in self.workers.values() if not w.long_lived]
             if victims:

@@ -4,5 +4,5 @@
 Usage
 
 ``` python
-NullCache.close()
+NullCache.close(checkpoint=True)
 ```

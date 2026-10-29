@@ -65,6 +65,7 @@ class NullCache:
         max_connections: int = 8,
         sqlite_cache_size: int | None = None,
         wal_size_limit: int | None = None,
+        wal_checkpoint: Literal['manual', 'auto'] = 'manual',
         invalidate: CacheLike | None = None,
     ) -> None:
         _check_seconds('timeout', timeout)
@@ -129,6 +130,10 @@ class NullCache:
     def volume(self) -> int:
         return 0
 
+    def checkpoint(self, timeout: float | None = None) -> bool:
+        # No write-ahead log to reset.
+        return True
+
     # -- writes: succeed, then expire instantly ---------------------------------------------------
 
     def set(self, key: str, value: Any, expire: float | None = None) -> bool:
@@ -192,7 +197,7 @@ class NullCache:
     def cull(self) -> int:
         return 0
 
-    def close(self) -> None:
+    def close(self, *, checkpoint: bool = True) -> None:
         # Never closes the `invalidate=` cache: it belongs to whoever created it.
         pass
 

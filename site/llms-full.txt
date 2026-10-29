@@ -8,7 +8,7 @@ This is the API documentation for the diskcache_oxide library.
 Disk-backed cache backed by SQLite, shared safely across threads and processes.
 
 
-Cache(directory, timeout=None, *, size_limit=None, cull_limit=None, serializer='msgpack', pickle=False, clock=None, max_connections=None, sqlite_cache_size=None, wal_size_limit=None)
+Cache(directory, timeout=None, *, size_limit=None, cull_limit=None, serializer='msgpack', pickle=False, clock=None, max_connections=None, sqlite_cache_size=None, wal_size_limit=None, wal_checkpoint='manual')
 
 A disk cache backed by SQLite, shared safely across threads and processes.
 
@@ -64,10 +64,18 @@ it removed.
 
 volume(self, /)
 
-close(self, /)
+checkpoint(self, /)
+
+Checkpoints the write-ahead log and truncates it to zero (D-024), retrying until `timeout`.
+True if the WAL was reset; False if readers or writers in other processes kept it busy.
+
+close(self, /, checkpoint=True)
 
 Releases this handle. When the last handle on a directory closes, every connection closes
 (D-018). Using the cache again afterwards reopens it, as diskcache does.
+Closes this handle. With `checkpoint` (the default), a WAL left larger than its trim size
+(half of `wal_size_limit`) is checkpointed first, waiting at most 1 s (D-024). A small WAL,
+the usual case, costs nothing extra.
 
 __getitem__(self, key, /)
 
@@ -107,7 +115,7 @@ __exit__(self, exc_type, exc, tb, /)
 Switched-off cache behaving as if every entry expires instantly.
 
 
-NullCache(directory: 'str | os.PathLike[str] | None' = None, timeout: 'float' = 60.0, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, serializer: "Literal['msgpack', 'json']" = 'msgpack', pickle: 'bool' = False, clock: 'Callable[[], float] | None' = None, max_connections: 'int' = 8, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, invalidate: 'CacheLike | None' = None) -> 'None'
+NullCache(directory: 'str | os.PathLike[str] | None' = None, timeout: 'float' = 60.0, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, serializer: "Literal['msgpack', 'json']" = 'msgpack', pickle: 'bool' = False, clock: 'Callable[[], float] | None' = None, max_connections: 'int' = 8, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', invalidate: 'CacheLike | None' = None) -> 'None'
 
 A switched-off cache. See the module docstring for the rule every method follows.
 
@@ -150,6 +158,8 @@ __iter__(self) -> 'Iterator[str]'
 
 volume(self) -> 'int'
 
+checkpoint(self) -> 'bool'
+
 set(self, key: 'str', value: 'Any', expire: 'float | None' = None) -> 'bool'
 
 __setitem__(self, key: 'str', value: 'Any') -> 'None'
@@ -176,7 +186,7 @@ expire(self) -> 'int'
 
 cull(self) -> 'int'
 
-close(self) -> 'None'
+close(self, checkpoint: 'bool' = True) -> 'None'
 
 __enter__(self) -> 'Self'
 
@@ -224,7 +234,9 @@ cull(self) -> 'int'
 
 volume(self) -> 'int'
 
-close(self) -> 'None'
+checkpoint(self) -> 'bool'
+
+close(self, checkpoint: 'bool' = True) -> 'None'
 
 __getitem__(self, key: 'str') -> 'Any'
 

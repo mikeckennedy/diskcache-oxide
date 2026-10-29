@@ -180,8 +180,17 @@ impl WalState {
         if bytes <= limit || now < self.next_attempt_ms.load(Ordering::Relaxed) {
             return Decision::Nothing;
         }
-        self.attempts.fetch_add(1, Ordering::Relaxed);
         Decision::Checkpoint
+    }
+
+    /// True while backing off after a busy or failed attempt.
+    pub(crate) fn in_backoff(&self) -> bool {
+        self.now_ms() < self.next_attempt_ms.load(Ordering::Relaxed)
+    }
+
+    /// Counts a forced checkpoint attempt (automatic, explicit or on close).
+    pub(crate) fn note_attempt(&self) {
+        self.attempts.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Records a forced checkpoint's outcome and how long each step took.
@@ -261,6 +270,7 @@ mod tests {
     fn over_the_limit_checkpoints_and_a_busy_one_backs_off() {
         let state = WalState::new();
         assert_eq!(state.after_commit(100, || 200), Decision::Checkpoint);
+        state.note_attempt();
         state.record(&Outcome::Busy, Duration::from_micros(5), Duration::ZERO);
         // Next look (forced by the commit count) is still over the limit, but inside the backoff.
         for _ in 0..CHECK_EVERY_COMMITS - 1 {

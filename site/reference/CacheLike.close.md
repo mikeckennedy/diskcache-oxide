@@ -4,5 +4,5 @@
 Usage
 
 ``` python
-CacheLike.close()
+CacheLike.close(checkpoint=True)
 ```

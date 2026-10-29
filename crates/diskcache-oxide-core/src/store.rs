@@ -79,6 +79,9 @@ pub struct OpenOptions {
     pub cache_pages: u64,
     /// The WAL file's size limit in bytes (`wal_size_limit`, see [`crate::wal`]).
     pub wal_size_limit: u64,
+    /// Run forced checkpoints after writes once the WAL is over the limit (`wal_checkpoint="auto"`).
+    /// Off by default: checkpoints run on [`Store::checkpoint`] and, without waiting, on close.
+    pub auto_checkpoint: bool,
 }
 
 /// One database file's shared state. See the module docs.
@@ -102,6 +105,8 @@ pub struct Store {
     /// The largest `wal_size_limit` any handle on this store asked for (see [`crate::wal`]).
     wal_size_limit: AtomicU64,
     wal: crate::wal::WalState,
+    /// Whether any handle asked for `wal_checkpoint="auto"`.
+    auto_checkpoint: AtomicBool,
     /// The `-wal` file, computed once: the WAL check runs after every write.
     wal_path: PathBuf,
     /// Open handles. The pool drains when the last one closes.
@@ -184,6 +189,7 @@ impl Store {
             cache_pages: AtomicU64::new(options.cache_pages),
             wal_size_limit: AtomicU64::new(options.wal_size_limit),
             wal: crate::wal::WalState::new(),
+            auto_checkpoint: AtomicBool::new(options.auto_checkpoint),
             wal_path: db_path.with_extension("sqlite-wal"),
             handles: AtomicUsize::new(1),
             size_limit: AtomicI64::new(limits.size_limit),
@@ -213,6 +219,9 @@ impl Store {
         self.max_connections.fetch_max(options.max_connections, Ordering::AcqRel);
         self.cache_pages.fetch_max(options.cache_pages, Ordering::AcqRel);
         self.wal_size_limit.fetch_max(options.wal_size_limit, Ordering::AcqRel);
+        if options.auto_checkpoint {
+            self.auto_checkpoint.store(true, Ordering::Release);
+        }
         self.handles.fetch_add(1, Ordering::AcqRel);
         if options.requested == Requested::default() {
             return Ok(());
@@ -377,7 +386,7 @@ impl Store {
         // holding the write lock so our own writers queue rather than meet SQLite's busy handler.
         // Never for a nested write (depth > 0): it may get a token from try_lock, but an outer
         // snapshot on this thread would only make the checkpoint report busy.
-        if result.is_ok() && top_level {
+        if result.is_ok() && top_level && self.auto_checkpoint.load(Ordering::Relaxed) {
             self.maybe_checkpoint();
         }
         drop(token);
@@ -387,20 +396,82 @@ impl Store {
     /// The WAL check after a committed write; see [`crate::wal`]. Never fails, never waits beyond one
     /// attached window, and only records what happened.
     fn maybe_checkpoint(&self) {
-        use crate::wal::{Decision, Outcome};
+        use crate::wal::Decision;
         let limit = self.wal_size_limit.load(Ordering::Relaxed);
-        let decision = self.wal.after_commit(limit, || std::fs::metadata(&self.wal_path).map_or(0, |m| m.len()));
-        if decision == Decision::Nothing {
+        let decision = self.wal.after_commit(limit, || self.wal_bytes());
+        if decision == Decision::Checkpoint {
+            let _ = self.checkpoint_once();
+        }
+    }
+
+    /// The `-wal` file's size in bytes (0 if it doesn't exist).
+    fn wal_bytes(&self) -> u64 {
+        std::fs::metadata(&self.wal_path).map_or(0, |m| m.len())
+    }
+
+    /// Checkpoints the WAL and truncates it to zero (D-024): retries, waiting with the interpreter
+    /// released, until it succeeds or `timeout` runs out. Returns `Ok(true)` if the WAL was reset,
+    /// `Ok(false)` if readers or writers in other processes kept it busy the whole time. For
+    /// `Cache.checkpoint()`: an app calls it when a pause suits it (at shutdown, in a maintenance
+    /// job, after a large `clear()`). Inside the calling thread's own held transaction, or a nested
+    /// operation, it makes one attempt only (its own open transaction keeps the WAL busy).
+    pub fn checkpoint(&self, timeout: Duration) -> Result<bool> {
+        use crate::wal::Outcome;
+        crate::poison::check_writable(self.file_id)?;
+        let start = Instant::now();
+        let deadline = lockwait::deadline_after(start, timeout);
+        // Inside this thread's own held transaction (held levels count in own_depth) or a nested
+        // operation, TRUNCATE can't succeed, and the PASSIVE copy could stall for seconds while
+        // holding the gate: don't try. Another thread's held transaction is fine: the loop below
+        // waits for it (detached) on the write lock.
+        if GATE.own_depth() > 0 {
+            return Ok(false);
+        }
+        loop {
+            // Holding the in-process write lock keeps this process's writers queued (detached)
+            // instead of meeting SQLite's busy handler while the checkpoint resets the WAL.
+            let token = self.write_lock.lock_until(deadline);
+            let outcome = if token.is_some() { self.checkpoint_once() } else { Outcome::Busy };
+            drop(token);
+            if matches!(outcome, Outcome::Done) {
+                return Ok(true);
+            }
+            if Instant::now() >= deadline {
+                return Ok(false);
+            }
+            lockwait::backoff(start.elapsed());
+        }
+    }
+
+    /// For `Cache.close(checkpoint=True)`: if the WAL is past its trim size (`journal_size_limit`,
+    /// half of `wal_size_limit`), checkpoints it, waiting at most `budget`. A small WAL, the usual
+    /// case, costs one `stat`. Never fails: close must succeed whatever the WAL's state.
+    ///
+    /// Only for the process's last handle on this store: others leave it to the last one, so a
+    /// handle closed while the cache is in use never holds up this process's writers. And not
+    /// again for [`crate::wal::RETRY_AFTER_BUSY`] after an attempt reported busy, so a pattern of
+    /// `with Cache(...)` per request doesn't pay the budget on every exit while readers in other
+    /// processes keep the WAL busy.
+    pub fn checkpoint_on_close(&self, budget: Duration) {
+        let trim = crate::wal::journal_size_limit(self.wal_size_limit.load(Ordering::Relaxed));
+        if self.handles.load(Ordering::Acquire) != 1 || self.wal.in_backoff() || self.wal_bytes() <= trim {
             return;
         }
+        let _ = self.checkpoint(budget);
+    }
+
+    /// One forced checkpoint (PASSIVE, then TRUNCATE in a 2 ms window), recorded in the counters.
+    fn checkpoint_once(&self) -> crate::wal::Outcome {
+        use crate::wal::Outcome;
+        self.wal.note_attempt();
         let Some(_permit) = self.slots.try_acquire(self.max_connections.load(Ordering::Acquire)) else {
             self.wal.record(&Outcome::NoSlot, Duration::ZERO, Duration::ZERO);
-            return;
+            return Outcome::NoSlot;
         };
         let gate = GATE.enter_shared();
         let Ok(mut lease) = self.lease(&gate, Duration::ZERO) else {
             self.wal.record(&Outcome::Failed, Duration::ZERO, Duration::ZERO);
-            return;
+            return Outcome::Failed;
         };
         // Two steps. PASSIVE first, with no busy window: it copies whatever frames it can into the
         // database without waiting for anyone. Then TRUNCATE in a fresh window: it waits for readers
@@ -438,7 +509,7 @@ impl Store {
         drop(lease);
         let Some((row, passive, truncate)) = timings else {
             self.wal.record(&Outcome::Failed, Duration::ZERO, Duration::ZERO);
-            return;
+            return Outcome::Failed;
         };
         let outcome = match row {
             Ok(0) => Outcome::Done,
@@ -446,6 +517,7 @@ impl Store {
             Err(_) => Outcome::Failed,
         };
         self.wal.record(&outcome, passive, truncate);
+        outcome
     }
 
     /// What forced WAL checkpoints have done on this store (for tests and debugging).
@@ -739,6 +811,7 @@ mod tests {
             max_connections: DEFAULT_MAX_CONNECTIONS,
             cache_pages: DEFAULT_CACHE_PAGES,
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
+            auto_checkpoint: false,
         }
     }
 
@@ -998,8 +1071,12 @@ mod tests {
     #[test]
     fn nested_and_nowait_writes_never_check_the_wal() {
         let tmp = TempDir::new("store-wal-nested");
-        let store =
-            Store::open(&OpenOptions { wal_size_limit: crate::wal::MIN_SIZE_LIMIT, ..options(tmp.path()) }).unwrap();
+        let store = Store::open(&OpenOptions {
+            wal_size_limit: crate::wal::MIN_SIZE_LIMIT,
+            auto_checkpoint: true,
+            ..options(tmp.path())
+        })
+        .unwrap();
         let writes = crate::wal::CHECK_EVERY_COMMITS * 2;
         {
             let _gate = GATE.enter_shared(); // A nested write: depth > 0.
@@ -1055,6 +1132,21 @@ mod tests {
             Store::open(&OpenOptions { wal_size_limit: small - 1, ..options(&tmp.path().join("small")) }),
             Err(Error::InvalidSetting(_))
         ));
+    }
+
+    #[test]
+    fn by_default_writes_never_check_the_wal_and_checkpoint_resets_it() {
+        let tmp = TempDir::new("store-wal-manual");
+        let store =
+            Store::open(&OpenOptions { wal_size_limit: crate::wal::MIN_SIZE_LIMIT, ..options(tmp.path()) }).unwrap();
+        for i in 0..crate::wal::CHECK_EVERY_COMMITS * 2 {
+            put(&store, &format!("k{i}"), &[7u8; 4096]);
+        }
+        assert_eq!(store.wal_stats().checks, 0, "manual mode: no WAL checks on the write path");
+        assert!(store.wal_bytes() > 0);
+        assert!(store.checkpoint(T).unwrap(), "an idle store checkpoints at once");
+        assert_eq!(store.wal_bytes(), 0, "TRUNCATE leaves an empty WAL");
+        assert_eq!(store.wal_stats().successes, 1);
     }
 
     #[test]

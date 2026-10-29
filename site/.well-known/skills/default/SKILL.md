@@ -45,6 +45,7 @@ Methods for the Cache class
 - `Cache.clear`
 - `Cache.cull`
 - `Cache.volume`
+- `Cache.checkpoint`
 - `Cache.close`
 - `Cache.__getitem__`
 - `Cache.__setitem__`
@@ -80,6 +81,7 @@ Methods for the NullCache class
 - `NullCache.__bool__`
 - `NullCache.__iter__`
 - `NullCache.volume`
+- `NullCache.checkpoint`
 - `NullCache.set`
 - `NullCache.__setitem__`
 - `NullCache.add`
@@ -119,6 +121,7 @@ Methods for the CacheLike class
 - `CacheLike.clear`
 - `CacheLike.cull`
 - `CacheLike.volume`
+- `CacheLike.checkpoint`
 - `CacheLike.close`
 - `CacheLike.__getitem__`
 - `CacheLike.__setitem__`

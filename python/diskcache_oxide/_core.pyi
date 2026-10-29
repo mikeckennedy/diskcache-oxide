@@ -77,6 +77,7 @@ class Cache:
         max_connections: int | None = None,
         sqlite_cache_size: int | None = None,
         wal_size_limit: int | None = None,
+        wal_checkpoint: Literal['manual', 'auto'] = 'manual',
     ) -> Cache: ...
     @property
     def directory(self) -> str: ...
@@ -105,7 +106,18 @@ class Cache:
     def clear(self) -> int: ...
     def cull(self) -> int: ...
     def volume(self) -> int: ...
-    def close(self) -> None: ...
+    def checkpoint(self, timeout: float | None = None) -> bool:
+        """Checkpoint the write-ahead log and truncate it, retrying until the cache's timeout.
+
+        Returns True if the WAL was reset, False if readers or writers in other processes kept it
+        busy. Writes never checkpoint by default (`wal_checkpoint='manual'`): call this when a short
+        pause suits the app, such as at shutdown or after a large `clear()`. `close()` also does it
+        for a WAL left large.
+        """
+    def close(self, *, checkpoint: bool = True) -> None:
+        """Close this handle. With `checkpoint`, a WAL left larger than half of `wal_size_limit`
+        is checkpointed first if this is the process's last handle on the cache, waiting at most 1 second
+        for other connections (copying a large log can take longer); a small WAL costs nothing extra."""
     def _wal_stats(self) -> dict[str, int]:
         """Test hook: forced WAL checkpoint counters (checks, attempts, successes, busy, errors, no_slot, max_pause_us, max_passive_us, max_truncate_us, slow, last_wal_bytes)."""
     def _hold_write_transaction(self) -> AbstractContextManager[None]:

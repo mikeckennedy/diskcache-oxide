@@ -99,3 +99,30 @@ As in the roadmap: every review finding resolved or explicitly accepted, a clean
   All passed with 0 problems. At normal rates SQLite's own checkpointing keeps up, so the D-024 path costs nothing. The free-threaded memory premium mostly disappears without flat-out churn.
 
   **Why paced latency is 30× the benchmark:** cold CPU state between calls, not oxide. With busy-waiting between calls, a `get` takes 1.0 µs with no gap, 1.6 µs after 1 ms, 11 µs after 10 ms and 32 µs after 80 ms. A plain `dict` lookup degrades the same way (0.04 → 2.96 µs, 74×). Any library pays that on an occasional call; oxide's own work is the 1 µs hot figure.
+- **Manual checkpoints by default (Michael, 2026-10-28).** The soak kept producing multi-second forced-checkpoint pauses on the saturated mini: 81 of 1,841 attempts were slow, the worst 4.3 s. Both steps stall (PASSIVE up to 3.7 s, TRUNCATE up to 3.2 s), because both write and `fsync` a disk that's saturated. Michael's call: no housekeeping on the write path unless the app asks for it.
+  - Default `wal_checkpoint="manual"`: writes never checkpoint. `journal_size_limit` and the scaled autocheckpoint stay; they're free, and at normal load they keep the WAL at a few MiB.
+  - `Cache.checkpoint()`: retries until the cache timeout, returns True/False, and never raises for busy.
+  - `close(checkpoint=True)` (default): checkpoints a WAL past its trim size, waiting at most 1 s; `checkpoint=False` skips it. SQLite also removes the WAL when the last connection to the database closes.
+  - `wal_checkpoint="auto"`: the previous behavior, as an opt-in.
+  - The README's new "Shutting down" section recommends `checkpoint()` at shutdown, but doesn't require it.
+  - The soak gained a `checkpoint` chaos action, the cookbook pattern.
+  - **Later, if users hit it:** a docs cookbook recipe, a thread that watches the `-wal` size and calls `checkpoint()`. The real fix for write-path stalls under saturated disks is still the background maintenance thread, which would also take SQLite's own autocheckpoint (and its `fsync`) off the write path.
+  - **Normal-load test (Michael's spec, 10,000 reads and 100 writes a minute, 4 × 2 workers, 10 minutes, laptop, every call timed):** PASS.
+    - `get` p50 35 µs, p99 88 µs, max 5.8 ms;
+    - `set` p50 0.53 ms, max 13.7 ms;
+    - WAL peak 4 MiB, 0 forced checkpoints;
+    - 22-38 MiB per worker.
+  - **Architect review of the manual-checkpoint change:**
+    - **Applied:**
+      - `checkpoint()` at gate depth > 0 (the caller's own transaction) returns False without trying, and the store-wide `pinned_active` test is gone, so another thread's transaction is waited for;
+      - `close()` checkpoints only for the process's last handle on the store, and not during the 1 s backoff after a busy attempt;
+      - `close(*, checkpoint=True)` is keyword-only;
+      - `checkpoint(timeout=None)`.
+      - New tests: waiting for another thread's transaction, returning at once inside your own, and the timeout argument.
+    - **Still open (should-fix):**
+      - retry only on Busy/NoSlot and return real errors as `Err`;
+      - reword "at most 1 s" (the PASSIVE copy can take longer) and cap the TRUNCATE window at the deadline;
+      - count attempts once per `checkpoint()` call, or separately from automatic ones;
+      - merge the stale doc comment on `close()`;
+      - note in D-024 that `checkpoint()` raises in a child forked inside a transaction (D-020);
+      - a repeated-close test.

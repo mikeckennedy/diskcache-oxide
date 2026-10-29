@@ -53,6 +53,7 @@ impl Cache {
         max_connections = None,
         sqlite_cache_size = None,
         wal_size_limit = None,
+        wal_checkpoint = "manual",
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -67,6 +68,7 @@ impl Cache {
         max_connections: Option<&Bound<'_, PyAny>>,
         sqlite_cache_size: Option<&Bound<'_, PyAny>>,
         wal_size_limit: Option<&Bound<'_, PyAny>>,
+        wal_checkpoint: &str,
     ) -> PyResult<Self> {
         let timeout = match timeout {
             Some(t) => seconds("timeout", t)?,
@@ -103,6 +105,13 @@ impl Cache {
             Some(n) => n.unsigned_abs(),
             None => DEFAULT_WAL_SIZE_LIMIT,
         };
+        let auto_checkpoint = match wal_checkpoint {
+            "manual" => false,
+            "auto" => true,
+            other => {
+                return Err(PyValueError::new_err(format!("wal_checkpoint must be 'manual' or 'auto', got {other:?}")));
+            }
+        };
         let serializer = Serializer::from_name(serializer)?;
         let options = OpenOptions {
             directory: directory.clone(),
@@ -111,6 +120,7 @@ impl Cache {
             max_connections,
             cache_pages,
             wal_size_limit,
+            auto_checkpoint,
         };
         let store = py.detach(|| Store::open(&options)).map_err(to_py_err)?;
         Ok(Self {
@@ -234,6 +244,27 @@ impl Cache {
     fn volume(&self) -> PyResult<i64> {
         self.ensure_open();
         self.store.volume(self.timeout).map_err(to_py_err)
+    }
+
+    /// Checkpoints the write-ahead log and truncates it to zero (D-024), retrying until `timeout`.
+    /// True if the WAL was reset; False if readers or writers in other processes kept it busy.
+    /// `timeout`: how long to keep trying, in seconds (default: the cache's timeout).
+    #[pyo3(signature = (timeout = None))]
+    fn checkpoint(&self, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
+        let timeout = match timeout {
+            Some(t) if !t.is_none() => {
+                let t = seconds("timeout", t)?;
+                if !t.is_finite() || t < 0.0 {
+                    return Err(PyValueError::new_err(format!(
+                        "timeout must be a non-negative number of seconds, got {t}"
+                    )));
+                }
+                Duration::from_secs_f64(t.min(lockwait::MAX_TIMEOUT.as_secs_f64()))
+            }
+            _ => self.timeout,
+        };
+        self.ensure_open();
+        self.store.checkpoint(timeout).map_err(to_py_err)
     }
 
     // -- writes -------------------------------------------------------------------------------
@@ -361,8 +392,15 @@ impl Cache {
 
     /// Releases this handle. When the last handle on a directory closes, every connection closes
     /// (D-018). Using the cache again afterwards reopens it, as diskcache does.
-    fn close(&self) {
+    /// Closes this handle. With `checkpoint` (the default), a WAL left larger than its trim size
+    /// (half of `wal_size_limit`) is checkpointed first, waiting at most 1 s (D-024). A small WAL,
+    /// the usual case, costs nothing extra.
+    #[pyo3(signature = (*, checkpoint = true))]
+    fn close(&self, checkpoint: bool) {
         if !self.closed.swap(true, Ordering::AcqRel) {
+            if checkpoint {
+                self.store.checkpoint_on_close(self.timeout.min(Duration::from_secs(1)));
+            }
             self.store.release_handle();
         }
     }
@@ -374,7 +412,7 @@ impl Cache {
     #[pyo3(signature = (exc_type, exc, tb, /))]
     fn __exit__(&self, exc_type: &Bound<'_, PyAny>, exc: &Bound<'_, PyAny>, tb: &Bound<'_, PyAny>) {
         let _ = (exc_type, exc, tb);
-        self.close();
+        self.close(true);
     }
 
     /// Test hook until `transact()` lands (Phase 6b): a context manager holding a write

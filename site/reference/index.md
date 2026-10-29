@@ -54,7 +54,11 @@ Methods for the Cache class
 
 [Cache.volume()](Cache.volume.md#diskcache_oxide.Cache.volume)  
 
+[Cache.checkpoint()](Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint)  
+Checkpoint the write-ahead log and truncate it, retrying until the cache's timeout.
+
 [Cache.close()](Cache.close.md#diskcache_oxide.Cache.close)  
+Close this handle. With `checkpoint`, a WAL left larger than half of `wal_size_limit`
 
 [Cache.__getitem__()](Cache.__getitem__.md#diskcache_oxide.Cache.__getitem__)  
 
@@ -119,6 +123,8 @@ Methods for the NullCache class
 [NullCache.__iter__()](NullCache.__iter__.md#diskcache_oxide.NullCache.__iter__)  
 
 [NullCache.volume()](NullCache.volume.md#diskcache_oxide.NullCache.volume)  
+
+[NullCache.checkpoint()](NullCache.checkpoint.md#diskcache_oxide.NullCache.checkpoint)  
 
 [NullCache.set()](NullCache.set.md#diskcache_oxide.NullCache.set)  
 
@@ -194,6 +200,8 @@ Methods for the CacheLike class
 [CacheLike.cull()](CacheLike.cull.md#diskcache_oxide.CacheLike.cull)  
 
 [CacheLike.volume()](CacheLike.volume.md#diskcache_oxide.CacheLike.volume)  
+
+[CacheLike.checkpoint()](CacheLike.checkpoint.md#diskcache_oxide.CacheLike.checkpoint)  
 
 [CacheLike.close()](CacheLike.close.md#diskcache_oxide.CacheLike.close)  
 

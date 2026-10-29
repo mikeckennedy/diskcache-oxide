@@ -45,9 +45,9 @@ def _reader(directory: str, stop_at: float, ready: object) -> None:
 
 
 @pytest.mark.timeout(120)
-def test_the_wal_shrinks_back_after_a_burst_with_readers_in_other_processes(tmp_path: Path) -> None:
+def test_auto_mode_shrinks_the_wal_back_after_a_burst_with_readers_in_other_processes(tmp_path: Path) -> None:
     directory = tmp_path / 'c'
-    cache = Cache(directory, size_limit=2**34, wal_size_limit=LIMIT)
+    cache = Cache(directory, size_limit=2**34, wal_size_limit=LIMIT, wal_checkpoint='auto')
     cache.set('k0', 'v')
     ctx = multiprocessing.get_context('spawn')
     stop_at = time.time() + 60
@@ -85,10 +85,10 @@ def _wal_bytes(directory: Path) -> int:
     return path.stat().st_size if path.exists() else 0
 
 
-def test_a_healthy_workload_never_forces_a_checkpoint(tmp_path: Path) -> None:
+def test_auto_mode_never_forces_a_checkpoint_on_a_healthy_workload(tmp_path: Path) -> None:
     # Readers in this process only, and a small limit: the scaled autocheckpoint keeps the WAL far
     # under the trigger, so no forced checkpoint (and no write pause) ever happens.
-    cache = Cache(tmp_path / 'c', wal_size_limit=LIMIT)
+    cache = Cache(tmp_path / 'c', wal_size_limit=LIMIT, wal_checkpoint='auto')
     stop = threading.Event()
 
     def read() -> None:
@@ -109,11 +109,11 @@ def test_a_healthy_workload_never_forces_a_checkpoint(tmp_path: Path) -> None:
     cache.close()
 
 
-def test_a_busy_checkpoint_never_fails_the_write_and_recovers_after(tmp_path: Path) -> None:
+def test_auto_mode_busy_checkpoint_never_fails_the_write_and_recovers_after(tmp_path: Path) -> None:
     from tests.conformance.proc_workers import SqlitePeer
 
     directory = tmp_path / 'c'
-    cache = Cache(directory, wal_size_limit=LIMIT)
+    cache = Cache(directory, wal_size_limit=LIMIT, wal_checkpoint='auto')
     cache.set('k', 'v')
     body = 'x' * 20_000
     with SqlitePeer(directory / 'diskcache-oxide.sqlite') as peer:
@@ -142,7 +142,7 @@ def test_a_busy_checkpoint_never_fails_the_write_and_recovers_after(tmp_path: Pa
 
 
 def test_writes_inside_a_held_transaction_never_checkpoint(tmp_path: Path) -> None:
-    cache = Cache(tmp_path / 'c', wal_size_limit=LIMIT)
+    cache = Cache(tmp_path / 'c', wal_size_limit=LIMIT, wal_checkpoint='auto')
     cache.set('k', 'v')
     before = cache._wal_stats()['checks']
     with cache._hold_write_transaction():
@@ -150,6 +150,12 @@ def test_writes_inside_a_held_transaction_never_checkpoint(tmp_path: Path) -> No
             cache.set(f'h{i}', 'x' * 1_000)
     assert cache._wal_stats()['checks'] == before
     cache.close()
+
+
+@pytest.mark.parametrize('bad', ['always', 'AUTO', '', None, True])
+def test_wal_checkpoint_is_validated(tmp_path: Path, bad: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        Cache(tmp_path / 'c', wal_checkpoint=bad)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize('bad', [True, 0, -1, 1024, 2**20 - 1, 1.5, '64MiB'])
@@ -162,3 +168,149 @@ def test_null_cache_accepts_and_ignores_wal_size_limit() -> None:
     from diskcache_oxide import NullCache
 
     NullCache(wal_size_limit=2**20)
+
+
+# ---------------------------------------------------------------------------
+# The default, wal_checkpoint='manual': writes never checkpoint; checkpoint() and close() do
+# ---------------------------------------------------------------------------
+
+
+def _burst(cache: Cache, rows: int = 20_000) -> None:
+    body = 'x' * 2_000
+    for i in range(rows):
+        cache.set(f'k{i}', body)
+    cache.clear()
+
+
+@pytest.mark.timeout(120)
+def test_by_default_writes_never_checkpoint_and_checkpoint_truncates_under_reader_processes(tmp_path: Path) -> None:
+    directory = tmp_path / 'c'
+    cache = Cache(directory, size_limit=2**34, wal_size_limit=LIMIT, timeout=10)
+    cache.set('k0', 'v')
+    ctx = multiprocessing.get_context('spawn')
+    events = [ctx.Event() for _ in range(4)]
+    readers = [ctx.Process(target=_reader, args=(str(directory), time.time() + 60, e)) for e in events]
+    for p in readers:
+        p.start()
+    try:
+        assert all(e.wait(30) for e in events), 'readers never started'
+        _burst(cache)
+        assert cache._wal_stats()['attempts'] == 0, 'a write ran a forced checkpoint in manual mode'
+        # With readers in other processes, the burst may have left the WAL large; checkpoint()
+        # resets it regardless.
+        assert cache.checkpoint() is True
+        assert _wal_bytes(directory) == 0, f'{_wal_bytes(directory)} bytes after checkpoint()'
+    finally:
+        for p in readers:
+            p.terminate()
+            p.join(10)
+        cache.close()
+
+
+def test_checkpoint_returns_false_instead_of_raising_while_a_peer_holds_a_snapshot(tmp_path: Path) -> None:
+    from tests.conformance.proc_workers import SqlitePeer
+
+    directory = tmp_path / 'c'
+    cache = Cache(directory, timeout=0.3)
+    for i in range(200):
+        cache.set(f'k{i}', 'x' * 10_000)
+    with SqlitePeer(directory / 'diskcache-oxide.sqlite') as peer:
+        peer.begin('READ')
+        cache.set('more', 'x' * 10_000)  # Frames newer than the peer's snapshot.
+        started = time.monotonic()
+        assert cache.checkpoint() is False
+        assert time.monotonic() - started < 2, 'checkpoint() waited far past the cache timeout'
+        peer.rollback()
+    assert cache.checkpoint() is True
+    cache.close()
+
+
+def _swollen(directory: Path) -> Cache:
+    """A cache whose WAL is past its trim size, left by a burst under a peer's open snapshot."""
+    from tests.conformance.proc_workers import SqlitePeer
+
+    cache = Cache(directory, wal_size_limit=LIMIT)
+    cache.set('k', 'v')
+    with SqlitePeer(directory / 'diskcache-oxide.sqlite') as peer:
+        peer.begin('READ')
+        for i in range(1_000):
+            cache.set(f'b{i % 200}', 'x' * 20_000)
+        peer.rollback()
+    assert _wal_bytes(directory) > LIMIT // 2
+    return cache
+
+
+# In both close tests a peer keeps a connection open (in no transaction) while the cache closes.
+# Otherwise this would be the last connection to the database, and SQLite itself checkpoints and
+# deletes the WAL when the last connection closes, whatever `checkpoint` says.
+
+
+def test_close_checkpoints_a_large_wal(tmp_path: Path) -> None:
+    from tests.conformance.proc_workers import SqlitePeer
+
+    cache = _swollen(tmp_path / 'c')
+    with SqlitePeer(tmp_path / 'c' / 'diskcache-oxide.sqlite') as peer:
+        peer.data_version()  # A query attaches the peer to the WAL; an idle connection doesn't count.
+        cache.close()
+        assert _wal_bytes(tmp_path / 'c') == 0
+
+
+def test_close_without_checkpoint_leaves_the_wal_alone(tmp_path: Path) -> None:
+    from tests.conformance.proc_workers import SqlitePeer
+
+    cache = _swollen(tmp_path / 'c')
+    before = _wal_bytes(tmp_path / 'c')
+    with SqlitePeer(tmp_path / 'c' / 'diskcache-oxide.sqlite') as peer:
+        peer.data_version()
+        cache.close(checkpoint=False)
+        assert _wal_bytes(tmp_path / 'c') == before
+
+
+def test_null_cache_checkpoint_and_close_take_the_same_arguments() -> None:
+    from diskcache_oxide import NullCache
+
+    null = NullCache()
+    assert null.checkpoint() is True
+    null.close(checkpoint=False)
+
+
+def test_checkpoint_waits_for_another_threads_transaction_and_then_succeeds(tmp_path: Path) -> None:
+    cache = Cache(tmp_path / 'c', timeout=10)
+    for i in range(100):
+        cache.set(f'k{i}', 'x' * 5_000)
+    entered, release = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        with cache._hold_write_transaction():
+            cache.set('held', 1)
+            entered.set()
+            release.wait(10)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert entered.wait(10)
+    threading.Timer(0.3, release.set).start()
+    assert cache.checkpoint() is True, 'checkpoint() gave up instead of waiting for the held transaction'
+    holder.join()
+    assert _wal_bytes(tmp_path / 'c') == 0
+    assert cache.get('held') == 1
+    cache.close()
+
+
+def test_checkpoint_inside_your_own_transaction_returns_false_at_once(tmp_path: Path) -> None:
+    cache = Cache(tmp_path / 'c', timeout=10)
+    cache.set('k', 'v')
+    with cache._hold_write_transaction():
+        started = time.monotonic()
+        assert cache.checkpoint() is False
+        assert time.monotonic() - started < 0.5
+    cache.close()
+
+
+def test_checkpoint_takes_its_own_timeout(tmp_path: Path) -> None:
+    cache = Cache(tmp_path / 'c', timeout=60)
+    cache.set('k', 'v')
+    assert cache.checkpoint(timeout=0.5) is True
+    with pytest.raises(ValueError):
+        cache.checkpoint(timeout=-1)
+    cache.close()

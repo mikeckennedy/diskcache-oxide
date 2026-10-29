@@ -1,4 +1,5 @@
 ---
+# pagetitle, not title: the hero already shows the name, so no page heading above it.
 pagetitle: "diskcache-oxide"
 ---
 
