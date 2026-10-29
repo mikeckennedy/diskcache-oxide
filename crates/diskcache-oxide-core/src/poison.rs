@@ -196,7 +196,7 @@ mod tests {
     use super::*;
     use crate::gate::{Gate, ThreadState};
 
-    thread_local! { static LOCAL: ThreadState = const { ThreadState::new() }; }
+    crate::sync::thread_local! { static LOCAL: ThreadState = const { ThreadState::new() }; }
     static G: Gate = Gate::new(&LOCAL);
 
     const A: FileId = (1, 10);

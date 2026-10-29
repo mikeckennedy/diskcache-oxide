@@ -29,6 +29,10 @@ cargo test --quiet
 step 'cargo deny check'
 cargo deny --log-level error check
 
+# The shuttle models of the fork gate and the write lock (scripts/model-check.sh).
+step 'model check (shuttle)'
+if (( SLOW )); then scripts/model-check.sh 1000000; else scripts/model-check.sh 100000; fi
+
 for spec in "${ENVS[@]}"; do
     env="${spec%%:*}"
     python="${spec##*:}"

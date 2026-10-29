@@ -12,5 +12,10 @@ publish.workspace = true
 rusqlite.workspace = true
 thiserror.workspace = true
 
+# Only under `--cfg shuttle`, which swaps the gate's and the write lock's primitives for shuttle's
+# (src/sync.rs); see scripts/model-check.sh.
+[target.'cfg(shuttle)'.dependencies]
+shuttle.workspace = true
+
 [lints]
 workspace = true

@@ -8,8 +8,11 @@
 //!
 //! Layout: the high 32 bits are the generation (mod 2^32), the low 32 bits the state.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
+
+use crate::sync::atomic::AtomicU64;
+use crate::sync::{now, thread};
 
 use crate::gate;
 
@@ -24,7 +27,11 @@ const POLL: Duration = Duration::from_micros(50);
 /// `sync.Mutex` value, which hands off directly), a 99:1 mix at 8 threads on free-threaded Linux
 /// stayed in starvation mode and fell from about 740k to 175k ops/s. At 20 ms it's back to 741k,
 /// and a starved waiter still gets in well inside any timeout.
+#[cfg(not(shuttle))]
 const STARVE_AFTER: Duration = Duration::from_millis(20);
+/// Under the model checker: a few polls, so schedules reach starvation mode.
+#[cfg(shuttle)]
+const STARVE_AFTER: Duration = Duration::from_micros(200);
 
 fn current() -> u64 {
     gate::generation() & LOW
@@ -130,15 +137,15 @@ impl WriteLock {
         // Both counts are guards, so a wait that unwinds (a panic out of the blocker) takes them back:
         // a stuck `starving` would make every `try_lock` fail.
         let _waiting = Counted::new(&self.waiters);
-        let starve_at = Instant::now() + starve_after;
+        let starve_at = now() + starve_after;
         let mut starving = None;
         loop {
             // A starving waiter ignores the starving count (its own included); others defer to it.
             let token = if starving.is_some() { self.take() } else { self.try_lock() };
-            if token.is_some() || Instant::now() >= deadline {
+            if token.is_some() || now() >= deadline {
                 return token;
             }
-            if starving.is_none() && Instant::now() >= starve_at {
+            if starving.is_none() && now() >= starve_at {
                 starving = Some(Counted::new(&self.starving));
                 continue;
             }
@@ -149,9 +156,9 @@ impl WriteLock {
             let is_starving = starving.is_some();
             let until = if is_starving { deadline } else { deadline.min(starve_at) };
             gate::run_blocking(&|| {
-                std::thread::sleep(POLL);
-                while (self.state() != 0 || (!is_starving && self.starving_now() != 0)) && Instant::now() < until {
-                    std::thread::sleep(POLL);
+                thread::sleep(POLL);
+                while (self.state() != 0 || (!is_starving && self.starving_now() != 0)) && now() < until {
+                    thread::sleep(POLL);
                 }
             });
         }
@@ -276,10 +283,10 @@ impl Slots {
             if let Some(permit) = self.try_acquire(cap) {
                 return Some(permit);
             }
-            if Instant::now() >= deadline {
+            if now() >= deadline {
                 return None;
             }
-            gate::run_blocking(&|| std::thread::sleep(POLL));
+            gate::run_blocking(&|| thread::sleep(POLL));
         }
     }
 
@@ -309,7 +316,7 @@ pub(crate) mod tests_support {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(shuttle)))]
 mod tests {
     use super::*;
 
@@ -491,3 +498,6 @@ mod tests {
         assert_eq!(slots.in_use(), 1);
     }
 }
+
+#[cfg(all(test, shuttle))]
+mod model;

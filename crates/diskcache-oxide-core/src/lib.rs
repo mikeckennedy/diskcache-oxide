@@ -19,8 +19,12 @@ pub mod schema;
 pub mod spill;
 pub mod sqlite;
 pub mod store;
+mod sync;
 #[cfg(test)]
 mod testutil;
+// The shuttle model checker (scripts/model-check.sh); `crate::sync` swaps in its primitives.
+#[cfg(all(test, shuttle))]
+mod model;
 pub mod wal;
 
 pub use error::{Error, Result};

@@ -45,9 +45,11 @@
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
-use std::thread::LocalKey;
+use std::sync::OnceLock;
+use std::sync::atomic::Ordering;
+
+use crate::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use crate::sync::{Arc, LocalKey, thread};
 use std::time::Duration;
 
 /// How often [`Gate::begin_fork`] re-checks the claim and the holder count. Holders never notify on
@@ -111,7 +113,8 @@ impl ThreadState {
 #[derive(Debug)]
 struct Owner {
     /// How many held levels the thread has, with [`PARKED`] set while it is parked in
-    /// [`Gate::begin_fork`] (a share dropped then also takes its level off [`Gate::parked`]).
+    /// [`Gate::begin_fork`] (a share dropped then also takes its level off the parked half of
+    /// [`Gate::counts`]).
     levels: AtomicUsize,
     /// The [`Gate::epoch`] this thread exists in. A share whose owner is from an older epoch was
     /// inherited across fork from a thread that doesn't exist here, and its level was never counted.
@@ -127,7 +130,7 @@ impl Default for ThreadState {
     }
 }
 
-thread_local! {
+crate::sync::thread_local! {
     static GLOBAL_THREAD: ThreadState = const { ThreadState::new() };
 }
 
@@ -136,7 +139,7 @@ pub static GATE: Gate = Gate::new(&GLOBAL_THREAD);
 
 /// Bumped in the forked child. Anything tagged with an older generation was inherited from the
 /// parent and must be dropped without being closed (`mem::forget`), never used.
-static GENERATION: AtomicU64 = AtomicU64::new(0);
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The current process generation (0 in a process that was never forked from a cache user).
 #[must_use]
@@ -147,16 +150,16 @@ pub fn generation() -> u64 {
 /// A reentrant shared/exclusive gate whose exclusive side survives `fork()`. See the module docs.
 #[derive(Debug)]
 pub struct Gate {
-    /// Shared levels held, counted across all threads (a thread at depth 2 counts twice).
-    holders: AtomicUsize,
+    /// The two counts the forker compares, in one word so one load is a consistent snapshot. Low 32
+    /// bits: shared levels held across all threads (depth 2 counts twice). High 32 bits, signed and
+    /// wrapping: levels of threads parked in [`Gate::begin_fork`], waiting for another thread's
+    /// claim. Those are quiescent, so the claiming thread doesn't wait for them. Signed because a
+    /// share dropped while its owner parks can take its level off before the owner has added it;
+    /// every transient error makes the parked count too low, which only makes the fork wait longer.
+    counts: AtomicU64,
     /// A fork is claimed: set by [`Gate::begin_fork`], cleared when its [`ForkGuard`] ends. Also
     /// what makes concurrent forks take turns.
     pending: AtomicBool,
-    /// Levels held by threads parked in [`Gate::begin_fork`], waiting for another thread's claim.
-    /// They are quiescent, so the claiming thread doesn't wait for them. Signed because a share
-    /// dropped while its owner parks can take its level off before the owner has added it; every
-    /// transient error makes the count too low, which only makes the fork wait longer.
-    parked: AtomicIsize,
     /// Bumped in the forked child, see [`Owner::epoch`].
     epoch: AtomicU64,
     local: &'static LocalKey<ThreadState>,
@@ -166,13 +169,7 @@ impl Gate {
     /// A gate whose per-thread state lives in `local`. Each gate needs its own thread-local.
     #[must_use]
     pub const fn new(local: &'static LocalKey<ThreadState>) -> Self {
-        Self {
-            holders: AtomicUsize::new(0),
-            pending: AtomicBool::new(false),
-            parked: AtomicIsize::new(0),
-            epoch: AtomicU64::new(0),
-            local,
-        }
+        Self { counts: AtomicU64::new(0), pending: AtomicBool::new(false), epoch: AtomicU64::new(0), local }
     }
 
     /// Enters in shared mode without waiting. Returns `None` only if a fork is pending and this
@@ -183,9 +180,9 @@ impl Gate {
             // Increment, then check: paired with begin_fork's store-then-load, either we see the
             // pending flag or begin_fork sees our level. The held levels are read last, so only
             // while a fork is pending.
-            self.holders.fetch_add(1, Ordering::SeqCst);
+            self.counts.fetch_add(HOLDER, Ordering::SeqCst);
             if depth == 0 && !t.forking.get() && self.pending.load(Ordering::SeqCst) && t.held_levels() == 0 {
-                self.holders.fetch_sub(1, Ordering::SeqCst);
+                self.counts.fetch_sub(HOLDER, Ordering::SeqCst);
                 return None;
             }
             t.depth.set(depth + 1);
@@ -223,7 +220,7 @@ impl Gate {
     /// thread (and a free-threaded stop-the-world) isn't held up by the waiter.
     pub fn wait_while_pending(&self) {
         while self.pending.load(Ordering::SeqCst) {
-            std::thread::sleep(WAITER_POLL);
+            thread::sleep(WAITER_POLL);
         }
     }
 
@@ -249,13 +246,12 @@ impl Gate {
         if !self.try_claim() {
             self.park();
             while !self.try_claim() {
-                std::thread::sleep(FORK_POLL);
+                thread::sleep(FORK_POLL);
             }
             self.unpark();
         }
-        let own = self.own_depth();
-        while !self.quiescent(own) {
-            std::thread::sleep(FORK_POLL);
+        while !self.quiescent() {
+            thread::sleep(FORK_POLL);
         }
         self.local.with(|t| t.forking.set(true));
         ForkGuard { gate: self, active: true, _not_send: PhantomData }
@@ -266,13 +262,15 @@ impl Gate {
         self.pending.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok()
     }
 
-    /// Whether every level is the claiming thread's own (`own`) or parked.
-    fn quiescent(&self, own: usize) -> bool {
-        // Holders first: a share dropped in between takes its level off `parked` first, so this
-        // order can only see too many holders, never too few.
-        let holders = signed(self.holders.load(Ordering::SeqCst));
-        let parked = self.parked.load(Ordering::SeqCst);
-        holders.saturating_sub(parked) <= signed(own)
+    /// Whether every level is the calling (claiming) thread's own or parked.
+    fn quiescent(&self) -> bool {
+        // One load, so holders and parked are a consistent snapshot (two loads let a nested entry
+        // and a park land in between and look quiescent; found by the shuttle models).
+        let (holders, parked) = split(self.counts.load(Ordering::SeqCst));
+        // Own levels last, re-read every poll: a share of ours dropped on another thread meanwhile
+        // comes off `held` before `holders`, so this can only see too few own levels, never too many.
+        let own = signed(self.own_depth());
+        holders.saturating_sub(parked) <= own
     }
 
     /// Counts the calling thread's levels as parked, while it waits for another thread's claim.
@@ -282,7 +280,7 @@ impl Gate {
             // one dropped before is already missing from `held`. One dropped before the add below
             // makes the count briefly too low, which is the safe direction.
             let held = t.held.get().map_or(0, |owner| owner.levels.fetch_or(PARKED, Ordering::SeqCst) & !PARKED);
-            self.parked.fetch_add(signed(t.depth.get() + held), Ordering::SeqCst);
+            self.counts.fetch_add(parked_units(t.depth.get() + held), Ordering::SeqCst);
         });
     }
 
@@ -291,7 +289,7 @@ impl Gate {
     fn unpark(&self) {
         self.local.with(|t| {
             let held = t.held.get().map_or(0, |owner| owner.levels.fetch_and(!PARKED, Ordering::SeqCst) & !PARKED);
-            self.parked.fetch_sub(signed(t.depth.get() + held), Ordering::SeqCst);
+            self.counts.fetch_sub(parked_units(t.depth.get() + held), Ordering::SeqCst);
         });
     }
 
@@ -304,13 +302,48 @@ impl Gate {
                 owner.epoch.store(epoch, Ordering::SeqCst);
             }
         });
-        self.parked.store(0, Ordering::SeqCst);
-        self.holders.store(self.own_depth(), Ordering::SeqCst);
+        self.counts.store(u64::try_from(self.own_depth()).unwrap_or(LOW) & LOW, Ordering::SeqCst);
+    }
+
+    /// Back to a fresh gate, so a model reuses one gate per OS thread instead of leaking one per
+    /// execution (shuttle's atomics are large, and a run makes millions of executions).
+    #[cfg(all(test, shuttle))]
+    fn reset_for_model(&self) {
+        self.counts.store(0, Ordering::SeqCst);
+        self.pending.store(false, Ordering::SeqCst);
+        self.epoch.store(0, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    fn holders(&self) -> isize {
+        split(self.counts.load(Ordering::SeqCst)).0
+    }
+
+    #[cfg(test)]
+    fn parked(&self) -> isize {
+        split(self.counts.load(Ordering::SeqCst)).1
     }
 }
 
 fn signed(levels: usize) -> isize {
     isize::try_from(levels).unwrap_or(isize::MAX)
+}
+
+const LOW: u64 = 0xFFFF_FFFF;
+const HOLDER: u64 = 1;
+const PARKED_ONE: u64 = 1 << 32;
+
+/// `levels` parked, as an addend to [`Gate::counts`] (wrapping in the high half).
+fn parked_units(levels: usize) -> u64 {
+    (u64::try_from(levels).unwrap_or(LOW) & LOW) << 32
+}
+
+/// (holders, parked) from one load of [`Gate::counts`].
+fn split(word: u64) -> (isize, isize) {
+    let holders = isize::try_from(word & LOW).unwrap_or(isize::MAX);
+    // The high half is an i32 count stored wrapping: reinterpret its bits.
+    let parked = u32::try_from(word >> 32).map_or(0, u32::cast_signed);
+    (holders, isize::try_from(parked).unwrap_or(0))
 }
 
 /// One shared level of a [`Gate`], held by the current thread. Not `Send`: the level belongs to the
@@ -351,7 +384,8 @@ impl Drop for SharedGuard<'_> {
     fn drop(&mut self) {
         // try_with: a guard dropped while this thread's locals are being destroyed still releases.
         let _ = self.gate.local.try_with(|t| t.depth.set(t.depth.get().saturating_sub(1)));
-        self.gate.holders.fetch_sub(1, Ordering::SeqCst);
+        let prev = self.gate.counts.fetch_sub(HOLDER, Ordering::SeqCst);
+        debug_assert_ne!(prev & LOW, 0, "holders underflow");
     }
 }
 
@@ -373,13 +407,12 @@ impl Drop for HeldShare<'_> {
             return;
         }
         // Off the owner first: if a fork is pending, the owner then stops counting as reentrant no
-        // later than begin_fork stops counting the level. Off `parked` before `holders`, so a
-        // forker never sees too few levels.
+        // later than begin_fork stops counting the level.
         let before = self.owner.levels.fetch_sub(1, Ordering::SeqCst);
-        if before & PARKED != 0 {
-            self.gate.parked.fetch_sub(1, Ordering::SeqCst);
-        }
-        self.gate.holders.fetch_sub(1, Ordering::SeqCst);
+        // One step for both counts: a forker's snapshot never sees one without the other.
+        let units = if before & PARKED != 0 { HOLDER | PARKED_ONE } else { HOLDER };
+        let prev = self.gate.counts.fetch_sub(units, Ordering::SeqCst);
+        debug_assert_ne!(prev & LOW, 0, "holders underflow");
     }
 }
 
@@ -465,7 +498,7 @@ pub fn end_fork_child() {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(shuttle)))]
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
@@ -492,11 +525,11 @@ mod tests {
         let a = gate.try_enter_shared().unwrap();
         let b = gate.try_enter_shared().unwrap();
         assert_eq!(gate.own_depth(), 2);
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 2);
+        assert_eq!(gate.holders(), 2);
         drop(b);
         drop(a);
         assert_eq!(gate.own_depth(), 0);
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.holders(), 0);
     }
 
     #[test]
@@ -587,10 +620,10 @@ mod tests {
         // The forking thread may still use the gate between the hooks.
         assert!(gate.try_enter_shared().is_some());
         fork.end_child();
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 2, "the child keeps exactly the forking thread's levels");
+        assert_eq!(gate.holders(), 2, "the child keeps exactly the forking thread's levels");
         drop(held);
         drop(outer);
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.holders(), 0);
         assert_eq!(gate.own_depth(), 0);
     }
 
@@ -600,9 +633,9 @@ mod tests {
         // Simulate a level held by a parent thread that doesn't exist in the child: the fork can't
         // wait for it here, so count it in by hand after begin_fork.
         let fork = gate.begin_fork();
-        gate.holders.fetch_add(3, Ordering::SeqCst);
+        gate.counts.fetch_add(3 * HOLDER, Ordering::SeqCst);
         fork.end_child();
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.holders(), 0);
         assert!(gate.try_enter_shared().is_some());
     }
 
@@ -647,7 +680,7 @@ mod tests {
         // Thread B drops it.
         let held = held_rx.recv().unwrap();
         thread::spawn(move || drop(held)).join().unwrap();
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.holders(), 0);
         // Thread C forks: it must not wait for the released level, and A must wait for it.
         let (forked_tx, forked_rx) = mpsc::channel();
         let c = thread::spawn(move || {
@@ -660,7 +693,7 @@ mod tests {
         pending_tx.send(()).unwrap();
         a.join().unwrap();
         c.join().unwrap();
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.holders(), 0);
     }
 
     /// Two threads each hold their own level and fork at once: neither may wait for the other's
@@ -697,8 +730,8 @@ mod tests {
         for t in forkers {
             t.join().unwrap();
         }
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 0);
-        assert_eq!(gate.parked.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.holders(), 0);
+        assert_eq!(gate.parked(), 0);
     }
 
     /// Many forkers, each holding a nested level and a held one, all forking repeatedly.
@@ -726,8 +759,8 @@ mod tests {
         for t in threads {
             t.join().unwrap();
         }
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 0);
-        assert_eq!(gate.parked.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.holders(), 0);
+        assert_eq!(gate.parked(), 0);
     }
 
     #[test]
@@ -743,16 +776,24 @@ mod tests {
         .join()
         .unwrap();
         let held = share_rx.recv().unwrap();
-        assert_eq!(gate.parked.load(Ordering::SeqCst), 1);
-        assert!(gate.quiescent(0), "a parked level held up the fork");
-        // A running level (this thread's, uncounted as own) still holds it up.
-        let running = gate.try_enter_shared().unwrap();
-        assert!(!gate.quiescent(0));
-        drop(running);
+        assert_eq!(gate.parked(), 1);
+        assert!(gate.quiescent(), "a parked level held up the fork");
+        // A running level on another thread still holds it up (this thread's own would count as own).
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (leave_tx, leave_rx) = mpsc::channel::<()>();
+        let runner = thread::spawn(move || {
+            let _running = gate.try_enter_shared().unwrap();
+            entered_tx.send(()).unwrap();
+            leave_rx.recv().unwrap();
+        });
+        entered_rx.recv().unwrap();
+        assert!(!gate.quiescent());
+        leave_tx.send(()).unwrap();
+        runner.join().unwrap();
         // Dropping the parked owner's share takes it off both counts.
         drop(held);
-        assert_eq!(gate.parked.load(Ordering::SeqCst), 0);
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.parked(), 0);
+        assert_eq!(gate.holders(), 0);
     }
 
     #[test]
@@ -762,16 +803,16 @@ mod tests {
         let kept = gate.try_enter_shared().unwrap().into_held();
         let dropped = gate.try_enter_shared().unwrap().into_held();
         gate.park();
-        assert_eq!(gate.parked.load(Ordering::SeqCst), 3);
+        assert_eq!(gate.parked(), 3);
         thread::spawn(move || drop(dropped)).join().unwrap();
-        assert_eq!(gate.parked.load(Ordering::SeqCst), 2);
+        assert_eq!(gate.parked(), 2);
         assert_eq!(gate.own_depth(), 2, "the parked flag isn't counted as levels");
         gate.unpark();
-        assert_eq!(gate.parked.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.parked(), 0);
         assert_eq!(gate.own_depth(), 2);
         drop(kept);
         drop(outer);
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.holders(), 0);
     }
 
     /// The child of the first forker: the parked forker doesn't exist there, so its levels and the
@@ -791,14 +832,14 @@ mod tests {
         let own = gate.try_enter_shared().unwrap().into_held();
         let fork = gate.begin_fork();
         fork.end_child();
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 1, "only the forking thread's level is left");
-        assert_eq!(gate.parked.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.holders(), 1, "only the forking thread's level is left");
+        assert_eq!(gate.parked(), 0);
         drop(parked_share);
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 1, "an inherited share from a parked forker was counted");
-        assert_eq!(gate.parked.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.holders(), 1, "an inherited share from a parked forker was counted");
+        assert_eq!(gate.parked(), 0);
         // The forking thread's own share still counts after the fork, on any thread.
         thread::spawn(move || drop(own)).join().unwrap();
-        assert_eq!(gate.holders.load(Ordering::SeqCst), 0);
+        assert_eq!(gate.holders(), 0);
         assert_eq!(gate.own_depth(), 0);
         gate.begin_fork().end_parent();
     }
@@ -817,3 +858,6 @@ mod tests {
         .unwrap();
     }
 }
+
+#[cfg(all(test, shuttle))]
+mod model;

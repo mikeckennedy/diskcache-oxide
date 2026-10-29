@@ -24,6 +24,8 @@ serde = "1.0.229"
 # float_roundtrip is required: without it about 1 in 1,500 random floats decode one ULP off (Spike 3).
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 thiserror = "2"
+# The model checker for the gate and the write lock, only under `--cfg shuttle` (scripts/model-check.sh).
+shuttle = "0.9.9"
 
 # Every crate opts in with:
 #   [lints]
@@ -32,6 +34,7 @@ thiserror = "2"
 # deny, not forbid: the py crate's PyO3 macros expand to unsafe code. Core adds #![forbid(unsafe_code)].
 unsafe_code = "deny"
 missing_debug_implementations = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(shuttle)'] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
@@ -47,3 +50,11 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 # Keep the default panic = "unwind": PyO3 turns a panic into PanicException; abort would kill the interpreter.
+
+# The model checker's builds (scripts/model-check.sh): optimized, with debug assertions and overflow
+# checks on, and without the release profile's slow LTO.
+[profile.model-check]
+inherits = "dev"
+opt-level = 3
+debug-assertions = true
+overflow-checks = true
