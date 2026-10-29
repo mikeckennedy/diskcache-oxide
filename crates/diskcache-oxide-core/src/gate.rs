@@ -330,6 +330,14 @@ impl Gate {
         self.counts.store(u64::try_from(self.own_depth()).unwrap_or(LOW) & LOW, Ordering::SeqCst);
     }
 
+    /// The child-side reset when this thread never claimed the fork (its before-fork hook didn't
+    /// run): [`Gate::reset_in_child`], and the claim cleared too. Another thread in the parent may
+    /// have held it, mid-way through its own fork, and no thread in the child is forking.
+    fn reset_in_unclaimed_child(&self) {
+        self.reset_in_child();
+        self.pending.store(false, Ordering::SeqCst);
+    }
+
     /// Back to a fresh gate, so a model reuses one gate per OS thread instead of leaking one per
     /// execution (shuttle's atomics are large, and a run makes millions of executions).
     #[cfg(all(test, shuttle))]
@@ -545,8 +553,8 @@ pub fn end_fork_child() {
     match HELD_FORK.with(|held| held.borrow_mut().take()) {
         Some(guard) => guard.end_child(),
         // The before-hook didn't run (it can't fail, but CPython ignores before-hook errors). Still
-        // drop the parent's other threads from the count.
-        None => GATE.reset_in_child(),
+        // drop the parent's other threads from the count, and any claim one of them held.
+        None => GATE.reset_in_unclaimed_child(),
     }
 }
 
@@ -689,6 +697,18 @@ mod tests {
         fork.end_child();
         assert_eq!(gate.holders(), 0);
         assert!(gate.try_enter_shared().is_some());
+    }
+
+    #[test]
+    fn a_child_whose_before_hook_never_ran_drops_another_threads_claim() {
+        let gate = test_gate!(G);
+        // A claim taken by a parent thread forking at the same moment; this thread forked without
+        // the before-hook, so the child inherits the flag set and no guard to clear it.
+        gate.pending.store(true, Ordering::SeqCst);
+        gate.counts.fetch_add(HOLDER, Ordering::SeqCst);
+        gate.reset_in_unclaimed_child();
+        assert_eq!(gate.holders(), 0);
+        assert!(gate.try_enter_shared().is_some(), "the child waits for a fork no thread there runs");
     }
 
     #[test]
