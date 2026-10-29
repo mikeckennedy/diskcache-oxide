@@ -6,7 +6,7 @@
 //! SQLite state, and closing them in the child would release POSIX locks the parent relies on. Each
 //! fork therefore leaks the inherited connections' fds in the child, by design.
 //!
-//! The before-fork hook closes every idle connection first ([`close_idle_all`]), so normally the
+//! The before-fork hook closes every idle connection first (`close_idle_all`), so normally the
 //! child inherits none. That matters beyond the leak: SQLite keeps one lock record per database file
 //! per process, and a new connection that finds the record saying the process holds SHARED takes no
 //! kernel lock of its own. A child that inherited such a record would run with no locks at all, and
