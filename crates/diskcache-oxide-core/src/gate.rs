@@ -12,9 +12,16 @@
 //!   while a fork is pending, so nested operations (an operation inside a held transaction) can't
 //!   deadlock behind the fork. Levels kept as a [`HeldShare`] count as the entering thread's until
 //!   the share is dropped, on whichever thread that happens.
-//! - The gate is the outermost lock. Nothing that blocks may be waited on while it is held shared,
-//!   except SQLite's own busy wait; a pool that runs out of connections must release the gate
-//!   before it waits for one.
+//! - The gate is the outermost lock. While holding a shared level, a thread waits for nothing another
+//!   thread can hold: not the write lock, a connection slot, a connection or the gate. A pool that
+//!   runs out of connections releases the gate before it waits for one. Two waits are allowed:
+//!   SQLite's own busy wait inside an [`crate::lockwait::AttachedWindow`], and bounded local work run
+//!   through [`run_blocking`] (file I/O, or a SQLite call whose only wait is that window: the
+//!   spill-file read in `pop`, the forced WAL checkpoint), which keeps a pending fork waiting no
+//!   longer than the work takes.
+//! - Both rely on a second rule: **no thread waits on a gate holder while attached** to the
+//!   interpreter. Every wait for the write lock, a slot or a pending fork goes through the blocker.
+//!   Otherwise a holder that released the interpreter could deadlock re-taking it on a GIL build.
 //! - [`Gate::begin_fork`] waits until the only holders left are the calling thread's own levels and
 //!   those of threads parked in `begin_fork` behind it, so forking inside your own transaction
 //!   doesn't deadlock, and neither do two threads that each hold their own and fork at once: a
@@ -47,7 +54,9 @@ const FORK_POLL: Duration = Duration::from_millis(1);
 /// also the most a thread can lag behind the end of a fork.
 const WAITER_POLL: Duration = Duration::from_millis(1);
 
-/// Runs a blocking wait. The Python layer installs one that releases the interpreter around it.
+/// Runs a blocking wait. The Python layer installs one that releases the interpreter around it. It
+/// must run the closure exactly once, on the calling thread: callers keep thread-local state (an
+/// open [`crate::lockwait::AttachedWindow`]) across it.
 pub type Blocker = fn(&(dyn Fn() + Sync));
 
 static BLOCKER: OnceLock<Blocker> = OnceLock::new();
@@ -58,8 +67,10 @@ pub fn set_blocker(blocker: Blocker) -> bool {
     BLOCKER.set(blocker).is_ok()
 }
 
-/// Runs a blocking wait through the installed [`Blocker`], so the interpreter is released while it
-/// waits. Callers must not hold the gate (see the rules above).
+/// Runs `work` once, on the calling thread, through the installed [`Blocker`], so the interpreter is
+/// released while it runs. Usually called with no gate level held. A caller holding one may use it
+/// only for the bounded work the rules above allow (the spill-file read in `pop`, the forced WAL
+/// checkpoint).
 pub fn run_blocking(wait: &(dyn Fn() + Sync)) {
     match BLOCKER.get() {
         Some(blocker) => blocker(wait),
@@ -179,6 +190,9 @@ impl Gate {
     }
 
     /// Enters in shared mode, waiting on this thread (attached to nothing) while a fork is pending.
+    /// Never call it from code attached to the interpreter: an attached wait on a gate holder breaks
+    /// the second rule above. Only tests use it.
+    #[cfg(test)]
     pub fn enter_shared_blocking(&self) -> SharedGuard<'_> {
         loop {
             if let Some(guard) = self.try_enter_shared() {

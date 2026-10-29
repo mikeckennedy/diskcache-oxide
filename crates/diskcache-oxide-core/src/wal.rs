@@ -12,10 +12,12 @@
 //! - `wal_autocheckpoint`, scaled from the limit (at most SQLite's 1,000 pages), so that a healthy
 //!   WAL stays well under the trigger.
 //! - After a committed write, at most every [`CHECK_EVERY`] or [`CHECK_EVERY_COMMITS`], the
-//!   `-wal` file is `stat`ed. If it's over the limit, one `PRAGMA wal_checkpoint(TRUNCATE)` runs
-//!   under a standard attached busy window ([`crate::lockwait::ATTACHED_WINDOW`]). It waits for
-//!   in-flight readers (ours are microseconds long), copies the remaining frames and truncates the
-//!   file. If it reports busy, the store backs off for [`RETRY_AFTER_BUSY`].
+//!   `-wal` file is `stat`ed. If it's over the limit, a forced checkpoint runs with the interpreter
+//!   released: `PRAGMA wal_checkpoint(PASSIVE)` (copy what it can, no waiting), then
+//!   `wal_checkpoint(TRUNCATE)` under a fresh busy window ([`crate::lockwait::ATTACHED_WINDOW`]),
+//!   which waits for in-flight readers (ours are microseconds long), copies the remainder and
+//!   truncates the file. If it reports busy, the store backs off for [`RETRY_AFTER_BUSY`]. The
+//!   counters' pause times measure the SQLite work only, not re-taking the interpreter.
 //!
 //! The check runs after the write's retry loop has returned, still holding the in-process write
 //! lock, and never for a write at gate depth > 0, inside a held transaction, or through
@@ -37,6 +39,9 @@ pub const CHECK_EVERY: Duration = Duration::from_millis(250);
 pub const CHECK_EVERY_COMMITS: u64 = 64;
 /// After a busy or failed forced checkpoint, the store waits this long before the next attempt.
 pub const RETRY_AFTER_BUSY: Duration = Duration::from_secs(1);
+
+/// A forced checkpoint at least this long counts as slow in [`WalStats::slow`].
+pub const SLOW_PAUSE: Duration = Duration::from_millis(100);
 
 /// SQLite's own default `wal_autocheckpoint`, in pages.
 const SQLITE_AUTOCHECKPOINT: u64 = 1_000;
@@ -73,8 +78,14 @@ pub struct WalStats {
     pub errors: u64,
     /// ...that were skipped because every connection slot was in use.
     pub no_slot: u64,
-    /// The longest forced checkpoint, in microseconds.
+    /// The longest forced checkpoint (both steps), in microseconds.
     pub max_pause_us: u64,
+    /// The longest PASSIVE step (copying frames without waiting), in microseconds.
+    pub max_passive_us: u64,
+    /// The longest TRUNCATE step (waiting for readers, the remainder, the truncation), in microseconds.
+    pub max_truncate_us: u64,
+    /// Forced checkpoints that took at least [`SLOW_PAUSE`].
+    pub slow: u64,
     /// The `-wal` file size at the last check, in bytes.
     pub last_wal_bytes: u64,
 }
@@ -96,6 +107,9 @@ pub(crate) struct WalState {
     errors: AtomicU64,
     no_slot: AtomicU64,
     max_pause_us: AtomicU64,
+    max_passive_us: AtomicU64,
+    max_truncate_us: AtomicU64,
+    slow: AtomicU64,
     last_wal_bytes: AtomicU64,
 }
 
@@ -139,6 +153,9 @@ impl WalState {
             errors: AtomicU64::new(0),
             no_slot: AtomicU64::new(0),
             max_pause_us: AtomicU64::new(0),
+            max_passive_us: AtomicU64::new(0),
+            max_truncate_us: AtomicU64::new(0),
+            slow: AtomicU64::new(0),
             last_wal_bytes: AtomicU64::new(0),
         }
     }
@@ -167,8 +184,8 @@ impl WalState {
         Decision::Checkpoint
     }
 
-    /// Records a forced checkpoint's outcome and how long it took.
-    pub fn record(&self, outcome: &Outcome, took: Duration) {
+    /// Records a forced checkpoint's outcome and how long each step took.
+    pub(crate) fn record(&self, outcome: &Outcome, passive: Duration, truncate: Duration) {
         let counter = match outcome {
             Outcome::Done => &self.successes,
             Outcome::Busy => &self.busy,
@@ -179,8 +196,14 @@ impl WalState {
         if !matches!(outcome, Outcome::Done) {
             self.next_attempt_ms.store(self.now_ms() + millis(RETRY_AFTER_BUSY), Ordering::Relaxed);
         }
-        let us = u64::try_from(took.as_micros()).unwrap_or(u64::MAX);
-        self.max_pause_us.fetch_max(us, Ordering::Relaxed);
+        let us = |d: Duration| u64::try_from(d.as_micros()).unwrap_or(u64::MAX);
+        let took = passive + truncate;
+        self.max_pause_us.fetch_max(us(took), Ordering::Relaxed);
+        self.max_passive_us.fetch_max(us(passive), Ordering::Relaxed);
+        self.max_truncate_us.fetch_max(us(truncate), Ordering::Relaxed);
+        if took >= SLOW_PAUSE {
+            self.slow.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     #[must_use]
@@ -193,6 +216,9 @@ impl WalState {
             errors: self.errors.load(Ordering::Relaxed),
             no_slot: self.no_slot.load(Ordering::Relaxed),
             max_pause_us: self.max_pause_us.load(Ordering::Relaxed),
+            max_passive_us: self.max_passive_us.load(Ordering::Relaxed),
+            max_truncate_us: self.max_truncate_us.load(Ordering::Relaxed),
+            slow: self.slow.load(Ordering::Relaxed),
             last_wal_bytes: self.last_wal_bytes.load(Ordering::Relaxed),
         }
     }
@@ -235,7 +261,7 @@ mod tests {
     fn over_the_limit_checkpoints_and_a_busy_one_backs_off() {
         let state = WalState::new();
         assert_eq!(state.after_commit(100, || 200), Decision::Checkpoint);
-        state.record(&Outcome::Busy, Duration::from_micros(5));
+        state.record(&Outcome::Busy, Duration::from_micros(5), Duration::ZERO);
         // Next look (forced by the commit count) is still over the limit, but inside the backoff.
         for _ in 0..CHECK_EVERY_COMMITS - 1 {
             let _ = state.after_commit(100, || 200);
@@ -250,7 +276,7 @@ mod tests {
     fn a_successful_checkpoint_does_not_back_off() {
         let state = WalState::new();
         assert_eq!(state.after_commit(100, || 200), Decision::Checkpoint);
-        state.record(&Outcome::Done, Duration::from_micros(5));
+        state.record(&Outcome::Done, Duration::from_micros(5), Duration::ZERO);
         for _ in 0..CHECK_EVERY_COMMITS - 1 {
             let _ = state.after_commit(100, || 200);
         }

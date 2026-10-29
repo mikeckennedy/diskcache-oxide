@@ -394,33 +394,58 @@ impl Store {
             return;
         }
         let Some(_permit) = self.slots.try_acquire(self.max_connections.load(Ordering::Acquire)) else {
-            self.wal.record(&Outcome::NoSlot, Duration::ZERO);
+            self.wal.record(&Outcome::NoSlot, Duration::ZERO, Duration::ZERO);
             return;
         };
         let gate = GATE.enter_shared();
-        let Ok(lease) = self.lease(&gate, Duration::ZERO) else {
-            self.wal.record(&Outcome::Failed, Duration::ZERO);
+        let Ok(mut lease) = self.lease(&gate, Duration::ZERO) else {
+            self.wal.record(&Outcome::Failed, Duration::ZERO, Duration::ZERO);
             return;
         };
-        let start = Instant::now();
         // Two steps. PASSIVE first, with no busy window: it copies whatever frames it can into the
         // database without waiting for anyone. Then TRUNCATE in a fresh window: it waits for readers
         // on older snapshots (ours take microseconds), copies the small remainder and truncates the
         // file. A single TRUNCATE spent its whole window copying a large backlog and then reported
         // busy before it could wait for readers (seen on Linux with readers in other processes).
         // Busy comes back as a row (busy = 1), not an error.
-        let _ = lease.conn().query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| r.get::<_, i64>(0));
-        let row = {
-            // `open` caps the window at ATTACHED_WINDOW from now.
-            let _window = lockwait::AttachedWindow::open(Instant::now() + lockwait::ATTACHED_WINDOW);
-            lease.conn().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0))
+        //
+        // Both run with the interpreter released (through the gate's blocker), although this thread
+        // holds the gate: copying a large backlog under a loaded disk took up to 1.4 s in the soak,
+        // and on a GIL build every other thread of the process would have frozen with it. This is
+        // the same exception spill-file reads make: bounded work with no waiting on another lock or
+        // on the interpreter, so a pending fork waits at most this long, and can't deadlock.
+        // The blocker's closure must be `Sync` and a `Connection` isn't, so the closure borrows the
+        // lease's connection through a mutex (`&mut PooledConn` is `Send`).
+        let mut timings = None;
+        {
+            let cell = std::sync::Mutex::new((lease.pooled_mut(), &mut timings));
+            gate::run_blocking(&|| {
+                let Ok(mut guard) = cell.lock() else { return };
+                let (pooled, out) = &mut *guard;
+                let conn = pooled.conn();
+                let start = Instant::now();
+                let _ = conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| r.get::<_, i64>(0));
+                let passive = start.elapsed();
+                let row = {
+                    // `open` caps the window at ATTACHED_WINDOW from now.
+                    let _window = lockwait::AttachedWindow::open(Instant::now() + lockwait::ATTACHED_WINDOW);
+                    conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0))
+                };
+                **out = Some((row, passive, start.elapsed().saturating_sub(passive)));
+            });
+        }
+        // The lease checks the connection back in on every path, panics included.
+        drop(lease);
+        let Some((row, passive, truncate)) = timings else {
+            self.wal.record(&Outcome::Failed, Duration::ZERO, Duration::ZERO);
+            return;
         };
         let outcome = match row {
             Ok(0) => Outcome::Done,
             Ok(_) => Outcome::Busy,
             Err(_) => Outcome::Failed,
         };
-        self.wal.record(&outcome, start.elapsed());
+        self.wal.record(&outcome, passive, truncate);
     }
 
     /// What forced WAL checkpoints have done on this store (for tests and debugging).
@@ -614,6 +639,10 @@ impl Lease<'_, '_> {
     /// Takes the connection out, so it outlives the lease (a held transaction keeps it).
     fn into_inner(mut self) -> PooledConn {
         self.pooled.take().unwrap_or_else(|| unreachable!("lease used after drop"))
+    }
+
+    fn pooled_mut(&mut self) -> &mut PooledConn {
+        self.pooled.as_mut().unwrap_or_else(|| unreachable!("lease used after drop"))
     }
 
     fn conn(&self) -> &Connection {

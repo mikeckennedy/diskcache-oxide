@@ -225,7 +225,7 @@ def build(run: Path, final: bool) -> dict[str, Any]:
         chart('Rows and value files', {'chaos rows': col(t, 'chaos_rows'), 'chaos value files': col(t, 'chaos_value_files'), 'ledger rows': col(t, 'ledger_rows'), 'chaos orphan files': col(t, 'chaos_orphans')}),
         chart('Cumulative problems, stalls and timeouts', {'problems': col(t, 'problems'), 'stalls': col(t, 'stalls'), 'timeouts': col(t, 'timeouts_total')}),
         chart('Chaos: kills, forks and maintenance calls', {'kills': col(t, 'kills'), 'forks ok': col(t, 'forks_ok'), 'forks failed': col(t, 'forks_failed'), 'maintenance calls': col(t, 'maint_calls')}),
-        chart('Forced WAL checkpoints (D-024)', {'attempts': col(t, 'wal_ckpt_attempts'), 'busy': col(t, 'wal_ckpt_busy')}),
+        chart('Forced WAL checkpoints (D-024)', {'attempts': col(t, 'wal_ckpt_attempts'), 'busy': col(t, 'wal_ckpt_busy'), 'slow (>= 100 ms)': col(t, 'wal_ckpt_slow')}),
         chart('Worst forced-checkpoint pause', {'max pause': col(t, 'wal_ckpt_max_pause_us')}, 'µs'),
         chart('Maintenance call duration', {op: [(m['elapsed_h'], m['seconds']) for m in a['maint'] if m['op'] == op] for op in ('clear', 'expire', 'cull')}, 's'),
     ]

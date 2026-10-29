@@ -79,3 +79,23 @@ As in the roadmap: every review finding resolved or explicitly accepted, a clean
 
     So the permanent bloat is fixed on both platforms. On Linux, heavy cross-process reading still allows a temporary overshoot during a burst. Michael (2026-10-28): fine under crazy load, as long as it's tamed eventually. Recorded as a D-024 limitation; the background maintenance thread is the way to do better.
   - **Deferred:** the benchmark row for WAL size and pause under the 99:1 mix (to step 6). `bench/wal_burst.py` covers the burst case meanwhile. The soak kit now records checkpoint counters and charts them for the next run.
+- **Checkpoint pauses in the soak (2026-10-28).** The 24-hour run on the mini (commit 5e91b60) showed forced-checkpoint pauses of 245 ms to 4.1 s, mostly in 3.14 GIL workers, where the whole process waits with the triggering thread.
+  - **What causes them:** the checkpoint's own work is cheap even under the soak's load (PASSIVE 5 ms, TRUNCATE 1.4 ms on an 89 MiB WAL, timed on the mini). The long pauses are the mini's disk stalls: the baseline run (Phase 2, no forced checkpoints) already showed `set` p99 up to 3.46 s. Read tails did grow on the mini (`get` p99 max 0.4 → 8.5 ms) but not on the laptop (0.5 ms).
+  - **Change:** the checkpoint now runs with the interpreter released (`gate::run_blocking`), even though the thread holds the gate, so a GIL build's other threads keep running. The architect found no deadlock and no must-fix. The safety argument rests on a rule now written into the gate docs: no thread waits on a gate holder while attached; every wait for the write lock, a slot or a pending fork goes through the blocker. Also done:
+    - the lease stays alive across the blocker, so a panic can't leak a pooled connection;
+    - `enter_shared_blocking` is test-only;
+    - split counters: `max_passive_us`, `max_truncate_us`, and `slow` (≥ 100 ms), recorded by the soak kit.
+  - **RESTART vs TRUNCATE A/B** (measuring the write that triggers the checkpoint and the first write after it): RESTART saves about 0.3 ms on the trigger but adds about 0.25 ms (max 8.7 ms) to the next ordinary write, which holds the GIL. A wash, so TRUNCATE stays.
+  - **Laptop soak, 7 × 4 flat out, 10 min:** 1 slow checkpoint of 328 (111 ms, in TRUNCATE), `set` p99 ≤ 58 ms, `get` p99 ≤ 0.5 ms.
+- **Reasonable-load test (Michael, 2026-10-28):** 4 processes × 2 threads, 1,000:1, a steady 100 ops/s, chaos every ~5 minutes, 10 minutes; the soak kit gained `--mix` and `--rate`.
+
+  | | macOS laptop | Linux 3.14 | Linux 3.14t |
+  |---|---|---|---|
+  | `get` p50 / p99 | 39 / 56 µs | 26.5 / 34 µs | 37 / 49 µs |
+  | `set` p50 / p99 | 1.0 / 1.6 ms | 0.43 / 4.8 ms | 0.79 / 2.7 ms |
+  | RSS per worker | 17.5 MiB | 23-28 MiB | 30-41 MiB |
+  | WAL peak, forced checkpoints | 1.3 MiB, 0 | 1.4 MiB, 0 | 1.4 MiB, 0 |
+
+  All passed with 0 problems. At normal rates SQLite's own checkpointing keeps up, so the D-024 path costs nothing. The free-threaded memory premium mostly disappears without flat-out churn.
+
+  **Why paced latency is 30× the benchmark:** cold CPU state between calls, not oxide. With busy-waiting between calls, a `get` takes 1.0 µs with no gap, 1.6 µs after 1 ms, 11 µs after 10 ms and 32 µs after 80 ms. A plain `dict` lookup degrades the same way (0.04 → 2.96 µs, 74×). Any library pays that on an occasional call; oxide's own work is the 1 µs hot figure.

@@ -1,7 +1,7 @@
 """A soak worker: one process hammering the chaos and ledger caches from several threads.
 
 Started by soak/soak.py, never by hand:
-    python -m soak.worker run <run_dir> <worker_id> <threads> <seed>
+    python -m soak.worker run <run_dir> <worker_id> <threads> <seed> [<every> <ops/s per thread>]
     python -m soak.worker maint <run_dir> clear|expire|cull
 
 Two caches share the run directory:
@@ -111,7 +111,11 @@ def check_value(key: str, value: Any, now: float) -> str | None:
 
 
 class Worker:
-    def __init__(self, run_dir: Path, worker_id: int, threads: int, seed: int) -> None:
+    def __init__(self, run_dir: Path, worker_id: int, threads: int, seed: int, every: int = 0, thread_rate: float = 0.0) -> None:
+        # every: one write per this many ops (0 alternates the 99:1 and 1,000:1 mixes by thread).
+        # thread_rate: ops per second per thread (0 runs flat out).
+        self.every = every
+        self.thread_rate = thread_rate
         self.run_dir = run_dir
         self.id = worker_id
         self.thread_count = threads
@@ -146,9 +150,18 @@ class Worker:
 
     def thread_main(self, n: int) -> None:
         rng = random.Random(self.seed * 1_000 + n)
-        every = 100 if n % 2 == 0 else 1_000  # the 99:1 headline mix and the 1,000:1 Talk Python profile
+        # The 99:1 headline mix and the 1,000:1 Talk Python profile, alternating by thread, unless
+        # --mix fixed one.
+        every = self.every or (100 if n % 2 == 0 else 1_000)
+        interval = 1.0 / self.thread_rate if self.thread_rate else 0.0
+        next_at = time.monotonic() + rng.uniform(0, interval)
         i = 0
         while not self.stop.is_set():
+            if interval:  # Paced: a steady request rate rather than flat out.
+                delay = next_at - time.monotonic()
+                if delay > 0 and self.stop.wait(delay):
+                    break
+                next_at = max(next_at + interval, time.monotonic() - interval)
             i += 1
             try:
                 self.one_op(rng, i, every)
@@ -375,9 +388,11 @@ def main() -> int:
         set_title(f'soak-maint-{sys.argv[3]}')
         return maint(run_dir, sys.argv[3])
     worker_id, threads, seed = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+    every = int(sys.argv[6]) if len(sys.argv) > 6 else 0
+    thread_rate = float(sys.argv[7]) if len(sys.argv) > 7 else 0.0
     set_title(f'soak-worker-{worker_id}')
     assert diskcache_oxide.sqlite_version() == diskcache_oxide.BUNDLED_SQLITE_VERSION
-    return Worker(run_dir, worker_id, threads, seed).run()
+    return Worker(run_dir, worker_id, threads, seed, every, thread_rate).run()
 
 
 if __name__ == '__main__':

@@ -133,7 +133,11 @@ class Soak:
         wid = self.next_id
         self.next_id += 1
         log = (self.dir / 'logs' / f'{wid}.log').open('ab')
-        cmd = [python, '-m', 'soak.worker', 'run', str(self.dir), str(wid), str(self.args.threads), str(self.args.seed * 10_000 + wid)]
+        thread_rate = self.args.rate / (self.args.procs * self.args.threads) if self.args.rate else 0.0
+        cmd = [
+            python, '-m', 'soak.worker', 'run', str(self.dir), str(wid), str(self.args.threads),
+            str(self.args.seed * 10_000 + wid), str(self.args.mix), str(thread_rate),
+        ]  # fmt: skip
         proc = subprocess.Popen(cmd, cwd=REPO, stdout=log, stderr=log)
         self.workers[wid] = WorkerProc(wid, python, long_lived, proc, time.time(), log)
         self.event('spawn', id=wid, pid=proc.pid, python=python, long_lived=long_lived)
@@ -418,6 +422,7 @@ class Soak:
             'wal_ckpt_attempts': sum((w.stats.get('wal') or {}).get('attempts', 0) for w in live),
             'wal_ckpt_busy': sum((w.stats.get('wal') or {}).get('busy', 0) for w in live),
             'wal_ckpt_max_pause_us': max(((w.stats.get('wal') or {}).get('max_pause_us', 0) for w in live), default=0),
+            'wal_ckpt_slow': sum((w.stats.get('wal') or {}).get('slow', 0) for w in live),
         }
         self.timeline[1].writerow(trow)
         self.write_status(trow, ops)
@@ -541,7 +546,7 @@ TIMELINE_FIELDS = [
     'rss_total_mib', 'fds_total', 'timeouts_total', 'problems', 'kills', 'forks_ok', 'forks_failed', 'maint_calls',
     'stalls', 'chaos_rows', 'chaos_db_bytes', 'chaos_wal_bytes', 'chaos_value_files', 'ledger_rows', 'ledger_db_bytes',
     'ledger_wal_bytes', 'ledger_value_files', 'chaos_orphans', 'wal_ckpt_attempts', 'wal_ckpt_busy',
-    'wal_ckpt_max_pause_us',
+    'wal_ckpt_max_pause_us', 'wal_ckpt_slow',
 ]  # fmt: skip
 WORKER_FIELDS = [
     'time', 'elapsed_h', 'id', 'python', 'long_lived', 'rss_mib', 'fds', 'ops', 'timeouts', 'problems', 'forks_ok',
@@ -557,6 +562,8 @@ def main() -> int:
     parser.add_argument('--procs', type=int, default=max(4, (os.cpu_count() or 8) // 2), help='Worker processes (default: half the CPUs).')
     parser.add_argument('--threads', type=int, default=4, help='Threads per worker.')
     parser.add_argument('--interval', type=float, default=60.0, help='Seconds between checks and data rows.')
+    parser.add_argument('--mix', type=int, default=0, help='One write per this many operations (default: 99:1 and 1,000:1, alternating by thread).')
+    parser.add_argument('--rate', type=float, default=0.0, help='Total cache operations per second across all workers (default: flat out).')
     parser.add_argument('--chaos-every', type=float, default=60.0, help='Upper bound on seconds between chaos actions.')
     parser.add_argument('--stall-after', type=float, default=STALL_AFTER, help='Seconds without progress before a worker counts as stalled.')
     parser.add_argument('--seed', type=int, default=int(time.time()) % 100_000)

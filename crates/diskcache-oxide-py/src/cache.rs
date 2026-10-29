@@ -165,6 +165,9 @@ impl Cache {
             ("errors", s.errors),
             ("no_slot", s.no_slot),
             ("max_pause_us", s.max_pause_us),
+            ("max_passive_us", s.max_passive_us),
+            ("max_truncate_us", s.max_truncate_us),
+            ("slow", s.slow),
             ("last_wal_bytes", s.last_wal_bytes),
         ] {
             d.set_item(k, v)?;
