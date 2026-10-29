@@ -28,7 +28,11 @@
 //!   parked forker is running Python, not SQLite, so its levels are quiescent. Those transactions
 //!   are poisoned in the child (see [`generation`] and [`crate::poison`]).
 //! - Blocking waits go through the [`Blocker`] installed with [`set_blocker`], so the Python layer
-//!   can release the interpreter while a thread waits. The fast path never calls it.
+//!   can release the interpreter while a thread waits. The fast path never calls it. The Python
+//!   layer's blocker trusts a per-thread "already detached" flag, set while its `detach` helper
+//!   runs long Rust-only work (`clear`, `expire`, `cull`, opening, `begin_hold`), and then waits
+//!   without re-attaching. Work run through that helper must therefore never attach the
+//!   interpreter (no Python callbacks), or its waits would run attached and break the rule above.
 //!
 //! # Across `fork()`
 //!

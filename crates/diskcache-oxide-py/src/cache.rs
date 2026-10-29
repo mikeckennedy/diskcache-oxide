@@ -122,7 +122,7 @@ impl Cache {
             wal_size_limit,
             auto_checkpoint,
         };
-        let store = py.detach(|| Store::open(&options)).map_err(to_py_err)?;
+        let store = crate::detach(py, || Store::open(&options)).map_err(to_py_err)?;
         Ok(Self {
             store,
             directory: directory.to_string_lossy().into_owned(),
@@ -323,13 +323,10 @@ impl Cache {
         let key = str_key(key)?;
         let now = self.now(py)?;
         self.ensure_open();
-        let allow_pickle = self.pickle;
-        let popped = self
-            .store
-            .pop_with(self.timeout, key, now, |mode, value| Ok(decode_value(py, mode, value, allow_pickle)))
-            .map_err(to_py_err)?;
-        match popped {
-            Some(value) => value,
+        // Decoded only after the delete has committed: unpickling can run Python that uses this
+        // cache (see `Store::pop`). A value that fails to decode is still removed.
+        match self.store.pop(self.timeout, key, now).map_err(to_py_err)? {
+            Some(popped) => decode_value(py, popped.mode, popped.value_ref(), self.pickle),
             None => Ok(default.unwrap_or_else(|| py.None())),
         }
     }
@@ -359,13 +356,13 @@ impl Cache {
     fn expire(&self, py: Python<'_>) -> PyResult<u64> {
         let now = self.now(py)?;
         self.ensure_open();
-        py.detach(|| self.store.expire(self.timeout, now)).map_err(to_py_err)
+        crate::detach(py, || self.store.expire(self.timeout, now)).map_err(to_py_err)
     }
 
     /// Removes every entry stored before the call. Returns how many it removed.
     fn clear(&self, py: Python<'_>) -> PyResult<u64> {
         self.ensure_open();
-        py.detach(|| self.store.clear(self.timeout)).map_err(to_py_err)
+        crate::detach(py, || self.store.clear(self.timeout)).map_err(to_py_err)
     }
 
     /// Removes expired entries, then evicts until the cache is under `size_limit`. Returns how many
@@ -373,7 +370,7 @@ impl Cache {
     fn cull(&self, py: Python<'_>) -> PyResult<u64> {
         let now = self.now(py)?;
         self.ensure_open();
-        py.detach(|| self.store.cull(self.timeout, now)).map_err(to_py_err)
+        crate::detach(py, || self.store.cull(self.timeout, now)).map_err(to_py_err)
     }
 
     /// Keys in sorted order (code-point order, like `sorted()`), optionally only those starting
@@ -553,7 +550,7 @@ impl WriteHold {
     fn __enter__(&self, py: Python<'_>) -> PyResult<()> {
         let cache = self.cache.get();
         cache.ensure_open();
-        let held = py.detach(|| cache.store.begin_hold(cache.timeout)).map_err(to_py_err)?;
+        let held = crate::detach(py, || cache.store.begin_hold(cache.timeout)).map_err(to_py_err)?;
         *self.held.lock().unwrap_or_else(PoisonError::into_inner) = Some(held);
         Ok(())
     }

@@ -140,3 +140,34 @@ def test_waiting_for_another_processs_lock_lets_other_threads_run(tmp_path: Path
     # With the interpreter held for the whole wait, the ticker would stall for about 0.6 s.
     assert max(gaps) < 0.1, f'another thread stalled for {max(gaps):.3f}s while a write waited'
     cache.close()
+
+
+@pytest.mark.skipif(not sys._is_gil_enabled(), reason='the GIL hand-off cost exists only on GIL builds')
+def test_clear_does_not_re_take_the_gil_between_chunks(tmp_path: Path) -> None:
+    # clear() runs detached. Its waits between chunks used to re-attach the interpreter only to
+    # release it again, and with other threads busy each re-attach waited for the GIL, up to the
+    # 5 ms switch interval: about 15 ms a chunk with two reader threads (bench.reattach), so about
+    # 0.75 s for these 50 chunks. Without the re-attach it takes about 15 ms.
+    cache = Cache(tmp_path / 'c', size_limit=2**34)
+    for i in range(5_000):
+        cache.set(f'k{i}', i)
+    stop = threading.Event()
+
+    def read() -> None:
+        while not stop.is_set():
+            cache.get('k1')
+
+    readers = [threading.Thread(target=read) for _ in range(2)]
+    for t in readers:
+        t.start()
+    try:
+        time.sleep(0.05)
+        started = time.perf_counter()
+        assert cache.clear() == 5_000
+        took = time.perf_counter() - started
+    finally:
+        stop.set()
+        for t in readers:
+            t.join()
+        cache.close()
+    assert took < 0.3, f'clear() took {took:.2f} s: it waits for the GIL between chunks again'
