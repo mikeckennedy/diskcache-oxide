@@ -391,10 +391,13 @@ impl Cache {
     // -- lifecycle ----------------------------------------------------------------------------
 
     /// Releases this handle. When the last handle on a directory closes, every connection closes
-    /// (D-018). Using the cache again afterwards reopens it, as diskcache does.
-    /// Closes this handle. With `checkpoint` (the default), a WAL left larger than its trim size
-    /// (half of `wal_size_limit`) is checkpointed first, waiting at most 1 s (D-024). A small WAL,
-    /// the usual case, costs nothing extra.
+    /// (D-018). Using the cache again afterwards reopens it, as diskcache does. Closing twice is
+    /// harmless.
+    ///
+    /// With `checkpoint` (the default), the process's last handle first checkpoints a WAL left
+    /// larger than its trim size (half of `wal_size_limit`), waiting at most 1 s (or `timeout`, if
+    /// shorter) for other processes; a copy already under way can run past that (D-024). A small
+    /// WAL, the usual case, costs one `stat`. Close never fails because of the checkpoint.
     #[pyo3(signature = (*, checkpoint = true))]
     fn close(&self, checkpoint: bool) {
         if !self.closed.swap(true, Ordering::AcqRel) {

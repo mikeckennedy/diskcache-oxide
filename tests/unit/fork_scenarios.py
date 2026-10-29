@@ -97,6 +97,7 @@ def d020(directory: Path) -> list[str]:
         fresh = Cache(directory, timeout=TIMEOUT)
         assert fresh.get('before') == 'parent'
         fails_fast('write through a fresh Cache', lambda: fresh.set('child', 1))
+        fails_fast('checkpoint through a fresh Cache', fresh.checkpoint)
         with Cache(other, timeout=TIMEOUT) as elsewhere:
             assert elsewhere.set('child', 1) is True and elsewhere.get('child') == 1
         code = wait(fork(grandchild))

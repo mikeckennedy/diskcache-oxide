@@ -400,7 +400,8 @@ impl Store {
         let limit = self.wal_size_limit.load(Ordering::Relaxed);
         let decision = self.wal.after_commit(limit, || self.wal_bytes());
         if decision == Decision::Checkpoint {
-            let _ = self.checkpoint_once();
+            let outcome = self.checkpoint_once();
+            self.wal.record_outcome(&outcome);
         }
     }
 
@@ -409,12 +410,15 @@ impl Store {
         std::fs::metadata(&self.wal_path).map_or(0, |m| m.len())
     }
 
-    /// Checkpoints the WAL and truncates it to zero (D-024): retries, waiting with the interpreter
-    /// released, until it succeeds or `timeout` runs out. Returns `Ok(true)` if the WAL was reset,
-    /// `Ok(false)` if readers or writers in other processes kept it busy the whole time. For
+    /// Checkpoints the WAL and truncates it to zero (D-024): retries busy rounds, waiting with the
+    /// interpreter released, until one succeeds or `timeout` runs out. Returns `Ok(true)` if the WAL
+    /// was reset, `Ok(false)` if readers or writers in other processes kept it busy the whole time,
+    /// and a real error (a full disk, an I/O error) at once. `timeout` bounds the waiting, not a
+    /// round already running: its PASSIVE copy of a large backlog can take longer, and its TRUNCATE
+    /// always gets a fresh 2 ms window. For
     /// `Cache.checkpoint()`: an app calls it when a pause suits it (at shutdown, in a maintenance
     /// job, after a large `clear()`). Inside the calling thread's own held transaction, or a nested
-    /// operation, it makes one attempt only (its own open transaction keeps the WAL busy).
+    /// operation, it returns `Ok(false)` without trying (its own open transaction keeps the WAL busy).
     pub fn checkpoint(&self, timeout: Duration) -> Result<bool> {
         use crate::wal::Outcome;
         crate::poison::check_writable(self.file_id)?;
@@ -427,29 +431,35 @@ impl Store {
         if GATE.own_depth() > 0 {
             return Ok(false);
         }
-        loop {
+        let outcome = loop {
             // Holding the in-process write lock keeps this process's writers queued (detached)
             // instead of meeting SQLite's busy handler while the checkpoint resets the WAL.
             let token = self.write_lock.lock_until(deadline);
             let outcome = if token.is_some() { self.checkpoint_once() } else { Outcome::Busy };
             drop(token);
-            if matches!(outcome, Outcome::Done) {
-                return Ok(true);
-            }
-            if Instant::now() >= deadline {
-                return Ok(false);
+            let retry = matches!(outcome, Outcome::Busy | Outcome::NoSlot);
+            if !retry || Instant::now() >= deadline {
+                break outcome;
             }
             lockwait::backoff(start.elapsed());
+        };
+        // One attempt in the counters, however many rounds it took.
+        self.wal.record_outcome(&outcome);
+        match outcome {
+            Outcome::Done => Ok(true),
+            Outcome::Busy | Outcome::NoSlot => Ok(false),
+            Outcome::Failed(error) => Err(error),
         }
     }
 
     /// For `Cache.close(checkpoint=True)`: if the WAL is past its trim size (`journal_size_limit`,
-    /// half of `wal_size_limit`), checkpoints it, waiting at most `budget`. A small WAL, the usual
-    /// case, costs one `stat`. Never fails: close must succeed whatever the WAL's state.
+    /// half of `wal_size_limit`), checkpoints it, waiting at most `budget` for other processes (a
+    /// round already copying can run past it). A small WAL, the usual case, costs one `stat`. Never
+    /// fails: close must succeed whatever the WAL's state.
     ///
     /// Only for the process's last handle on this store: others leave it to the last one, so a
     /// handle closed while the cache is in use never holds up this process's writers. And not
-    /// again for [`crate::wal::RETRY_AFTER_BUSY`] after an attempt reported busy, so a pattern of
+    /// again for [`crate::wal::RETRY_AFTER_BUSY`] after an attempt that didn't succeed, so a pattern of
     /// `with Cache(...)` per request doesn't pay the budget on every exit while readers in other
     /// processes keep the WAL busy.
     pub fn checkpoint_on_close(&self, budget: Duration) {
@@ -460,18 +470,24 @@ impl Store {
         let _ = self.checkpoint(budget);
     }
 
-    /// One forced checkpoint (PASSIVE, then TRUNCATE in a 2 ms window), recorded in the counters.
+    /// One round of a forced checkpoint: PASSIVE, then TRUNCATE in a fresh 2 ms window. Records how
+    /// long it took; the caller records the outcome. The window opens after PASSIVE, never sooner:
+    /// a window that PASSIVE's copy had already used up would let TRUNCATE lose to a reader
+    /// microseconds into its transaction, after all the copying was done. So a round can end up to
+    /// [`lockwait::ATTACHED_WINDOW`] past its caller's deadline.
     fn checkpoint_once(&self) -> crate::wal::Outcome {
         use crate::wal::Outcome;
-        self.wal.note_attempt();
+        let classify = |error: Error| match error {
+            Error::Timeout { .. } => Outcome::Busy,
+            other => Outcome::Failed(other),
+        };
         let Some(_permit) = self.slots.try_acquire(self.max_connections.load(Ordering::Acquire)) else {
-            self.wal.record(&Outcome::NoSlot, Duration::ZERO, Duration::ZERO);
             return Outcome::NoSlot;
         };
         let gate = GATE.enter_shared();
-        let Ok(mut lease) = self.lease(&gate, Duration::ZERO) else {
-            self.wal.record(&Outcome::Failed, Duration::ZERO, Duration::ZERO);
-            return Outcome::Failed;
+        let mut lease = match self.lease(&gate, Duration::ZERO) {
+            Ok(lease) => lease,
+            Err(error) => return classify(error),
         };
         // Two steps. PASSIVE first, with no busy window: it copies whatever frames it can into the
         // database without waiting for anyone. Then TRUNCATE in a fresh window: it waits for readers
@@ -507,17 +523,19 @@ impl Store {
         }
         // The lease checks the connection back in on every path, panics included.
         drop(lease);
+        // Defensive: unset only if the blocker returned without running the closure.
         let Some((row, passive, truncate)) = timings else {
-            self.wal.record(&Outcome::Failed, Duration::ZERO, Duration::ZERO);
-            return Outcome::Failed;
+            return Outcome::Failed(Error::Io {
+                path: self.wal_path.clone(),
+                source: std::io::Error::other("the blocker returned without running the checkpoint"),
+            });
         };
-        let outcome = match row {
+        self.wal.record_pause(passive, truncate);
+        match row {
             Ok(0) => Outcome::Done,
             Ok(_) => Outcome::Busy,
-            Err(_) => Outcome::Failed,
-        };
-        self.wal.record(&outcome, passive, truncate);
-        outcome
+            Err(error) => classify(Error::from_sqlite(error, Duration::ZERO)),
+        }
     }
 
     /// What forced WAL checkpoints have done on this store (for tests and debugging).

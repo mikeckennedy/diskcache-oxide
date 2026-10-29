@@ -119,10 +119,12 @@ As in the roadmap: every review finding resolved or explicitly accepted, a clean
       - `close(*, checkpoint=True)` is keyword-only;
       - `checkpoint(timeout=None)`.
       - New tests: waiting for another thread's transaction, returning at once inside your own, and the timeout argument.
-    - **Still open (should-fix):**
-      - retry only on Busy/NoSlot and return real errors as `Err`;
-      - reword "at most 1 s" (the PASSIVE copy can take longer) and cap the TRUNCATE window at the deadline;
-      - count attempts once per `checkpoint()` call, or separately from automatic ones;
-      - merge the stale doc comment on `close()`;
-      - note in D-024 that `checkpoint()` raises in a child forked inside a transaction (D-020);
-      - a repeated-close test.
+    - **Should-fixes, done (2026-10-28, night):**
+      - `checkpoint()` retries only busy rounds (busy, locked, no free slot) and returns a real error (a full disk, an I/O error) at once;
+      - one `checkpoint()` call is one attempt in the counters, with exactly one outcome (`attempts = successes + busy + errors + no_slot`); pause times and `slow` are per round; a success ends the backoff;
+      - the docs say `timeout` bounds the waiting, not a round already under way. The TRUNCATE window is **not** capped at the deadline after all: the architect's re-review found that a window computed before PASSIVE was already used up after a long copy, the exact failure the two-step design fixes. Each round's TRUNCATE gets a fresh 2 ms window, so a round can end up to 2 ms past the deadline;
+      - `close()`'s two doc comments merged; D-024 notes that `checkpoint()` raises in a D-020 child (also checked in `fork_scenarios.d020`) and that closing twice is harmless;
+      - tests: one call is one attempt; closing twice (and `__exit__` after `close()`) is harmless and the cache reopens; closing one of two handles three times leaves the other as the last, and its close checkpoints.
+- **Load framing (Michael, 2026-10-28):** half of what the Mac mini can do flat out, about 180k cache operations a second across 7 processes × 4 threads, with roughly 1,000 writes a second plus chaos, is the **absolute upper bound** for one cache directory. Beyond that, the answer is FanoutCache (6c). Normal load is about 100 requests a second at 1,000:1. Saturation runs exist to shake out races, leaks and deadlocks; their latencies aren't targets.
+  - Half-load run, first minutes: `get` p50 4.7 µs and p99 32 µs, worst `get` per minute 0.3-1.3 ms; `set` p50 72 µs and p99 1.7 ms; worst `set` 8 ms; WAL 4-5 MiB. At full load the worst write was 2.2 s, with 3 of 10 minutes over 500 ms, from SQLite's own autocheckpoint `fsync` on the saturated disk.
+- **Step 2, waiter counters on unwind (2026-10-28, night; roadmap item 1).** The write lock's `waiters` and `starving` counts are RAII guards (`Counted`, generation-tagged like `SlotPermit`, sharing its `release_one`), so a panic out of the blocker can't leave `starving` raised and make every `try_lock` fail. The release profile keeps `panic = "unwind"`, so the path was reachable. Tests: an unwind takes both counts back; a guard from an older generation releases nothing. Architect: no must-fixes; doc wording, the shared helper and a test comment applied. The gate's own `parked`/`holders` counts were checked too: their waits only sleep, so they can't unwind.

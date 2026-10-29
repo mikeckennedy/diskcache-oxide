@@ -6,20 +6,29 @@
 //! burst, and SQLite never shrinks it: the soak, and a 4-process reproduction, left WALs of
 //! 300 MiB to 1 GiB behind.
 //!
-//! Three settings and one action keep it bounded. All three settings are connection settings, so
+//! Two settings and a forced checkpoint keep it bounded. Both settings are connection settings, so
 //! they write nothing (D-019):
 //! - `journal_size_limit` = half the limit: a WAL that resets normally is truncated back to it.
 //! - `wal_autocheckpoint`, scaled from the limit (at most SQLite's 1,000 pages), so that a healthy
 //!   WAL stays well under the trigger.
-//! - After a committed write, at most every [`CHECK_EVERY`] or [`CHECK_EVERY_COMMITS`], the
-//!   `-wal` file is `stat`ed. If it's over the limit, a forced checkpoint runs with the interpreter
-//!   released: `PRAGMA wal_checkpoint(PASSIVE)` (copy what it can, no waiting), then
-//!   `wal_checkpoint(TRUNCATE)` under a fresh busy window ([`crate::lockwait::ATTACHED_WINDOW`]),
-//!   which waits for in-flight readers (ours are microseconds long), copies the remainder and
-//!   truncates the file. If it reports busy, the store backs off for [`RETRY_AFTER_BUSY`]. The
-//!   counters' pause times measure the SQLite work only, not re-taking the interpreter.
 //!
-//! The check runs after the write's retry loop has returned, still holding the in-process write
+//! A forced checkpoint runs with the interpreter released: `PRAGMA wal_checkpoint(PASSIVE)` (copy
+//! what it can, no waiting), then `wal_checkpoint(TRUNCATE)` under a fresh busy window
+//! ([`crate::lockwait::ATTACHED_WINDOW`], opened after PASSIVE), which waits for
+//! in-flight readers (ours are microseconds long), copies the remainder and truncates the file. The
+//! PASSIVE copy itself has no time limit: on a saturated disk, copying a large backlog took seconds
+//! in the soak. The counters' pause times measure the SQLite work only, not re-taking the
+//! interpreter.
+//!
+//! By default it runs only when the app asks: `Store::checkpoint` (`Cache.checkpoint()`), which
+//! retries busy rounds until its timeout and returns real errors at once, and on the last handle's
+//! `close()` if the WAL is past its trim size. With `wal_checkpoint="auto"`, it also runs after a
+//! committed write: at most every [`CHECK_EVERY`] or [`CHECK_EVERY_COMMITS`] the `-wal` file is
+//! `stat`ed, and if it's over the limit, one round runs. After an attempt that doesn't succeed
+//! (an automatic round, or a whole `checkpoint()` call), the store backs off for
+//! [`RETRY_AFTER_BUSY`].
+//!
+//! The automatic check runs after the write's retry loop has returned, still holding the in-process write
 //! lock, and never for a write at gate depth > 0, inside a held transaction, or through
 //! `write_nowait`. A checkpoint that fails or reports busy never fails the write: it has already
 //! committed. Outcomes go to the counters in [`WalStats`].
@@ -68,23 +77,25 @@ pub fn autocheckpoint_pages(limit: u64) -> u64 {
 pub struct WalStats {
     /// `-wal` file checks.
     pub checks: u64,
-    /// Forced checkpoints attempted.
+    /// Forced checkpoints attempted: one per automatic check over the limit, and one per
+    /// `checkpoint()` call (however many times it retried). Each ends in exactly one of the next four.
     pub attempts: u64,
     /// ...that completed (the WAL was reset and truncated).
     pub successes: u64,
-    /// ...that reported busy (another checkpointer, or a reader or writer that outlasted the window).
+    /// ...that stayed busy (another checkpointer, or a reader or writer that outlasted the window or
+    /// the call's timeout).
     pub busy: u64,
-    /// ...that failed with an error (or couldn't get a connection).
+    /// ...that failed with an error.
     pub errors: u64,
     /// ...that were skipped because every connection slot was in use.
     pub no_slot: u64,
-    /// The longest forced checkpoint (both steps), in microseconds.
+    /// The longest single round of SQLite work (both steps), in microseconds.
     pub max_pause_us: u64,
     /// The longest PASSIVE step (copying frames without waiting), in microseconds.
     pub max_passive_us: u64,
     /// The longest TRUNCATE step (waiting for readers, the remainder, the truncation), in microseconds.
     pub max_truncate_us: u64,
-    /// Forced checkpoints that took at least [`SLOW_PAUSE`].
+    /// Rounds that took at least [`SLOW_PAUSE`].
     pub slow: u64,
     /// The `-wal` file size at the last check, in bytes.
     pub last_wal_bytes: u64,
@@ -126,8 +137,10 @@ pub(crate) enum Decision {
 #[derive(Debug)]
 pub(crate) enum Outcome {
     Done,
+    /// Busy, or a lock SQLite gave up on (`SQLITE_BUSY`/`SQLITE_LOCKED`): worth retrying.
     Busy,
-    Failed,
+    /// A real error: retrying won't help.
+    Failed(crate::Error),
     /// No connection slot was free; skipped.
     NoSlot,
 }
@@ -188,23 +201,23 @@ impl WalState {
         self.now_ms() < self.next_attempt_ms.load(Ordering::Relaxed)
     }
 
-    /// Counts a forced checkpoint attempt (automatic, explicit or on close).
-    pub(crate) fn note_attempt(&self) {
+    /// Records how a forced checkpoint ended (automatic, explicit or on close): one attempt, and its
+    /// final outcome. Anything but success starts the [`RETRY_AFTER_BUSY`] backoff.
+    pub(crate) fn record_outcome(&self, outcome: &Outcome) {
         self.attempts.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Records a forced checkpoint's outcome and how long each step took.
-    pub(crate) fn record(&self, outcome: &Outcome, passive: Duration, truncate: Duration) {
         let counter = match outcome {
             Outcome::Done => &self.successes,
             Outcome::Busy => &self.busy,
-            Outcome::Failed => &self.errors,
+            Outcome::Failed(_) => &self.errors,
             Outcome::NoSlot => &self.no_slot,
         };
         counter.fetch_add(1, Ordering::Relaxed);
-        if !matches!(outcome, Outcome::Done) {
-            self.next_attempt_ms.store(self.now_ms() + millis(RETRY_AFTER_BUSY), Ordering::Relaxed);
-        }
+        let next = if matches!(outcome, Outcome::Done) { 0 } else { self.now_ms() + millis(RETRY_AFTER_BUSY) };
+        self.next_attempt_ms.store(next, Ordering::Relaxed);
+    }
+
+    /// Records how long one round of SQLite work took, step by step.
+    pub(crate) fn record_pause(&self, passive: Duration, truncate: Duration) {
         let us = |d: Duration| u64::try_from(d.as_micros()).unwrap_or(u64::MAX);
         let took = passive + truncate;
         self.max_pause_us.fetch_max(us(took), Ordering::Relaxed);
@@ -270,8 +283,8 @@ mod tests {
     fn over_the_limit_checkpoints_and_a_busy_one_backs_off() {
         let state = WalState::new();
         assert_eq!(state.after_commit(100, || 200), Decision::Checkpoint);
-        state.note_attempt();
-        state.record(&Outcome::Busy, Duration::from_micros(5), Duration::ZERO);
+        state.record_pause(Duration::from_micros(5), Duration::ZERO);
+        state.record_outcome(&Outcome::Busy);
         // Next look (forced by the commit count) is still over the limit, but inside the backoff.
         for _ in 0..CHECK_EVERY_COMMITS - 1 {
             let _ = state.after_commit(100, || 200);
@@ -283,10 +296,22 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_checkpoint_counts_as_an_error_and_backs_off() {
+        let state = WalState::new();
+        state.record_outcome(&Outcome::Failed(crate::Error::Closed));
+        let seen = state.stats();
+        assert_eq!((seen.attempts, seen.errors, seen.busy), (1, 1, 0));
+        assert!(state.in_backoff());
+        state.record_outcome(&Outcome::Done);
+        assert!(!state.in_backoff(), "a success ends the backoff");
+    }
+
+    #[test]
     fn a_successful_checkpoint_does_not_back_off() {
         let state = WalState::new();
         assert_eq!(state.after_commit(100, || 200), Decision::Checkpoint);
-        state.record(&Outcome::Done, Duration::from_micros(5), Duration::ZERO);
+        state.record_pause(Duration::from_micros(5), Duration::ZERO);
+        state.record_outcome(&Outcome::Done);
         for _ in 0..CHECK_EVERY_COMMITS - 1 {
             let _ = state.after_commit(100, || 200);
         }

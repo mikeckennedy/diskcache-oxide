@@ -220,8 +220,13 @@ def test_checkpoint_returns_false_instead_of_raising_while_a_peer_holds_a_snapsh
         started = time.monotonic()
         assert cache.checkpoint() is False
         assert time.monotonic() - started < 2, 'checkpoint() waited far past the cache timeout'
+        stats = cache._wal_stats()
+        # One call is one attempt in the counters, however many busy rounds it retried.
+        assert (stats['attempts'], stats['busy'], stats['errors']) == (1, 1, 0), stats
         peer.rollback()
     assert cache.checkpoint() is True
+    stats = cache._wal_stats()
+    assert (stats['attempts'], stats['successes']) == (2, 1), stats
     cache.close()
 
 
@@ -264,6 +269,43 @@ def test_close_without_checkpoint_leaves_the_wal_alone(tmp_path: Path) -> None:
         peer.data_version()
         cache.close(checkpoint=False)
         assert _wal_bytes(tmp_path / 'c') == before
+
+
+def test_closing_twice_is_harmless_and_the_cache_reopens_after(tmp_path: Path) -> None:
+    from tests.conformance.proc_workers import SqlitePeer
+
+    cache = _swollen(tmp_path / 'c')
+    with SqlitePeer(tmp_path / 'c' / 'diskcache-oxide.sqlite') as peer:
+        peer.data_version()
+        cache.close()
+        cache.close()
+        cache.close(checkpoint=False)
+        with cache:
+            pass  # __exit__ closes an already-closed handle again.
+        assert _wal_bytes(tmp_path / 'c') == 0
+        assert cache.get('k') == 'v', 'a closed cache reopens on use'
+        cache.close()
+        cache.close()
+
+
+def test_closing_one_handle_repeatedly_leaves_the_other_as_the_last(tmp_path: Path) -> None:
+    from tests.conformance.proc_workers import SqlitePeer
+
+    directory = tmp_path / 'c'
+    first = _swollen(directory)
+    second = Cache(directory, wal_size_limit=LIMIT)
+    with SqlitePeer(directory / 'diskcache-oxide.sqlite') as peer:
+        peer.data_version()
+        for _ in range(3):
+            first.close()
+        # Still a handle open: closing the first must not have checkpointed (it wasn't the last)...
+        assert _wal_bytes(directory) > LIMIT // 2
+        assert second.get('k') == 'v'
+        # ...and the second is now the last one, exactly once, so its close checkpoints.
+        second.close()
+        assert _wal_bytes(directory) == 0
+    assert second.set('after', 1) is True and second.get('after') == 1
+    second.close()
 
 
 def test_null_cache_checkpoint_and_close_take_the_same_arguments() -> None:
