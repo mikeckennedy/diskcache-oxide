@@ -11,7 +11,8 @@
 //! for the write lock, and any operation waits for a connection slot, *before* entering the gate,
 //! with the interpreter released. At gate depth > 0 (a nested operation inside a held
 //! transaction), both are `try_*` only: the write lock falls back to SQLite's busy path, and the
-//! pool opens a connection over the cap.
+//! pool opens a connection over the cap. That busy path's backoff keeps the caller's gate levels, so
+//! a pending fork waits for it, up to the write's `timeout` (see the gate's rules).
 //!
 //! # Registry
 //!
