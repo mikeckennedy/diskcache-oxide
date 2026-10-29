@@ -2,7 +2,7 @@
 
 You're one of several reviewers, each working alone, asked to find bugs in the concurrency core of diskcache-oxide. Don't look for other reviewers' findings. Don't take this brief's claims on trust either: verify them against the code. Don't change the code; report.
 
-**Review this commit:** `bae079d` on `main` (github.com/mikeckennedy/diskcache-oxide). If you're handed a later one, say which.
+**Review this commit:** `1835d18` on `main` (github.com/mikeckennedy/diskcache-oxide), the commit that adds this brief. If you're handed a later one, say which.
 
 ## What this is
 
@@ -81,7 +81,7 @@ So you can skip them, or argue with them on purpose:
 
 One finding per entry, most severe first, in this format, so several reviews can be merged:
 
-```
+```text
 ### <short title>
 - Severity: critical (hang, corruption, or a fork child using inherited state) | high (leak or starvation in a realistic case) | medium (edge case) | low (doc, clarity)
 - Where: file:line (and the function)
