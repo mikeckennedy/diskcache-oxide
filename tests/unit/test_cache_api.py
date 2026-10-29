@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -68,3 +69,55 @@ def test_a_huge_timeout_works_instead_of_panicking(tmp_path: Path, timeout: floa
     with Cache(tmp_path / 'c', timeout=timeout) as cache:
         assert cache.set('k', 1) is True and cache.get('k') == 1
         assert cache.timeout > 1e9  # Clamped to about 100 years.
+
+
+_REENTRANT: dict[str, Cache] = {}
+
+
+class _WritesOnUnpickle:
+    """Unpickling it writes to the cache it was read from (roadmap Phase 2.5, item 7)."""
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        self.__dict__.update(state)
+        _REENTRANT['cache'].set('written-while-unpickling', 1)
+
+
+@pytest.mark.parametrize('popped', ['inline', 'spilled'])
+def test_pop_decodes_after_its_write_commits(tmp_path: Path, popped: str) -> None:
+    # Decoding inside pop's write transaction made a __setstate__ that writes the same cache wait
+    # out the whole timeout behind its own transaction, then raise Timeout.
+    cache = Cache(tmp_path / 'c', timeout=2, pickle=True)
+    _REENTRANT['cache'] = cache
+    try:
+        value = _WritesOnUnpickle()
+        value.payload = 'x' * (100 if popped == 'inline' else 100_000)  # type: ignore[attr-defined]
+        cache.set('k', value)
+        started = time.monotonic()
+        result = cache.pop('k')
+        assert time.monotonic() - started < 1, 'pop waited on its own write transaction'
+        assert isinstance(result, _WritesOnUnpickle)
+        assert cache.get('written-while-unpickling') == 1
+        assert 'k' not in cache
+    finally:
+        _REENTRANT.clear()
+        cache.close()
+
+
+def test_pop_inside_a_held_transaction_decodes_with_the_same_transaction_still_usable(tmp_path: Path) -> None:
+    # Inside your own held transaction the decode still runs while it's open; the write from
+    # __setstate__ must join it, not wait for it.
+    cache = Cache(tmp_path / 'c', timeout=2, pickle=True)
+    _REENTRANT['cache'] = cache
+    try:
+        value = _WritesOnUnpickle()
+        value.payload = 'x'  # type: ignore[attr-defined]
+        cache.set('k', value)
+        started = time.monotonic()
+        with cache._hold_write_transaction():
+            assert isinstance(cache.pop('k'), _WritesOnUnpickle)
+        assert time.monotonic() - started < 1, 'the write from __setstate__ waited on its own transaction'
+        assert cache.get('written-while-unpickling') == 1
+        assert 'k' not in cache
+    finally:
+        _REENTRANT.clear()
+        cache.close()

@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use rusqlite::types::ValueRef;
+use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::rows::{NewRow, Removed, RowWriter, Stored};
@@ -51,6 +51,22 @@ impl Value<'_> {
     #[allow(clippy::unused_self)] // Becomes non-trivial when values spill to files.
     fn size(&self) -> i64 {
         0
+    }
+}
+
+/// A value removed by [`Store::pop`], still encoded: its mode and an owned copy of what SQLite (or
+/// its value file) held.
+#[derive(Debug, PartialEq)]
+pub struct Popped {
+    pub mode: i64,
+    pub value: SqlValue,
+}
+
+impl Popped {
+    /// The value, borrowed in the shape a read hands out.
+    #[must_use]
+    pub fn value_ref(&self) -> ValueRef<'_> {
+        (&self.value).into()
     }
 }
 
@@ -229,17 +245,13 @@ impl Store {
         Ok(deleted)
     }
 
-    /// Removes the live value of `key` and returns `decode(mode, value)` of it, or `None` if it was
-    /// missing or expired.
-    pub fn pop_with<T>(
-        &self,
-        timeout: Duration,
-        key: &str,
-        now: f64,
-        mut decode: impl FnMut(i64, ValueRef<'_>) -> Result<T>,
-    ) -> Result<Option<T>> {
+    /// Removes the live value of `key` and returns it, still encoded, or `None` if it was missing or
+    /// expired. The caller decodes it after the write has committed: decoding a pickle can run
+    /// Python (`__setstate__`) that uses this cache, and inside the transaction a write from it
+    /// would wait out the whole timeout behind its own thread (roadmap Phase 2.5, item 7).
+    pub fn pop(&self, timeout: Duration, key: &str, now: f64) -> Result<Option<Popped>> {
         let (value, removed) = self.write(timeout, |writer, tx| {
-            let decoded = {
+            let found = {
                 let mut stmt = tx
                     .prepare_cached(
                         "SELECT mode, value, filename, size FROM cache
@@ -251,22 +263,28 @@ impl Store {
                     Some(row) => {
                         let mode: i64 = row.get(0).map_err(|e| Error::from_sqlite(e, timeout))?;
                         let filename: Option<String> = row.get(2).map_err(|e| Error::from_sqlite(e, timeout))?;
-                        match filename {
-                            // Under the write lock nothing can replace the file, so read it here.
-                            Some(relative) => {
-                                let size: i64 = row.get(3).map_err(|e| Error::from_sqlite(e, timeout))?;
-                                match spill::read(self.directory(), &relative, size)? {
-                                    Some(bytes) => Some(decode(mode, ValueRef::Blob(&bytes))?),
-                                    None => None, // A missing file acts missing (D-013); the row goes below.
-                                }
-                            }
-                            None => Some(decode(mode, row.get_ref(1).map_err(|e| Error::from_sqlite(e, timeout))?)?),
+                        if let Some(relative) = filename {
+                            // Under the write lock nothing can replace the file, so read it here. A
+                            // missing file acts missing (D-013); the row goes below.
+                            let size: i64 = row.get(3).map_err(|e| Error::from_sqlite(e, timeout))?;
+                            spill::read(self.directory(), &relative, size)?
+                                .map(|bytes| Popped { mode, value: SqlValue::Blob(bytes) })
+                        } else {
+                            // Copied byte for byte, as `get` borrows them: TEXT goes in as a BLOB
+                            // (the codec reads both as raw bytes), so no UTF-8 check can fail here.
+                            let value = match row.get_ref(1).map_err(|e| Error::from_sqlite(e, timeout))? {
+                                ValueRef::Text(bytes) | ValueRef::Blob(bytes) => SqlValue::Blob(bytes.to_vec()),
+                                ValueRef::Integer(n) => SqlValue::Integer(n),
+                                ValueRef::Real(x) => SqlValue::Real(x),
+                                ValueRef::Null => SqlValue::Null,
+                            };
+                            Some(Popped { mode, value })
                         }
                     }
                     None => None,
                 }
             };
-            match decoded {
+            match found {
                 Some(value) => Ok((Some(value), writer.delete_key(key)?)),
                 // A spilled row whose file is gone: remove it, and report a miss.
                 None if live_row(tx, key, now, timeout)?.is_some() => Ok((None, writer.delete_key(key)?)),
@@ -642,13 +660,14 @@ mod tests {
         assert!(!s.delete(T, "k", NOW + 2.0).unwrap());
         assert!(!s.touch(T, "k", Some(100.0), NOW + 2.0).unwrap(), "touch doesn't revive");
         assert!(get(&s, "k", NOW + 2.0).is_none());
-        let popped = s.pop_with(T, "k", NOW + 2.0, |_, _| Ok(())).unwrap();
+        let popped = s.pop(T, "k", NOW + 2.0).unwrap();
         assert!(popped.is_none());
 
         s.set(T, "j", text("v"), Some(10.0), NOW).unwrap();
         assert!(s.touch(T, "j", None, NOW).unwrap());
         assert_eq!(get(&s, "j", NOW + 1e9).unwrap().1, None, "touch(None) removes the expiry");
-        assert_eq!(s.pop_with(T, "j", NOW, |m, _| Ok(m)).unwrap(), Some(MODE_STR));
+        let popped = s.pop(T, "j", NOW).unwrap().expect("a live value pops");
+        assert_eq!((popped.mode, popped.value_ref()), (MODE_STR, ValueRef::Blob(b"v")));
         assert!(!s.delete(T, "j", NOW).unwrap());
     }
 
