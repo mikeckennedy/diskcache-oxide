@@ -43,6 +43,8 @@ DB_NAME = 'diskcache-oxide.sqlite'
 STALL_AFTER = 120.0
 # A maintenance call (clear/expire/cull) that takes longer than this is a stall too.
 MAINT_TIMEOUT = 300.0
+# A gracefully restarted worker (SIGTERM) must have finished, verified its keys and exited by then.
+RESTART_TIMEOUT = 90.0
 # Files younger than this are skipped by the orphan scan (writes in flight).
 ORPHAN_MIN_AGE = 120.0
 # More unexpected worker deaths than this within CRASH_WINDOW seconds stops the run: the build or
@@ -101,7 +103,7 @@ class Soak:
         self.reported_acked: dict[int, int] = {}
         self.final_acked: dict[int, int] = {}
         self.once_winners: dict[str, set[int]] = {}
-        self.counts = {'kills': 0, 'respawns': 0, 'maint': 0, 'stalls': 0}
+        self.counts = {'kills': 0, 'restarts': 0, 'respawns': 0, 'maint': 0, 'stalls': 0}
         # Each worker's latest stats, kept after it exits, so run totals include killed workers.
         self.last_stats: dict[int, dict[str, Any]] = {}
         self.maint_running = False
@@ -201,7 +203,14 @@ class Soak:
 
     def chaos(self) -> None:
         # 'checkpoint' is the cookbook pattern for long-running apps: call Cache.checkpoint() now and then.
-        action = self.rng.choice(['kill', 'kill', 'fork', 'fork', 'clear', 'expire', 'cull', 'checkpoint'])
+        # 'restart' is what gunicorn and friends do: SIGTERM, a clean shutdown, a fresh worker.
+        action = self.rng.choice(['kill', 'kill', 'restart', 'fork', 'fork', 'clear', 'expire', 'cull', 'checkpoint'])
+        if action == 'restart':
+            # Old enough to have installed its SIGTERM handler (a just-spawned one exits -15).
+            victims = [w for w in self.workers.values() if not w.long_lived and time.time() - w.started > 30]
+            if victims:
+                self.restart(self.rng.choice(victims))
+            return
         if action == 'kill':
             victims = [w for w in self.workers.values() if not w.long_lived]
             if victims:
@@ -220,6 +229,33 @@ class Soak:
             self.event('fork-request', id=w.id)
         elif not self.maint_running:
             threading.Thread(target=self.maint, args=(action,), daemon=True).start()
+
+    def restart(self, w: WorkerProc) -> None:
+        """Gracefully restarts `w`: SIGTERM, then it must finish its calls, verify every key it owns,
+        write exact final counts (checked against the ledger at the end of the run), close its caches
+        (with the checkpoint on close) and exit 0, within RESTART_TIMEOUT. Then a fresh worker."""
+        start = time.time()
+        w.proc.terminate()
+        try:
+            code = w.proc.wait(RESTART_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.capture_stall(f'worker-{w.id}-restart', w.proc.pid, w.python)
+            w.proc.kill()
+            code = w.proc.wait()
+            self.event('restart-hang', problem=True, id=w.id, seconds=round(time.time() - start, 1))
+        del self.workers[w.id]
+        w.log.close()
+        self.read_stats(w)
+        self.counts['restarts'] += 1
+        if code != 0:
+            tail = (self.dir / 'logs' / f'{w.id}.log').read_text(errors='replace')[-3000:]
+            self.event('restart-bad-exit', problem=True, id=w.id, exit=code, log_tail=tail)
+        elif not w.stats.get('final'):
+            self.event('restart-no-final-stats', problem=True, id=w.id)
+        else:
+            self.event('restart', id=w.id, seconds=round(time.time() - start, 2), acked=w.stats.get('acked'))
+        self.spawn(w.python, long_lived=False)
+        self.counts['respawns'] += 1
 
     def maint(self, op: str) -> None:
         self.maint_running = True
@@ -427,6 +463,7 @@ class Soak:
             'timeouts_total': self.total('timeouts'),
             'problems': self.problems,
             'kills': self.counts['kills'],
+            'restarts': self.counts['restarts'],
             'forks_ok': self.total('forks_ok'),
             'forks_failed': self.total('forks_failed'),
             'maint_calls': self.counts['maint'],
@@ -463,7 +500,7 @@ class Soak:
             f'verdict so far: {"OK" if self.problems == 0 else f"{self.problems} PROBLEM(S), see events.jsonl"}',
             f'workers {t["workers"]}  ops/s {t["ops_per_s"]:,}  get p50/p99 {t["get_p50_us"]}/{t["get_p99_us"]} us  set p50/p99 {t["set_p50_us"]}/{t["set_p99_us"]} us',
             f'rss total {t["rss_total_mib"]} MiB  fds total {t["fds_total"]}  timeouts {t["timeouts_total"]}  stalls {t["stalls"]}',
-            f'kills {t["kills"]}  respawns {self.counts["respawns"]}  forks ok/failed {t["forks_ok"]}/{t["forks_failed"]}  maintenance calls {t["maint_calls"]}',
+            f'kills {t["kills"]}  restarts {t["restarts"]}  respawns {self.counts["respawns"]}  forks ok/failed {t["forks_ok"]}/{t["forks_failed"]}  maintenance calls {t["maint_calls"]}',
             f'chaos: {t["chaos_rows"]} rows, db {mib(t["chaos_db_bytes"])} MiB, wal {mib(t["chaos_wal_bytes"])} MiB, {t["chaos_value_files"]} value files, orphans {t["chaos_orphans"]}',
             f'ledger: {t["ledger_rows"]} rows, db {mib(t["ledger_db_bytes"])} MiB, wal {mib(t["ledger_wal_bytes"])} MiB',
             '',
@@ -565,7 +602,7 @@ TIMELINE_FIELDS = [
     'rss_total_mib', 'fds_total', 'timeouts_total', 'problems', 'kills', 'forks_ok', 'forks_failed', 'maint_calls',
     'stalls', 'chaos_rows', 'chaos_db_bytes', 'chaos_wal_bytes', 'chaos_value_files', 'ledger_rows', 'ledger_db_bytes',
     'ledger_wal_bytes', 'ledger_value_files', 'chaos_orphans', 'wal_ckpt_attempts', 'wal_ckpt_busy',
-    'wal_ckpt_max_pause_us', 'wal_ckpt_slow', 'get_max_us', 'set_max_us',
+    'wal_ckpt_max_pause_us', 'wal_ckpt_slow', 'get_max_us', 'set_max_us', 'restarts',
 ]  # fmt: skip
 WORKER_FIELDS = [
     'time', 'elapsed_h', 'id', 'python', 'long_lived', 'rss_mib', 'fds', 'ops', 'timeouts', 'problems', 'forks_ok',
