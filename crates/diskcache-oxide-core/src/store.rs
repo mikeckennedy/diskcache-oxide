@@ -413,12 +413,12 @@ impl Store {
         }
         // Fast path: one attempt with no busy wait, no deadline and no clock read. WAL readers almost
         // never meet a lock; if this one does (or the pool is full), fall through to the full loop.
+        // That includes the lease: a new connection reads the schema when its settings are applied.
         if GATE.own_depth() == 0
             && let Some(_permit) = self.slots.try_acquire(self.max_connections.load(Ordering::Acquire))
         {
             let gate = GATE.enter_shared();
-            let lease = self.lease(&gate, timeout)?;
-            match read(lease.conn()) {
+            match self.lease(&gate, timeout).and_then(|lease| read(lease.conn())) {
                 Err(Error::Timeout { .. }) => {}
                 done => return done,
             }
@@ -1421,6 +1421,27 @@ mod tests {
         assert!(store.checkpoint(T).unwrap(), "an idle store checkpoints at once");
         assert_eq!(store.wal_bytes(), 0, "TRUNCATE leaves an empty WAL");
         assert_eq!(store.wal_stats().successes, 1);
+    }
+
+    #[test]
+    fn a_read_on_a_new_connection_waits_out_a_lock_instead_of_failing() {
+        // A new connection reads the schema when the store applies its settings, so it can meet a
+        // lock that an established connection would read past (here a peer in exclusive locking
+        // mode; in practice another process's last-close checkpoint). The read must wait for it.
+        let tmp = TempDir::new("store-fresh-read");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        put(&store, "k", b"v");
+        store.pool.clear(&GATE.enter_shared());
+        let peer = Connection::open(open::db_path(tmp.path())).unwrap();
+        peer.execute_batch("PRAGMA locking_mode = EXCLUSIVE; SELECT count(*) FROM Cache;").unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(peer);
+        });
+        let start = Instant::now();
+        assert_eq!(count(&store), 1);
+        assert!(start.elapsed() >= Duration::from_millis(150), "the peer held its lock for 200 ms");
+        release.join().unwrap();
     }
 
     #[test]
