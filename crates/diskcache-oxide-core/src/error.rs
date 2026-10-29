@@ -83,6 +83,14 @@ pub enum Error {
     #[error("this thread already holds a write transaction on this cache")]
     NestedTransaction,
 
+    /// A write transaction was started inside another operation or another cache's transaction
+    /// (gate depth > 0) while this cache's write lock was taken. Waiting there could deadlock (two
+    /// threads each holding one cache and wanting the other's, or a pending fork), so it fails at
+    /// once. Never retry it in a loop: the lock's holder may be waiting on this thread. Python
+    /// `Timeout`, so existing handlers still catch it.
+    #[error("this cache's write lock is taken, and it can't be waited for inside another transaction")]
+    WriteLockBusyInTransaction,
+
     /// The calling thread tried to end a write transaction it doesn't hold.
     #[error("this thread holds no write transaction on this cache")]
     NoTransaction,

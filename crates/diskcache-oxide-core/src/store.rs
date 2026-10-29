@@ -365,7 +365,7 @@ impl Store {
             };
             Some(token.ok_or(Error::Timeout { seconds: timeout.as_secs_f64() })?)
         } else {
-            self.write_lock.try_lock()
+            self.write_lock.try_lock_nested()
         };
         // 2-3. Slot, gate and connection per attempt; SQLite's lock is then only contended by
         // other processes (and by a nested operation that couldn't take the write lock).
@@ -384,7 +384,7 @@ impl Store {
         });
         // 4. After the retry loop (a checkpoint problem must never replay a committed write), still
         // holding the write lock so our own writers queue rather than meet SQLite's busy handler.
-        // Never for a nested write (depth > 0): it may get a token from try_lock, but an outer
+        // Never for a nested write (depth > 0): it may get a token from try_lock_nested, but an outer
         // snapshot on this thread would only make the checkpoint report busy.
         if result.is_ok() && top_level && self.auto_checkpoint.load(Ordering::Relaxed) {
             self.maybe_checkpoint();
@@ -607,7 +607,14 @@ impl Store {
             drop(gate);
         }
         let deadline = lockwait::deadline_after(Instant::now(), timeout);
-        let token = self.write_lock.lock_until(deadline).ok_or(Error::Timeout { seconds: timeout.as_secs_f64() })?;
+        // At gate depth > 0 (a hold started from inside another operation, or while holding a
+        // transaction on another cache) never wait for the write lock: rule 1 of the module docs.
+        // Take it if it's free, or fail at once with an error that says why.
+        let token = if GATE.own_depth() == 0 {
+            self.write_lock.lock_until(deadline).ok_or(Error::Timeout { seconds: timeout.as_secs_f64() })?
+        } else {
+            self.write_lock.try_lock_nested().ok_or(Error::WriteLockBusyInTransaction)?
+        };
         let (conn, hold, share) = lockwait::retry(deadline.saturating_duration_since(Instant::now()), |_| {
             let gate = GATE.enter_shared();
             let lease = self.lease(&gate, timeout)?;
@@ -1018,6 +1025,27 @@ mod tests {
     }
 
     #[test]
+    fn a_hold_inside_the_gate_never_waits_for_the_write_lock() {
+        let tmp = TempDir::new("store-hold-depth");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let token = store.write_lock.try_lock().unwrap(); // As if another thread were writing.
+        let start = Instant::now();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _gate = GATE.enter_shared(); // Depth > 0, as inside another operation.
+                assert!(matches!(store.begin_hold(Duration::from_secs(5)), Err(Error::WriteLockBusyInTransaction)));
+            });
+        });
+        assert!(start.elapsed() < Duration::from_secs(1), "begin_hold waited for the write lock at depth > 0");
+        drop(token);
+        let held = {
+            let _gate = GATE.enter_shared();
+            store.begin_hold(T).expect("a free write lock is taken at depth > 0")
+        };
+        held.finish(true).unwrap();
+    }
+
+    #[test]
     fn connections_get_the_largest_cache_size_any_handle_asked_for() {
         let tmp = TempDir::new("store-cache-size");
         let pages = |store: &Store| {
@@ -1074,7 +1102,7 @@ mod tests {
     #[test]
     fn a_write_inside_the_gate_never_waits_for_a_starving_writer() {
         // A starving waiter makes try_lock refuse even when the lock is free. A nested write must
-        // still go through promptly (without the token), never wait.
+        // still go through promptly, never wait: it takes the free lock anyway (try_lock_nested).
         let tmp = TempDir::new("store-depth-starving");
         let store = Store::open(&options(tmp.path())).unwrap();
         crate::genlock::tests_support::mark_starving(&store.write_lock);

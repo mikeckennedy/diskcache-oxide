@@ -103,6 +103,40 @@ def _clear_fairness(tmp_path: Path) -> None:
     cache.close()
 
 
+def test_cull_finishes_promptly_while_threads_hammer_writes(tmp_path: Path) -> None:
+    # cull()'s eviction loop doesn't yield between chunks the way clear() does: measured on 3.14t,
+    # yielding made it 3.5x slower against 4 writer threads (2.6 s vs 0.73 s for 98k rows) and only
+    # trimmed the writers' worst wait from about 24 to 15 ms. The write lock's starvation mode
+    # bounds both sides at about STARVE_AFTER (20 ms) instead. This guards cull()'s side: it must
+    # never be starved out by tight set() loops (the clear() bug on free-threaded Linux).
+    cache = Cache(tmp_path / 'c', timeout=30.0, size_limit=2**20, cull_limit=0)
+    for i in range(30_000):
+        cache.set(f'k{i}', 'x' * 400)
+    stop = threading.Event()
+
+    def hammer(n: int) -> None:
+        i = 0
+        while not stop.is_set():
+            cache.set(f'w{n}-{i % 50}', i)
+            i += 1
+
+    writers = [threading.Thread(target=hammer, args=(n,)) for n in range(4)]
+    for t in writers:
+        t.start()
+    try:
+        time.sleep(0.1)
+        started = time.perf_counter()
+        assert cache.cull() > 25_000
+        took = time.perf_counter() - started
+    finally:
+        stop.set()
+        for t in writers:
+            t.join()
+        cache.close()
+    # About 0.25 s here; 300 chunks starved for 20 ms each would take 6 s.
+    assert took < 4, f'cull() took {took:.2f} s against 4 writer threads'
+
+
 # ---------------------------------------------------------------------------
 # Detached busy retry: waiting for another process's lock doesn't hold the interpreter
 # ---------------------------------------------------------------------------

@@ -43,7 +43,7 @@ fn state_now(word: u64, generation: u64) -> u64 {
 ///
 /// Threads of one process queue here, with the interpreter released, before `BEGIN IMMEDIATE`, so
 /// only other processes ever meet SQLite's busy handler. It's taken *before* the gate, never while
-/// holding it; at gate depth > 0 callers use [`WriteLock::try_lock`] only.
+/// holding it; at gate depth > 0 callers use [`WriteLock::try_lock_nested`] only.
 ///
 /// **Starvation:** a free lock goes to whoever takes it first, so a thread that releases it and
 /// asks again at once (a tight `set()` loop) can win every time against a waiter that polls. A
@@ -80,9 +80,18 @@ impl WriteLock {
     /// Takes the lock if it's free (or was only held by a thread in a parent process) and no
     /// waiter is starving.
     pub fn try_lock(&self) -> Option<WriteToken<'_>> {
-        if state_now(self.starving.load(Ordering::Acquire), current()) != 0 {
+        if self.starving_now() != 0 {
             return None;
         }
+        self.take()
+    }
+
+    /// For a write at gate depth > 0, which must never wait: takes the lock if it's free, even
+    /// while a waiter is starving. Deferring to the starving waiter there wouldn't let it in
+    /// sooner (the nested write goes ahead either way, without the lock), it would only send the
+    /// two into SQLite's busy handler together. A thread writing in a tight loop at depth > 0 can
+    /// so jump ahead of starving waiters repeatedly; those writes would go ahead anyway.
+    pub fn try_lock_nested(&self) -> Option<WriteToken<'_>> {
         self.take()
     }
 
@@ -133,13 +142,15 @@ impl WriteLock {
                 starving = Some(Counted::new(&self.starving));
                 continue;
             }
-            // Sleep with the interpreter released until the lock looks free, the deadline passes,
-            // or it's time to start starving. The blocker can't hand a token out of its `Fn`, so
-            // the next turn of the loop takes it.
-            let until = if starving.is_some() { deadline } else { deadline.min(starve_at) };
+            // Sleep with the interpreter released until the lock looks free to us, the deadline
+            // passes, or it's time to start starving. A waiter that isn't starving keeps sleeping
+            // while the lock is reserved for one that is: `try_lock` would refuse it anyway. The
+            // blocker can't hand a token out of its `Fn`, so the next turn of the loop takes it.
+            let is_starving = starving.is_some();
+            let until = if is_starving { deadline } else { deadline.min(starve_at) };
             gate::run_blocking(&|| {
                 std::thread::sleep(POLL);
-                while self.state() != 0 && Instant::now() < until {
+                while (self.state() != 0 || (!is_starving && self.starving_now() != 0)) && Instant::now() < until {
                     std::thread::sleep(POLL);
                 }
             });
@@ -155,6 +166,10 @@ impl WriteLock {
 
     fn state(&self) -> u64 {
         state_now(self.word.load(Ordering::Acquire), current())
+    }
+
+    fn starving_now(&self) -> u64 {
+        state_now(self.starving.load(Ordering::Acquire), current())
     }
 }
 
@@ -404,6 +419,16 @@ mod tests {
         lock.word.store(pack(current().wrapping_sub(1) & LOW, 1), Ordering::Release);
         let token = lock.try_lock().expect("a parent's hold is free in the child");
         assert!(lock.try_lock().is_none());
+        drop(token);
+    }
+
+    #[test]
+    fn a_nested_writer_takes_a_free_lock_even_while_someone_starves() {
+        let lock = WriteLock::new();
+        tests_support::mark_starving(&lock);
+        assert!(lock.try_lock().is_none(), "try_lock defers to a starving waiter");
+        let token = lock.try_lock_nested().expect("a free lock goes to a nested writer");
+        assert!(lock.try_lock_nested().is_none(), "but never twice");
         drop(token);
     }
 

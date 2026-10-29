@@ -58,7 +58,7 @@ fn sqlite_compile_options() -> PyResult<Vec<String>> {
 pub(crate) fn to_py_err(error: Error) -> PyErr {
     let message = error.to_string();
     match error {
-        Error::Timeout { .. } => Timeout::new_err(message),
+        Error::Timeout { .. } | Error::WriteLockBusyInTransaction => Timeout::new_err(message),
         Error::DiskFull { .. } => PyOSError::new_err((libc::ENOSPC, message)),
         Error::SqliteIo { errno: Some(errno), .. } => PyOSError::new_err((errno, message)),
         Error::Io { source, .. } => match source.raw_os_error() {
