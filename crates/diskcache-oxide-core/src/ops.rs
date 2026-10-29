@@ -568,7 +568,7 @@ mod tests {
     use super::*;
     use crate::open::Requested;
     use crate::schema::{MODE_BYTES, MODE_STR};
-    use crate::store::{DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, OpenOptions};
+    use crate::store::{DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, OpenOptions};
     use crate::testutil::TempDir;
 
     const T: Duration = Duration::from_secs(5);
@@ -581,6 +581,7 @@ mod tests {
             requested,
             max_connections: DEFAULT_MAX_CONNECTIONS,
             cache_pages: DEFAULT_CACHE_PAGES,
+            wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
         })
         .unwrap()
     }
@@ -739,7 +740,7 @@ mod reprepare_guard {
 
     use super::*;
     use crate::open::Requested;
-    use crate::store::{DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, OpenOptions, Store};
+    use crate::store::{DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, OpenOptions, Store};
     use crate::testutil::TempDir;
 
     /// Regression guard: cached statements must not be recompiled on every call. Without the query
@@ -755,6 +756,7 @@ mod reprepare_guard {
             requested: Requested::default(),
             max_connections: DEFAULT_MAX_CONNECTIONS,
             cache_pages: DEFAULT_CACHE_PAGES,
+            wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
         })
         .unwrap();
         for i in 0..300 {

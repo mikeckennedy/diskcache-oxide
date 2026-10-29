@@ -265,7 +265,7 @@ mod tests {
     use crate::open::Requested;
     use crate::ops::Value;
     use crate::schema::MODE_STR;
-    use crate::store::{DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, OpenOptions};
+    use crate::store::{DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, OpenOptions};
     use crate::testutil::TempDir;
 
     const T: Duration = Duration::from_secs(5);
@@ -278,6 +278,7 @@ mod tests {
             requested: Requested::default(),
             max_connections: DEFAULT_MAX_CONNECTIONS,
             cache_pages: DEFAULT_CACHE_PAGES,
+            wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
         })
         .unwrap()
     }
@@ -372,6 +373,7 @@ mod tests {
             requested: Requested { size_limit: Some(1 << 20), cull_limit: Some(0) },
             max_connections: DEFAULT_MAX_CONNECTIONS,
             cache_pages: DEFAULT_CACHE_PAGES,
+            wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
         })
         .unwrap();
         let blob = vec![1u8; 30_000];

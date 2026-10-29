@@ -21,6 +21,7 @@ pub mod sqlite;
 pub mod store;
 #[cfg(test)]
 mod testutil;
+pub mod wal;
 
 pub use error::{Error, Result};
 /// A borrowed view of a stored value, as `Store::get_with` hands it to its decoder.

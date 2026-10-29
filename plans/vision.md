@@ -12,7 +12,7 @@ Ideas that aren't ready to plan: worth remembering, not committed to. When one b
 **The idea:** expire on a timer, so "expires at noon" means gone at noon everywhere, not just for lookups. Pieces, roughly in the order they'd be worth doing:
 
 1. **Filter listings at query time:** `__iter__`/`iterkeys()` skip rows with `expire_time <= now`. It's cheap (the keyset pages already run a query) and exact, with no thread. It diverges from diskcache, so it would need a divergence entry.
-2. **A background sweeper per store:** a Rust thread, so no Python and no interpreter involvement, that runs the existing chunked `expire()` every interval (say once a minute; configurable, off-able).
+2. **A background sweeper per store** (also the home of WAL checkpointing, Phase 2.5 item 10 in the roadmap, so this thread is now planned rather than only an idea): a Rust thread, so no Python and no interpreter involvement, that runs the existing chunked `expire()` every interval (say once a minute; configurable, off-able).
    - It first probes for any expired row (a cheap read), so an idle or tidy cache never takes the write lock.
    - Chunks yield to waiting writers, as `clear()` does today.
    - Processes coordinate through a "next sweep at" time in the `totals` row, updated in the sweep's own transaction, so eight gunicorn workers don't all sweep.

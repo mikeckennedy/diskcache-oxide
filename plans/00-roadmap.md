@@ -145,6 +145,7 @@ A separate phase, because the concurrency core is where serious bugs would hide,
   7. `pop` decodes Python inside its write transaction. A pickle `__setstate__` that writes the same cache waits out the full timeout behind its own transaction. Copy the bytes, and decode after `COMMIT`.
   8. Close-then-reuse and a close/open race can leave two `Store`s for one file: decide retirement under the registry mutex, and look up or revive on rejoin.
   9. The pool's `max_idle` stays at the first handle's `max_connections`; raise it on `join`, as `cache_pages` is.
+  10. **Built-in WAL management (found by the soak, 2026-10-28; Michael).** With readers in other processes, a burst of writes can't wrap the WAL, so the file grows and never shrinks: 538 MiB-1.1 GiB in a 3.14t reproduction. Done as Phase 2.5 step 1: `wal_size_limit` (default 64 MiB), D-024. Design and results are in `plans/06-phase-2.5-concurrency-review.md`. The forced checkpoint moves to the background maintenance thread when that lands.
   - Plus the cheap first step towards real parking: spin about 2-5 µs, then `yield_now`, before each 50 µs sleep. Real parking needs `unsafe` (a futex or `os_sync_wait_on_address`) in a small separate crate, since core forbids `unsafe`.
 - Exit: all review findings resolved or explicitly accepted, and a clean 24-hour soak on macOS plus a clean multi-hour soak on Linux.
 

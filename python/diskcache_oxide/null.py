@@ -64,6 +64,7 @@ class NullCache:
         clock: Callable[[], float] | None = None,
         max_connections: int = 8,
         sqlite_cache_size: int | None = None,
+        wal_size_limit: int | None = None,
         invalidate: CacheLike | None = None,
     ) -> None:
         _check_seconds('timeout', timeout)

@@ -46,6 +46,9 @@ pub const DEFAULT_MAX_CONNECTIONS: u64 = 8;
 /// [`DEFAULT_MAX_CONNECTIONS`] this bounds a store's page caches at `8 × pages × page_size`.
 pub const DEFAULT_CACHE_PAGES: u64 = 256;
 
+/// Default `wal_size_limit` in bytes (see [`crate::wal`]).
+pub const DEFAULT_WAL_SIZE_LIMIT: u64 = crate::wal::DEFAULT_SIZE_LIMIT;
+
 use crate::poison::FileId;
 
 static REGISTRY: Mutex<Vec<Weak<Store>>> = Mutex::new(Vec::new());
@@ -74,6 +77,8 @@ pub struct OpenOptions {
     pub max_connections: u64,
     /// Page-cache size of each connection, in pages (`sqlite_cache_size`).
     pub cache_pages: u64,
+    /// The WAL file's size limit in bytes (`wal_size_limit`, see [`crate::wal`]).
+    pub wal_size_limit: u64,
 }
 
 /// One database file's shared state. See the module docs.
@@ -94,6 +99,11 @@ pub struct Store {
     /// The largest `cache_pages` any handle on this store asked for. Each leased connection is
     /// brought up to it.
     cache_pages: AtomicU64,
+    /// The largest `wal_size_limit` any handle on this store asked for (see [`crate::wal`]).
+    wal_size_limit: AtomicU64,
+    wal: crate::wal::WalState,
+    /// The `-wal` file, computed once: the WAL check runs after every write.
+    wal_path: PathBuf,
     /// Open handles. The pool drains when the last one closes.
     handles: AtomicUsize,
     /// Cached copies of the persisted limits, for the attribute getters only. Write paths read the
@@ -123,6 +133,12 @@ impl Store {
         }
         if options.cache_pages == 0 {
             return Err(Error::InvalidSetting("sqlite_cache_size must be at least 1 page".into()));
+        }
+        if options.wal_size_limit < crate::wal::MIN_SIZE_LIMIT {
+            return Err(Error::InvalidSetting(format!(
+                "wal_size_limit must be at least {} bytes",
+                crate::wal::MIN_SIZE_LIMIT
+            )));
         }
         options.requested.validate()?;
         open::ensure_directory(&options.directory)?;
@@ -166,6 +182,9 @@ impl Store {
             slots: Slots::new(),
             max_connections: AtomicU64::new(options.max_connections),
             cache_pages: AtomicU64::new(options.cache_pages),
+            wal_size_limit: AtomicU64::new(options.wal_size_limit),
+            wal: crate::wal::WalState::new(),
+            wal_path: db_path.with_extension("sqlite-wal"),
             handles: AtomicUsize::new(1),
             size_limit: AtomicI64::new(limits.size_limit),
             cull_limit: AtomicI64::new(limits.cull_limit),
@@ -193,6 +212,7 @@ impl Store {
     fn join(&self, options: &OpenOptions) -> Result<()> {
         self.max_connections.fetch_max(options.max_connections, Ordering::AcqRel);
         self.cache_pages.fetch_max(options.cache_pages, Ordering::AcqRel);
+        self.wal_size_limit.fetch_max(options.wal_size_limit, Ordering::AcqRel);
         self.handles.fetch_add(1, Ordering::AcqRel);
         if options.requested == Requested::default() {
             return Ok(());
@@ -327,7 +347,8 @@ impl Store {
             return result;
         }
         // 1. The write lock, before the gate. At depth > 0 never wait for it (see the module docs).
-        let _token = if GATE.own_depth() == 0 {
+        let top_level = GATE.own_depth() == 0;
+        let token = if top_level {
             let token = if priority {
                 self.write_lock.lock_until_with_priority(deadline)
             } else {
@@ -339,7 +360,7 @@ impl Store {
         };
         // 2-3. Slot, gate and connection per attempt; SQLite's lock is then only contended by
         // other processes (and by a nested operation that couldn't take the write lock).
-        lockwait::retry(deadline.saturating_duration_since(Instant::now()), |attempt_deadline| {
+        let result = lockwait::retry(deadline.saturating_duration_since(Instant::now()), |attempt_deadline| {
             let _permit = self.reserve_slot(attempt_deadline)?;
             let gate = GATE.enter_shared();
             let lease = self.lease(&gate, timeout)?;
@@ -351,7 +372,61 @@ impl Store {
         .map_err(|error| match error {
             Error::Timeout { .. } => Error::Timeout { seconds: timeout.as_secs_f64() },
             other => other,
-        })
+        });
+        // 4. After the retry loop (a checkpoint problem must never replay a committed write), still
+        // holding the write lock so our own writers queue rather than meet SQLite's busy handler.
+        // Never for a nested write (depth > 0): it may get a token from try_lock, but an outer
+        // snapshot on this thread would only make the checkpoint report busy.
+        if result.is_ok() && top_level {
+            self.maybe_checkpoint();
+        }
+        drop(token);
+        result
+    }
+
+    /// The WAL check after a committed write; see [`crate::wal`]. Never fails, never waits beyond one
+    /// attached window, and only records what happened.
+    fn maybe_checkpoint(&self) {
+        use crate::wal::{Decision, Outcome};
+        let limit = self.wal_size_limit.load(Ordering::Relaxed);
+        let decision = self.wal.after_commit(limit, || std::fs::metadata(&self.wal_path).map_or(0, |m| m.len()));
+        if decision == Decision::Nothing {
+            return;
+        }
+        let Some(_permit) = self.slots.try_acquire(self.max_connections.load(Ordering::Acquire)) else {
+            self.wal.record(&Outcome::NoSlot, Duration::ZERO);
+            return;
+        };
+        let gate = GATE.enter_shared();
+        let Ok(lease) = self.lease(&gate, Duration::ZERO) else {
+            self.wal.record(&Outcome::Failed, Duration::ZERO);
+            return;
+        };
+        let start = Instant::now();
+        // Two steps. PASSIVE first, with no busy window: it copies whatever frames it can into the
+        // database without waiting for anyone. Then TRUNCATE in a fresh window: it waits for readers
+        // on older snapshots (ours take microseconds), copies the small remainder and truncates the
+        // file. A single TRUNCATE spent its whole window copying a large backlog and then reported
+        // busy before it could wait for readers (seen on Linux with readers in other processes).
+        // Busy comes back as a row (busy = 1), not an error.
+        let _ = lease.conn().query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| r.get::<_, i64>(0));
+        let row = {
+            // `open` caps the window at ATTACHED_WINDOW from now.
+            let _window = lockwait::AttachedWindow::open(Instant::now() + lockwait::ATTACHED_WINDOW);
+            lease.conn().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0))
+        };
+        let outcome = match row {
+            Ok(0) => Outcome::Done,
+            Ok(_) => Outcome::Busy,
+            Err(_) => Outcome::Failed,
+        };
+        self.wal.record(&outcome, start.elapsed());
+    }
+
+    /// What forced WAL checkpoints have done on this store (for tests and debugging).
+    #[must_use]
+    pub fn wal_stats(&self) -> crate::wal::WalStats {
+        self.wal.stats()
     }
 
     /// Fails with [`Error::Unwritable`] in a child forked inside a transaction on this file (D-020).
@@ -463,15 +538,25 @@ impl Store {
 
     fn lease<'s, 'g>(&'s self, gate: &'g SharedGuard<'g>, timeout: Duration) -> Result<Lease<'s, 'g>> {
         let mut pooled = self.pool.checkout(gate, || open::connect(&self.directory, timeout))?;
-        // New connections, and older ones after a handle asked for more, get the store's size.
-        let pages = self.cache_pages.load(Ordering::Relaxed);
-        if pooled.cache_pages() != pages {
-            let set = pooled.conn().execute_batch(&format!("PRAGMA cache_size = {pages}"));
+        // New connections, and older ones after a handle asked for more, get the store's settings.
+        // All three are connection settings that write nothing (D-019). `format!` is safe here:
+        // they're integers we computed, and PRAGMA values can't be bound as parameters.
+        let applied = crate::pool::Applied {
+            cache_pages: self.cache_pages.load(Ordering::Relaxed),
+            wal_size_limit: self.wal_size_limit.load(Ordering::Relaxed),
+        };
+        if pooled.applied() != applied {
+            let crate::pool::Applied { cache_pages: pages, wal_size_limit: wal_limit } = applied;
+            let set = pooled.conn().execute_batch(&format!(
+                "PRAGMA cache_size = {pages}; PRAGMA journal_size_limit = {}; PRAGMA wal_autocheckpoint = {};",
+                crate::wal::journal_size_limit(wal_limit),
+                crate::wal::autocheckpoint_pages(wal_limit),
+            ));
             if let Err(error) = set {
                 self.pool.checkin(gate, pooled);
                 return Err(Error::from_sqlite(error, timeout));
             }
-            pooled.set_cache_pages(pages);
+            pooled.set_applied(applied);
         }
         Ok(Lease { store: self, gate, pooled: Some(pooled) })
     }
@@ -624,6 +709,7 @@ mod tests {
             requested: Requested::default(),
             max_connections: DEFAULT_MAX_CONNECTIONS,
             cache_pages: DEFAULT_CACHE_PAGES,
+            wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
         }
     }
 
@@ -878,6 +964,68 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(1), "a nested write waited behind a starving writer");
         drop(gate);
         assert_eq!(count(&store), 1);
+    }
+
+    #[test]
+    fn nested_and_nowait_writes_never_check_the_wal() {
+        let tmp = TempDir::new("store-wal-nested");
+        let store =
+            Store::open(&OpenOptions { wal_size_limit: crate::wal::MIN_SIZE_LIMIT, ..options(tmp.path()) }).unwrap();
+        let writes = crate::wal::CHECK_EVERY_COMMITS * 2;
+        {
+            let _gate = GATE.enter_shared(); // A nested write: depth > 0.
+            for i in 0..writes {
+                put(&store, &format!("n{i}"), b"v");
+            }
+        }
+        for i in 0..writes {
+            let row = NewRow {
+                key: "nowait",
+                mode: 2,
+                value: Stored::Blob(b"v"),
+                size: 1,
+                store_time: f64::from(u32::try_from(i).unwrap()),
+                expire_time: None,
+            };
+            store.write_nowait(|w| w.upsert(&row)).unwrap().unwrap();
+        }
+        assert_eq!(store.wal_stats().checks, 0, "a nested or write_nowait write checked the WAL");
+        put(&store, "top", b"v");
+        assert_eq!(store.wal_stats().checks, 1, "a top-level write checks");
+    }
+
+    #[test]
+    fn a_larger_wal_limit_from_a_second_handle_is_applied_to_pooled_connections() {
+        let tmp = TempDir::new("store-wal-join");
+        let pragmas = |store: &Store| {
+            store
+                .read(T, |c| {
+                    let j: i64 = c
+                        .query_row("PRAGMA journal_size_limit", [], |r| r.get(0))
+                        .map_err(|e| Error::from_sqlite(e, T))?;
+                    let a: i64 = c
+                        .query_row("PRAGMA wal_autocheckpoint", [], |r| r.get(0))
+                        .map_err(|e| Error::from_sqlite(e, T))?;
+                    Ok((j, a))
+                })
+                .unwrap()
+        };
+        let small = crate::wal::MIN_SIZE_LIMIT;
+        let a = Store::open(&OpenOptions { wal_size_limit: small, ..options(tmp.path()) }).unwrap();
+        let expect = |limit: u64| {
+            (
+                i64::try_from(crate::wal::journal_size_limit(limit)).unwrap(),
+                i64::try_from(crate::wal::autocheckpoint_pages(limit)).unwrap(),
+            )
+        };
+        assert_eq!(pragmas(&a), expect(small));
+        let large = 16 * small;
+        let _b = Store::open(&OpenOptions { wal_size_limit: large, ..options(tmp.path()) }).unwrap();
+        assert_eq!(pragmas(&a), expect(large), "an idle pooled connection is brought up to the larger limit");
+        assert!(matches!(
+            Store::open(&OpenOptions { wal_size_limit: small - 1, ..options(&tmp.path().join("small")) }),
+            Err(Error::InvalidSetting(_))
+        ));
     }
 
     #[test]

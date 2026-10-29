@@ -10,6 +10,7 @@ A clean-room reimplementation of [python-diskcache](https://github.com/grantjenk
 - Fast: roughly half diskcache's latency on cached reads, and much higher multi-threaded throughput.
 - No pickle by default. Values are stored as msgpack (or JSON), with exact type tags for tuples, sets, datetimes and big ints. `pickle=True` is opt-in.
 - Bounded memory: at most `max_connections` SQLite connections per cache directory, each with a page cache of `sqlite_cache_size` pages (1 MiB by default).
+- Bounded disk: the WAL file stays under `wal_size_limit` (64 MiB by default), even with readers in other processes.
 - Type hints included (`py.typed`), and a `NullCache` that turns caching off without changing call sites.
 
 ## Where things are

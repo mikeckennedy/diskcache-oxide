@@ -10,31 +10,31 @@ round 4/4: oxide done
 Python 3.14.10 (GIL), 4 interleaved rounds, tolerance 1.05x
 
 workload                     variant          p50 us / ops  vs diskcache  verdict
-get_hit_small                diskcache               1.836
-get_hit_small                oxide                   0.763         0.42x  pass (target <= 0.55x)
-get_miss                     diskcache               1.435
-get_miss                     oxide                   0.647         0.45x  pass
-get_hit_small_dict           diskcache               2.499
-get_hit_small_dict           oxide                   1.182         0.47x  pass
-set_small                    diskcache              29.324
-set_small                    oxide                  22.576         0.77x  pass (target <= 0.85x)
-get_random_wide              diskcache               3.418
-get_random_wide              oxide                   2.206         0.65x  pass
-threads_99to1 x1             diskcache         378,377.260
-threads_99to1 x1             oxide             749,723.597         1.98x  pass
-threads_99to1 x2             diskcache         238,721.347
-threads_99to1 x2             oxide             744,664.632         3.12x  pass
-threads_99to1 x4             diskcache         141,144.445
-threads_99to1 x4             oxide             722,854.838         5.12x  pass
-threads_99to1 x8             diskcache          43,888.656
-threads_99to1 x8             oxide             722,823.210        16.47x  pass
-threads_1000to1 x1           diskcache         422,671.087
-threads_1000to1 x1           oxide             900,124.768         2.13x  pass
-threads_1000to1 x2           diskcache         187,682.937
-threads_1000to1 x2           oxide             886,122.430         4.72x  pass
-threads_1000to1 x4           diskcache         127,190.450
-threads_1000to1 x4           oxide             875,966.642         6.89x  pass
-threads_1000to1 x8           diskcache          46,265.648
-threads_1000to1 x8           oxide             874,718.272        18.91x  pass
+get_hit_small                diskcache               1.921
+get_hit_small                oxide                   0.771         0.40x  pass (target <= 0.55x)
+get_miss                     diskcache               1.490
+get_miss                     oxide                   0.659         0.44x  pass
+get_hit_small_dict           diskcache               2.602
+get_hit_small_dict           oxide                   1.188         0.46x  pass
+set_small                    diskcache              37.295
+set_small                    oxide                  29.383         0.79x  pass (target <= 0.85x)
+get_random_wide              diskcache               4.595
+get_random_wide              oxide                   2.805         0.61x  pass
+threads_99to1 x1             diskcache         341,135.849
+threads_99to1 x1             oxide             652,680.722         1.91x  pass
+threads_99to1 x2             diskcache         203,729.996
+threads_99to1 x2             oxide             655,001.919         3.22x  pass
+threads_99to1 x4             diskcache         134,479.536
+threads_99to1 x4             oxide             639,174.354         4.75x  pass
+threads_99to1 x8             diskcache          41,075.407
+threads_99to1 x8             oxide             670,097.803        16.31x  pass
+threads_1000to1 x1           diskcache         415,098.878
+threads_1000to1 x1           oxide             821,315.514         1.98x  pass
+threads_1000to1 x2           diskcache         184,366.533
+threads_1000to1 x2           oxide             810,567.912         4.40x  pass
+threads_1000to1 x4           diskcache         119,406.186
+threads_1000to1 x4           oxide             789,869.197         6.61x  pass
+threads_1000to1 x8           diskcache          44,048.532
+threads_1000to1 x8           oxide             791,687.182        17.97x  pass
 
 oxide: GO

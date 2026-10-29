@@ -253,3 +253,7 @@ __marimo__/
 *.sqlite-wal
 *.sqlite-shm
 bench/results/*.tmp
+
+# Soak runs (soak/)
+soak-results/
+soak.out

@@ -10,7 +10,7 @@ must not import pytest fixtures. The CLI runs in a fresh interpreter (cwd = repo
 
     python -m tests.conformance.proc_workers peer <db>
         A second SQLite connection on <db>, driven one command per stdin line, one reply line each:
-        `begin <IMMEDIATE|EXCLUSIVE>` -> `locked`, `rollback` -> `released`,
+        `begin <IMMEDIATE|EXCLUSIVE|READ>` -> `locked` (READ holds a read snapshot), `rollback` -> `released`,
         `data_version` -> the integer. EOF closes the connection.
 
     python -m tests.conformance.proc_workers integrity <db>
@@ -141,6 +141,11 @@ def _peer_main(db_path: str) -> int:
             try:
                 if command[:1] == ['begin'] and command[1] in ('IMMEDIATE', 'EXCLUSIVE'):
                     con.execute(f'BEGIN {command[1]}')
+                    reply = 'locked'
+                elif command == ['begin', 'READ']:
+                    # A read snapshot held open: blocks WAL resets and checkpoints, not writers.
+                    con.execute('BEGIN')
+                    con.execute('SELECT COUNT(*) FROM cache').fetchone()
                     reply = 'locked'
                 elif command == ['rollback']:
                     con.execute('ROLLBACK')

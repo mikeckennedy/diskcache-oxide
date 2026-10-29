@@ -15,7 +15,9 @@ use std::collections::VecDeque;
 
 use diskcache_oxide_core::maintenance::{Cursor, Order};
 use diskcache_oxide_core::ops::{Number, Value};
-use diskcache_oxide_core::store::{DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, HeldTransaction, OpenOptions, Store};
+use diskcache_oxide_core::store::{
+    DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, HeldTransaction, OpenOptions, Store,
+};
 use diskcache_oxide_core::{Error, ValueRef, lockwait, open::Requested};
 use pyo3::exceptions::{PyKeyError, PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -50,6 +52,7 @@ impl Cache {
         clock = None,
         max_connections = None,
         sqlite_cache_size = None,
+        wal_size_limit = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -63,6 +66,7 @@ impl Cache {
         clock: Option<Py<PyAny>>,
         max_connections: Option<&Bound<'_, PyAny>>,
         sqlite_cache_size: Option<&Bound<'_, PyAny>>,
+        wal_size_limit: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let timeout = match timeout {
             Some(t) => seconds("timeout", t)?,
@@ -91,8 +95,23 @@ impl Cache {
             Some(n) => n.unsigned_abs(),
             None => DEFAULT_CACHE_PAGES,
         };
+        let min_wal = diskcache_oxide_core::wal::MIN_SIZE_LIMIT;
+        let wal_size_limit = match whole("wal_size_limit", wal_size_limit)? {
+            Some(n) if n < 0 || n.unsigned_abs() < min_wal => {
+                return Err(PyValueError::new_err(format!("wal_size_limit must be at least {min_wal} bytes")));
+            }
+            Some(n) => n.unsigned_abs(),
+            None => DEFAULT_WAL_SIZE_LIMIT,
+        };
         let serializer = Serializer::from_name(serializer)?;
-        let options = OpenOptions { directory: directory.clone(), timeout, requested, max_connections, cache_pages };
+        let options = OpenOptions {
+            directory: directory.clone(),
+            timeout,
+            requested,
+            max_connections,
+            cache_pages,
+            wal_size_limit,
+        };
         let store = py.detach(|| Store::open(&options)).map_err(to_py_err)?;
         Ok(Self {
             store,
@@ -132,6 +151,25 @@ impl Cache {
     #[allow(clippy::unused_self)] // A Python attribute: it needs `self` even though it's constant.
     fn enabled(&self) -> bool {
         true
+    }
+
+    /// Test hook: what forced WAL checkpoints have done on this cache's store.
+    fn _wal_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        let s = self.store.wal_stats();
+        let d = pyo3::types::PyDict::new(py);
+        for (k, v) in [
+            ("checks", s.checks),
+            ("attempts", s.attempts),
+            ("successes", s.successes),
+            ("busy", s.busy),
+            ("errors", s.errors),
+            ("no_slot", s.no_slot),
+            ("max_pause_us", s.max_pause_us),
+            ("last_wal_bytes", s.last_wal_bytes),
+        ] {
+            d.set_item(k, v)?;
+        }
+        Ok(d)
     }
 
     fn __repr__(&self) -> String {
