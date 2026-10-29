@@ -27,7 +27,8 @@ pub const CHUNK: i64 = 100;
 /// Keys per iteration page.
 pub const PAGE: i64 = 512;
 
-/// The pause after each maintenance chunk, with the interpreter released.
+/// The pause after a maintenance chunk while a same-process writer waits, with the interpreter
+/// released.
 const PAUSE: Duration = Duration::from_micros(100);
 
 /// The longest a chunk loop yields to a waiting same-process writer before carrying on.
@@ -186,9 +187,18 @@ impl Store {
         count
     }
 
-    /// The breather between maintenance chunks: a short pause, then a yield to any same-process
-    /// writer waiting on the write lock (up to [`MAX_YIELD`]), all with the interpreter released.
+    /// The breather between maintenance chunks, only while a same-process writer waits on the write
+    /// lock: a short pause, then a yield to it (up to [`MAX_YIELD`]), with the interpreter released.
+    ///
+    /// With nobody waiting it does nothing (Michael, 2026-10-29). Measured on `clear()` of 100k
+    /// rows: an unconditional pause made it 2.2x slower idle and 8x slower beside a writer in
+    /// another process, whose worst wait it only trimmed from about 4 to 2.3 ms (that writer
+    /// still gets in between chunks, through SQLite's busy wait). Without the yield, though, a
+    /// same-process writer waited out the whole `clear()` (127-140 ms). plans/06 has the table.
     fn pause_between_chunks(&self) {
+        if self.write_waiters() == 0 {
+            return;
+        }
         gate::run_blocking(&|| {
             std::thread::sleep(PAUSE);
             let start = Instant::now();
