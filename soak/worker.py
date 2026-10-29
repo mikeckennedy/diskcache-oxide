@@ -55,6 +55,12 @@ FORK_DEADLINE = 20.0
 EXPIRY_SLACK = 1.0
 
 
+# Pacing: the shortest sleep worth taking, and how far behind schedule a thread may fall before the
+# backlog is dropped (so a stall doesn't turn into a long burst afterwards).
+PACE_MIN_SLEEP = 0.005
+PACE_MAX_BEHIND = 0.02
+
+
 def open_chaos(run_dir: Path) -> Cache:
     return Cache(run_dir / 'chaos', timeout=30.0, size_limit=CHAOS_SIZE_LIMIT)
 
@@ -159,9 +165,12 @@ class Worker:
         while not self.stop.is_set():
             if interval:  # Paced: a steady request rate rather than flat out.
                 delay = next_at - time.monotonic()
-                if delay > 0 and self.stop.wait(delay):
+                # Sleep only once well ahead, then catch up in a burst. Some kernels (OrbStack's
+                # Linux VM) round every sleep up to about 3 ms, so sleeping before each 40 us call
+                # capped a thread at a few hundred calls a second; the average rate is the same.
+                if delay > PACE_MIN_SLEEP and self.stop.wait(delay):
                     break
-                next_at = max(next_at + interval, time.monotonic() - interval)
+                next_at = max(next_at + interval, time.monotonic() - PACE_MAX_BEHIND)
             i += 1
             try:
                 self.one_op(rng, i, every)

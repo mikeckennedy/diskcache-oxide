@@ -151,7 +151,8 @@ impl Store {
     }
 
     /// Runs `delete_chunk` in its own write transaction until it removes nothing, fixing up the
-    /// totals for each chunk and pausing between chunks. Returns the total removed.
+    /// totals for each chunk, and stepping aside between chunks while a same-process writer waits.
+    /// Returns the total removed.
     fn chunked(
         &self,
         timeout: Duration,
@@ -173,8 +174,7 @@ impl Store {
                 return Ok(total);
             }
             total += self.finish_chunk(batch);
-            self.pause_between_chunks();
-            yielded = true;
+            yielded = self.pause_between_chunks();
         }
     }
 
@@ -192,12 +192,15 @@ impl Store {
     ///
     /// With nobody waiting it does nothing (Michael, 2026-10-29). Measured on `clear()` of 100k
     /// rows: an unconditional pause made it 2.2x slower idle and 8x slower beside a writer in
-    /// another process, whose worst wait it only trimmed from about 4 to 2.3 ms (that writer
-    /// still gets in between chunks, through SQLite's busy wait). Without the yield, though, a
-    /// same-process writer waited out the whole `clear()` (127-140 ms). plans/06 has the table.
-    fn pause_between_chunks(&self) {
+    /// another process, whose worst wait it only trimmed from about 4 to 2.3 ms. That writer now
+    /// gets in only in the short gap between one chunk's `COMMIT` and the next `BEGIN`, through
+    /// SQLite's busy wait: usually, not by guarantee, so a slow disk could stretch its tail.
+    /// Without the yield, though, a same-process writer waited out the whole `clear()`
+    /// (127-140 ms). plans/06 has the table. Returns whether it stepped aside, so the next chunk
+    /// takes the lock back with priority only then.
+    fn pause_between_chunks(&self) -> bool {
         if self.write_waiters() == 0 {
-            return;
+            return false;
         }
         gate::run_blocking(&|| {
             std::thread::sleep(PAUSE);
@@ -206,6 +209,7 @@ impl Store {
                 std::thread::sleep(Duration::from_micros(50));
             }
         });
+        true
     }
 }
 
