@@ -999,7 +999,9 @@ impl Drop for Lease<'_, '_> {
 }
 
 /// A write transaction held across calls. See [`Store::begin_hold`]. `Send`: it may be finished or
-/// dropped on another thread (the GC may drop the Python object holding it anywhere).
+/// dropped on another thread (the GC may drop the Python object holding it anywhere). While the
+/// owner thread is inside an operation on it, that waits for the operation, with the interpreter
+/// released.
 #[derive(Debug)]
 #[must_use = "dropping a held transaction rolls it back"]
 pub struct HeldTransaction {
@@ -1029,10 +1031,13 @@ impl HeldTransaction {
             match &*slot {
                 PinnedSlot::Lent { owner, .. } if *owner == me => return Err(Error::EndInsideOperation),
                 PinnedSlot::Lent { .. } => {
-                    // The owner thread is inside an operation on it: wait for it to hand it back.
+                    // The owner thread is inside an operation on it: wait for it to hand it back,
+                    // with the interpreter released, since that operation may be running Python
+                    // (a pickle hook) and need it. The operation itself never waits for this
+                    // thread: it's at gate depth > 0, where every wait is bounded.
                     drop(slot);
                     drop(gate);
-                    std::thread::sleep(LENT_POLL);
+                    gate::run_blocking(&|| std::thread::sleep(LENT_POLL));
                 }
                 _ => {
                     self.store.pinned_active.store(false, Ordering::Release);

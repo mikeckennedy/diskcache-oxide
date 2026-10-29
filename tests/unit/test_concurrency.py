@@ -255,3 +255,50 @@ def test_a_pickle_hook_that_reads_the_cache_works_inside_a_held_transaction(tmp_
         timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+ENDED_FROM_ANOTHER_THREAD_MID_OPERATION = """
+import sys
+import threading
+import time
+from diskcache_oxide import Cache
+
+inside = threading.Event()
+
+class Slow:
+    def __init__(self):
+        self.n = 1
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        inside.set()
+        time.sleep(0.3)  # Releases the interpreter; the other thread ends the transaction meanwhile.
+
+CACHE = Cache(sys.argv[1], pickle=True)
+CACHE.set('slow', Slow())
+hold = CACHE._hold_write_transaction()
+hold.__enter__()
+CACHE.set('in-hold', 1)
+
+def end() -> None:
+    inside.wait()
+    hold.__exit__(None, None, None)
+
+ender = threading.Thread(target=end)
+ender.start()
+assert CACHE.get('slow').n == 1
+ender.join()
+assert CACHE.get('in-hold') == 1, 'the transaction ended on the other thread did not commit'
+"""
+
+
+def test_a_held_transaction_ended_from_another_thread_mid_operation_waits_detached(tmp_path: Path) -> None:
+    # Ending it waits for the operation running on the transaction's connection. That wait held
+    # the interpreter, so on a GIL build the operation could never finish: a deadlock.
+    proc = subprocess.run(
+        [sys.executable, '-c', ENDED_FROM_ANOTHER_THREAD_MID_OPERATION, str(tmp_path / 'c')],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
