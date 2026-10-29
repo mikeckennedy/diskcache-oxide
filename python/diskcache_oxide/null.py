@@ -48,7 +48,19 @@ def _check_seconds(name: str, value: object) -> None:
 
 
 class NullCache:
-    """A switched-off cache. See the module docstring for the rule every method follows."""
+    """A switched-off cache, so app code needs no `if cache is None` checks.
+
+    It behaves like a real cache in which every entry expires the instant it's written and is
+    swept straight away: reads miss, writes succeed, and it's always empty. It's falsy, and its
+    `enabled` is False.
+
+    Args:
+        directory: Accepted and ignored, like every other `Cache` argument, so switching between
+            the two is a one-line change.
+        invalidate: A real cache to forward removals to (`delete`, `pop`, `clear` and `iterkeys`),
+            so invalidations still land while caching is off and nothing stale is served once
+            it's back on.
+    """
 
     __slots__ = ('_cull_limit', '_directory', '_invalidate', '_size_limit', '_timeout')
 
@@ -76,6 +88,7 @@ class NullCache:
         self._invalidate = invalidate
 
     def __repr__(self) -> str:
+        """Shows the directory and any `invalidate=` cache."""
         forwarding = f', invalidate={self._invalidate!r}' if self._invalidate is not None else ''
         return f'NullCache({self._directory!r}{forwarding})'
 
@@ -83,22 +96,27 @@ class NullCache:
 
     @property
     def directory(self) -> str | None:
+        """The directory passed to the constructor, or None. Nothing is created there."""
         return self._directory
 
     @property
     def timeout(self) -> float:
+        """The timeout passed to the constructor (default 60). Unused."""
         return self._timeout
 
     @property
     def size_limit(self) -> int:
+        """The size limit passed to the constructor (default 1 GiB). Unused."""
         return self._size_limit
 
     @property
     def cull_limit(self) -> int:
+        """The cull limit passed to the constructor (default 10). Unused."""
         return self._cull_limit
 
     @property
     def enabled(self) -> bool:
+        """Always False: caching is off."""
         return False
 
     # -- reads: nothing is ever present ---------------------------------------------------------
@@ -108,83 +126,109 @@ class NullCache:
     @overload
     def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
     def get(self, key: str, default: Any = None, *, expire_time: bool = False) -> Any:
+        """Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`."""
         _check_key(key)
         return (default, None) if expire_time else default
 
     def __getitem__(self, key: str) -> Any:
+        """Always raises `KeyError`, as every entry has already expired."""
         _check_key(key)
         raise KeyError(key)
 
     def __contains__(self, key: object) -> bool:
+        """Always False."""
         return False
 
     def __len__(self) -> int:
+        """Always 0."""
         return 0
 
     def __bool__(self) -> bool:
+        """Always False, so `if cache:` means "caching is on"."""
         return False
 
     def __iter__(self) -> Iterator[str]:
+        """Yields nothing."""
         return iter(())
 
     def volume(self) -> int:
+        """Always 0: a `NullCache` uses no disk."""
         return 0
 
     def checkpoint(self, timeout: float | None = None) -> bool:
+        """Always True: there is no write-ahead log to reset."""
         # No write-ahead log to reset.
         return True
 
     # -- writes: succeed, then expire instantly ---------------------------------------------------
 
     def set(self, key: str, value: Any, expire: float | None = None) -> bool:
+        """Return True without storing anything: the write succeeds, then expires instantly."""
         _check_key(key)
         _check_seconds('expire', expire)
         return True
 
     def __setitem__(self, key: str, value: Any) -> None:
+        """Store nothing, as `set()` does."""
         self.set(key, value)
 
     def add(self, key: str, value: Any, expire: float | None = None) -> bool:
+        """Return True without storing anything: the key is always absent, so the add succeeds.
+
+        With caching off, every caller's `add()` succeeds, so don't rely on it for job claims or locks.
+        """
         _check_key(key)
         _check_seconds('expire', expire)
         return True
 
     def touch(self, key: str, expire: float | None = None) -> bool:
+        """Always False: the key never exists."""
         _check_key(key)
         _check_seconds('expire', expire)
         return False
 
     def incr(self, key: str, delta: int | float = 1, default: int | float | None = 0) -> int | float:
+        """Return `default + delta`, since every count starts again from `default`.
+
+        Raises:
+            KeyError: `default` is None.
+        """
         _check_key(key)
         if default is None:
             raise KeyError(key)
         return default + delta
 
     def decr(self, key: str, delta: int | float = 1, default: int | float | None = 0) -> int | float:
+        """Return `default - delta`. See `incr()`."""
         return self.incr(key, -delta, default)
 
     # -- removals: forwarded with invalidate= -----------------------------------------------------
 
     def delete(self, key: str) -> bool:
+        """False, or with `invalidate=`, delete the key from that cache and return its result."""
         _check_key(key)
         if self._invalidate is not None:
             return self._invalidate.delete(key)
         return False
 
     def __delitem__(self, key: str) -> None:
+        """Raise `KeyError`, or with `invalidate=`, delete the key from that cache."""
         if not self.delete(key) and self._invalidate is None:
             raise KeyError(key)
 
     def pop(self, key: str, default: Any = None) -> Any:
+        """Return `default`. With `invalidate=`, also delete the key from that cache."""
         _check_key(key)
         if self._invalidate is not None:
             self._invalidate.delete(key)
         return default
 
     def clear(self) -> int:
+        """0, or with `invalidate=`, clear that cache and return its count."""
         return self._invalidate.clear() if self._invalidate is not None else 0
 
     def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+        """Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works."""
         if self._invalidate is not None:
             return self._invalidate.iterkeys(prefix=prefix, reverse=reverse)
         return iter(())
@@ -192,19 +236,24 @@ class NullCache:
     # -- maintenance and lifecycle -------------------------------------------------------------
 
     def expire(self) -> int:
+        """Always 0."""
         return 0
 
     def cull(self) -> int:
+        """Always 0."""
         return 0
 
     def close(self, *, checkpoint: bool = True) -> None:
+        """Do nothing. An `invalidate=` cache is never closed: it belongs to whoever created it."""
         # Never closes the `invalidate=` cache: it belongs to whoever created it.
         pass
 
     def __enter__(self) -> Self:
+        """Return the cache, for `with NullCache() as cache:`."""
         return self
 
     def __exit__(
         self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None, /
     ) -> None:
+        """Do nothing, as `close()` does."""
         self.close()

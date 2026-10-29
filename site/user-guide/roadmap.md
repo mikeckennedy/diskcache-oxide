@@ -1,93 +1,84 @@
-# Project status and roadmap
-
-diskcache-oxide is an active, clean-room reimplementation of python-diskcache in Rust. It is currently approximately **60% complete**.
-
-This page outlines what is fully implemented and tested today, and what features are scheduled for future phases.
+# Vision and roadmap
 
 
-# What is complete today (Phase 0 - Phase 2)
+# The vision
 
-The core foundation and the primary [Cache](../reference/Cache.md#diskcache_oxide.Cache) interface are fully operational, tested against both diskcache 5.6.3 and the diskcache-community fork across multiple Python versions (3.14, 3.14t, 3.15, 3.15t):
+A shared cache is one of the first pieces of infrastructure a Python web app grows into, and today the choice is awkward. An in-process dict is fast, but each worker has its own copy and it's gone on restart. Redis is shared and durable, but it's a separate server, a network hop on every read, and one more thing to run. [python-diskcache](https://github.com/grantjenks/python-diskcache) showed there's a lot of room between those two: a cache that is just a directory, shared by every thread and process on the machine, built on SQLite.
 
-- **Core [Cache](../reference/Cache.md#diskcache_oxide.Cache) operations**:
-  - [get()](../reference/NullCache.get.md#diskcache_oxide.NullCache.get), [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set), [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add), [delete()](../reference/Cache.delete.md#diskcache_oxide.Cache.delete), [pop()](../reference/Cache.pop.md#diskcache_oxide.Cache.pop), [touch()](../reference/Cache.touch.md#diskcache_oxide.Cache.touch).
-  - Atomic counters: [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr), [decr()](../reference/Cache.decr.md#diskcache_oxide.Cache.decr).
-  - Fast prefix iteration: `iterkeys(prefix=...)`.
-  - Dictionary interface: `cache[k]`, `k in cache`, `del cache[k]`, `len(cache)`, `bool(cache)`.
-  - Resource cleanup: [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close), context manager (`with Cache(...) as cache:`).
-- **Storage and file spills**:
-  - Inline small values in SQLite; automatic file spilling for large values.
-  - Atomic temporary file creation and rename.
-  - Race-condition safety: readers racing an overwrite always receive consistent old or new data.
-- **Serialization & Data Safety**:
-  - `serializer="msgpack"` (default): ultra-fast binary format.
-  - `serializer="json"`: standard JSON with float roundtrip.
-  - Type-tagging system: exact preservation of `tuple`, [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), `datetime`, `NaN`/`inf`, nested `bytes`, and large ints.
-  - Safe by default: `pickle=False` default; `pickle=True` opt-in.
-  - [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) safety check for non-pickle handles.
-- **Process and thread concurrency**:
-  - `#[pymodule(gil_used = false)]` for free-threaded Python 3.14t and 3.15t.
-  - Process-wide fork barrier via `os.register_at_fork`: safe for Gunicorn, Celery, and Uvicorn.
-  - Bounded connection pool (`max_connections`, default 8).
-- **Resource bounds**:
-  - Bounded SQLite page cache per connection (`sqlite_cache_size`).
-  - Active forced WAL checkpoints (`wal_size_limit`, default 64 MiB).
-  - Least-Recently-Stored (LRS) eviction with [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) and [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit).
-- **[NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) & Typing**:
-  - Complete [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) implementation with instant-expiry semantics and `invalidate=` forwarding.
-  - [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) protocol for static type checkers.
-  - Shipped with `py.typed`.
+diskcache-oxide is a bet that this middle option can be much bigger than it has been. With a Rust engine underneath, a directory-backed cache can be fast enough to call on the event loop, safe enough for pre-forking servers and free-threaded Python, and complete enough to cover the jobs people now reach for Redis to do: caching, counters, rate limits, locks, job claims and queues. And when one machine isn't enough, the same engine can be served over the network.
 
-------------------------------------------------------------------------
+It's being built in three stages.
 
 
-# In progress
+## Stage 1: a better diskcache (now)
+
+Keep diskcache's API, fix what's wrong underneath it, and make it fast. Behavior comes first: every phase keeps a conformance suite green against real diskcache 5.6.3 before chasing speed, and every deliberate difference is written down in [Divergences](divergences.md).
 
 
-## Phase 2.5: Concurrency deep review and soak testing
+## Stage 2: the complete local caching toolkit
 
-- Long-duration multi-hour soak tests (`soak/`) running multi-process writers, readers, and random SIGKILL crash recovery.
-- Concurrency audit of SQLite WAL lock transitions and edge-case deadlocks.
-- Proactive background sweeper thread: a lightweight Rust background thread per cache store to proactively purge expired entries and run periodic WAL checkpoints off the hot request path.
+Everything diskcache offers that real apps use, plus the things a modern Python stack needs that it never had: an async API, sharding designed for many threads, and coordination recipes that are atomic across every process on the machine.
 
 
-## Platform expansion: Windows support
+## Stage 3: a cache server
 
-- Porting the fork barrier and file inode metadata handling to Windows.
+The same Rust core, served over HTTP to many clients: a Redis-style central cache with SQLite underneath, for when your app outgrows one machine. A server that is the only owner of its files can run SQLite in exclusive locking mode, which keeps the WAL index in heap memory instead of a shared file. Measured on the development machine:
 
-------------------------------------------------------------------------
-
-
-# Upcoming roadmap
-
-
-## Phase 3: Production adoption
-
-- Initial deployment and validation across high-traffic production web applications at Talk Python.
-- Real-world validation of WAL bounds, latency, and cache hit rates under live web traffic.
+| Storage mode | Read | Write | Shared by several processes? |
+|----|----|----|----|
+| WAL (the library today) | 1.18 µs | 13.9 µs | Yes |
+| WAL with exclusive locking (the server) | 0.69 µs | 16.5 µs | No, one owner |
 
 
-## Phase 4: Free-threaded optimization
-
-- Deep profiling on multi-core workloads with CPython 3.14t / 3.15t.
-- Evaluating zero-GIL lockless read paths and memory cache optimization.
+# Where things stand
 
 
-## Phase 5: `AsyncCache`
+## Done: the core [Cache](../reference/Cache.md#diskcache_oxide.Cache)
 
-- Native async interface (`AsyncCache`) designed for asynchronous web frameworks: FastAPI, Starlette, Litestar, Quart, and Sanic.
-- Non-blocking disk I/O offloaded to background thread pools without slowing down the synchronous path.
+- [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), [add](../reference/Cache.add.md#diskcache_oxide.Cache.add), [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete), [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop), [touch](../reference/Cache.touch.md#diskcache_oxide.Cache.touch), [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr), [decr](../reference/Cache.decr.md#diskcache_oxide.Cache.decr), with expiry.
+- The dictionary interface: `cache[k]`, `k in cache`, `del cache[k]`, `len(cache)`, iteration.
+- Indexed prefix scans: `iterkeys(prefix=..., reverse=...)`.
+- Maintenance: [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull), [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume), and [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) for the write-ahead log.
+- Least-recently-stored eviction with [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) and [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit).
+- Large values spilled to files, with readers that never see a spurious miss during an overwrite.
+- msgpack (default) and JSON serializers with exact type tags; pickle only when you opt in.
+- Thread-, process- and fork-safe, on GIL and free-threaded builds of 3.14 and 3.15.
+- Bounded connections, memory and WAL size.
+- [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), the [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) protocol, `py.typed`.
 
 
-## Phase 6: Parity features
+## Now: concurrency review and soak (Phase 2.5)
 
-- **Phase 6a: `FanoutCache` & Structured Keys**: Sharding across multiple SQLite databases for extreme write concurrency, plus arbitrary key types beyond `str`.
-- **Phase 6b: Tags**: Tagging cached entries and invalidating groups of keys by tag (`cache.evict(tag=...)`).
-- **Phase 6c: Data structures**: `Deque` and `Index` disk-backed collections.
-- **Phase 6d: Recipes**: `@cache.memoize()` function decorators, rate limiters, distributed locks.
-- **`transact()`**: Full multi-statement write transactions.
+The concurrency core is where serious bugs hide, so it gets its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) under load, checking for corruption, lost writes, leaks and latency drift. The soak has already paid for itself: it found the unbounded WAL growth that `wal_size_limit` and [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) now fix.
 
 
-## Phase 7: Standalone network cache server
+## Next
 
-- A high-performance, standalone network cache server powered by diskcache-oxide's Rust core, providing a disk-backed alternative to Redis with minimal operational overhead.
+| Phase | What it delivers |
+|----|----|
+| **3. Production** | diskcache-oxide replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers. First release to PyPI after that. |
+| **4. Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
+| **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one. |
+| **6a. Cache options** | More eviction policies (LRU, LFU, none), tags and `evict(tag)`, statistics, `memoize`, `peek`/`pull`/`push`, `check()`, `retry=`, and non-`str` keys. |
+| **6b. `transact()`** | Multi-operation transactions. |
+| **6c. `FanoutCache`** | Sharding across several databases, so writers stop queueing on one write lock. A strong candidate for the recommended default in threaded apps. |
+| **6d. `Deque` and `Index`** | diskcache's persistent collections. |
+| **6e. Recipes** | `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, and stampede-proof `memoize`. |
+| **7. Network server** | Stage 3, above. |
+| **Windows** | Supported as a development platform once macOS and Linux are solid. |
+
+
+# Further out
+
+Ideas being considered, not yet committed to:
+
+- **Expiry that's exact everywhere.** Lookups already treat an expired entry as gone at the moment it expires. The plan is to make `len()` and iteration do the same, and move the physical cleanup to a small background sweeper written in Rust, coordinated across processes so eight workers don't all sweep at once.
+- **Encryption at rest**, if a real need appears: SQLCipher for the database, authenticated encryption for spill files.
+
+
+# Non-goals
+
+- Reading existing diskcache directories. diskcache-oxide uses its own on-disk format, so caches start cold when you switch.
+- A module named `diskcache` (it would collide with the real package).
+- `DjangoCache`.
+- Python older than 3.14.

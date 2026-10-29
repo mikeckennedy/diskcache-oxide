@@ -1,6 +1,9 @@
 ## NullCache.touch()
 
 
+Always False: the key never exists.
+
+
 Usage
 
 ``` python

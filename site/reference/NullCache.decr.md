@@ -1,6 +1,9 @@
 ## NullCache.decr()
 
 
+Return `default - delta`. See [incr()](Cache.incr.md#diskcache_oxide.Cache.incr).
+
+
 Usage
 
 ``` python

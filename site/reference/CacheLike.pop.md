@@ -1,6 +1,9 @@
 ## CacheLike.pop()
 
 
+Remove `key` and return its value, or `default`.
+
+
 Usage
 
 ``` python

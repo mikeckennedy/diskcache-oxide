@@ -21,6 +21,10 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import griffe
 
 _SCRIPTS = Path(__file__).resolve().parent
 PKG_DIR = _SCRIPTS.parent  # dir holding pyproject.toml + great-docs.yml
@@ -171,6 +175,64 @@ def _postprocess(dest: Path) -> None:
     _append_llms_sections(dest, base)
 
 
+def _stub_extension() -> griffe.Extension:
+    """A griffe extension that fills two gaps in how great-docs 0.13.0 reads `_core.pyi`.
+
+    1. A stub method that is only `@overload`s (no implementation is allowed in a stub) never
+       becomes a member, so `Cache.get` got no page. Add one built from the overloads, using the
+       docstring of whichever overload has it and widening each `Literal[...]` parameter to `bool`.
+    2. PyO3 classes are built by `__new__`, and the stub must say so for stubtest, but the usage
+       line comes from `__init__`, so `Cache` showed as `Cache()`. Add an `__init__` that mirrors
+       `__new__`'s parameters.
+    """
+    import griffe
+
+    class StubFixes(griffe.Extension):
+        def on_class_members(self, *, cls: griffe.Class, **kwargs: object) -> None:
+            for name, overloads in cls.overloads.items():
+                if name in cls.members or not overloads or name == '__new__':
+                    continue
+                first = overloads[0]
+                params = griffe.Parameters(
+                    *(
+                        griffe.Parameter(
+                            p.name,
+                            annotation='bool' if str(p.annotation).startswith('Literal[') else p.annotation,
+                            kind=p.kind,
+                            default=p.default,
+                        )
+                        for p in first.parameters
+                    )
+                )
+                docstring = next((o.docstring for o in overloads if o.docstring), None)
+                func = griffe.Function(
+                    name, lineno=first.lineno, endlineno=first.endlineno, parameters=params, docstring=docstring
+                )
+                func.returns = ' | '.join(dict.fromkeys(str(o.returns) for o in overloads))
+                cls.set_member(name, func)
+            # great-docs renders `obj.overloads` as overload signatures when it's non-empty. On a class
+            # it's griffe's name -> overloads dict, so the class's own usage line came out empty.
+            cls.overloads.clear()
+
+            new = cls.members.get('__new__')
+            if isinstance(new, griffe.Function) and '__init__' not in cls.members:
+                init_params = list(new.parameters)
+                if init_params and init_params[0].name == 'cls':
+                    init_params[0] = griffe.Parameter('self', kind=init_params[0].kind)
+                cls.set_member(
+                    '__init__',
+                    griffe.Function(
+                        '__init__',
+                        lineno=new.lineno,
+                        endlineno=new.endlineno,
+                        parameters=griffe.Parameters(*init_params),
+                        returns='None',
+                    ),
+                )
+
+    return StubFixes()
+
+
 def main() -> int:
     # Ensure GriffeLoader runs in pure static mode for compiled PyO3 classes
     # so that .pyi stubs are parsed without cyclic alias errors between
@@ -179,9 +241,15 @@ def main() -> int:
     from griffe import GriffeLoader
 
     _orig_init = GriffeLoader.__init__
+    stub_fixes = _stub_extension()
 
     def _safe_init(self: GriffeLoader, *args: object, **kwargs: object) -> None:
         kwargs['allow_inspection'] = False
+        extensions = kwargs.get('extensions')
+        if not isinstance(extensions, griffe.Extensions):
+            extensions = griffe.Extensions()
+        extensions.add(stub_fixes)
+        kwargs['extensions'] = extensions
         _orig_init(self, *args, **kwargs)
 
     GriffeLoader.__init__ = _safe_init  # type: ignore[method-assign]

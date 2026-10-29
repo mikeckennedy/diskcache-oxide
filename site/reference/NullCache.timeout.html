@@ -86,14 +86,14 @@ ul.task-list li input[type="checkbox"] {
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="A clean-room Rust reimplementation of diskcache.">
+  <meta name="description" content="The timeout passed to the constructor (default 60). Unused.">
   <script type="application/ld+json">
 [
   {
     "@context": "https://schema.org",
     "@type": "SoftwareSourceCode",
     "name": "diskcache-oxide",
-    "description": "A clean-room Rust reimplementation of diskcache.",
+    "description": "A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API.",
     "codeRepository": "https://github.com/mikeckennedy/diskcache-oxide",
     "license": "https://opensource.org/licenses/MIT",
     "url": "https://mkennedy.codes/docs/diskcache-oxide",
@@ -117,13 +117,13 @@ ul.task-list li input[type="checkbox"] {
 </script>
   <meta property="og:type" content="website">
   <meta property="og:title" content="NullCache.timeout – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A clean-room Rust reimplementation of diskcache.">
+  <meta property="og:description" content="The timeout passed to the constructor (default 60). Unused.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.timeout.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="NullCache.timeout – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A clean-room Rust reimplementation of diskcache.">
+  <meta name="twitter:description" content="The timeout passed to the constructor (default 60). Unused.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -151,6 +151,10 @@ ul.task-list li input[type="checkbox"] {
   <li class="nav-item">
     <a class="nav-link" href="../user-guide/getting-started.html"> 
 <span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
     <a class="nav-link active" href="../reference/index.html" aria-current="page"> 
@@ -378,6 +382,12 @@ ul.task-list li input[type="checkbox"] {
   <div class="sidebar-item-container"> 
   <a href="../reference/Cache.__exit__.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.__exit__()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.get.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.get()</span></span></a>
   </div>
 </li>
       </ul>
@@ -861,7 +871,7 @@ ul.task-list li input[type="checkbox"] {
 
 
 <div class="doc-subject">
-
+<p>The timeout passed to the constructor (default 60). Unused.</p>
 </div>
 <div class="doc-signature doc-attribute">
 <p><code><span class="doc-parameter-name">NullCache.timeout</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">float</span></code></p>

@@ -1,185 +1,154 @@
 # Getting started
 
-This guide walks through installing **diskcache-oxide**, creating a cache, storing and retrieving data, managing expiration and eviction, and cleaning up resources.
+A [Cache](../reference/Cache.md#diskcache_oxide.Cache) is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a restart. This page covers installing diskcache-oxide, the everyday operations, and how to shut down cleanly.
 
 
 # Install
 
-Install diskcache-oxide with `uv` or `pip`:
+diskcache-oxide isn't on PyPI yet. Until the first release, build it from source, which needs a Rust toolchain:
 
 ``` bash
-uv pip install diskcache-oxide
+uv pip install git+https://github.com/mikeckennedy/diskcache-oxide
 ```
 
-Requirements:
-
-- **Python**: CPython 3.14 or 3.15, including free-threaded builds (`3.14t`, `3.15t`).
-- **Platforms**: macOS (Apple Silicon and Intel) and Linux (x86_64 and aarch64). Windows support is planned.
-- **Dependencies**: None. The pre-compiled wheel includes the Rust core and the bundled SQLite library.
+- **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
+- **Platforms:** macOS and Linux. Windows support is planned.
+- **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter ([diskcache_oxide.sqlite_version()](../reference/sqlite_version.md#diskcache_oxide.sqlite_version) reports the one in use).
 
 
-# Creating a cache
-
-The [Cache](../reference/Cache.md#diskcache_oxide.Cache) class is the central interface. Pass a directory path where cache files and database records should be stored:
+# Open a cache
 
 ``` python
 from diskcache_oxide import Cache
 
-cache = Cache('/tmp/my-app-cache')
+cache = Cache('/var/cache/my-app')
 ```
 
-If the directory does not exist, diskcache-oxide creates it (with `0700` permissions on Unix).
+The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`), because anyone who can write to a cache directory can poison the cache.
+
+Every process that should share the cache opens the same path. Inside one process, opening the same directory twice gives two handles on one shared engine, with one connection pool between them.
 
 
-## Clean shutdown with context managers
-
-Every [Cache](../reference/Cache.md#diskcache_oxide.Cache) handle maintains a pooled set of SQLite connections. Use a context manager to automatically close connection handles when done, or call `cache.close()` explicitly:
+## Close it, or use `with`
 
 ``` python
-with Cache('/tmp/my-app-cache') as cache:
-    cache.set('key', 'value')
-    # All connections are cleanly closed upon exiting the block
+with Cache('/var/cache/my-app') as cache:
+    cache.set('greeting', 'hello')
 ```
 
-
-# Basic operations
-
-[Cache](../reference/Cache.md#diskcache_oxide.Cache) implements both method-based and standard Python dictionary interfaces.
+[close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) returns the handle's SQLite connections. Once the last handle on a directory in a process closes, nothing in that directory is held open, so it's safe to move or delete.
 
 
-## Storing values
-
-Use `cache.set(key, value, expire=None)`:
+# Store and read values
 
 ``` python
-# Store a string for 10 minutes (600 seconds)
-cache.set('session:123', 'active', expire=600.0)
+cache.set('user:42', {'name': 'Sam', 'roles': {'admin', 'editor'}}, expire=600)
 
-# Store complex structured data (encoded with msgpack by default)
-cache.set('user:42', {
-    'name': 'Bob',
-    'roles': {'admin', 'editor'},  # Sets and tuples are preserved!
-    'metadata': {'login_count': 12}
-})
+user = cache.get('user:42')                 # the dict, with roles still a set
+missing = cache.get('user:99', default={})  # {}
+
+value, expires_at = cache.get('user:42', expire_time=True)
 ```
 
-Keys must be `str`. Values can be strings, bytes, numbers, booleans, dicts, lists, tuples, sets, or datetimes.
+- Keys are `str`. Other key types raise `TypeError` for now (they're planned).
+- Values can be `str`, `bytes`, `int`, `float`, `bool`, `None`, and lists, tuples, dicts, sets and datetimes made of those. They come back as the types you stored. See [Serialization](serialization.md).
+- [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) is in seconds. Leave it out for an entry that never expires. `touch(key, expire=...)` changes the expiry of an existing entry.
 
 
-## Conditional add
-
-To store a value only if the key does not already exist (or has expired), use [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add):
+## Dictionary syntax
 
 ``` python
-created = cache.add('lock:job-1', 'locked', expire=30)
-if created:
-    print("Acquired lock!")
-else:
-    print("Lock already held by another worker")
+cache['alpha'] = 100
+assert 'alpha' in cache
+assert cache['alpha'] == 100
+del cache['alpha']        # KeyError if it's missing, like a dict
 ```
 
 
-## Retrieving values
-
-Use `cache.get(key, default=None)`:
+## Remove values
 
 ``` python
-user = cache.get('user:42')
-if user is not None:
-    print(user['name'])
-
-# Providing a custom default
-missing = cache.get('nonexistent', default='fallback')
-assert missing == 'fallback'
+cache.delete('user:42')             # True if it was there
+value = cache.pop('session:7')      # the value, or the default if it was missing
 ```
 
-To also retrieve the expiration timestamp, pass `expire_time=True`:
+
+# Atomic operations across processes
+
+These are what make a shared cache useful for coordination, not only for caching. Each one is a single SQLite transaction, so it's atomic across every thread and process using the directory.
 
 ``` python
-val, exp = cache.get('session:123', expire_time=True)
-print(f"Value: {val}, Expires at: {exp}")
+# Store only if the key is absent (or expired). Exactly one caller wins.
+if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
+    refresh_feeds()
+
+# Counters. incr() keeps the entry's existing expiry.
+cache.incr('page_views')          # 1
+cache.incr('page_views', 5)       # 6
+cache.decr('page_views', 2)       # 4
 ```
 
+[incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) on a missing key starts from `default` (0). Pass `default=None` to get a `KeyError` instead. A key holding a non-number raises `TypeError`.
 
-## Removing values
 
-- `cache.delete(key)`: Deletes the key. Returns `True` if the key was deleted, `False` if it was not present.
-- `cache.pop(key, default=None)`: Removes the key and returns its value, or returns `default`.
+# List keys
 
 ``` python
-deleted = cache.delete('session:123')
-assert deleted is True
-
-val = cache.pop('nonexistent', default=None)
-assert val is None
+for key in cache.iterkeys(prefix='user:'):
+    print(key)
 ```
 
-
-# Dictionary syntax
-
-[Cache](../reference/Cache.md#diskcache_oxide.Cache) supports standard Python `Mapping` and `MutableMapping` item access:
-
-``` python
-with Cache('/tmp/my-app-cache') as cache:
-    cache['alpha'] = 100
-    assert 'alpha' in cache
-    assert cache['alpha'] == 100
-
-    del cache['alpha']
-    assert 'alpha' not in cache
-```
-
-> \[!NOTE\] Like a standard Python dictionary, accessing a missing key with `cache['missing']` or deleting a missing key with `del cache['missing']` raises a standard `KeyError`.
+[iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) yields keys in sorted order (`reverse=True` for descending), and with `prefix=` it's an indexed range scan: 400,000 keys scan in about 10 ms, against about 25 seconds for diskcache. Iterating the cache itself (`for key in cache`) yields keys in insertion order.
 
 
-# Atomic counters
-
-[incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) and [decr()](../reference/Cache.decr.md#diskcache_oxide.Cache.decr) adjust integer or float counters atomically in SQLite without requiring separate transaction locks:
-
-``` python
-with Cache('/tmp/my-app-cache') as cache:
-    # Increments key by delta (default 1), starting from default (default 0)
-    count = cache.incr('page_views')      # returns 1
-    count = cache.incr('page_views', 5)   # returns 6
-    count = cache.decr('page_views', 2)   # returns 4
-```
-
-If the key exists but holds a non-numeric value, [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) raises `TypeError`.
-
-
-# Iterating and scanning keys
-
-[Cache](../reference/Cache.md#diskcache_oxide.Cache) supports fast key listing and prefix-based scanning via [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys):
-
-``` python
-with Cache('/tmp/my-app-cache') as cache:
-    cache.set('user:1', 'Alice')
-    cache.set('user:2', 'Bob')
-    cache.set('post:1', 'Hello')
-
-    # Iterate over all keys matching a prefix
-    user_keys = list(cache.iterkeys(prefix='user:'))
-    print(user_keys)  # ['user:1', 'user:2']
-```
-
-The prefix scan is evaluated directly in SQLite using indexed range queries, avoiding full table scans.
-
-
-# Eviction and size limits
-
-A cache can be configured with disk limits:
+# Size limits and eviction
 
 ``` python
 cache = Cache(
-    '/tmp/bounded-cache',
-    size_limit=100 * 1024 * 1024,  # 100 MiB (default: 1 GiB)
-    cull_limit=20,                 # Evict up to 20 items when limit is exceeded
+    '/var/cache/my-app',
+    size_limit=500 * 1024 * 1024,   # 500 MiB (default 1 GiB, minimum 1 MiB)
+    cull_limit=10,                  # entries evicted per set() when over the limit (default 10)
 )
 ```
 
-- **[size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit)**: Total disk volume in bytes (database + spill files). Minimum is 1 MiB (`MIN_SIZE_LIMIT = 1048576`).
-- **[cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit)**: Number of least-recently-stored items removed when disk volume exceeds [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit).
-- **`cache.volume()`**: Reports the total disk space in bytes consumed by the database and spilled value files.
-- **`cache.cull()`**: Manually triggers eviction of up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) entries if the cache is over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit).
-- **`cache.expire()`**: Sweeps and deletes all expired entries from disk.
-- **`cache.clear()`**: Deletes all entries that were present when the call began.
+When the cache's on-disk volume goes over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), each [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) evicts up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of the least recently stored entries. `cache.volume()` reports the current size in bytes.
+
+Maintenance calls, all safe to run while other processes use the cache:
+
+- `cache.expire()` removes every expired entry and returns how many.
+- `cache.clear()` removes every entry that existed when it started, and keeps anything written while it runs.
+- `cache.cull()` evicts down to the size limit.
+
+
+# Timeouts
+
+When another process holds SQLite's write lock, a write waits for it, up to the cache's [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) (60 seconds by default), then raises [diskcache_oxide.Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), a subclass of the built-in `TimeoutError`:
+
+``` python
+from diskcache_oxide import Cache, Timeout
+
+cache = Cache('/var/cache/my-app', timeout=1.0)
+try:
+    cache.set('key', 'value')
+except Timeout:
+    ...  # the cache was too busy; carry on without it
+```
+
+
+# Shutting down
+
+Call `cache.checkpoint()` at shutdown if you can. It isn't required. With readers in other processes, a burst of writes (a big fill, or a [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear)) can leave SQLite's write-ahead log much larger than the database, and SQLite only shrinks it when it gets a moment with no readers. [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) makes that moment: it waits briefly for in-flight reads, copies the log into the database, and truncates it. It returns `False` instead of raising if other processes keep it busy.
+
+[close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) does the same by default, but only when the log is large, and it waits at most a second, so closing stays cheap. [Storage and WAL](storage-and-wal.md) has the details.
+
+
+# Testing code that uses a cache
+
+Two tools help here:
+
+- **[NullCache](../reference/NullCache.md#diskcache_oxide.NullCache)** is a cache that's switched off: every write succeeds and every read misses. Swap it in for tests or local development without touching call sites. See [NullCache](null-cache.md).
+- **`clock=`** controls the cache's clock. diskcache-oxide reads time natively in Rust, so patching `time.time` doesn't affect it on its own. Pass `clock=lambda: time.time()` and the cache follows your patched clock:
+
+``` python
+cache = Cache(tmp_path, clock=lambda: time.time())
+```

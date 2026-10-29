@@ -1,114 +1,91 @@
 # NullCache
 
-A common challenge in production applications is turning caching off: during local development, inside unit test suites, or temporarily in production while diagnosing an issue.
+Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry. Without help, that means `if cache is not None:` around every call, or a hand-written fake that drifts out of sync with the real API.
 
-Without a dedicated abstraction, developers are forced to write defensive guards around every cache call:
+[NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) is a cache that's switched off. It has the same methods and signatures as [Cache](../reference/Cache.md#diskcache_oxide.Cache), so swapping one for the other is a one-line change, and the code that uses it never knows.
 
 ``` python
-# The anti-pattern: defensive null checks everywhere
-if cache is not None:
-    cache.set('key', value)
+from diskcache_oxide import Cache, CacheLike, NullCache
 
-# Retrieving:
-if cache is not None:
-    value = cache.get('key')
-else:
-    value = fetch_from_db()
+def make_cache(settings) -> CacheLike:
+    if settings.cache_enabled:
+        return Cache(settings.cache_dir)
+    return NullCache()
 ```
 
-diskcache-oxide provides **[NullCache](../reference/NullCache.md#diskcache_oxide.NullCache)**: a drop-in implementation of the cache interface that turns caching off cleanly without changing call sites.
 
+# One rule
 
-# The governing rule
+> **A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) behaves like a real cache in which every entry expires the instant it's written and is swept straight away.**
 
-A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) follows one simple rule:
+Every result follows from that sentence, so you never have to guess:
 
-> **A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) behaves like a real cache in which every entry expires the instant it is written and is swept immediately.**
-
-Every method's return value follows directly from this rule:
-
-| Method | Behavior | Rationale |
+| Call | Result | Because |
 |----|----|----|
-| `get(key, default=None)` | Returns `default` | Key is expired/missing |
-| `cache[key]` | Raises `KeyError` | Key is expired/missing |
-| `set(key, value, expire=...)` | Returns `True` | Write succeeded, then expired |
-| `add(key, value, expire=...)` | Returns `True` | Key was absent, so add succeeded |
-| `delete(key)` | Returns `False` | Nothing to delete |
-| `pop(key, default=None)` | Returns `default` | Nothing to remove |
-| `touch(key)` | Returns `False` | Key does not exist |
-| `incr(key, delta=1, default=0)` | Returns `default + delta` | Starts at default and increments |
-| `key in cache` | Returns `False` | Nothing is cached |
-| `len(cache)` | Returns `0` | Cache is empty |
-| `volume(cache)` | Returns `0` | Consumes no disk |
-| `bool(cache)` | Returns `False` | `cache.enabled` is `False` |
-| `iter(cache)` / [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) | Yields nothing | Empty collection |
-| [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) | Returns `0` | No entries affected |
+| `get(key, default)` | `default` | the entry already expired |
+| `cache[key]` | raises `KeyError` | the entry already expired |
+| `set(...)` | `True` | the write succeeded, then expired |
+| `add(...)` | `True` | the key was absent, so the add succeeded |
+| `incr(key, delta, default)` | `default + delta` | it starts from the default each time; `KeyError` if `default=None` |
+| [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete), [touch](../reference/Cache.touch.md#diskcache_oxide.Cache.touch), `key in cache` | `False` | there's nothing there |
+| `pop(key, default)` | `default` | there's nothing there |
+| `len(cache)`, `cache.volume()` | `0` | it's empty and uses no disk |
+| [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) | `0` | nothing to remove |
+| iteration, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) | nothing | it's empty |
+| `bool(cache)`, `cache.enabled` | `False` | caching is off |
+
+The constructor accepts the same arguments as [Cache](../reference/Cache.md#diskcache_oxide.Cache) and ignores them, and the directory is optional. Bad argument *types* still raise as they would on [Cache](../reference/Cache.md#diskcache_oxide.Cache) (a non-`str` key, `expire=True`), so code that passes with a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) in tests also works with a real one.
 
 
-# Truthiness and [enabled](../reference/Cache.enabled.md#diskcache_oxide.Cache.enabled)
+## Watch [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add)
 
-Unlike python-diskcache (where truthiness depended on whether `len()` was greater than zero), diskcache-oxide distinguishes between an empty active cache and a disabled cache:
+The rule means [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) always succeeds on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache). If you use [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) to claim a job so only one worker runs it, then with caching off every worker's claim succeeds and the job runs once per worker. That's harmless for idempotent work and wrong for work with side effects, like sending email. Keep claims like that on a cache that's never switched off.
 
-- `bool(Cache(...))` is **always `True`**, and `cache.enabled` is `True`.
-- `bool(NullCache(...))` is **always `False`**, and `null_cache.enabled` is `False`.
 
-This makes feature checks readable and idiomatic:
+# `if cache:` means "caching is on"
+
+`bool(Cache(...))` is always True and `bool(NullCache())` is always False, and both have an [enabled](../reference/Cache.enabled.md#diskcache_oxide.Cache.enabled) property. (In diskcache, an empty real cache is falsy, which makes this check unreliable.)
 
 ``` python
 if cache:
-    print("Caching is active!")
-else:
-    print("Caching is disabled.")
+    log.info('Caching is on')
 ```
 
 
-# Invalidation forwarding with `invalidate=`
+# Keep invalidating while caching is off: `invalidate=`
 
-A common dilemma when disabling caching is handling mutation endpoints. If caching is switched off and a user updates their profile, simply bypassing the cache means old, stale entries remain in the real database for when caching is turned back on.
+Turning caching off creates a trap. While it's off, your app keeps changing data, and the code that would have deleted the now-stale cache entries is talking to a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache). When you turn caching back on, the real cache serves the stale values.
 
-To solve this, [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) supports `invalidate=`:
+`invalidate=` closes the trap. Give the [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) the real cache, and it forwards the operations that *remove* data to it, while everything else stays switched off:
 
 ``` python
-from diskcache_oxide import Cache, NullCache
+real = Cache('/var/cache/my-app')
+cache = NullCache(invalidate=real)
 
-real_cache = Cache('/var/cache/app')
-
-# Invalidate forwards mutations to the real cache, but keeps reads null
-null_cache = NullCache(invalidate=real_cache)
-
-# Writes and reads remain null:
-null_cache.set('user:42', {'name': 'New Name'})
-assert null_cache.get('user:42') is None
-
-# BUT removals forward directly to the real cache:
-null_cache.delete('user:42')       # Deletes 'user:42' from real_cache!
-null_cache.pop('session:99')        # Deletes 'session:99' from real_cache!
-null_cache.clear()                  # Clears real_cache!
+cache.set('user:42', profile)    # not cached
+cache.get('user:42')             # None
+cache.delete('user:42')          # deleted from the real cache
+cache.pop('user:42')             # deleted from the real cache; returns the default
+cache.clear()                    # clears the real cache
+cache.iterkeys(prefix='user:')   # the real cache's keys, so list-then-delete still works
 ```
 
-This guarantees that while caching is disabled, cache-busting logic in your business layer continues to purge stale data from the backing store.
+When caching comes back on, nothing stale is waiting.
 
 
-# The [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) protocol
+# [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike)
 
-To support strict static type checking with Mypy or Pyright, diskcache-oxide exports the [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) runtime-checkable protocol:
+[CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) is a `typing.Protocol` that both [Cache](../reference/Cache.md#diskcache_oxide.Cache) and [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) satisfy. Annotate with it and mypy or pyright will accept either:
 
 ``` python
-from diskcache_oxide import Cache, NullCache, CacheLike
+from diskcache_oxide import CacheLike
 
-def create_cache(dev_mode: bool) -> CacheLike:
-    if dev_mode:
-        return NullCache()
-    return Cache('/var/cache/production')
-
-def fetch_user_data(user_id: str, cache: CacheLike) -> dict:
-    cached = cache.get(f'user:{user_id}')
-    if cached is not None:
-        return cached
-
-    data = compute_user_data(user_id)
-    cache.set(f'user:{user_id}', data, expire=300)
-    return data
+def load_user(user_id: str, cache: CacheLike) -> dict:
+    if (user := cache.get(f'user:{user_id}')) is not None:
+        return user
+    user = db.load_user(user_id)
+    cache.set(f'user:{user_id}', user, expire=300)
+    return user
 ```
 
-A test in the diskcache-oxide test suite guarantees that [Cache](../reference/Cache.md#diskcache_oxide.Cache) and [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) signatures remain 100% synchronized with [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike).
+A test in diskcache-oxide's own suite checks that [Cache](../reference/Cache.md#diskcache_oxide.Cache), [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) keep identical public signatures, so they can't drift apart.

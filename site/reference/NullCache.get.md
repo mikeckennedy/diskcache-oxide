@@ -1,6 +1,9 @@
 ## NullCache.get()
 
 
+Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`.
+
+
 Usage
 
 ``` python

@@ -1,6 +1,9 @@
 ## CacheLike.incr()
 
 
+Add `delta` to the number under `key`, atomically, and return the result.
+
+
 Usage
 
 ``` python

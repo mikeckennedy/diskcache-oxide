@@ -1,6 +1,9 @@
 ## CacheLike.\_\_exit\_\_()
 
 
+Close the cache.
+
+
 Usage
 
 ``` python

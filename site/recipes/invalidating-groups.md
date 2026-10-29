@@ -1,0 +1,100 @@
+# Invalidating groups of keys
+
+A single change often makes many cache entries stale. When a user edits their profile, their profile page, their sidebar widget and every API response that embeds their name may all need to go. There are two good ways to handle this. Both start with a naming convention.
+
+
+# Name keys hierarchically
+
+Put the thing a key depends on at the front of the key, from the general to the specific:
+
+    user:42:profile
+    user:42:sidebar
+    user:42:api:/v1/me
+    episode:512:page
+    episode:512:transcript
+
+Everything about user 42 now shares the prefix `user:42:`. Note the trailing colon: without it, `user:4` would also match `user:42`.
+
+
+# Option 1: delete by prefix
+
+`iterkeys(prefix=...)` is an indexed range scan, so finding a user's keys costs time in proportion to how many there are, not the size of the cache. It fetches keys a page at a time with no lock held in between, so deleting while iterating is safe.
+
+
+``` python
+import tempfile
+
+from diskcache_oxide import Cache
+
+cache = Cache(tempfile.mkdtemp())
+for key in ['user:42:profile', 'user:42:sidebar', 'user:420:profile', 'episode:512:page']:
+    cache.set(key, '...', expire=3600)
+
+def invalidate_prefix(prefix: str) -> int:
+    removed = 0
+    for key in cache.iterkeys(prefix=prefix):
+        removed += cache.delete(key)
+    return removed
+
+print(invalidate_prefix('user:42:'), 'removed')
+print(sorted(cache))
+```
+
+
+    2 removed
+    ['episode:512:page', 'user:420:profile']
+
+
+This is simple and frees the space right away. It costs one small write per key, so it's best when a group has tens or hundreds of keys, not hundreds of thousands.
+
+
+# Option 2: generation numbers
+
+Instead of deleting anything, keep a generation number per group and put it in every key. To invalidate the group, change the generation. Every old key becomes unreachable at once, in a single write, however many keys there were. The old entries are never read again, and they leave the cache when they expire or are evicted.
+
+
+``` python
+import time
+
+def generation(user_id: int) -> int:
+    key = f'gen:user:{user_id}'
+    gen = cache.get(key)
+    if gen is None:
+        cache.add(key, time.time_ns())   # if several workers race, one value wins
+        gen = cache.get(key)
+    return gen
+
+def user_key(user_id: int, name: str) -> str:
+    return f'user:{user_id}:g{generation(user_id)}:{name}'
+
+def invalidate_user(user_id: int) -> None:
+    cache.set(f'gen:user:{user_id}', time.time_ns())
+
+cache.set(user_key(7, 'profile'), {'name': 'Sam'}, expire=3600)
+print(cache.get(user_key(7, 'profile')))
+
+invalidate_user(7)
+print(cache.get(user_key(7, 'profile')))
+```
+
+
+    {'name': 'Sam'}
+    None
+
+
+Generation numbers cost one extra read per lookup (the generation, which is tiny and hot) and make invalidation free. Give the real entries an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), since nothing deletes them.
+
+The generations are timestamps rather than a counter starting at 0 for a reason. A generation key is written rarely, and the cache evicts the least recently *stored* entries first, so under size pressure it can be evicted. A counter would then restart at 0 and bring old entries back to life. A new timestamp is always larger than any generation used before, so a lost generation only costs a few cache misses.
+
+
+# Which to use
+
+- **Prefix deletes** when groups are small and you want the space back immediately.
+- **Generation numbers** when groups are large, or invalidation is frequent, or many workers might invalidate the same group at the same time.
+
+
+# While caching is switched off
+
+If you turn caching off with [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), pass the real cache as `invalidate=`. Prefix deletes still reach the real cache ([iterkeys](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) and [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) are both forwarded), so nothing stale is waiting when caching comes back on. See [NullCache](../user-guide/null-cache.md).
+
+Tags, which group keys without a naming convention, are planned for Phase 6a.

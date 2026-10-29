@@ -61,7 +61,37 @@ def _decode(mode: int, payload: bytes | int | float, allow_pickle: bool = False)
 class Cache:
     """A disk cache backed by SQLite, shared safely across threads and processes.
 
-    diskcache-compatible API; see `tests/DIVERGENCES.md` for the deliberate differences.
+    Every thread and process that opens the same directory shares one cache. The API follows
+    `diskcache.Cache`; the deliberate differences are listed in the Divergences guide.
+
+    Args:
+        directory: The cache directory. It's created (owner-only, `0700`) if it doesn't exist.
+        timeout: Seconds a write waits for another process's lock before raising `Timeout`
+            (default 60).
+        size_limit: The disk budget in bytes, database plus value files (default 1 GiB, minimum
+            1 MiB). Stored in the cache, so it applies to every process.
+        cull_limit: How many least-recently-stored entries a `set()` evicts when the cache is over
+            `size_limit` (default 10).
+        serializer: `'msgpack'` (the default) or `'json'`, for values that aren't plain `str` or
+            `bytes`.
+        pickle: Allow pickle for values the serializer can't represent exactly. Without it, such
+            values raise `TypeError` and pickled values are never read.
+        clock: A function returning the current time in seconds, used instead of the native clock.
+            Tests pass `clock=lambda: time.time()` to follow a patched `time.time`.
+        max_connections: The most SQLite connections this process opens for the directory, shared
+            by every handle on it (default 8).
+        sqlite_cache_size: SQLite's page cache per connection, in 4 KiB pages (default 256, 1 MiB).
+        wal_size_limit: The write-ahead log is trimmed back to half this many bytes whenever it
+            resets (default 64 MiB, minimum 1 MiB).
+        wal_checkpoint: `'manual'` (the default) leaves checkpoints to `checkpoint()` and
+            `close()`. `'auto'` also checkpoints after writes once the log is over
+            `wal_size_limit`.
+
+    Raises:
+        ValueError: A setting is out of range, such as a `size_limit` under 1 MiB.
+        TypeError: An argument has the wrong type, including a `bool` for `timeout`.
+        FormatMismatchError: The directory holds a database in a format this version can't read.
+        Timeout: Another process held the database locked for longer than `timeout`.
     """
 
     def __new__(
@@ -80,54 +110,225 @@ class Cache:
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
     ) -> Cache: ...
     @property
-    def directory(self) -> str: ...
+    def directory(self) -> str:
+        """The cache directory, as given to the constructor."""
     @property
-    def timeout(self) -> float: ...
+    def timeout(self) -> float:
+        """Seconds a write waits for another process's lock before raising `Timeout`."""
     @property
-    def size_limit(self) -> int: ...
+    def size_limit(self) -> int:
+        """The disk budget in bytes. A `set()` that finds the cache over it evicts entries."""
     @property
-    def cull_limit(self) -> int: ...
+    def cull_limit(self) -> int:
+        """The most entries a single `set()` evicts when the cache is over `size_limit`."""
     @property
-    def enabled(self) -> bool: ...
+    def enabled(self) -> bool:
+        """Always True for a real cache; False for a `NullCache`."""
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any: ...
+    def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
+        """Return the value stored for `key`, or `default` if it's missing or expired.
+
+        Reads never write, so any number of threads and processes can read at once.
+
+        Args:
+            key: The key to look up.
+            default: Returned when the key is missing or expired.
+            expire_time: Also return the entry's expiry time.
+
+        Returns:
+            The value, or `default`. With `expire_time=True`, a `(value, expire_time)` tuple, where
+            `expire_time` is a Unix timestamp, or None for an entry that never expires (or a miss).
+
+        Raises:
+            UnsafeValueError: The value was stored with pickle and this cache has `pickle=False`.
+            CorruptValueError: The stored bytes can't be decoded.
+            Timeout: Reading a large value kept losing to concurrent overwrites until `timeout`.
+        """
     @overload
     def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def set(self, key: str, value: Any, expire: float | None = None) -> bool: ...
-    def add(self, key: str, value: Any, expire: float | None = None) -> bool: ...
-    def delete(self, key: str) -> bool: ...
-    def pop(self, key: str, default: Any = None) -> Any: ...
-    def touch(self, key: str, expire: float | None = None) -> bool: ...
-    # Defaults are delta=1, default=0; PyO3 reports them as `...` at runtime.
-    def incr(self, key: str, delta: int | float = ..., default: int | float | None = ...) -> int | float: ...
-    def decr(self, key: str, delta: int | float = ..., default: int | float | None = ...) -> int | float: ...
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]: ...
-    def expire(self) -> int: ...
-    def clear(self) -> int: ...
-    def cull(self) -> int: ...
-    def volume(self) -> int: ...
-    def checkpoint(self, timeout: float | None = None) -> bool:
-        """Checkpoint the write-ahead log and truncate it, retrying until the cache's timeout.
+    def set(self, key: str, value: Any, expire: float | None = None) -> bool:
+        """Store `value` under `key`, replacing any existing value.
 
-        Returns True if the WAL was reset, False if readers or writers in other processes kept it
-        busy. Writes never checkpoint by default (`wal_checkpoint='manual'`): call this when a short
-        pause suits the app, such as at shutdown or after a large `clear()`. `close()` also does it
-        for a WAL left large.
+        Values of 64 KiB or more (after encoding) are stored in their own file.
+
+        Args:
+            key: The key.
+            value: The value: `str`, `bytes`, numbers, `bool`, `None`, and lists, tuples, dicts,
+                sets and datetimes of those, or anything picklable with `pickle=True`.
+            expire: Seconds until the entry expires, or None for never.
+
+        Returns:
+            True.
+
+        Raises:
+            TypeError: The value can't be stored exactly without pickle, or `expire` is a `bool`.
+            Timeout: Another process held the write lock for longer than `timeout`.
+        """
+    def add(self, key: str, value: Any, expire: float | None = None) -> bool:
+        """Store `value` only if `key` is missing or expired.
+
+        Atomic across threads and processes: when several callers race to add one key, exactly one
+        succeeds. That makes it a simple way to claim a job or take a lock.
+
+        Args:
+            key: The key.
+            value: The value, as for `set()`.
+            expire: Seconds until the entry expires, or None for never.
+
+        Returns:
+            True if the value was stored, False if the key already held a live value.
+
+        Raises:
+            TypeError: The value can't be stored exactly without pickle, or `expire` is a `bool`.
+            Timeout: Another process held the write lock for longer than `timeout`.
+        """
+    def delete(self, key: str) -> bool:
+        """Remove `key`.
+
+        Returns:
+            True if a live entry was removed, False if the key was missing or expired.
+
+        Raises:
+            Timeout: Another process held the write lock for longer than `timeout`.
+        """
+    def pop(self, key: str, default: Any = None) -> Any:
+        """Remove `key` and return its value, atomically.
+
+        Args:
+            key: The key.
+            default: Returned when the key is missing or expired.
+
+        Returns:
+            The removed value, or `default`.
+
+        Raises:
+            UnsafeValueError: The value was stored with pickle and this cache has `pickle=False`.
+            Timeout: Another process held the write lock for longer than `timeout`.
+        """
+    def touch(self, key: str, expire: float | None = None) -> bool:
+        """Change the expiry of an existing entry without rewriting its value.
+
+        Args:
+            key: The key.
+            expire: Seconds from now until the entry expires, or None to make it never expire.
+
+        Returns:
+            True if the entry existed and was updated, False if it was missing or expired.
+
+        Raises:
+            Timeout: Another process held the write lock for longer than `timeout`.
+        """
+    # Defaults are delta=1, default=0; PyO3 reports them as `...` at runtime.
+    def incr(self, key: str, delta: int | float = ..., default: int | float | None = ...) -> int | float:
+        """Add `delta` to the number stored under `key`, atomically, and return the result.
+
+        Atomic across threads and processes, so concurrent increments are never lost. The entry
+        keeps its existing expiry.
+
+        Args:
+            key: The key.
+            delta: The amount to add (default 1).
+            default: The starting value for a missing or expired key (default 0). Pass None to
+                raise `KeyError` instead.
+
+        Returns:
+            The new value.
+
+        Raises:
+            KeyError: The key is missing and `default` is None.
+            TypeError: The stored value isn't a number.
+            Timeout: Another process held the write lock for longer than `timeout`.
+        """
+    def decr(self, key: str, delta: int | float = ..., default: int | float | None = ...) -> int | float:
+        """Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
+
+        Returns:
+            The new value.
+        """
+    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+        """Iterate over keys in sorted order, optionally only those starting with `prefix`.
+
+        A prefix is an indexed range scan, so it costs time in proportion to the matches, not the
+        size of the cache. Keys are fetched a page at a time with no lock held in between, so
+        deleting keys while iterating is safe. Expired entries not yet removed are included.
+
+        Args:
+            prefix: Only yield keys that start with this string.
+            reverse: Yield keys in descending order.
+
+        Returns:
+            An iterator of keys.
+        """
+    def expire(self) -> int:
+        """Remove every expired entry, and its value file.
+
+        Works in chunks and lets other writers in between them.
+
+        Returns:
+            How many entries were removed.
+        """
+    def clear(self) -> int:
+        """Remove every entry that existed when the call started.
+
+        Works in chunks and lets other writers in between them. Writes that land while it runs,
+        including overwrites of existing keys, are kept.
+
+        Returns:
+            How many entries were removed.
+        """
+    def cull(self) -> int:
+        """Remove expired entries, then evict the least recently stored until under `size_limit`.
+
+        Returns:
+            How many entries were removed.
+        """
+    def volume(self) -> int:
+        """The cache's size on disk in bytes: the database plus value files."""
+    def checkpoint(self, timeout: float | None = None) -> bool:
+        """Copy the write-ahead log into the database and truncate it to zero.
+
+        With readers in other processes, a burst of writes can leave the log much larger than the
+        database. Call this when a short pause suits the app: at shutdown, in a maintenance job,
+        or after a large `clear()`. `close()` also does it for a log left large.
+
+        Args:
+            timeout: Seconds to keep retrying while other processes are busy (default: the cache's
+                `timeout`).
+
+        Returns:
+            True if the log was reset, False if readers or writers in other processes kept it
+            busy. It never raises for a busy database.
         """
     def close(self, *, checkpoint: bool = True) -> None:
-        """Close this handle. With `checkpoint`, a WAL left larger than half of `wal_size_limit`
-        is checkpointed first if this is the process's last handle on the cache, waiting at most 1 second
-        for other connections (copying a large log can take longer); a small WAL costs nothing extra."""
+        """Close this handle and return its connections.
+
+        When the last handle on a directory in the process closes, every connection to it closes,
+        whichever threads used them. Using the cache again afterwards reopens it.
+
+        Args:
+            checkpoint: If this is the process's last handle and the write-ahead log is over half
+                of `wal_size_limit`, checkpoint it first, waiting at most 1 second. A small log
+                costs nothing extra.
+        """
     def _wal_stats(self) -> dict[str, int]:
         """Test hook: forced WAL checkpoint counters (checks, attempts, successes, busy, errors, no_slot, max_pause_us, max_passive_us, max_truncate_us, slow, last_wal_bytes)."""
     def _hold_write_transaction(self) -> AbstractContextManager[None]:
         """Test hook until transact() lands: holds a write transaction until the block exits."""
-    def __getitem__(self, key: str, /) -> Any: ...
-    def __setitem__(self, key: str, value: Any, /) -> None: ...
-    def __delitem__(self, key: str, /) -> None: ...
-    def __contains__(self, key: object, /) -> bool: ...
-    def __len__(self) -> int: ...
-    def __bool__(self) -> bool: ...
-    def __iter__(self) -> Iterator[str]: ...
-    def __enter__(self) -> Self: ...
-    def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None, /) -> None: ...
+    def __getitem__(self, key: str, /) -> Any:
+        """`cache[key]`: the value, or `KeyError` if it's missing or expired."""
+    def __setitem__(self, key: str, value: Any, /) -> None:
+        """`cache[key] = value`: store a value that never expires, like `set()`."""
+    def __delitem__(self, key: str, /) -> None:
+        """`del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired."""
+    def __contains__(self, key: object, /) -> bool:
+        """`key in cache`: True if the key holds a live (unexpired) value."""
+    def __len__(self) -> int:
+        """The number of entries, including expired entries not yet removed."""
+    def __bool__(self) -> bool:
+        """Always True, even when empty, so `if cache:` means "caching is on"."""
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over keys in insertion order. An overwrite keeps its key's place."""
+    def __enter__(self) -> Self:
+        """Return the cache, for `with Cache(...) as cache:`."""
+    def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None, /) -> None:
+        """Close the cache, as `close()` does."""

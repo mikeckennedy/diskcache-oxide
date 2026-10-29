@@ -121,14 +121,14 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="A switched-off cache. See the module docstring for the rule every method follows.">
+  <meta name="description" content="A switched-off cache, so app code needs no if cache is None checks.">
   <script type="application/ld+json">
 [
   {
     "@context": "https://schema.org",
     "@type": "SoftwareSourceCode",
     "name": "diskcache-oxide",
-    "description": "A clean-room Rust reimplementation of diskcache.",
+    "description": "A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API.",
     "codeRepository": "https://github.com/mikeckennedy/diskcache-oxide",
     "license": "https://opensource.org/licenses/MIT",
     "url": "https://mkennedy.codes/docs/diskcache-oxide",
@@ -152,13 +152,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </script>
   <meta property="og:type" content="website">
   <meta property="og:title" content="NullCache – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A switched-off cache. See the module docstring for the rule every method follows.">
+  <meta property="og:description" content="A switched-off cache, so app code needs no if cache is None checks.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="NullCache – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A switched-off cache. See the module docstring for the rule every method follows.">
+  <meta name="twitter:description" content="A switched-off cache, so app code needs no if cache is None checks.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -186,6 +186,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li class="nav-item">
     <a class="nav-link" href="../user-guide/getting-started.html"> 
 <span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
     <a class="nav-link active" href="../reference/index.html" aria-current="page"> 
@@ -413,6 +417,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <div class="sidebar-item-container"> 
   <a href="../reference/Cache.__exit__.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.__exit__()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.get.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.get()</span></span></a>
   </div>
 </li>
       </ul>
@@ -870,8 +880,14 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </nav>
 <div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
 <!-- margin-sidebar -->
-    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar zindex-bottom">
-        
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h3 id="toc-title">On this page</h3>
+   
+  <ul class="collapse">
+  <li><a href="#parameters" id="toc-parameters" class="nav-link active" data-scroll-target="#parameters">Parameters</a></li>
+  </ul>
+</nav>
     </div>
 <!-- main -->
 <main class="content" id="quarto-document-content">
@@ -896,17 +912,49 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 
 <div class="doc-subject">
-<p>A switched-off cache. See the module docstring for the rule every method follows.</p>
+<p>A switched-off cache, so app code needs no <code>if cache is None</code> checks.</p>
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/null.py#L50-L210" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/null.py#L50-L259" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
-<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">NullCache</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">NullCache</span>(</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>    <span class="va">directory</span><span class="op">=</span><span class="cn-none">None</span>,</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="va">timeout</span><span class="op">=</span><span class="fl">60.0</span>,</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    <span class="op">*</span>,</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>    <span class="va">size_limit</span><span class="op">=</span><span class="cn-none">None</span>,</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>    <span class="va">cull_limit</span><span class="op">=</span><span class="cn-none">None</span>,</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    <span class="va">serializer</span><span class="op">=</span><span class="st">"msgpack"</span>,</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    <span class="va">pickle</span><span class="op">=</span><span class="cn-bool">False</span>,</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="va">clock</span><span class="op">=</span><span class="cn-none">None</span>,</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    <span class="va">max_connections</span><span class="op">=</span><span class="dv">8</span>,</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    <span class="va">sqlite_cache_size</span><span class="op">=</span><span class="cn-none">None</span>,</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>    <span class="va">wal_size_limit</span><span class="op">=</span><span class="cn-none">None</span>,</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>    <span class="va">wal_checkpoint</span><span class="op">=</span><span class="st">"manual"</span>,</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    <span class="va">invalidate</span><span class="op">=</span><span class="cn-none">None</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+<div class="doc-text">
+<p>It behaves like a real cache in which every entry expires the instant it’s written and is swept straight away: reads miss, writes succeed, and it’s always empty. It’s falsy, and its <a href="Cache.enabled.html#diskcache_oxide.Cache.enabled" class="gdls-link gdls-code">enabled</a> is False.</p>
+</div>
+<section id="parameters" class="level2 doc-parameters">
+<h2 class="doc-parameters">Parameters</h2>
+<div class="doc-definition-items">
+<dl>
+<dt><code><span class="doc-parameter-name">directory</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">str | os.PathLike[str] | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dd>
+<p>Accepted and ignored, like every other <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> argument, so switching between the two is a one-line change.</p>
+</dd>
+<dt><code><span class="doc-parameter-name">invalidate</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">CacheLike | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dd>
+A real cache to forward removals to (<a href="Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, <a href="Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a>, <a href="Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear</a> and <a href="Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys</a>), so invalidations still land while caching is off and nothing stale is served once it’s back on.
+</dd>
+</dl>
 </div>
 
 
+</section>
 
 </main>
 <hr style="padding: 0; margin: 0;">

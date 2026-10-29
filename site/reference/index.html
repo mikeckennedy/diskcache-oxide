@@ -92,7 +92,7 @@ ul.task-list li input[type="checkbox"] {
   "@context": "https://schema.org",
   "@type": "SoftwareSourceCode",
   "name": "diskcache-oxide",
-  "description": "A clean-room Rust reimplementation of diskcache.",
+  "description": "A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API.",
   "codeRepository": "https://github.com/mikeckennedy/diskcache-oxide",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://mkennedy.codes/docs/diskcache-oxide",
@@ -139,6 +139,10 @@ ul.task-list li input[type="checkbox"] {
   <li class="nav-item">
     <a class="nav-link" href="../user-guide/getting-started.html"> 
 <span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
     <a class="nav-link active" href="../reference/index.html" aria-current="page"> 
@@ -366,6 +370,12 @@ ul.task-list li input[type="checkbox"] {
   <div class="sidebar-item-container"> 
   <a href="../reference/Cache.__exit__.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.__exit__()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.get.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.get()</span></span></a>
   </div>
 </li>
       </ul>
@@ -883,115 +893,119 @@ ul.task-list li input[type="checkbox"] {
 <dl>
 <dt><a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="doc-attribute doc-label doc-label-property">Cache.directory</a></dt>
 <dd>
-
+<p>The cache directory, as given to the constructor.</p>
 </dd>
 <dt><a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="doc-attribute doc-label doc-label-property">Cache.timeout</a></dt>
 <dd>
-
+<p>Seconds a write waits for another process’s lock before raising <code>Timeout</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="doc-attribute doc-label doc-label-property">Cache.size_limit</a></dt>
 <dd>
-
+<p>The disk budget in bytes. A <code>set()</code> that finds the cache over it evicts entries.</p>
 </dd>
 <dt><a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="doc-attribute doc-label doc-label-property">Cache.cull_limit</a></dt>
 <dd>
-
+<p>The most entries a single <code>set()</code> evicts when the cache is over <code>size_limit</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.enabled.html#diskcache_oxide.Cache.enabled" class="doc-attribute doc-label doc-label-property">Cache.enabled</a></dt>
 <dd>
-
+<p>Always True for a real cache; False for a <code>NullCache</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="doc-function doc-label doc-label-method">Cache.set()</a></dt>
 <dd>
-
+<p>Store <code>value</code> under <code>key</code>, replacing any existing value.</p>
 </dd>
 <dt><a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="doc-function doc-label doc-label-method">Cache.add()</a></dt>
 <dd>
-
+<p>Store <code>value</code> only if <code>key</code> is missing or expired.</p>
 </dd>
 <dt><a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="doc-function doc-label doc-label-method">Cache.delete()</a></dt>
 <dd>
-
+<p>Remove <code>key</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="doc-function doc-label doc-label-method">Cache.pop()</a></dt>
 <dd>
-
+<p>Remove <code>key</code> and return its value, atomically.</p>
 </dd>
 <dt><a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="doc-function doc-label doc-label-method">Cache.touch()</a></dt>
 <dd>
-
+<p>Change the expiry of an existing entry without rewriting its value.</p>
 </dd>
 <dt><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="doc-function doc-label doc-label-method">Cache.incr()</a></dt>
 <dd>
-
+<p>Add <code>delta</code> to the number stored under <code>key</code>, atomically, and return the result.</p>
 </dd>
 <dt><a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="doc-function doc-label doc-label-method">Cache.decr()</a></dt>
 <dd>
-
+<p>Subtract <code>delta</code> from the number stored under <code>key</code>, atomically. See <code>incr()</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="doc-function doc-label doc-label-method">Cache.iterkeys()</a></dt>
 <dd>
-
+<p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="doc-function doc-label doc-label-method">Cache.expire()</a></dt>
 <dd>
-
+<p>Remove every expired entry, and its value file.</p>
 </dd>
 <dt><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="doc-function doc-label doc-label-method">Cache.clear()</a></dt>
 <dd>
-
+<p>Remove every entry that existed when the call started.</p>
 </dd>
 <dt><a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="doc-function doc-label doc-label-method">Cache.cull()</a></dt>
 <dd>
-
+<p>Remove expired entries, then evict the least recently stored until under <code>size_limit</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="doc-function doc-label doc-label-method">Cache.volume()</a></dt>
 <dd>
-
+<p>The cache’s size on disk in bytes: the database plus value files.</p>
 </dd>
 <dt><a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="doc-function doc-label doc-label-method">Cache.checkpoint()</a></dt>
 <dd>
-<p>Checkpoint the write-ahead log and truncate it, retrying until the cache’s timeout.</p>
+<p>Copy the write-ahead log into the database and truncate it to zero.</p>
 </dd>
 <dt><a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="doc-function doc-label doc-label-method">Cache.close()</a></dt>
 <dd>
-<p>Close this handle. With <code>checkpoint</code>, a WAL left larger than half of <code>wal_size_limit</code></p>
+<p>Close this handle and return its connections.</p>
 </dd>
 <dt><a href="../reference/Cache.__getitem__.html#diskcache_oxide.Cache.__getitem__" class="doc-function doc-label doc-label-method">Cache.__getitem__()</a></dt>
 <dd>
-
+<p><code>cache[key]</code>: the value, or <code>KeyError</code> if it’s missing or expired.</p>
 </dd>
 <dt><a href="../reference/Cache.__setitem__.html#diskcache_oxide.Cache.__setitem__" class="doc-function doc-label doc-label-method">Cache.__setitem__()</a></dt>
 <dd>
-
+<p><code>cache[key] = value</code>: store a value that never expires, like <code>set()</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.__delitem__.html#diskcache_oxide.Cache.__delitem__" class="doc-function doc-label doc-label-method">Cache.__delitem__()</a></dt>
 <dd>
-
+<p><code>del cache[key]</code>: remove the entry, or raise <code>KeyError</code> if it’s missing or expired.</p>
 </dd>
 <dt><a href="../reference/Cache.__contains__.html#diskcache_oxide.Cache.__contains__" class="doc-function doc-label doc-label-method">Cache.__contains__()</a></dt>
 <dd>
-
+<p><code>key in cache</code>: True if the key holds a live (unexpired) value.</p>
 </dd>
 <dt><a href="../reference/Cache.__len__.html#diskcache_oxide.Cache.__len__" class="doc-function doc-label doc-label-method">Cache.__len__()</a></dt>
 <dd>
-
+<p>The number of entries, including expired entries not yet removed.</p>
 </dd>
 <dt><a href="../reference/Cache.__bool__.html#diskcache_oxide.Cache.__bool__" class="doc-function doc-label doc-label-method">Cache.__bool__()</a></dt>
 <dd>
-
+<p>Always True, even when empty, so <code>if cache:</code> means “caching is on”.</p>
 </dd>
 <dt><a href="../reference/Cache.__iter__.html#diskcache_oxide.Cache.__iter__" class="doc-function doc-label doc-label-method">Cache.__iter__()</a></dt>
 <dd>
-
+<p>Iterate over keys in insertion order. An overwrite keeps its key’s place.</p>
 </dd>
 <dt><a href="../reference/Cache.__enter__.html#diskcache_oxide.Cache.__enter__" class="doc-function doc-label doc-label-method">Cache.__enter__()</a></dt>
 <dd>
-
+<p>Return the cache, for <code>with Cache(...) as cache:</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.__exit__.html#diskcache_oxide.Cache.__exit__" class="doc-function doc-label doc-label-method">Cache.__exit__()</a></dt>
 <dd>
-
+<p>Close the cache, as <code>close()</code> does.</p>
+</dd>
+<dt><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="doc-function doc-label doc-label-method">Cache.get()</a></dt>
+<dd>
+<p>Return the value stored for <code>key</code>, or <code>default</code> if it’s missing or expired.</p>
 </dd>
 </dl>
 </section>
@@ -1003,7 +1017,7 @@ ul.task-list li input[type="checkbox"] {
 <dl>
 <dt><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="doc-class doc-label doc-label-class">NullCache</a></dt>
 <dd>
-<p>A switched-off cache. See the module docstring for the rule every method follows.</p>
+<p>A switched-off cache, so app code needs no <code>if cache is None</code> checks.</p>
 </dd>
 <dt><a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="doc-class doc-label doc-label-protocol">CacheLike</a></dt>
 <dd>
@@ -1019,123 +1033,123 @@ ul.task-list li input[type="checkbox"] {
 <dl>
 <dt><a href="../reference/NullCache.__repr__.html#diskcache_oxide.NullCache.__repr__" class="doc-function doc-label doc-label-method">NullCache.__repr__()</a></dt>
 <dd>
-
+<p>Shows the directory and any <code>invalidate=</code> cache.</p>
 </dd>
 <dt><a href="../reference/NullCache.directory.html#diskcache_oxide.NullCache.directory" class="doc-attribute doc-label doc-label-property">NullCache.directory</a></dt>
 <dd>
-
+<p>The directory passed to the constructor, or None. Nothing is created there.</p>
 </dd>
 <dt><a href="../reference/NullCache.timeout.html#diskcache_oxide.NullCache.timeout" class="doc-attribute doc-label doc-label-property">NullCache.timeout</a></dt>
 <dd>
-
+<p>The timeout passed to the constructor (default 60). Unused.</p>
 </dd>
 <dt><a href="../reference/NullCache.size_limit.html#diskcache_oxide.NullCache.size_limit" class="doc-attribute doc-label doc-label-property">NullCache.size_limit</a></dt>
 <dd>
-
+<p>The size limit passed to the constructor (default 1 GiB). Unused.</p>
 </dd>
 <dt><a href="../reference/NullCache.cull_limit.html#diskcache_oxide.NullCache.cull_limit" class="doc-attribute doc-label doc-label-property">NullCache.cull_limit</a></dt>
 <dd>
-
+<p>The cull limit passed to the constructor (default 10). Unused.</p>
 </dd>
 <dt><a href="../reference/NullCache.enabled.html#diskcache_oxide.NullCache.enabled" class="doc-attribute doc-label doc-label-property">NullCache.enabled</a></dt>
 <dd>
-
+<p>Always False: caching is off.</p>
 </dd>
 <dt><a href="../reference/NullCache.get.html#diskcache_oxide.NullCache.get" class="doc-function doc-label doc-label-method">NullCache.get()</a></dt>
 <dd>
-
+<p>Return <code>default</code>, as every entry has already expired. With <code>expire_time=True</code>, <code>(default, None)</code>.</p>
 </dd>
 <dt><a href="../reference/NullCache.__getitem__.html#diskcache_oxide.NullCache.__getitem__" class="doc-function doc-label doc-label-method">NullCache.__getitem__()</a></dt>
 <dd>
-
+<p>Always raises <code>KeyError</code>, as every entry has already expired.</p>
 </dd>
 <dt><a href="../reference/NullCache.__contains__.html#diskcache_oxide.NullCache.__contains__" class="doc-function doc-label doc-label-method">NullCache.__contains__()</a></dt>
 <dd>
-
+<p>Always False.</p>
 </dd>
 <dt><a href="../reference/NullCache.__len__.html#diskcache_oxide.NullCache.__len__" class="doc-function doc-label doc-label-method">NullCache.__len__()</a></dt>
 <dd>
-
+<p>Always 0.</p>
 </dd>
 <dt><a href="../reference/NullCache.__bool__.html#diskcache_oxide.NullCache.__bool__" class="doc-function doc-label doc-label-method">NullCache.__bool__()</a></dt>
 <dd>
-
+<p>Always False, so <code>if cache:</code> means “caching is on”.</p>
 </dd>
 <dt><a href="../reference/NullCache.__iter__.html#diskcache_oxide.NullCache.__iter__" class="doc-function doc-label doc-label-method">NullCache.__iter__()</a></dt>
 <dd>
-
+<p>Yields nothing.</p>
 </dd>
 <dt><a href="../reference/NullCache.volume.html#diskcache_oxide.NullCache.volume" class="doc-function doc-label doc-label-method">NullCache.volume()</a></dt>
 <dd>
-
+<p>Always 0: a <code>NullCache</code> uses no disk.</p>
 </dd>
 <dt><a href="../reference/NullCache.checkpoint.html#diskcache_oxide.NullCache.checkpoint" class="doc-function doc-label doc-label-method">NullCache.checkpoint()</a></dt>
 <dd>
-
+<p>Always True: there is no write-ahead log to reset.</p>
 </dd>
 <dt><a href="../reference/NullCache.set.html#diskcache_oxide.NullCache.set" class="doc-function doc-label doc-label-method">NullCache.set()</a></dt>
 <dd>
-
+<p>Return True without storing anything: the write succeeds, then expires instantly.</p>
 </dd>
 <dt><a href="../reference/NullCache.__setitem__.html#diskcache_oxide.NullCache.__setitem__" class="doc-function doc-label doc-label-method">NullCache.__setitem__()</a></dt>
 <dd>
-
+<p>Store nothing, as <code>set()</code> does.</p>
 </dd>
 <dt><a href="../reference/NullCache.add.html#diskcache_oxide.NullCache.add" class="doc-function doc-label doc-label-method">NullCache.add()</a></dt>
 <dd>
-
+<p>Return True without storing anything: the key is always absent, so the add succeeds.</p>
 </dd>
 <dt><a href="../reference/NullCache.touch.html#diskcache_oxide.NullCache.touch" class="doc-function doc-label doc-label-method">NullCache.touch()</a></dt>
 <dd>
-
+<p>Always False: the key never exists.</p>
 </dd>
 <dt><a href="../reference/NullCache.incr.html#diskcache_oxide.NullCache.incr" class="doc-function doc-label doc-label-method">NullCache.incr()</a></dt>
 <dd>
-
+<p>Return <code>default + delta</code>, since every count starts again from <code>default</code>.</p>
 </dd>
 <dt><a href="../reference/NullCache.decr.html#diskcache_oxide.NullCache.decr" class="doc-function doc-label doc-label-method">NullCache.decr()</a></dt>
 <dd>
-
+<p>Return <code>default - delta</code>. See <code>incr()</code>.</p>
 </dd>
 <dt><a href="../reference/NullCache.delete.html#diskcache_oxide.NullCache.delete" class="doc-function doc-label doc-label-method">NullCache.delete()</a></dt>
 <dd>
-
+<p>False, or with <code>invalidate=</code>, delete the key from that cache and return its result.</p>
 </dd>
 <dt><a href="../reference/NullCache.__delitem__.html#diskcache_oxide.NullCache.__delitem__" class="doc-function doc-label doc-label-method">NullCache.__delitem__()</a></dt>
 <dd>
-
+<p>Raise <code>KeyError</code>, or with <code>invalidate=</code>, delete the key from that cache.</p>
 </dd>
 <dt><a href="../reference/NullCache.pop.html#diskcache_oxide.NullCache.pop" class="doc-function doc-label doc-label-method">NullCache.pop()</a></dt>
 <dd>
-
+<p>Return <code>default</code>. With <code>invalidate=</code>, also delete the key from that cache.</p>
 </dd>
 <dt><a href="../reference/NullCache.clear.html#diskcache_oxide.NullCache.clear" class="doc-function doc-label doc-label-method">NullCache.clear()</a></dt>
 <dd>
-
+<p>0, or with <code>invalidate=</code>, clear that cache and return its count.</p>
 </dd>
 <dt><a href="../reference/NullCache.iterkeys.html#diskcache_oxide.NullCache.iterkeys" class="doc-function doc-label doc-label-method">NullCache.iterkeys()</a></dt>
 <dd>
-
+<p>Yield nothing, or with <code>invalidate=</code>, that cache’s keys, so list-then-delete still works.</p>
 </dd>
 <dt><a href="../reference/NullCache.expire.html#diskcache_oxide.NullCache.expire" class="doc-function doc-label doc-label-method">NullCache.expire()</a></dt>
 <dd>
-
+<p>Always 0.</p>
 </dd>
 <dt><a href="../reference/NullCache.cull.html#diskcache_oxide.NullCache.cull" class="doc-function doc-label doc-label-method">NullCache.cull()</a></dt>
 <dd>
-
+<p>Always 0.</p>
 </dd>
 <dt><a href="../reference/NullCache.close.html#diskcache_oxide.NullCache.close" class="doc-function doc-label doc-label-method">NullCache.close()</a></dt>
 <dd>
-
+<p>Do nothing. An <code>invalidate=</code> cache is never closed: it belongs to whoever created it.</p>
 </dd>
 <dt><a href="../reference/NullCache.__enter__.html#diskcache_oxide.NullCache.__enter__" class="doc-function doc-label doc-label-method">NullCache.__enter__()</a></dt>
 <dd>
-
+<p>Return the cache, for <code>with NullCache() as cache:</code>.</p>
 </dd>
 <dt><a href="../reference/NullCache.__exit__.html#diskcache_oxide.NullCache.__exit__" class="doc-function doc-label doc-label-method">NullCache.__exit__()</a></dt>
 <dd>
-
+<p>Do nothing, as <code>close()</code> does.</p>
 </dd>
 </dl>
 </section>
@@ -1147,119 +1161,119 @@ ul.task-list li input[type="checkbox"] {
 <dl>
 <dt><a href="../reference/CacheLike.directory.html#diskcache_oxide.CacheLike.directory" class="doc-attribute doc-label doc-label-property">CacheLike.directory</a></dt>
 <dd>
-
+<p>The cache directory (None for a <code>NullCache</code> created without one).</p>
 </dd>
 <dt><a href="../reference/CacheLike.timeout.html#diskcache_oxide.CacheLike.timeout" class="doc-attribute doc-label doc-label-property">CacheLike.timeout</a></dt>
 <dd>
-
+<p>Seconds a write waits for another process’s lock before raising <code>Timeout</code>.</p>
 </dd>
 <dt><a href="../reference/CacheLike.size_limit.html#diskcache_oxide.CacheLike.size_limit" class="doc-attribute doc-label doc-label-property">CacheLike.size_limit</a></dt>
 <dd>
-
+<p>The disk budget in bytes.</p>
 </dd>
 <dt><a href="../reference/CacheLike.cull_limit.html#diskcache_oxide.CacheLike.cull_limit" class="doc-attribute doc-label doc-label-property">CacheLike.cull_limit</a></dt>
 <dd>
-
+<p>The most entries one <code>set()</code> evicts when over <code>size_limit</code>.</p>
 </dd>
 <dt><a href="../reference/CacheLike.enabled.html#diskcache_oxide.CacheLike.enabled" class="doc-attribute doc-label doc-label-property">CacheLike.enabled</a></dt>
 <dd>
-
+<p>True if caching is on (<code>Cache</code>), False if it’s off (<code>NullCache</code>).</p>
 </dd>
 <dt><a href="../reference/CacheLike.get.html#diskcache_oxide.CacheLike.get" class="doc-function doc-label doc-label-method">CacheLike.get()</a></dt>
 <dd>
-
+<p>Return the value for <code>key</code>, or <code>default</code> if it’s missing or expired.</p>
 </dd>
 <dt><a href="../reference/CacheLike.set.html#diskcache_oxide.CacheLike.set" class="doc-function doc-label doc-label-method">CacheLike.set()</a></dt>
 <dd>
-
+<p>Store <code>value</code> under <code>key</code>, with an optional expiry in seconds.</p>
 </dd>
 <dt><a href="../reference/CacheLike.add.html#diskcache_oxide.CacheLike.add" class="doc-function doc-label doc-label-method">CacheLike.add()</a></dt>
 <dd>
-
+<p>Store <code>value</code> only if <code>key</code> is missing or expired. True if it was stored.</p>
 </dd>
 <dt><a href="../reference/CacheLike.delete.html#diskcache_oxide.CacheLike.delete" class="doc-function doc-label doc-label-method">CacheLike.delete()</a></dt>
 <dd>
-
+<p>Remove <code>key</code>. True if a live entry was removed.</p>
 </dd>
 <dt><a href="../reference/CacheLike.pop.html#diskcache_oxide.CacheLike.pop" class="doc-function doc-label doc-label-method">CacheLike.pop()</a></dt>
 <dd>
-
+<p>Remove <code>key</code> and return its value, or <code>default</code>.</p>
 </dd>
 <dt><a href="../reference/CacheLike.touch.html#diskcache_oxide.CacheLike.touch" class="doc-function doc-label doc-label-method">CacheLike.touch()</a></dt>
 <dd>
-
+<p>Change an existing entry’s expiry. True if the entry existed.</p>
 </dd>
 <dt><a href="../reference/CacheLike.incr.html#diskcache_oxide.CacheLike.incr" class="doc-function doc-label doc-label-method">CacheLike.incr()</a></dt>
 <dd>
-
+<p>Add <code>delta</code> to the number under <code>key</code>, atomically, and return the result.</p>
 </dd>
 <dt><a href="../reference/CacheLike.decr.html#diskcache_oxide.CacheLike.decr" class="doc-function doc-label doc-label-method">CacheLike.decr()</a></dt>
 <dd>
-
+<p>Subtract <code>delta</code> from the number under <code>key</code>, atomically, and return the result.</p>
 </dd>
 <dt><a href="../reference/CacheLike.iterkeys.html#diskcache_oxide.CacheLike.iterkeys" class="doc-function doc-label doc-label-method">CacheLike.iterkeys()</a></dt>
 <dd>
-
+<p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
 </dd>
 <dt><a href="../reference/CacheLike.expire.html#diskcache_oxide.CacheLike.expire" class="doc-function doc-label doc-label-method">CacheLike.expire()</a></dt>
 <dd>
-
+<p>Remove every expired entry. Returns how many were removed.</p>
 </dd>
 <dt><a href="../reference/CacheLike.clear.html#diskcache_oxide.CacheLike.clear" class="doc-function doc-label doc-label-method">CacheLike.clear()</a></dt>
 <dd>
-
+<p>Remove every entry that existed when the call started. Returns how many.</p>
 </dd>
 <dt><a href="../reference/CacheLike.cull.html#diskcache_oxide.CacheLike.cull" class="doc-function doc-label doc-label-method">CacheLike.cull()</a></dt>
 <dd>
-
+<p>Remove expired entries, then evict until under <code>size_limit</code>. Returns how many.</p>
 </dd>
 <dt><a href="../reference/CacheLike.volume.html#diskcache_oxide.CacheLike.volume" class="doc-function doc-label doc-label-method">CacheLike.volume()</a></dt>
 <dd>
-
+<p>The size on disk in bytes.</p>
 </dd>
 <dt><a href="../reference/CacheLike.checkpoint.html#diskcache_oxide.CacheLike.checkpoint" class="doc-function doc-label doc-label-method">CacheLike.checkpoint()</a></dt>
 <dd>
-
+<p>Empty the write-ahead log. True if it was reset, False if other processes kept it busy.</p>
 </dd>
 <dt><a href="../reference/CacheLike.close.html#diskcache_oxide.CacheLike.close" class="doc-function doc-label doc-label-method">CacheLike.close()</a></dt>
 <dd>
-
+<p>Close this handle and return its connections.</p>
 </dd>
 <dt><a href="../reference/CacheLike.__getitem__.html#diskcache_oxide.CacheLike.__getitem__" class="doc-function doc-label doc-label-method">CacheLike.__getitem__()</a></dt>
 <dd>
-
+<p><code>cache[key]</code>: the value, or <code>KeyError</code> if it’s missing or expired.</p>
 </dd>
 <dt><a href="../reference/CacheLike.__setitem__.html#diskcache_oxide.CacheLike.__setitem__" class="doc-function doc-label doc-label-method">CacheLike.__setitem__()</a></dt>
 <dd>
-
+<p><code>cache[key] = value</code>: store a value that never expires.</p>
 </dd>
 <dt><a href="../reference/CacheLike.__delitem__.html#diskcache_oxide.CacheLike.__delitem__" class="doc-function doc-label doc-label-method">CacheLike.__delitem__()</a></dt>
 <dd>
-
+<p><code>del cache[key]</code>: remove the entry, or raise <code>KeyError</code>.</p>
 </dd>
 <dt><a href="../reference/CacheLike.__contains__.html#diskcache_oxide.CacheLike.__contains__" class="doc-function doc-label doc-label-method">CacheLike.__contains__()</a></dt>
 <dd>
-
+<p><code>key in cache</code>: True if the key holds a live value.</p>
 </dd>
 <dt><a href="../reference/CacheLike.__len__.html#diskcache_oxide.CacheLike.__len__" class="doc-function doc-label doc-label-method">CacheLike.__len__()</a></dt>
 <dd>
-
+<p>The number of entries.</p>
 </dd>
 <dt><a href="../reference/CacheLike.__bool__.html#diskcache_oxide.CacheLike.__bool__" class="doc-function doc-label doc-label-method">CacheLike.__bool__()</a></dt>
 <dd>
-
+<p>True if caching is on, so <code>if cache:</code> reads naturally.</p>
 </dd>
 <dt><a href="../reference/CacheLike.__iter__.html#diskcache_oxide.CacheLike.__iter__" class="doc-function doc-label doc-label-method">CacheLike.__iter__()</a></dt>
 <dd>
-
+<p>Iterate over keys in insertion order.</p>
 </dd>
 <dt><a href="../reference/CacheLike.__enter__.html#diskcache_oxide.CacheLike.__enter__" class="doc-function doc-label doc-label-method">CacheLike.__enter__()</a></dt>
 <dd>
-
+<p>Return the cache, for use in a <code>with</code> block.</p>
 </dd>
 <dt><a href="../reference/CacheLike.__exit__.html#diskcache_oxide.CacheLike.__exit__" class="doc-function doc-label doc-label-method">CacheLike.__exit__()</a></dt>
 <dd>
-
+<p>Close the cache.</p>
 </dd>
 </dl>
 </section>

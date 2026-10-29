@@ -121,14 +121,14 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="A clean-room Rust reimplementation of diskcache.">
+  <meta name="description" content="Add delta to the number stored under key, atomically, and return the result.">
   <script type="application/ld+json">
 [
   {
     "@context": "https://schema.org",
     "@type": "SoftwareSourceCode",
     "name": "diskcache-oxide",
-    "description": "A clean-room Rust reimplementation of diskcache.",
+    "description": "A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API.",
     "codeRepository": "https://github.com/mikeckennedy/diskcache-oxide",
     "license": "https://opensource.org/licenses/MIT",
     "url": "https://mkennedy.codes/docs/diskcache-oxide",
@@ -152,13 +152,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </script>
   <meta property="og:type" content="website">
   <meta property="og:title" content="Cache.incr() – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A clean-room Rust reimplementation of diskcache.">
+  <meta property="og:description" content="Add delta to the number stored under key, atomically, and return the result.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.incr.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Cache.incr() – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A clean-room Rust reimplementation of diskcache.">
+  <meta name="twitter:description" content="Add delta to the number stored under key, atomically, and return the result.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -186,6 +186,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li class="nav-item">
     <a class="nav-link" href="../user-guide/getting-started.html"> 
 <span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
     <a class="nav-link active" href="../reference/index.html" aria-current="page"> 
@@ -413,6 +417,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <div class="sidebar-item-container"> 
   <a href="../reference/Cache.__exit__.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.__exit__()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.get.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.get()</span></span></a>
   </div>
 </li>
       </ul>
@@ -870,8 +880,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </nav>
 <div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
 <!-- margin-sidebar -->
-    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar zindex-bottom">
-        
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h3 id="toc-title">On this page</h3>
+   
+  <ul class="collapse">
+  <li><a href="#parameters" id="toc-parameters" class="nav-link active" data-scroll-target="#parameters">Parameters</a></li>
+  <li><a href="#returns" id="toc-returns" class="nav-link" data-scroll-target="#returns">Returns</a></li>
+  <li><a href="#raises" id="toc-raises" class="nav-link" data-scroll-target="#raises">Raises</a></li>
+  </ul>
+</nav>
     </div>
 <!-- main -->
 <main class="content" id="quarto-document-content">
@@ -896,11 +914,11 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 
 <div class="doc-subject">
-
+<p>Add <code>delta</code> to the number stored under <code>key</code>, atomically, and return the result.</p>
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L102" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L222-L241" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Cache</span><span class="op">.</span><span class="sig-name">incr</span>(
@@ -909,8 +927,60 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <span class="va">default</span><span class="op">=...</span>,
 )</span></code></pre></div>
 </div>
+<div class="doc-text">
+<p>Atomic across threads and processes, so concurrent increments are never lost. The entry keeps its existing expiry.</p>
+</div>
+<section id="parameters" class="level2 doc-parameters">
+<h2 class="doc-parameters">Parameters</h2>
+<div class="doc-definition-items">
+<dl>
+<dt><code><span class="doc-parameter-name">key</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">str</span></code></dt>
+<dd>
+<p>The key.</p>
+</dd>
+<dt><code><span class="doc-parameter-name">delta</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | float</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">…</span></code></dt>
+<dd>
+<p>The amount to add (default 1).</p>
+</dd>
+<dt><code><span class="doc-parameter-name">default</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | float | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">…</span></code></dt>
+<dd>
+The starting value for a missing or expired key (default 0). Pass None to raise <code>KeyError</code> instead.
+</dd>
+</dl>
+</div>
+</section>
+<section id="returns" class="level2 doc-returns">
+<h2 class="doc-returns">Returns</h2>
+<div class="doc-definition-items">
+<dl>
+<dt><code> <span class="doc-parameter-annotation">int | float</span></code></dt>
+<dd>
+The new value.
+</dd>
+</dl>
+</div>
+</section>
+<section id="raises" class="level2 doc-raises">
+<h2 class="doc-raises">Raises</h2>
+<div class="doc-definition-items">
+<dl>
+<dt><code> <span class="doc-parameter-annotation">KeyError</span></code></dt>
+<dd>
+<p>The key is missing and <code>default</code> is None.</p>
+</dd>
+<dt><code> <span class="doc-parameter-annotation">TypeError</span></code></dt>
+<dd>
+<p>The stored value isn’t a number.</p>
+</dd>
+<dt><code> <span class="doc-parameter-annotation">Timeout</span></code></dt>
+<dd>
+Another process held the write lock for longer than <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>.
+</dd>
+</dl>
+</div>
 
 
+</section>
 
 </main>
 <hr style="padding: 0; margin: 0;">

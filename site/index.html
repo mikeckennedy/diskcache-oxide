@@ -121,13 +121,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="theme-init.js"></script>
 
 
-  <meta name="description" content="A clean-room Rust reimplementation of diskcache.">
+  <meta name="description" content="A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API.">
   <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "SoftwareSourceCode",
   "name": "diskcache-oxide",
-  "description": "A clean-room Rust reimplementation of diskcache.",
+  "description": "A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API.",
   "codeRepository": "https://github.com/mikeckennedy/diskcache-oxide",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://mkennedy.codes/docs/diskcache-oxide",
@@ -140,13 +140,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </script>
   <meta property="og:type" content="website">
   <meta property="og:title" content="diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A clean-room Rust reimplementation of diskcache.">
+  <meta property="og:description" content="A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A clean-room Rust reimplementation of diskcache.">
+  <meta name="twitter:description" content="A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -174,6 +174,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li class="nav-item">
     <a class="nav-link" href="./user-guide/getting-started.html"> 
 <span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="./recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
     <a class="nav-link" href="./reference/index.html"> 
@@ -214,9 +218,9 @@ section.level2:first-of-type > h2:first-child,
 }
 </style>
 <div class="gd-hero">
-<img src="assets/diskcache-oxide-slogan.jpg" alt="Logo" class="gd-hero-logo" style="max-height:220px">
+<img src="assets/diskcache-oxide-slogan.jpg" alt="Logo" class="gd-hero-logo" style="max-height:480px">
 <p class="gd-hero-name">diskcache-oxide</p>
-<p class="gd-hero-tagline">A clean-room Rust reimplementation of diskcache.</p>
+<p class="gd-hero-tagline">A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API.</p>
 </div>
 
 
@@ -251,75 +255,90 @@ section.level2:first-of-type > h2:first-child,
 <h3 class="anchored" data-anchor-id="meta">Meta</h3>
 <p><strong>Requires:</strong> Python <code>&gt;=3.14</code></p>
 </section>
-</div></div><p><strong>A fast, robust, pure-Rust disk cache for Python. Thread-safe, process-safe, fork-safe.</strong></p>
-<p>diskcache-oxide is a clean-room reimplementation of <a href="https://github.com/grantjenks/python-diskcache">python-diskcache</a> in Rust via PyO3, with a minimal Python layer. It provides an API compatible with <code>diskcache.Cache</code>, running on a modernized SQLite storage engine and file spill manager designed from the ground up for high-concurrency web apps, free-threaded CPython (3.14t, 3.15t), and multi-process deployments.</p>
+</div></div><p><strong>Python cache. Rust engine. SQLite storage.</strong></p>
+<p>Almost every Python web app reaches the point where it needs a cache that more than one process can see. An in-memory dict dies with its worker and isn’t shared with the others. Redis is another server to deploy, secure, monitor and pay for. <a href="https://github.com/grantjenks/python-diskcache">python-diskcache</a> made the middle path popular: a cache that is just a directory on disk, shared by every thread and process on the machine, and still there after a restart.</p>
+<p>diskcache-oxide rebuilds that idea for where Python is going: many cores, many worker processes, free-threaded CPython, and async web frameworks. The engine is Rust, the storage is SQLite, and the Python layer is as thin as it can be. You keep diskcache’s API. You get reads in well under a microsecond, threads that no longer fight each other, no pickle on your disk, and memory and disk use you can predict.</p>
 <p><strong>Source on GitHub: <a href="https://github.com/mikeckennedy/diskcache-oxide" class="uri">https://github.com/mikeckennedy/diskcache-oxide</a></strong> · <a href="https://github.com/mikeckennedy/diskcache-oxide/issues">Issues</a></p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> os</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> Cache(<span class="st">'/tmp/my-cache'</span>) <span class="im">as</span> cache:</span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Storing values (msgpack by default; JSON also supported)</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'user:42'</span>, {<span class="st">'name'</span>: <span class="st">'Alice'</span>, <span class="st">'role'</span>: <span class="st">'admin'</span>}, expire<span class="op">=</span><span class="dv">3600</span>)</span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Reading values</span></span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    user <span class="op">=</span> cache.get(<span class="st">'user:42'</span>)</span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(user[<span class="st">'name'</span>])  <span class="co"># Alice</span></span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Dictionary syntax works identically</span></span>
-<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>    cache[<span class="st">'session:xyz'</span>] <span class="op">=</span> {<span class="st">'active'</span>: <span class="va">True</span>}</span>
-<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="st">'session:xyz'</span> <span class="kw">in</span> cache:</span>
-<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>        <span class="bu">print</span>(cache[<span class="st">'session:xyz'</span>])</span></code></pre></div>
-<section id="install" class="level2">
-<h2 class="anchored" data-anchor-id="install">Install</h2>
-<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install diskcache-oxide</span></code></pre></div>
-<p>Supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t, 3.15t). Pre-compiled wheels for Linux and macOS include the compiled Rust engine and bundled SQLite, so no Rust toolchain or system SQLite development packages are required.</p>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="co">## Every worker process opens the same directory and sees the same cache.</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>)</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> popular_episodes() <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">dict</span>]:</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> (episodes <span class="op">:=</span> cache.get(<span class="st">'episodes:popular'</span>)) <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> episodes</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    episodes <span class="op">=</span> db.load_popular_episodes()</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'episodes:popular'</span>, episodes, expire<span class="op">=</span><span class="dv">300</span>)</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> episodes</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a><span class="co">## Only one worker in the whole fleet runs the hourly job: add() is atomic across processes.</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> cache.add(<span class="st">'job:refresh-feeds'</span>, os.getpid(), expire<span class="op">=</span><span class="dv">3600</span>):</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    refresh_feeds()</span></code></pre></div>
+<section id="where-this-is-going" class="level2">
+<h2 class="anchored" data-anchor-id="where-this-is-going">Where this is going</h2>
+<p>diskcache-oxide is being built in three stages. The first is working today.</p>
+<ol type="1">
+<li><strong>A better diskcache.</strong> The <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> you already know, rebuilt in Rust: about half the read latency, many times the threaded throughput, safe across <code>fork()</code>, safe on free-threaded Python, and no pickle by default. <em>This is the core that exists now.</em></li>
+<li><strong>The complete local caching toolkit.</strong> <code>FanoutCache</code> sharding for write-heavy and threaded apps, a native <code>AsyncCache</code> for FastAPI, Litestar and friends, <code>memoize</code>, tags, more eviction policies, transactions, <code>Deque</code> and <code>Index</code>, and the coordination recipes (locks, semaphores, throttles, stampede protection) that make a shared cache useful as more than a cache.</li>
+<li><strong>A cache server.</strong> The same Rust engine served over the network: a Redis-style central cache for a fleet of machines, with SQLite underneath instead of RAM. As the only owner of its files, the server can use SQLite’s exclusive locking mode, which already measures about 40% faster reads than the shared-directory library.</li>
+</ol>
+<p>See <a href="./user-guide/roadmap.html">Vision and roadmap</a> for how each stage breaks down.</p>
+</section>
+<section id="why-diskcache-oxide" class="level2">
+<h2 class="anchored" data-anchor-id="why-diskcache-oxide">Why diskcache-oxide</h2>
+<ul>
+<li><strong><a href="./user-guide/performance.html">Fast where web apps spend their time.</a></strong> A cached <a href="reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> takes about 0.75 µs, 0.42× diskcache’s latency. At a 99:1 read/write mix with 8 threads on a GIL build, it handles 16× diskcache’s throughput, because diskcache’s per-thread connections collapse under contention and oxide’s don’t. Fast enough to call straight from the event loop.</li>
+<li><strong><a href="./user-guide/concurrency-and-forks.html">Built for free-threaded Python.</a></strong> The extension is compiled with <code>gil_used = false</code> and tested on 3.14, 3.14t, 3.15 and 3.15t on every change. It never relies on the GIL for correctness.</li>
+<li><strong><a href="./user-guide/concurrency-and-forks.html">Safe across <code>fork()</code>.</a></strong> gunicorn, Celery prefork and multiprocessing fork while other threads may be writing. A process-wide fork barrier makes sure no child ever starts life holding half a SQLite transaction.</li>
+<li><strong><a href="./user-guide/serialization.html">No pickle on your disk.</a></strong> Values are msgpack (or JSON) with exact type tags, so tuples, sets, datetimes, big ints and NaN come back as what you stored. Pickle is opt-in, and a cache that didn’t opt in refuses to unpickle anything it finds.</li>
+<li><strong><a href="./user-guide/storage-and-wal.html">Predictable memory and disk.</a></strong> A bounded connection pool, a 1 MiB page cache per connection, a write-ahead log that trims itself back down, and a <a href="reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> you can call when you want it empty.</li>
+<li><strong><a href="./user-guide/divergences.html">Correct under pressure.</a></strong> <a href="reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> never deletes writes that landed while it ran, <a href="reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes every expired entry, and a reader racing an overwrite gets the old value or the new one, never a spurious miss. Each of these is a bug in diskcache with a reproduction in the repo.</li>
+<li><strong><a href="./user-guide/null-cache.html">A real off switch.</a></strong> <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> turns caching off without a single <code>if cache is not None:</code> in your code, and can still forward invalidations to the real cache while it’s off.</li>
+<li><strong>Typed.</strong> Ships <code>py.typed</code> and a <a href="reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> protocol that both <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> satisfy.</li>
+</ul>
 </section>
 <section id="status" class="level2">
 <h2 class="anchored" data-anchor-id="status">Status</h2>
-<blockquote class="blockquote">
-<p><strong>Pre-release (~60% complete).</strong> The core <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is fully functional, thread-safe, process-safe, fork-safe, and passes the strict conformance suite run against <code>diskcache</code> 5.6.3 (except for deliberate, documented improvements). Features like <code>FanoutCache</code>, <code>transact()</code>, tags, non-str keys, <code>Deque</code>/<code>Index</code>, and memoize decorators are coming in subsequent phases. See the <a href="./user-guide/roadmap.html">Roadmap</a>.</p>
-</blockquote>
+<div class="callout callout-style-default callout-warning callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+Warning
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><strong>Pre-release: not on PyPI yet, and not yet in production.</strong> The core <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is complete. It passes a conformance suite that runs the same tests against real diskcache 5.6.3, apart from the <a href="./user-guide/divergences.html">documented divergences</a>. It’s now in a deep concurrency review and 24-hour soak runs, and then it goes into production at <a href="https://talkpython.fm">Talk Python</a>. <code>FanoutCache</code>, <code>AsyncCache</code>, <code>transact()</code>, tags, non-<code>str</code> keys and the recipes come in later phases.</p>
+</div>
+</div>
 </section>
-<section id="already-on-diskcache" class="level2">
-<h2 class="anchored" data-anchor-id="already-on-diskcache">Already on diskcache?</h2>
-<p>Point diskcache-oxide at a new directory. diskcache-oxide uses its own optimized database schema (<code>diskcache-oxide.sqlite</code>) and does not read diskcache 5.x files (<code>cache.db</code>):</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co">## Old:</span></span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="co">## from diskcache import Cache</span></span>
+<section id="install" class="level2">
+<h2 class="anchored" data-anchor-id="install">Install</h2>
+<p>Until the first release, build it from source (needs a Rust toolchain):</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install git+https://github.com/mikeckennedy/diskcache-oxide</span></code></pre></div>
+<p>It supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t and 3.15t), on macOS and Linux. Windows support is planned. Release wheels will include the compiled engine and a bundled SQLite, so there’s nothing else to install.</p>
+</section>
+<section id="coming-from-diskcache" class="level2">
+<h2 class="anchored" data-anchor-id="coming-from-diskcache">Coming from diskcache?</h2>
+<p>Change the import and point it at a new directory. diskcache-oxide keeps diskcache’s API but uses its own file format (<code>diskcache-oxide.sqlite</code>), so it never reads or touches an existing <code>cache.db</code>:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co">## from diskcache import Cache</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="co">## New:</span></span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/tmp/app-cache-oxide'</span>)</span></code></pre></div>
-<ul>
-<li><strong>Drop-in API for <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></strong>: <a href="reference/NullCache.get.html#diskcache_oxide.NullCache.get" class="gdls-link gdls-code">get()</a>, <a href="reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>, <a href="reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a>, <a href="reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete()</a>, <a href="reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a>, <a href="reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch()</a>, <a href="reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a>, <a href="reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr()</a>, <a href="reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>, <a href="reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>, <a href="reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a>, <a href="reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a>, and dictionary operations (<code>cache[k]</code>, <code>k in cache</code>, <code>len(cache)</code>) work as expected.</li>
-<li><strong>Predictable, safe serialization</strong>: Pickle is disabled by default. Values are encoded as compact <code>msgpack</code> or <code>json</code> with type preservation for tuples, sets, datetimes, and large ints.</li>
-<li><strong>Truthy cache</strong>: An empty <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is always truthy (<code>bool(cache) is True</code>), so <code>if cache:</code> reliably checks whether caching is active.</li>
-<li><strong>See <a href="./user-guide/switching-from-diskcache.html">Switching from diskcache</a></strong> for full transition details.</li>
-</ul>
-</section>
-<section id="why-diskcache-oxide" class="level2">
-<h2 class="anchored" data-anchor-id="why-diskcache-oxide">Why diskcache-oxide?</h2>
-<ul>
-<li><strong><a href="./user-guide/performance.html">Roughly half the latency on cached reads</a>.</strong> Direct PyO3 integration, cached SQLite statements, and fast zero-copy deserialization deliver significantly lower latency than pure Python diskcache, with much higher multi-threaded throughput.</li>
-<li><strong><a href="./user-guide/concurrency-and-forks.html">Free-threaded Python ready</a>.</strong> Compiled with <code>gil_used = false</code>. Runs safely and scalably on CPython 3.14t and 3.15t without the Global Interpreter Lock.</li>
-<li><strong><a href="./user-guide/concurrency-and-forks.html">Safe across <code>fork()</code></a>.</strong> Gunicorn and Uvicorn pre-forking web servers frequently trigger SQLite crashes or corruption in child processes. diskcache-oxide’s <code>os.register_at_fork</code> transaction barrier prevents forks during active write transactions and drops stale connection handles across process boundaries.</li>
-<li><strong><a href="./user-guide/storage-and-wal.html">Bounded memory &amp; connection pooling</a>.</strong> Each cache directory is serviced by a bounded pool of at most <code>max_connections</code> SQLite connections (default 8), each with a fixed page cache (<code>sqlite_cache_size</code>, default 1 MiB), preventing file descriptor leaks and unbounded memory.</li>
-<li><strong><a href="./user-guide/storage-and-wal.html">Bounded disk &amp; WAL management</a>.</strong> Standard SQLite WAL files grow without limit when readers in other processes prevent checkpoints. diskcache-oxide actively monitors and bounds the WAL file (<code>wal_size_limit</code>, default 64 MiB) through forced checkpoints.</li>
-<li><strong><a href="./user-guide/serialization.html">No pickle by default</a>.</strong> Arbitrary unpickling from disk is a security hazard and masks bugs. diskcache-oxide stores values as <code>msgpack</code> or <code>json</code> with type tags. Opt-in <code>pickle=True</code> is available when strictly necessary.</li>
-<li><strong><a href="./user-guide/null-cache.html">Built-in <code>NullCache</code></a>.</strong> Switch off caching in tests or development environments without adding <code>if cache is not None:</code> branches across your codebase. Supports <code>invalidate=real_cache</code> forwarding for safe mutation handling.</li>
-<li><strong><a href="./user-guide/getting-started.html">Full typing</a>.</strong> Shipped with <code>py.typed</code> and the <a href="reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> structural protocol.</li>
-</ul>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-oxide'</span>)</span></code></pre></div>
+<p><a href="./user-guide/switching-from-diskcache.html">Switching from diskcache</a> covers every difference you might notice.</p>
 </section>
 <section id="where-to-next" class="level2">
 <h2 class="anchored" data-anchor-id="where-to-next">Where to next</h2>
 <ul>
-<li><a href="./user-guide/getting-started.html">Getting started</a>: Installation, quickstart, and core cache operations.</li>
-<li><a href="./user-guide/switching-from-diskcache.html">Switching from diskcache</a>: Differences, transition steps, and compatibility.</li>
-<li><a href="./user-guide/serialization.html">Serialization</a>: Msgpack vs JSON, type tags, and why pickle is opt-in.</li>
-<li><a href="./user-guide/null-cache.html">NullCache</a>: Zero-overhead cache toggling and invalidation forwarding.</li>
-<li><a href="./user-guide/concurrency-and-forks.html">Concurrency &amp; Forks</a>: Threads, processes, free-threading, and the fork barrier.</li>
-<li><a href="./user-guide/storage-and-wal.html">Storage &amp; WAL</a>: Files, blobs, page caches, and bounded WAL files.</li>
-<li><a href="./user-guide/divergences.html">Divergences</a>: Detailed log of all intentional improvements over diskcache 5.6.3.</li>
-<li><a href="./user-guide/roadmap.html">Roadmap</a>: Current status and feature roadmap for future releases.</li>
+<li><a href="./user-guide/getting-started.html">Getting started</a>: create a cache, store and read values, expiry, counters and eviction.</li>
+<li><a href="./user-guide/switching-from-diskcache.html">Switching from diskcache</a>: what changes, and why.</li>
+<li><a href="./recipes/index.html">Recipes</a>: caching expensive calls, invalidation, job claims, rate limiting, deployment and testing.</li>
+<li><a href="./user-guide/roadmap.html">Vision and roadmap</a>: what exists today and what’s coming.</li>
+<li><a href="./user-guide/concurrency-and-forks.html">Concurrency and forks</a>: threads, processes, free-threading and the fork barrier.</li>
+<li><a href="./user-guide/performance.html">Performance</a>: the measured numbers, and where the next speedups come from.</li>
 </ul>
 
 

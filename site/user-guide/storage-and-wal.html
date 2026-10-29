@@ -8,7 +8,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 
-<title>Storage and WAL management – diskcache-oxide | diskcache-oxide</title>
+<title>Storage and WAL – diskcache-oxide | diskcache-oxide</title>
 <style>
 /* Default styles provided by pandoc.
 ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
@@ -123,16 +123,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="diskcache-oxide is designed to keep both memory usage and disk usage strictly bounded, even under heavy concurrent write bursts and sustained...">
+  <meta name="description" content="A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps...">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Storage and WAL management – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="diskcache-oxide is designed to keep both memory usage and disk usage strictly bounded, even under heavy concurrent write bursts and sustained...">
+  <meta property="og:title" content="Storage and WAL – diskcache-oxide | diskcache-oxide">
+  <meta property="og:description" content="A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Storage and WAL management – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="diskcache-oxide is designed to keep both memory usage and disk usage strictly bounded, even under heavy concurrent write bursts and sustained...">
+  <meta name="twitter:title" content="Storage and WAL – diskcache-oxide | diskcache-oxide">
+  <meta name="twitter:description" content="A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -162,6 +162,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span class="menu-text">User Guide</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -183,7 +187,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
         <i class="bi bi-layout-text-sidebar-reverse"></i>
       </button>
-        <h1 class="quarto-secondary-nav-title no-breadcrumbs">Storage and WAL management</h1>
+        <h1 class="quarto-secondary-nav-title no-breadcrumbs">Storage and WAL</h1>
         <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
         </a>
     </div>
@@ -213,6 +217,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Switching from python-diskcache</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Vision and roadmap</span></a>
+  </div>
+</li>
       </ul>
   </li>
         <li class="sidebar-item sidebar-item-section">
@@ -236,13 +246,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Concurrency and fork safety</span></a>
+ <span class="menu-text">Concurrency and forks</span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/storage-and-wal.html" class="sidebar-item-text sidebar-link active">
- <span class="menu-text">Storage and WAL management</span></a>
+ <span class="menu-text">Storage and WAL</span></a>
   </div>
 </li>
       </ul>
@@ -265,12 +275,6 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
 </li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Project status and roadmap</span></a>
-  </div>
-</li>
       </ul>
   </li>
     </ul>
@@ -283,15 +287,18 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#on-disk-layout" id="toc-on-disk-layout" class="nav-link active" data-scroll-target="#on-disk-layout">On-disk layout</a></li>
-  <li><a href="#inline-values-vs-file-spills" id="toc-inline-values-vs-file-spills" class="nav-link" data-scroll-target="#inline-values-vs-file-spills">Inline values vs file spills</a>
+  <li><a href="#whats-in-the-directory" id="toc-whats-in-the-directory" class="nav-link active" data-scroll-target="#whats-in-the-directory">What’s in the directory</a></li>
+  <li><a href="#small-values-inline-large-values-in-files" id="toc-small-values-inline-large-values-in-files" class="nav-link" data-scroll-target="#small-values-inline-large-values-in-files">Small values inline, large values in files</a></li>
+  <li><a href="#size-limit-and-eviction" id="toc-size-limit-and-eviction" class="nav-link" data-scroll-target="#size-limit-and-eviction">Size limit and eviction</a></li>
+  <li><a href="#memory-max_connections-and-sqlite_cache_size" id="toc-memory-max_connections-and-sqlite_cache_size" class="nav-link" data-scroll-target="#memory-max_connections-and-sqlite_cache_size">Memory: <code>max_connections</code> and <code>sqlite_cache_size</code></a></li>
+  <li><a href="#the-write-ahead-log" id="toc-the-write-ahead-log" class="nav-link" data-scroll-target="#the-write-ahead-log">The write-ahead log</a>
   <ul class="collapse">
-  <li><a href="#atomic-spill-writes" id="toc-atomic-spill-writes" class="nav-link" data-scroll-target="#atomic-spill-writes">Atomic spill writes</a></li>
+  <li><a href="#always-on-wal_size_limit" id="toc-always-on-wal_size_limit" class="nav-link" data-scroll-target="#always-on-wal_size_limit">Always on: <code>wal_size_limit</code></a></li>
+  <li><a href="#on-demand-checkpoint" id="toc-on-demand-checkpoint" class="nav-link" data-scroll-target="#on-demand-checkpoint">On demand: <code>checkpoint()</code></a></li>
+  <li><a href="#at-close" id="toc-at-close" class="nav-link" data-scroll-target="#at-close">At close</a></li>
+  <li><a href="#opt-in-automatic-checkpoints" id="toc-opt-in-automatic-checkpoints" class="nav-link" data-scroll-target="#opt-in-automatic-checkpoints">Opt-in: automatic checkpoints</a></li>
   </ul></li>
-  <li><a href="#bounded-memory-sqlite_cache_size" id="toc-bounded-memory-sqlite_cache_size" class="nav-link" data-scroll-target="#bounded-memory-sqlite_cache_size">Bounded memory (<code>sqlite_cache_size</code>)</a></li>
-  <li><a href="#bounded-wal-files-wal_size_limit" id="toc-bounded-wal-files-wal_size_limit" class="nav-link" data-scroll-target="#bounded-wal-files-wal_size_limit">Bounded WAL files (<code>wal_size_limit</code>)</a></li>
-  <li><a href="#eviction-and-disk-bounds" id="toc-eviction-and-disk-bounds" class="nav-link" data-scroll-target="#eviction-and-disk-bounds">Eviction and disk bounds</a></li>
-  <li><a href="#maintenance-operations" id="toc-maintenance-operations" class="nav-link" data-scroll-target="#maintenance-operations">Maintenance operations</a></li>
+  <li><a href="#maintenance-calls" id="toc-maintenance-calls" class="nav-link" data-scroll-target="#maintenance-calls">Maintenance calls</a></li>
   </ul>
 </nav>
     </div>
@@ -300,7 +307,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 <header id="title-block-header" class="quarto-title-block default">
 <div class="quarto-title">
-<h1 class="title d-none d-lg-block">Storage and WAL management</h1>
+<h1 class="title d-none d-lg-block">Storage and WAL</h1>
 </div>
 
 
@@ -317,89 +324,78 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>diskcache-oxide is designed to keep both <strong>memory usage</strong> and <strong>disk usage</strong> strictly bounded, even under heavy concurrent write bursts and sustained multi-process reads.</p>
-<section id="on-disk-layout" class="level1">
-<h1>On-disk layout</h1>
-<p>Inside each cache directory, diskcache-oxide manages the following files:</p>
+<p>A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps up until an alert fires. This page covers what diskcache-oxide puts on disk, and the settings that keep memory and disk bounded.</p>
+<section id="whats-in-the-directory" class="level1">
+<h1>What’s in the directory</h1>
 <pre><code>/var/cache/my-app/
-├── diskcache-oxide.sqlite        # SQLite database (metadata, indexes, inline values)
-├── diskcache-oxide.sqlite-wal    # Write-Ahead Log file (bounded by wal_size_limit)
-├── diskcache-oxide.sqlite-shm    # Shared-memory index for WAL coordination
-└── 0a/                           # Subdirectories holding spilled value files
-    └── 0a1b2c3d4e...blob</code></pre>
+├── diskcache-oxide.sqlite        # keys, metadata and small values
+├── diskcache-oxide.sqlite-wal    # SQLite's write-ahead log
+├── diskcache-oxide.sqlite-shm    # SQLite's shared-memory index for the log
+└── 3f/
+    └── a2/
+        └── 3fa2…c91e.val         # one large value</code></pre>
+<p>The database file carries a format version. A future build that can’t read it raises <a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a> rather than guessing.</p>
+</section>
+<section id="small-values-inline-large-values-in-files" class="level1">
+<h1>Small values inline, large values in files</h1>
 <ul>
-<li><strong>Database file</strong>: <code>diskcache-oxide.sqlite</code> stores row metadata, timestamps, expiry times, keys, and small-to-medium values.</li>
-<li><strong>Directory permissions</strong>: Cache directories created by diskcache-oxide are initialized with <code>0700</code> permissions (owner read/write/execute only) on Unix systems to protect cached credentials and data.</li>
+<li><strong>Under 64 KiB</strong> (after encoding), a value is stored in its database row. Reading it is one indexed lookup.</li>
+<li><strong>64 KiB or more</strong>, it’s written to its own file, and the row points to it. This keeps the database small and its page cache hot, and large values stream straight from the file.</li>
 </ul>
+<p>Writing a large value never holds the database lock while the bytes go to disk: the value goes to a temporary file first, then inside a short transaction the file is renamed into place and the row updated. The old file is removed after the commit, and file names are never reused.</p>
+<p>A reader racing an overwrite always gets a whole value, old or new. If a value’s file really is gone (deleted by hand, or cut short by a crash, since value files aren’t fsynced), <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> returns the default and the orphaned row is cleaned up, so <code>in</code> and <code>len</code> don’t keep reporting an entry that can’t be read.</p>
 </section>
-<section id="inline-values-vs-file-spills" class="level1">
-<h1>Inline values vs file spills</h1>
-<p>To balance latency and SQLite database size, diskcache-oxide splits storage into two paths:</p>
-<ol type="1">
-<li><strong>Inline values</strong>: Values below the spill threshold are stored directly inside the SQLite database as a <code>BLOB</code> or text column. Reading an inline value requires a single SQLite indexed lookup.</li>
-<li><strong>File spills</strong>: Large values (e.g., cached image blobs, large API payloads) are written to standalone files in subdirectories. The database row stores only the relative file path, size, and metadata.</li>
-</ol>
-<section id="atomic-spill-writes" class="level2">
-<h2 class="anchored" data-anchor-id="atomic-spill-writes">Atomic spill writes</h2>
-<p>When writing a spilled value:</p>
+<section id="size-limit-and-eviction" class="level1">
+<h1>Size limit and eviction</h1>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, size_limit<span class="op">=</span><span class="dv">500</span> <span class="op">*</span> <span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>, cull_limit<span class="op">=</span><span class="dv">10</span>)</span></code></pre></div>
 <ul>
-<li>The payload is written to a temporary file in the destination folder and renamed into place atomically.</li>
-<li>The SQLite transaction then commits the row pointing to the file.</li>
-<li>When an entry is overwritten, deleted, or evicted, the database row is deleted first, and the backing file is unlinked.</li>
-<li><strong>Concurrency safe</strong>: If a reader races an overwrite of a spilled entry, the reader receives either the old value or the new value—never an empty read, a <code>None</code>, or an I/O error.</li>
+<li><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> is the cache’s disk budget in bytes: the database plus value files. The default is 1 GiB and the minimum is 1 MiB.</li>
+<li>When a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> finds the cache over its limit, it evicts up to <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> of the least recently stored entries (default 10). <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> evicts down to the limit on demand.</li>
+<li><a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> reports the current size.</li>
 </ul>
+<p>Least-recently-stored eviction means a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU policies are planned for Phase 6a.</p>
 </section>
-</section>
-<section id="bounded-memory-sqlite_cache_size" class="level1">
-<h1>Bounded memory (<code>sqlite_cache_size</code>)</h1>
-<p>Standard SQLite configurations can cause unexpected memory growth in long-running Python web processes. As queries run, SQLite caches database pages in process memory. In a multi-worker deployment, each worker process can accumulate hundreds of megabytes of RSS cache memory.</p>
-<p>diskcache-oxide bounds page cache memory on every connection:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(</span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">'/tmp/bounded-cache'</span>,</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    max_connections<span class="op">=</span><span class="dv">8</span>,</span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    sqlite_cache_size<span class="op">=</span><span class="dv">256</span>,  <span class="co"># 256 pages of 4 KiB = 1 MiB per connection (default)</span></span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
-<p>With 8 pooled connections, the maximum SQLite memory consumed per process is bounded to approximately 8 MiB.</p>
-</section>
-<section id="bounded-wal-files-wal_size_limit" class="level1">
-<h1>Bounded WAL files (<code>wal_size_limit</code>)</h1>
-<p>SQLite’s Write-Ahead Log (WAL) mode provides high read and write concurrency. However, standard SQLite has a well-known vulnerability in multi-process environments:</p>
-<blockquote class="blockquote">
-<p><strong>The WAL growth problem</strong>: When multiple processes are continuously reading from the database, SQLite cannot checkpoint the WAL back into the main database file because active reader locks prevent it. A burst of writes (such as an initial cache warm-up or mass invalidation) causes the <code>-wal</code> file to grow to hundreds of megabytes or gigabytes, and standard SQLite never shrinks it back down.</p>
-</blockquote>
-<p>diskcache-oxide actively monitors and bounds the <code>-wal</code> file:</p>
+<section id="memory-max_connections-and-sqlite_cache_size" class="level1">
+<h1>Memory: <code>max_connections</code> and <code>sqlite_cache_size</code></h1>
+<p>diskcache gives each thread its own connection with a 32 MiB page cache plus a 64 MiB memory map, so its memory grows with your thread count. diskcache-oxide bounds it:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">'/tmp/bounded-cache'</span>,</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    wal_size_limit<span class="op">=</span><span class="dv">64</span> <span class="op">*</span> <span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>,  <span class="co"># 64 MiB limit (default)</span></span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
-<ol type="1">
-<li><strong>Size limits</strong>: Sets SQLite’s <code>journal_size_limit</code> to half the limit, instructing SQLite to truncate the log when reset.</li>
-<li><strong>Autocheckpoint scaling</strong>: Scales SQLite’s <code>wal_autocheckpoint</code> frequency based on the limit.</li>
-<li><strong>Forced checkpoints</strong>: After writes, if the WAL file exceeds <code>wal_size_limit</code>, diskcache-oxide attempts a forced checkpoint (<code>PASSIVE</code>, then <code>TRUNCATE</code> with a 2 ms busy timeout).</li>
-<li><strong>Adaptive backoff</strong>: If other readers hold locks, the checkpoint attempt yields and backs off for 1 second, ensuring that write calls are never failed or delayed by maintenance.</li>
-</ol>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">'/var/cache/my-app'</span>,</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    max_connections<span class="op">=</span><span class="dv">8</span>,       <span class="co"># connections per database file, per process (default 8)</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    sqlite_cache_size<span class="op">=</span><span class="dv">256</span>,   <span class="co"># 4 KiB pages per connection: 1 MiB (default)</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<p>SQLite’s memory for a directory stays around <code>max_connections × sqlite_cache_size</code> pages, 8 MiB per process by default, however many threads use it. The 1 MiB default is the smallest size that left hot reads, writes and the threaded benchmarks unchanged. If your cache is large and read uniformly at random, raising it helps: 2,000 pages measured about 17% faster on that workload.</p>
 </section>
-<section id="eviction-and-disk-bounds" class="level1">
-<h1>Eviction and disk bounds</h1>
-<p>You can configure an overall disk budget for the cache:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">'/tmp/app-cache'</span>,</span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    size_limit<span class="op">=</span><span class="dv">500</span> <span class="op">*</span> <span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>,  <span class="co"># 500 MiB total limit</span></span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    cull_limit<span class="op">=</span><span class="dv">20</span>,                 <span class="co"># Evict 20 items per cull pass</span></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
-<ul>
-<li><strong><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a></strong>: Total disk budget for the cache directory, including both database files and spilled value files. Default: 1 GiB. Minimum: 1 MiB (<code>MIN_SIZE_LIMIT = 1048576</code>).</li>
-<li><strong><a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a></strong>: Maximum number of entries evicted during a single <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> pass when the cache exceeds <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>. Default: 10.</li>
-<li><strong>Least-Recently-Stored (LRS)</strong>: Eviction prioritizes entries with the lowest monotonic <code>store_seq</code>. Entries written earliest are culled first.</li>
-<li><strong><a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a></strong>: Returns the accurate on-disk volume in bytes consumed by database and spill files.</li>
-</ul>
+<section id="the-write-ahead-log" class="level1">
+<h1>The write-ahead log</h1>
+<p>SQLite’s write-ahead log (WAL) is what lets readers and a writer work at the same time. It has a weak spot in multi-process apps: SQLite can only reset the log when it finds a moment with no readers, and with readers in other processes, a burst of writes (a big fill, or a <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>) makes the log grow to fit the burst and then stay that size. diskcache-oxide’s soak tests saw logs over 1 GiB next to databases of a few MiB.</p>
+<p>diskcache-oxide handles this in layers, from free and always on to explicit.</p>
+<section id="always-on-wal_size_limit" class="level2">
+<h2 class="anchored" data-anchor-id="always-on-wal_size_limit">Always on: <code>wal_size_limit</code></h2>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, wal_size_limit<span class="op">=</span><span class="dv">64</span> <span class="op">*</span> <span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>)   <span class="co"># the default</span></span></code></pre></div>
+<p>This tells SQLite to trim the log back to half the limit (32 MiB by default) whenever it resets, and scales how often SQLite checkpoints automatically. These are connection settings, so they never pause anything. At normal load they keep the log at a few MiB.</p>
 </section>
-<section id="maintenance-operations" class="level1">
-<h1>Maintenance operations</h1>
+<section id="on-demand-checkpoint" class="level2">
+<h2 class="anchored" data-anchor-id="on-demand-checkpoint">On demand: <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a></h2>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>cache.checkpoint()   <span class="co"># True if the log was reset and truncated</span></span></code></pre></div>
+<p><a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> copies the log into the database and truncates it to zero. It waits briefly for in-flight reads, retrying up to the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, and returns <code>False</code> instead of raising if other processes keep the database busy. Call it when a short pause suits your app: at shutdown, in a maintenance job, or after a large <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>.</p>
+</section>
+<section id="at-close" class="level2">
+<h2 class="anchored" data-anchor-id="at-close">At close</h2>
+<p><a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> runs the same checkpoint when this is the process’s last handle on the cache and the log is over half the limit, waiting at most a second. A small log, the usual case, costs nothing extra. Pass <code>close(checkpoint=False)</code> to skip it.</p>
+</section>
+<section id="opt-in-automatic-checkpoints" class="level2">
+<h2 class="anchored" data-anchor-id="opt-in-automatic-checkpoints">Opt-in: automatic checkpoints</h2>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, wal_checkpoint<span class="op">=</span><span class="st">'auto'</span>)</span></code></pre></div>
+<p>With <code>'auto'</code>, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it’s over the limit, with the interpreter released and a 1-second backoff if other processes are busy. It never fails a write. It isn’t the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. The plan is to move this into a background maintenance thread so writes never pay for it at all.</p>
+</section>
+</section>
+<section id="maintenance-calls" class="level1">
+<h1>Maintenance calls</h1>
+<p>All of these work in chunks, release the database between chunks so other writers get in, and are safe to call while other processes use the cache:</p>
 <ul>
-<li><code>cache.expire()</code>: Scans the database and purges all expired records and their associated spill files. Runs in non-blocking batches so concurrent writers can interleave between chunks.</li>
-<li><code>cache.cull()</code>: Manually triggers an eviction cycle if the cache currently exceeds <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>.</li>
-<li><code>cache.clear()</code>: Deletes all entries that were present when <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> was called. Uses snapshot boundaries so that writes occurring during the clear operation are preserved.</li>
+<li><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes every expired entry and its value file.</li>
+<li><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> removes every entry that existed when it started, and keeps writes that land while it runs.</li>
+<li><a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> evicts down to <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>.</li>
 </ul>
 
 
@@ -746,8 +742,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   </script>
 <nav class="page-navigation">
   <div class="nav-page nav-page-previous">
-      <a href="../user-guide/concurrency-and-forks.html" class="pagination-link" aria-label="Concurrency and fork safety">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Concurrency and fork safety</span>
+      <a href="../user-guide/concurrency-and-forks.html" class="pagination-link" aria-label="Concurrency and forks">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Concurrency and forks</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">

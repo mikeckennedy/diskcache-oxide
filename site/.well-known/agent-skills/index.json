@@ -2,7 +2,7 @@
   "skills": [
     {
       "name": "diskcache-oxide",
-      "description": "A clean-room Rust reimplementation of diskcache. Use when writing Python code that uses the diskcache_oxide package.",
+      "description": "A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API. Use when writing Python code that uses the diskcache_oxide package.",
       "files": [
         "SKILL.md"
       ]

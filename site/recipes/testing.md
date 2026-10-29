@@ -1,0 +1,108 @@
+# Testing code that uses a cache
+
+Code that uses a cache needs tests of two kinds: tests where caching shouldn't get in the way, and tests of the caching behavior itself (is the value cached, does it expire, is it invalidated). diskcache-oxide gives you a tool for each.
+
+
+# A real cache per test
+
+A [Cache](../reference/Cache.md#diskcache_oxide.Cache) in pytest's `tmp_path` is fast and isolated: each test gets its own empty cache, and it's thrown away afterwards.
+
+``` python
+import pytest
+
+from diskcache_oxide import Cache
+
+@pytest.fixture
+def cache(tmp_path):
+    with Cache(tmp_path / 'cache') as cache:
+        yield cache
+```
+
+
+# No caching at all: [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache)
+
+For tests that exercise your app rather than its caching, a cached value from an earlier test can hide a bug. Swap in a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache): every read misses and every write succeeds, so every call goes to the real code path. It has the same methods and signatures as [Cache](../reference/Cache.md#diskcache_oxide.Cache), so nothing else changes.
+
+``` python
+from diskcache_oxide import NullCache
+
+@pytest.fixture
+def app_cache(monkeypatch):
+    null = NullCache()
+    monkeypatch.setattr('my_app.services.cache', null)
+    return null
+```
+
+
+# Testing expiry without sleeping
+
+diskcache-oxide reads the clock natively in Rust, so patching `time.time` doesn't affect it on its own. Pass `clock=` instead. A small fake clock lets a test jump forward in time:
+
+
+``` python
+import tempfile
+
+from diskcache_oxide import Cache
+
+class FakeClock:
+    def __init__(self, now: float = 1_000_000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+clock = FakeClock()
+cache = Cache(tempfile.mkdtemp(), clock=clock)
+
+cache.set('session:abc', {'user': 42}, expire=30)
+clock.advance(29)
+print('after 29 s:', cache.get('session:abc'))
+clock.advance(2)
+print('after 31 s:', cache.get('session:abc'))
+```
+
+
+    after 29 s: {'user': 42}
+    after 31 s: None
+
+
+As a fixture:
+
+``` python
+@pytest.fixture
+def clock():
+    return FakeClock()
+
+@pytest.fixture
+def cache(tmp_path, clock):
+    with Cache(tmp_path / 'cache', clock=clock) as cache:
+        yield cache
+
+def test_sessions_expire(cache, clock):
+    cache.set('session:abc', {'user': 42}, expire=30)
+    clock.advance(31)
+    assert cache.get('session:abc') is None
+```
+
+If your tests already patch `time.time` (with `unittest.mock`, freezegun or time-machine) and you want the cache to follow along, pass `clock=lambda: time.time()`. The lambda looks up `time.time` on every call, so it sees the patched version.
+
+
+# Testing code that runs in several processes
+
+Code that relies on the cache being shared, like a job claim or a rate limit, can be tested for real: start processes with `multiprocessing` and point them at the same `tmp_path` directory. diskcache-oxide is safe with every start method, including fork.
+
+``` python
+import multiprocessing
+
+def claim(directory: str) -> bool:
+    with Cache(directory) as cache:
+        return cache.add('job:nightly', 'claimed', expire=60)
+
+def test_only_one_worker_claims_the_job(tmp_path):
+    with multiprocessing.Pool(8) as pool:
+        results = pool.map(claim, [str(tmp_path)] * 8)
+    assert results.count(True) == 1
+```

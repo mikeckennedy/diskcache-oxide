@@ -122,16 +122,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="This guide walks through installing diskcache-oxide, creating a cache, storing and retrieving data, managing expiration and eviction, and cleaning up...">
+  <meta name="description" content="A Cache is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Getting started – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="This guide walks through installing diskcache-oxide, creating a cache, storing and retrieving data, managing expiration and eviction, and cleaning up...">
+  <meta property="og:description" content="A Cache is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Getting started – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="This guide walks through installing diskcache-oxide, creating a cache, storing and retrieving data, managing expiration and eviction, and cleaning up...">
+  <meta name="twitter:description" content="A Cache is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -159,6 +159,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li class="nav-item">
     <a class="nav-link active" href="../user-guide/getting-started.html" aria-current="page"> 
 <span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
@@ -212,6 +216,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Switching from python-diskcache</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Vision and roadmap</span></a>
+  </div>
+</li>
       </ul>
   </li>
         <li class="sidebar-item sidebar-item-section">
@@ -235,13 +245,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Concurrency and fork safety</span></a>
+ <span class="menu-text">Concurrency and forks</span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/storage-and-wal.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storage and WAL management</span></a>
+ <span class="menu-text">Storage and WAL</span></a>
   </div>
 </li>
       </ul>
@@ -264,12 +274,6 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
 </li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Project status and roadmap</span></a>
-  </div>
-</li>
       </ul>
   </li>
     </ul>
@@ -283,21 +287,21 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
    
   <ul class="collapse">
   <li><a href="#install" id="toc-install" class="nav-link active" data-scroll-target="#install">Install</a></li>
-  <li><a href="#creating-a-cache" id="toc-creating-a-cache" class="nav-link" data-scroll-target="#creating-a-cache">Creating a cache</a>
+  <li><a href="#open-a-cache" id="toc-open-a-cache" class="nav-link" data-scroll-target="#open-a-cache">Open a cache</a>
   <ul class="collapse">
-  <li><a href="#clean-shutdown-with-context-managers" id="toc-clean-shutdown-with-context-managers" class="nav-link" data-scroll-target="#clean-shutdown-with-context-managers">Clean shutdown with context managers</a></li>
+  <li><a href="#close-it-or-use-with" id="toc-close-it-or-use-with" class="nav-link" data-scroll-target="#close-it-or-use-with">Close it, or use <code>with</code></a></li>
   </ul></li>
-  <li><a href="#basic-operations" id="toc-basic-operations" class="nav-link" data-scroll-target="#basic-operations">Basic operations</a>
+  <li><a href="#store-and-read-values" id="toc-store-and-read-values" class="nav-link" data-scroll-target="#store-and-read-values">Store and read values</a>
   <ul class="collapse">
-  <li><a href="#storing-values" id="toc-storing-values" class="nav-link" data-scroll-target="#storing-values">Storing values</a></li>
-  <li><a href="#conditional-add" id="toc-conditional-add" class="nav-link" data-scroll-target="#conditional-add">Conditional add</a></li>
-  <li><a href="#retrieving-values" id="toc-retrieving-values" class="nav-link" data-scroll-target="#retrieving-values">Retrieving values</a></li>
-  <li><a href="#removing-values" id="toc-removing-values" class="nav-link" data-scroll-target="#removing-values">Removing values</a></li>
-  </ul></li>
   <li><a href="#dictionary-syntax" id="toc-dictionary-syntax" class="nav-link" data-scroll-target="#dictionary-syntax">Dictionary syntax</a></li>
-  <li><a href="#atomic-counters" id="toc-atomic-counters" class="nav-link" data-scroll-target="#atomic-counters">Atomic counters</a></li>
-  <li><a href="#iterating-and-scanning-keys" id="toc-iterating-and-scanning-keys" class="nav-link" data-scroll-target="#iterating-and-scanning-keys">Iterating and scanning keys</a></li>
-  <li><a href="#eviction-and-size-limits" id="toc-eviction-and-size-limits" class="nav-link" data-scroll-target="#eviction-and-size-limits">Eviction and size limits</a></li>
+  <li><a href="#remove-values" id="toc-remove-values" class="nav-link" data-scroll-target="#remove-values">Remove values</a></li>
+  </ul></li>
+  <li><a href="#atomic-operations-across-processes" id="toc-atomic-operations-across-processes" class="nav-link" data-scroll-target="#atomic-operations-across-processes">Atomic operations across processes</a></li>
+  <li><a href="#list-keys" id="toc-list-keys" class="nav-link" data-scroll-target="#list-keys">List keys</a></li>
+  <li><a href="#size-limits-and-eviction" id="toc-size-limits-and-eviction" class="nav-link" data-scroll-target="#size-limits-and-eviction">Size limits and eviction</a></li>
+  <li><a href="#timeouts" id="toc-timeouts" class="nav-link" data-scroll-target="#timeouts">Timeouts</a></li>
+  <li><a href="#shutting-down" id="toc-shutting-down" class="nav-link" data-scroll-target="#shutting-down">Shutting down</a></li>
+  <li><a href="#testing-code-that-uses-a-cache" id="toc-testing-code-that-uses-a-cache" class="nav-link" data-scroll-target="#testing-code-that-uses-a-cache">Testing code that uses a cache</a></li>
   </ul>
 </nav>
     </div>
@@ -323,139 +327,115 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>This guide walks through installing <strong>diskcache-oxide</strong>, creating a cache, storing and retrieving data, managing expiration and eviction, and cleaning up resources.</p>
+<p>A <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a restart. This page covers installing diskcache-oxide, the everyday operations, and how to shut down cleanly.</p>
 <section id="install" class="level1">
 <h1>Install</h1>
-<p>Install diskcache-oxide with <code>uv</code> or <code>pip</code>:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install diskcache-oxide</span></code></pre></div>
-<p>Requirements:</p>
+<p>diskcache-oxide isn’t on PyPI yet. Until the first release, build it from source, which needs a Rust toolchain:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install git+https://github.com/mikeckennedy/diskcache-oxide</span></code></pre></div>
 <ul>
-<li><strong>Python</strong>: CPython 3.14 or 3.15, including free-threaded builds (<code>3.14t</code>, <code>3.15t</code>).</li>
-<li><strong>Platforms</strong>: macOS (Apple Silicon and Intel) and Linux (x86_64 and aarch64). Windows support is planned.</li>
-<li><strong>Dependencies</strong>: None. The pre-compiled wheel includes the Rust core and the bundled SQLite library.</li>
+<li><strong>Python:</strong> CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).</li>
+<li><strong>Platforms:</strong> macOS and Linux. Windows support is planned.</li>
+<li><strong>Dependencies:</strong> none at runtime. SQLite is bundled and compiled in, so your system’s SQLite version doesn’t matter (<a href="../reference/sqlite_version.html#diskcache_oxide.sqlite_version" class="gdls-link gdls-code">diskcache_oxide.sqlite_version()</a> reports the one in use).</li>
 </ul>
 </section>
-<section id="creating-a-cache" class="level1">
-<h1>Creating a cache</h1>
-<p>The <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> class is the central interface. Pass a directory path where cache files and database records should be stored:</p>
+<section id="open-a-cache" class="level1">
+<h1>Open a cache</h1>
 <div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/tmp/my-app-cache'</span>)</span></code></pre></div>
-<p>If the directory does not exist, diskcache-oxide creates it (with <code>0700</code> permissions on Unix).</p>
-<section id="clean-shutdown-with-context-managers" class="level2">
-<h2 class="anchored" data-anchor-id="clean-shutdown-with-context-managers">Clean shutdown with context managers</h2>
-<p>Every <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> handle maintains a pooled set of SQLite connections. Use a context manager to automatically close connection handles when done, or call <code>cache.close()</code> explicitly:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> Cache(<span class="st">'/tmp/my-app-cache'</span>) <span class="im">as</span> cache:</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'key'</span>, <span class="st">'value'</span>)</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="co"># All connections are cleanly closed upon exiting the block</span></span></code></pre></div>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>)</span></code></pre></div>
+<p>The directory is required. If it doesn’t exist, diskcache-oxide creates it, readable and writable only by your user (<code>0700</code>), because anyone who can write to a cache directory can poison the cache.</p>
+<p>Every process that should share the cache opens the same path. Inside one process, opening the same directory twice gives two handles on one shared engine, with one connection pool between them.</p>
+<section id="close-it-or-use-with" class="level2">
+<h2 class="anchored" data-anchor-id="close-it-or-use-with">Close it, or use <code>with</code></h2>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> Cache(<span class="st">'/var/cache/my-app'</span>) <span class="im">as</span> cache:</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'greeting'</span>, <span class="st">'hello'</span>)</span></code></pre></div>
+<p><a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> returns the handle’s SQLite connections. Once the last handle on a directory in a process closes, nothing in that directory is held open, so it’s safe to move or delete.</p>
 </section>
 </section>
-<section id="basic-operations" class="level1">
-<h1>Basic operations</h1>
-<p><a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> implements both method-based and standard Python dictionary interfaces.</p>
-<section id="storing-values" class="level2">
-<h2 class="anchored" data-anchor-id="storing-values">Storing values</h2>
-<p>Use <code>cache.set(key, value, expire=None)</code>:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Store a string for 10 minutes (600 seconds)</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'session:123'</span>, <span class="st">'active'</span>, expire<span class="op">=</span><span class="fl">600.0</span>)</span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Store complex structured data (encoded with msgpack by default)</span></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'user:42'</span>, {</span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">'name'</span>: <span class="st">'Bob'</span>,</span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">'roles'</span>: {<span class="st">'admin'</span>, <span class="st">'editor'</span>},  <span class="co"># Sets and tuples are preserved!</span></span>
-<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">'metadata'</span>: {<span class="st">'login_count'</span>: <span class="dv">12</span>}</span>
-<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div>
-<p>Keys must be <code>str</code>. Values can be strings, bytes, numbers, booleans, dicts, lists, tuples, sets, or datetimes.</p>
-</section>
-<section id="conditional-add" class="level2">
-<h2 class="anchored" data-anchor-id="conditional-add">Conditional add</h2>
-<p>To store a value only if the key does not already exist (or has expired), use <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a>:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>created <span class="op">=</span> cache.add(<span class="st">'lock:job-1'</span>, <span class="st">'locked'</span>, expire<span class="op">=</span><span class="dv">30</span>)</span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> created:</span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="st">"Acquired lock!"</span>)</span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="cf">else</span>:</span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="st">"Lock already held by another worker"</span>)</span></code></pre></div>
-</section>
-<section id="retrieving-values" class="level2">
-<h2 class="anchored" data-anchor-id="retrieving-values">Retrieving values</h2>
-<p>Use <code>cache.get(key, default=None)</code>:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>user <span class="op">=</span> cache.get(<span class="st">'user:42'</span>)</span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> user <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(user[<span class="st">'name'</span>])</span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Providing a custom default</span></span>
-<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>missing <span class="op">=</span> cache.get(<span class="st">'nonexistent'</span>, default<span class="op">=</span><span class="st">'fallback'</span>)</span>
-<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> missing <span class="op">==</span> <span class="st">'fallback'</span></span></code></pre></div>
-<p>To also retrieve the expiration timestamp, pass <code>expire_time=True</code>:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>val, exp <span class="op">=</span> cache.get(<span class="st">'session:123'</span>, expire_time<span class="op">=</span><span class="va">True</span>)</span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"Value: </span><span class="sc">{</span>val<span class="sc">}</span><span class="ss">, Expires at: </span><span class="sc">{</span>exp<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div>
-</section>
-<section id="removing-values" class="level2">
-<h2 class="anchored" data-anchor-id="removing-values">Removing values</h2>
+<section id="store-and-read-values" class="level1">
+<h1>Store and read values</h1>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'user:42'</span>, {<span class="st">'name'</span>: <span class="st">'Sam'</span>, <span class="st">'roles'</span>: {<span class="st">'admin'</span>, <span class="st">'editor'</span>}}, expire<span class="op">=</span><span class="dv">600</span>)</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>user <span class="op">=</span> cache.get(<span class="st">'user:42'</span>)                 <span class="co"># the dict, with roles still a set</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>missing <span class="op">=</span> cache.get(<span class="st">'user:99'</span>, default<span class="op">=</span>{})  <span class="co"># {}</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>value, expires_at <span class="op">=</span> cache.get(<span class="st">'user:42'</span>, expire_time<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
 <ul>
-<li><code>cache.delete(key)</code>: Deletes the key. Returns <code>True</code> if the key was deleted, <code>False</code> if it was not present.</li>
-<li><code>cache.pop(key, default=None)</code>: Removes the key and returns its value, or returns <code>default</code>.</li>
+<li>Keys are <code>str</code>. Other key types raise <code>TypeError</code> for now (they’re planned).</li>
+<li>Values can be <code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code>, and lists, tuples, dicts, sets and datetimes made of those. They come back as the types you stored. See <a href="../user-guide/serialization.html">Serialization</a>.</li>
+<li><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> is in seconds. Leave it out for an entry that never expires. <code>touch(key, expire=...)</code> changes the expiry of an existing entry.</li>
 </ul>
-<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>deleted <span class="op">=</span> cache.delete(<span class="st">'session:123'</span>)</span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> deleted <span class="kw">is</span> <span class="va">True</span></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>val <span class="op">=</span> cache.pop(<span class="st">'nonexistent'</span>, default<span class="op">=</span><span class="va">None</span>)</span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> val <span class="kw">is</span> <span class="va">None</span></span></code></pre></div>
+<section id="dictionary-syntax" class="level2">
+<h2 class="anchored" data-anchor-id="dictionary-syntax">Dictionary syntax</h2>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>cache[<span class="st">'alpha'</span>] <span class="op">=</span> <span class="dv">100</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> <span class="st">'alpha'</span> <span class="kw">in</span> cache</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> cache[<span class="st">'alpha'</span>] <span class="op">==</span> <span class="dv">100</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="kw">del</span> cache[<span class="st">'alpha'</span>]        <span class="co"># KeyError if it's missing, like a dict</span></span></code></pre></div>
+</section>
+<section id="remove-values" class="level2">
+<h2 class="anchored" data-anchor-id="remove-values">Remove values</h2>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>cache.delete(<span class="st">'user:42'</span>)             <span class="co"># True if it was there</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>value <span class="op">=</span> cache.pop(<span class="st">'session:7'</span>)      <span class="co"># the value, or the default if it was missing</span></span></code></pre></div>
 </section>
 </section>
-<section id="dictionary-syntax" class="level1">
-<h1>Dictionary syntax</h1>
-<p><a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> supports standard Python <code>Mapping</code> and <code>MutableMapping</code> item access:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> Cache(<span class="st">'/tmp/my-app-cache'</span>) <span class="im">as</span> cache:</span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    cache[<span class="st">'alpha'</span>] <span class="op">=</span> <span class="dv">100</span></span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">assert</span> <span class="st">'alpha'</span> <span class="kw">in</span> cache</span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">assert</span> cache[<span class="st">'alpha'</span>] <span class="op">==</span> <span class="dv">100</span></span>
-<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">del</span> cache[<span class="st">'alpha'</span>]</span>
-<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">assert</span> <span class="st">'alpha'</span> <span class="kw">not</span> <span class="kw">in</span> cache</span></code></pre></div>
-<blockquote class="blockquote">
-<p>[!NOTE] Like a standard Python dictionary, accessing a missing key with <code>cache['missing']</code> or deleting a missing key with <code>del cache['missing']</code> raises a standard <code>KeyError</code>.</p>
-</blockquote>
+<section id="atomic-operations-across-processes" class="level1">
+<h1>Atomic operations across processes</h1>
+<p>These are what make a shared cache useful for coordination, not only for caching. Each one is a single SQLite transaction, so it’s atomic across every thread and process using the directory.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Store only if the key is absent (or expired). Exactly one caller wins.</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> cache.add(<span class="st">'job:refresh-feeds'</span>, os.getpid(), expire<span class="op">=</span><span class="dv">3600</span>):</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    refresh_feeds()</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Counters. incr() keeps the entry's existing expiry.</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>cache.incr(<span class="st">'page_views'</span>)          <span class="co"># 1</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>cache.incr(<span class="st">'page_views'</span>, <span class="dv">5</span>)       <span class="co"># 6</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>cache.decr(<span class="st">'page_views'</span>, <span class="dv">2</span>)       <span class="co"># 4</span></span></code></pre></div>
+<p><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> on a missing key starts from <code>default</code> (0). Pass <code>default=None</code> to get a <code>KeyError</code> instead. A key holding a non-number raises <code>TypeError</code>.</p>
 </section>
-<section id="atomic-counters" class="level1">
-<h1>Atomic counters</h1>
-<p><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> and <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr()</a> adjust integer or float counters atomically in SQLite without requiring separate transaction locks:</p>
-<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> Cache(<span class="st">'/tmp/my-app-cache'</span>) <span class="im">as</span> cache:</span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Increments key by delta (default 1), starting from default (default 0)</span></span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    count <span class="op">=</span> cache.incr(<span class="st">'page_views'</span>)      <span class="co"># returns 1</span></span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>    count <span class="op">=</span> cache.incr(<span class="st">'page_views'</span>, <span class="dv">5</span>)   <span class="co"># returns 6</span></span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    count <span class="op">=</span> cache.decr(<span class="st">'page_views'</span>, <span class="dv">2</span>)   <span class="co"># returns 4</span></span></code></pre></div>
-<p>If the key exists but holds a non-numeric value, <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> raises <code>TypeError</code>.</p>
+<section id="list-keys" class="level1">
+<h1>List keys</h1>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> key <span class="kw">in</span> cache.iterkeys(prefix<span class="op">=</span><span class="st">'user:'</span>):</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(key)</span></code></pre></div>
+<p><a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> yields keys in sorted order (<code>reverse=True</code> for descending), and with <code>prefix=</code> it’s an indexed range scan: 400,000 keys scan in about 10 ms, against about 25 seconds for diskcache. Iterating the cache itself (<code>for key in cache</code>) yields keys in insertion order.</p>
 </section>
-<section id="iterating-and-scanning-keys" class="level1">
-<h1>Iterating and scanning keys</h1>
-<p><a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> supports fast key listing and prefix-based scanning via <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>:</p>
-<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> Cache(<span class="st">'/tmp/my-app-cache'</span>) <span class="im">as</span> cache:</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'user:1'</span>, <span class="st">'Alice'</span>)</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'user:2'</span>, <span class="st">'Bob'</span>)</span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'post:1'</span>, <span class="st">'Hello'</span>)</span>
-<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Iterate over all keys matching a prefix</span></span>
-<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>    user_keys <span class="op">=</span> <span class="bu">list</span>(cache.iterkeys(prefix<span class="op">=</span><span class="st">'user:'</span>))</span>
-<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(user_keys)  <span class="co"># ['user:1', 'user:2']</span></span></code></pre></div>
-<p>The prefix scan is evaluated directly in SQLite using indexed range queries, avoiding full table scans.</p>
-</section>
-<section id="eviction-and-size-limits" class="level1">
-<h1>Eviction and size limits</h1>
-<p>A cache can be configured with disk limits:</p>
-<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(</span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">'/tmp/bounded-cache'</span>,</span>
-<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>    size_limit<span class="op">=</span><span class="dv">100</span> <span class="op">*</span> <span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>,  <span class="co"># 100 MiB (default: 1 GiB)</span></span>
-<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>    cull_limit<span class="op">=</span><span class="dv">20</span>,                 <span class="co"># Evict up to 20 items when limit is exceeded</span></span>
-<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<section id="size-limits-and-eviction" class="level1">
+<h1>Size limits and eviction</h1>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">'/var/cache/my-app'</span>,</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    size_limit<span class="op">=</span><span class="dv">500</span> <span class="op">*</span> <span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>,   <span class="co"># 500 MiB (default 1 GiB, minimum 1 MiB)</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    cull_limit<span class="op">=</span><span class="dv">10</span>,                  <span class="co"># entries evicted per set() when over the limit (default 10)</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<p>When the cache’s on-disk volume goes over <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, each <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> evicts up to <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> of the least recently stored entries. <code>cache.volume()</code> reports the current size in bytes.</p>
+<p>Maintenance calls, all safe to run while other processes use the cache:</p>
 <ul>
-<li><strong><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a></strong>: Total disk volume in bytes (database + spill files). Minimum is 1 MiB (<code>MIN_SIZE_LIMIT = 1048576</code>).</li>
-<li><strong><a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a></strong>: Number of least-recently-stored items removed when disk volume exceeds <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>.</li>
-<li><strong><code>cache.volume()</code></strong>: Reports the total disk space in bytes consumed by the database and spilled value files.</li>
-<li><strong><code>cache.cull()</code></strong>: Manually triggers eviction of up to <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> entries if the cache is over <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>.</li>
-<li><strong><code>cache.expire()</code></strong>: Sweeps and deletes all expired entries from disk.</li>
-<li><strong><code>cache.clear()</code></strong>: Deletes all entries that were present when the call began.</li>
+<li><code>cache.expire()</code> removes every expired entry and returns how many.</li>
+<li><code>cache.clear()</code> removes every entry that existed when it started, and keeps anything written while it runs.</li>
+<li><code>cache.cull()</code> evicts down to the size limit.</li>
 </ul>
+</section>
+<section id="timeouts" class="level1">
+<h1>Timeouts</h1>
+<p>When another process holds SQLite’s write lock, a write waits for it, up to the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> (60 seconds by default), then raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">diskcache_oxide.Timeout</a>, a subclass of the built-in <code>TimeoutError</code>:</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, Timeout</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span>:</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'key'</span>, <span class="st">'value'</span>)</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="cf">except</span> Timeout:</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>    ...  <span class="co"># the cache was too busy; carry on without it</span></span></code></pre></div>
+</section>
+<section id="shutting-down" class="level1">
+<h1>Shutting down</h1>
+<p>Call <code>cache.checkpoint()</code> at shutdown if you can. It isn’t required. With readers in other processes, a burst of writes (a big fill, or a <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>) can leave SQLite’s write-ahead log much larger than the database, and SQLite only shrinks it when it gets a moment with no readers. <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> makes that moment: it waits briefly for in-flight reads, copies the log into the database, and truncates it. It returns <code>False</code> instead of raising if other processes keep it busy.</p>
+<p><a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> does the same by default, but only when the log is large, and it waits at most a second, so closing stays cheap. <a href="../user-guide/storage-and-wal.html">Storage and WAL</a> has the details.</p>
+</section>
+<section id="testing-code-that-uses-a-cache" class="level1">
+<h1>Testing code that uses a cache</h1>
+<p>Two tools help here:</p>
+<ul>
+<li><strong><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a></strong> is a cache that’s switched off: every write succeeds and every read misses. Swap it in for tests or local development without touching call sites. See <a href="../user-guide/null-cache.html">NullCache</a>.</li>
+<li><strong><code>clock=</code></strong> controls the cache’s clock. diskcache-oxide reads time natively in Rust, so patching <code>time.time</code> doesn’t affect it on its own. Pass <code>clock=lambda: time.time()</code> and the cache follows your patched clock:</li>
+</ul>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tmp_path, clock<span class="op">=</span><span class="kw">lambda</span>: time.time())</span></code></pre></div>
 
 
 </section>

@@ -8,7 +8,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 
-<title>Project status and roadmap – diskcache-oxide | diskcache-oxide</title>
+<title>Vision and roadmap – diskcache-oxide | diskcache-oxide</title>
 <style>
 /* Default styles provided by pandoc.
 ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
@@ -37,7 +37,8 @@ ul.task-list li input[type="checkbox"] {
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../user-guide/divergences.html" rel="prev">
+<link href="../user-guide/serialization.html" rel="next">
+<link href="../user-guide/switching-from-diskcache.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
@@ -87,16 +88,16 @@ ul.task-list li input[type="checkbox"] {
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="diskcache-oxide is an active, clean-room reimplementation of python-diskcache in Rust. It is currently approximately 60% complete.">
+  <meta name="description" content="A shared cache is one of the first pieces of infrastructure a Python web app grows into, and today the choice is awkward. An in-process dict is fast,...">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Project status and roadmap – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="diskcache-oxide is an active, clean-room reimplementation of python-diskcache in Rust. It is currently approximately 60% complete.">
+  <meta property="og:title" content="Vision and roadmap – diskcache-oxide | diskcache-oxide">
+  <meta property="og:description" content="A shared cache is one of the first pieces of infrastructure a Python web app grows into, and today the choice is awkward. An in-process dict is fast,...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Project status and roadmap – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="diskcache-oxide is an active, clean-room reimplementation of python-diskcache in Rust. It is currently approximately 60% complete.">
+  <meta name="twitter:title" content="Vision and roadmap – diskcache-oxide | diskcache-oxide">
+  <meta name="twitter:description" content="A shared cache is one of the first pieces of infrastructure a Python web app grows into, and today the choice is awkward. An in-process dict is fast,...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -126,6 +127,10 @@ ul.task-list li input[type="checkbox"] {
 <span class="menu-text">User Guide</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -147,7 +152,7 @@ ul.task-list li input[type="checkbox"] {
       <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
         <i class="bi bi-layout-text-sidebar-reverse"></i>
       </button>
-        <h1 class="quarto-secondary-nav-title no-breadcrumbs">Project status and roadmap</h1>
+        <h1 class="quarto-secondary-nav-title no-breadcrumbs">Vision and roadmap</h1>
         <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
         </a>
     </div>
@@ -177,6 +182,12 @@ ul.task-list li input[type="checkbox"] {
  <span class="menu-text">Switching from python-diskcache</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">Vision and roadmap</span></a>
+  </div>
+</li>
       </ul>
   </li>
         <li class="sidebar-item sidebar-item-section">
@@ -200,13 +211,13 @@ ul.task-list li input[type="checkbox"] {
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Concurrency and fork safety</span></a>
+ <span class="menu-text">Concurrency and forks</span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/storage-and-wal.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storage and WAL management</span></a>
+ <span class="menu-text">Storage and WAL</span></a>
   </div>
 </li>
       </ul>
@@ -229,12 +240,6 @@ ul.task-list li input[type="checkbox"] {
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
 </li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link active">
- <span class="menu-text">Project status and roadmap</span></a>
-  </div>
-</li>
       </ul>
   </li>
     </ul>
@@ -247,20 +252,20 @@ ul.task-list li input[type="checkbox"] {
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#what-is-complete-today-phase-0-phase-2" id="toc-what-is-complete-today-phase-0-phase-2" class="nav-link active" data-scroll-target="#what-is-complete-today-phase-0-phase-2">What is complete today (Phase 0 – Phase 2)</a></li>
-  <li><a href="#in-progress" id="toc-in-progress" class="nav-link" data-scroll-target="#in-progress">In progress</a>
+  <li><a href="#the-vision" id="toc-the-vision" class="nav-link active" data-scroll-target="#the-vision">The vision</a>
   <ul class="collapse">
-  <li><a href="#phase-2.5-concurrency-deep-review-and-soak-testing" id="toc-phase-2.5-concurrency-deep-review-and-soak-testing" class="nav-link" data-scroll-target="#phase-2.5-concurrency-deep-review-and-soak-testing">Phase 2.5: Concurrency deep review and soak testing</a></li>
-  <li><a href="#platform-expansion-windows-support" id="toc-platform-expansion-windows-support" class="nav-link" data-scroll-target="#platform-expansion-windows-support">Platform expansion: Windows support</a></li>
+  <li><a href="#stage-1-a-better-diskcache-now" id="toc-stage-1-a-better-diskcache-now" class="nav-link" data-scroll-target="#stage-1-a-better-diskcache-now">Stage 1: a better diskcache (now)</a></li>
+  <li><a href="#stage-2-the-complete-local-caching-toolkit" id="toc-stage-2-the-complete-local-caching-toolkit" class="nav-link" data-scroll-target="#stage-2-the-complete-local-caching-toolkit">Stage 2: the complete local caching toolkit</a></li>
+  <li><a href="#stage-3-a-cache-server" id="toc-stage-3-a-cache-server" class="nav-link" data-scroll-target="#stage-3-a-cache-server">Stage 3: a cache server</a></li>
   </ul></li>
-  <li><a href="#upcoming-roadmap" id="toc-upcoming-roadmap" class="nav-link" data-scroll-target="#upcoming-roadmap">Upcoming roadmap</a>
+  <li><a href="#where-things-stand" id="toc-where-things-stand" class="nav-link" data-scroll-target="#where-things-stand">Where things stand</a>
   <ul class="collapse">
-  <li><a href="#phase-3-production-adoption" id="toc-phase-3-production-adoption" class="nav-link" data-scroll-target="#phase-3-production-adoption">Phase 3: Production adoption</a></li>
-  <li><a href="#phase-4-free-threaded-optimization" id="toc-phase-4-free-threaded-optimization" class="nav-link" data-scroll-target="#phase-4-free-threaded-optimization">Phase 4: Free-threaded optimization</a></li>
-  <li><a href="#phase-5-asynccache" id="toc-phase-5-asynccache" class="nav-link" data-scroll-target="#phase-5-asynccache">Phase 5: <code>AsyncCache</code></a></li>
-  <li><a href="#phase-6-parity-features" id="toc-phase-6-parity-features" class="nav-link" data-scroll-target="#phase-6-parity-features">Phase 6: Parity features</a></li>
-  <li><a href="#phase-7-standalone-network-cache-server" id="toc-phase-7-standalone-network-cache-server" class="nav-link" data-scroll-target="#phase-7-standalone-network-cache-server">Phase 7: Standalone network cache server</a></li>
+  <li><a href="#done-the-core-cache" id="toc-done-the-core-cache" class="nav-link" data-scroll-target="#done-the-core-cache">Done: the core <code>Cache</code></a></li>
+  <li><a href="#now-concurrency-review-and-soak-phase-2.5" id="toc-now-concurrency-review-and-soak-phase-2.5" class="nav-link" data-scroll-target="#now-concurrency-review-and-soak-phase-2.5">Now: concurrency review and soak (Phase 2.5)</a></li>
+  <li><a href="#next" id="toc-next" class="nav-link" data-scroll-target="#next">Next</a></li>
   </ul></li>
+  <li><a href="#further-out" id="toc-further-out" class="nav-link" data-scroll-target="#further-out">Further out</a></li>
+  <li><a href="#non-goals" id="toc-non-goals" class="nav-link" data-scroll-target="#non-goals">Non-goals</a></li>
   </ul>
 </nav>
     </div>
@@ -269,7 +274,7 @@ ul.task-list li input[type="checkbox"] {
 
 <header id="title-block-header" class="quarto-title-block default">
 <div class="quarto-title">
-<h1 class="title d-none d-lg-block">Project status and roadmap</h1>
+<h1 class="title d-none d-lg-block">Vision and roadmap</h1>
 </div>
 
 
@@ -286,114 +291,141 @@ ul.task-list li input[type="checkbox"] {
 </header>
 
 
-<p>diskcache-oxide is an active, clean-room reimplementation of python-diskcache in Rust. It is currently approximately <strong>60% complete</strong>.</p>
-<p>This page outlines what is fully implemented and tested today, and what features are scheduled for future phases.</p>
-<section id="what-is-complete-today-phase-0-phase-2" class="level1">
-<h1>What is complete today (Phase 0 – Phase 2)</h1>
-<p>The core foundation and the primary <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> interface are fully operational, tested against both diskcache 5.6.3 and the diskcache-community fork across multiple Python versions (3.14, 3.14t, 3.15, 3.15t):</p>
-<ul>
-<li><strong>Core <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> operations</strong>:
-<ul>
-<li><a href="../reference/NullCache.get.html#diskcache_oxide.NullCache.get" class="gdls-link gdls-code">get()</a>, <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>, <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a>, <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete()</a>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a>, <a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch()</a>.</li>
-<li>Atomic counters: <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a>, <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr()</a>.</li>
-<li>Fast prefix iteration: <code>iterkeys(prefix=...)</code>.</li>
-<li>Dictionary interface: <code>cache[k]</code>, <code>k in cache</code>, <code>del cache[k]</code>, <code>len(cache)</code>, <code>bool(cache)</code>.</li>
-<li>Resource cleanup: <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a>, context manager (<code>with Cache(...) as cache:</code>).</li>
-</ul></li>
-<li><strong>Storage and file spills</strong>:
-<ul>
-<li>Inline small values in SQLite; automatic file spilling for large values.</li>
-<li>Atomic temporary file creation and rename.</li>
-<li>Race-condition safety: readers racing an overwrite always receive consistent old or new data.</li>
-</ul></li>
-<li><strong>Serialization &amp; Data Safety</strong>:
-<ul>
-<li><code>serializer="msgpack"</code> (default): ultra-fast binary format.</li>
-<li><code>serializer="json"</code>: standard JSON with float roundtrip.</li>
-<li>Type-tagging system: exact preservation of <code>tuple</code>, <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <code>datetime</code>, <code>NaN</code>/<code>inf</code>, nested <code>bytes</code>, and large ints.</li>
-<li>Safe by default: <code>pickle=False</code> default; <code>pickle=True</code> opt-in.</li>
-<li><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> safety check for non-pickle handles.</li>
-</ul></li>
-<li><strong>Process and thread concurrency</strong>:
-<ul>
-<li><code>#[pymodule(gil_used = false)]</code> for free-threaded Python 3.14t and 3.15t.</li>
-<li>Process-wide fork barrier via <code>os.register_at_fork</code>: safe for Gunicorn, Celery, and Uvicorn.</li>
-<li>Bounded connection pool (<code>max_connections</code>, default 8).</li>
-</ul></li>
-<li><strong>Resource bounds</strong>:
-<ul>
-<li>Bounded SQLite page cache per connection (<code>sqlite_cache_size</code>).</li>
-<li>Active forced WAL checkpoints (<code>wal_size_limit</code>, default 64 MiB).</li>
-<li>Least-Recently-Stored (LRS) eviction with <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> and <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a>.</li>
-</ul></li>
-<li><strong><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> &amp; Typing</strong>:
-<ul>
-<li>Complete <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> implementation with instant-expiry semantics and <code>invalidate=</code> forwarding.</li>
-<li><a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> protocol for static type checkers.</li>
-<li>Shipped with <code>py.typed</code>.</li>
-</ul></li>
-</ul>
-<hr>
+<section id="the-vision" class="level1">
+<h1>The vision</h1>
+<p>A shared cache is one of the first pieces of infrastructure a Python web app grows into, and today the choice is awkward. An in-process dict is fast, but each worker has its own copy and it’s gone on restart. Redis is shared and durable, but it’s a separate server, a network hop on every read, and one more thing to run. <a href="https://github.com/grantjenks/python-diskcache">python-diskcache</a> showed there’s a lot of room between those two: a cache that is just a directory, shared by every thread and process on the machine, built on SQLite.</p>
+<p>diskcache-oxide is a bet that this middle option can be much bigger than it has been. With a Rust engine underneath, a directory-backed cache can be fast enough to call on the event loop, safe enough for pre-forking servers and free-threaded Python, and complete enough to cover the jobs people now reach for Redis to do: caching, counters, rate limits, locks, job claims and queues. And when one machine isn’t enough, the same engine can be served over the network.</p>
+<p>It’s being built in three stages.</p>
+<section id="stage-1-a-better-diskcache-now" class="level2">
+<h2 class="anchored" data-anchor-id="stage-1-a-better-diskcache-now">Stage 1: a better diskcache (now)</h2>
+<p>Keep diskcache’s API, fix what’s wrong underneath it, and make it fast. Behavior comes first: every phase keeps a conformance suite green against real diskcache 5.6.3 before chasing speed, and every deliberate difference is written down in <a href="../user-guide/divergences.html">Divergences</a>.</p>
 </section>
-<section id="in-progress" class="level1">
-<h1>In progress</h1>
-<section id="phase-2.5-concurrency-deep-review-and-soak-testing" class="level2">
-<h2 class="anchored" data-anchor-id="phase-2.5-concurrency-deep-review-and-soak-testing">Phase 2.5: Concurrency deep review and soak testing</h2>
-<ul>
-<li>Long-duration multi-hour soak tests (<code>soak/</code>) running multi-process writers, readers, and random SIGKILL crash recovery.</li>
-<li>Concurrency audit of SQLite WAL lock transitions and edge-case deadlocks.</li>
-<li>Proactive background sweeper thread: a lightweight Rust background thread per cache store to proactively purge expired entries and run periodic WAL checkpoints off the hot request path.</li>
-</ul>
+<section id="stage-2-the-complete-local-caching-toolkit" class="level2">
+<h2 class="anchored" data-anchor-id="stage-2-the-complete-local-caching-toolkit">Stage 2: the complete local caching toolkit</h2>
+<p>Everything diskcache offers that real apps use, plus the things a modern Python stack needs that it never had: an async API, sharding designed for many threads, and coordination recipes that are atomic across every process on the machine.</p>
 </section>
-<section id="platform-expansion-windows-support" class="level2">
-<h2 class="anchored" data-anchor-id="platform-expansion-windows-support">Platform expansion: Windows support</h2>
-<ul>
-<li>Porting the fork barrier and file inode metadata handling to Windows.</li>
-</ul>
-<hr>
+<section id="stage-3-a-cache-server" class="level2">
+<h2 class="anchored" data-anchor-id="stage-3-a-cache-server">Stage 3: a cache server</h2>
+<p>The same Rust core, served over HTTP to many clients: a Redis-style central cache with SQLite underneath, for when your app outgrows one machine. A server that is the only owner of its files can run SQLite in exclusive locking mode, which keeps the WAL index in heap memory instead of a shared file. Measured on the development machine:</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Storage mode</th>
+<th>Read</th>
+<th>Write</th>
+<th>Shared by several processes?</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>WAL (the library today)</td>
+<td>1.18 µs</td>
+<td>13.9 µs</td>
+<td>Yes</td>
+</tr>
+<tr class="even">
+<td>WAL with exclusive locking (the server)</td>
+<td>0.69 µs</td>
+<td>16.5 µs</td>
+<td>No, one owner</td>
+</tr>
+</tbody>
+</table>
 </section>
 </section>
-<section id="upcoming-roadmap" class="level1">
-<h1>Upcoming roadmap</h1>
-<section id="phase-3-production-adoption" class="level2">
-<h2 class="anchored" data-anchor-id="phase-3-production-adoption">Phase 3: Production adoption</h2>
+<section id="where-things-stand" class="level1">
+<h1>Where things stand</h1>
+<section id="done-the-core-cache" class="level2">
+<h2 class="anchored" data-anchor-id="done-the-core-cache">Done: the core <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></h2>
 <ul>
-<li>Initial deployment and validation across high-traffic production web applications at Talk Python.</li>
-<li>Real-world validation of WAL bounds, latency, and cache hit rates under live web traffic.</li>
+<li><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>, <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a>, <a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a>, <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>, <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr</a>, with expiry.</li>
+<li>The dictionary interface: <code>cache[k]</code>, <code>k in cache</code>, <code>del cache[k]</code>, <code>len(cache)</code>, iteration.</li>
+<li>Indexed prefix scans: <code>iterkeys(prefix=..., reverse=...)</code>.</li>
+<li>Maintenance: <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>, <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a>, <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a>, and <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> for the write-ahead log.</li>
+<li>Least-recently-stored eviction with <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> and <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a>.</li>
+<li>Large values spilled to files, with readers that never see a spurious miss during an overwrite.</li>
+<li>msgpack (default) and JSON serializers with exact type tags; pickle only when you opt in.</li>
+<li>Thread-, process- and fork-safe, on GIL and free-threaded builds of 3.14 and 3.15.</li>
+<li>Bounded connections, memory and WAL size.</li>
+<li><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, the <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> protocol, <code>py.typed</code>.</li>
 </ul>
 </section>
-<section id="phase-4-free-threaded-optimization" class="level2">
-<h2 class="anchored" data-anchor-id="phase-4-free-threaded-optimization">Phase 4: Free-threaded optimization</h2>
+<section id="now-concurrency-review-and-soak-phase-2.5" class="level2">
+<h2 class="anchored" data-anchor-id="now-concurrency-review-and-soak-phase-2.5">Now: concurrency review and soak (Phase 2.5)</h2>
+<p>The concurrency core is where serious bugs hide, so it gets its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> under load, checking for corruption, lost writes, leaks and latency drift. The soak has already paid for itself: it found the unbounded WAL growth that <code>wal_size_limit</code> and <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> now fix.</p>
+</section>
+<section id="next" class="level2">
+<h2 class="anchored" data-anchor-id="next">Next</h2>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Phase</th>
+<th>What it delivers</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>3. Production</strong></td>
+<td>diskcache-oxide replaces diskcache at <a href="https://talkpython.fm">Talk Python</a>, with production latency watched against the old numbers. First release to PyPI after that.</td>
+</tr>
+<tr class="even">
+<td><strong>4. Free-threaded performance</strong></td>
+<td>Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that’s the first target.</td>
+</tr>
+<tr class="odd">
+<td><strong>5. <code>AsyncCache</code></strong></td>
+<td>An async API for asyncio frameworks that can’t slow down the sync one.</td>
+</tr>
+<tr class="even">
+<td><strong>6a. Cache options</strong></td>
+<td>More eviction policies (LRU, LFU, none), tags and <code>evict(tag)</code>, statistics, <code>memoize</code>, <code>peek</code>/<code>pull</code>/<code>push</code>, <code>check()</code>, <code>retry=</code>, and non-<code>str</code> keys.</td>
+</tr>
+<tr class="odd">
+<td><strong>6b. <code>transact()</code></strong></td>
+<td>Multi-operation transactions.</td>
+</tr>
+<tr class="even">
+<td><strong>6c. <code>FanoutCache</code></strong></td>
+<td>Sharding across several databases, so writers stop queueing on one write lock. A strong candidate for the recommended default in threaded apps.</td>
+</tr>
+<tr class="odd">
+<td><strong>6d. <code>Deque</code> and <code>Index</code></strong></td>
+<td>diskcache’s persistent collections.</td>
+</tr>
+<tr class="even">
+<td><strong>6e. Recipes</strong></td>
+<td><code>Lock</code>, <code>RLock</code>, <code>BoundedSemaphore</code>, <code>throttle</code>, <code>barrier</code>, and stampede-proof <code>memoize</code>.</td>
+</tr>
+<tr class="odd">
+<td><strong>7. Network server</strong></td>
+<td>Stage 3, above.</td>
+</tr>
+<tr class="even">
+<td><strong>Windows</strong></td>
+<td>Supported as a development platform once macOS and Linux are solid.</td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="further-out" class="level1">
+<h1>Further out</h1>
+<p>Ideas being considered, not yet committed to:</p>
 <ul>
-<li>Deep profiling on multi-core workloads with CPython 3.14t / 3.15t.</li>
-<li>Evaluating zero-GIL lockless read paths and memory cache optimization.</li>
+<li><strong>Expiry that’s exact everywhere.</strong> Lookups already treat an expired entry as gone at the moment it expires. The plan is to make <code>len()</code> and iteration do the same, and move the physical cleanup to a small background sweeper written in Rust, coordinated across processes so eight workers don’t all sweep at once.</li>
+<li><strong>Encryption at rest</strong>, if a real need appears: SQLCipher for the database, authenticated encryption for spill files.</li>
 </ul>
 </section>
-<section id="phase-5-asynccache" class="level2">
-<h2 class="anchored" data-anchor-id="phase-5-asynccache">Phase 5: <code>AsyncCache</code></h2>
+<section id="non-goals" class="level1">
+<h1>Non-goals</h1>
 <ul>
-<li>Native async interface (<code>AsyncCache</code>) designed for asynchronous web frameworks: FastAPI, Starlette, Litestar, Quart, and Sanic.</li>
-<li>Non-blocking disk I/O offloaded to background thread pools without slowing down the synchronous path.</li>
-</ul>
-</section>
-<section id="phase-6-parity-features" class="level2">
-<h2 class="anchored" data-anchor-id="phase-6-parity-features">Phase 6: Parity features</h2>
-<ul>
-<li><strong>Phase 6a: <code>FanoutCache</code> &amp; Structured Keys</strong>: Sharding across multiple SQLite databases for extreme write concurrency, plus arbitrary key types beyond <code>str</code>.</li>
-<li><strong>Phase 6b: Tags</strong>: Tagging cached entries and invalidating groups of keys by tag (<code>cache.evict(tag=...)</code>).</li>
-<li><strong>Phase 6c: Data structures</strong>: <code>Deque</code> and <code>Index</code> disk-backed collections.</li>
-<li><strong>Phase 6d: Recipes</strong>: <code>@cache.memoize()</code> function decorators, rate limiters, distributed locks.</li>
-<li><strong><code>transact()</code></strong>: Full multi-statement write transactions.</li>
-</ul>
-</section>
-<section id="phase-7-standalone-network-cache-server" class="level2">
-<h2 class="anchored" data-anchor-id="phase-7-standalone-network-cache-server">Phase 7: Standalone network cache server</h2>
-<ul>
-<li>A high-performance, standalone network cache server powered by diskcache-oxide’s Rust core, providing a disk-backed alternative to Redis with minimal operational overhead.</li>
+<li>Reading existing diskcache directories. diskcache-oxide uses its own on-disk format, so caches start cold when you switch.</li>
+<li>A module named <code>diskcache</code> (it would collide with the real package).</li>
+<li><code>DjangoCache</code>.</li>
+<li>Python older than 3.14.</li>
 </ul>
 
 
-</section>
 </section>
 
 </main> <!-- /main -->
@@ -737,11 +769,14 @@ ul.task-list li input[type="checkbox"] {
   </script>
 <nav class="page-navigation">
   <div class="nav-page nav-page-previous">
-      <a href="../user-guide/divergences.html" class="pagination-link" aria-label="Divergences from python-diskcache">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Divergences from python-diskcache</span>
+      <a href="../user-guide/switching-from-diskcache.html" class="pagination-link" aria-label="Switching from python-diskcache">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Switching from python-diskcache</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">
+      <a href="../user-guide/serialization.html" class="pagination-link" aria-label="Serialization">
+        <span class="nav-page-text">Serialization</span> <i class="bi bi-arrow-right-short"></i>
+      </a>
   </div>
 </nav>
 </div> <!-- /content -->

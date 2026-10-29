@@ -17,47 +17,102 @@ class CacheLike(Protocol):
     """
 
     @property
-    def directory(self) -> str | None: ...
+    def directory(self) -> str | None:
+        """The cache directory (None for a `NullCache` created without one)."""
+
     @property
-    def timeout(self) -> float: ...
+    def timeout(self) -> float:
+        """Seconds a write waits for another process's lock before raising `Timeout`."""
+
     @property
-    def size_limit(self) -> int: ...
+    def size_limit(self) -> int:
+        """The disk budget in bytes."""
+
     @property
-    def cull_limit(self) -> int: ...
+    def cull_limit(self) -> int:
+        """The most entries one `set()` evicts when over `size_limit`."""
+
     @property
-    def enabled(self) -> bool: ...
+    def enabled(self) -> bool:
+        """True if caching is on (`Cache`), False if it's off (`NullCache`)."""
 
     @overload
     def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any: ...
     @overload
     def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def get(self, key: str, default: Any = None, *, expire_time: bool = False) -> Any: ...
-    def set(self, key: str, value: Any, expire: float | None = None) -> bool: ...
-    def add(self, key: str, value: Any, expire: float | None = None) -> bool: ...
-    def delete(self, key: str) -> bool: ...
-    def pop(self, key: str, default: Any = None) -> Any: ...
-    def touch(self, key: str, expire: float | None = None) -> bool: ...
-    def incr(self, key: str, delta: int | float = 1, default: int | float | None = 0) -> int | float: ...
-    def decr(self, key: str, delta: int | float = 1, default: int | float | None = 0) -> int | float: ...
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]: ...
-    def expire(self) -> int: ...
-    def clear(self) -> int: ...
-    def cull(self) -> int: ...
-    def volume(self) -> int: ...
-    def checkpoint(self, timeout: float | None = None) -> bool: ...
-    def close(self, *, checkpoint: bool = True) -> None: ...
+    def get(self, key: str, default: Any = None, *, expire_time: bool = False) -> Any:
+        """Return the value for `key`, or `default` if it's missing or expired."""
 
-    def __getitem__(self, key: str) -> Any: ...
-    def __setitem__(self, key: str, value: Any) -> None: ...
-    def __delitem__(self, key: str) -> None: ...
-    def __contains__(self, key: object) -> bool: ...
-    def __len__(self) -> int: ...
-    def __bool__(self) -> bool: ...
-    def __iter__(self) -> Iterator[str]: ...
-    def __enter__(self) -> Self: ...
+    def set(self, key: str, value: Any, expire: float | None = None) -> bool:
+        """Store `value` under `key`, with an optional expiry in seconds."""
+
+    def add(self, key: str, value: Any, expire: float | None = None) -> bool:
+        """Store `value` only if `key` is missing or expired. True if it was stored."""
+
+    def delete(self, key: str) -> bool:
+        """Remove `key`. True if a live entry was removed."""
+
+    def pop(self, key: str, default: Any = None) -> Any:
+        """Remove `key` and return its value, or `default`."""
+
+    def touch(self, key: str, expire: float | None = None) -> bool:
+        """Change an existing entry's expiry. True if the entry existed."""
+
+    def incr(self, key: str, delta: int | float = 1, default: int | float | None = 0) -> int | float:
+        """Add `delta` to the number under `key`, atomically, and return the result."""
+
+    def decr(self, key: str, delta: int | float = 1, default: int | float | None = 0) -> int | float:
+        """Subtract `delta` from the number under `key`, atomically, and return the result."""
+
+    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+        """Iterate over keys in sorted order, optionally only those starting with `prefix`."""
+
+    def expire(self) -> int:
+        """Remove every expired entry. Returns how many were removed."""
+
+    def clear(self) -> int:
+        """Remove every entry that existed when the call started. Returns how many."""
+
+    def cull(self) -> int:
+        """Remove expired entries, then evict until under `size_limit`. Returns how many."""
+
+    def volume(self) -> int:
+        """The size on disk in bytes."""
+
+    def checkpoint(self, timeout: float | None = None) -> bool:
+        """Empty the write-ahead log. True if it was reset, False if other processes kept it busy."""
+
+    def close(self, *, checkpoint: bool = True) -> None:
+        """Close this handle and return its connections."""
+
+    def __getitem__(self, key: str) -> Any:
+        """`cache[key]`: the value, or `KeyError` if it's missing or expired."""
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """`cache[key] = value`: store a value that never expires."""
+
+    def __delitem__(self, key: str) -> None:
+        """`del cache[key]`: remove the entry, or raise `KeyError`."""
+
+    def __contains__(self, key: object) -> bool:
+        """`key in cache`: True if the key holds a live value."""
+
+    def __len__(self) -> int:
+        """The number of entries."""
+
+    def __bool__(self) -> bool:
+        """True if caching is on, so `if cache:` reads naturally."""
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over keys in insertion order."""
+
+    def __enter__(self) -> Self:
+        """Return the cache, for use in a `with` block."""
+
     def __exit__(
         self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None, /
-    ) -> None: ...
+    ) -> None:
+        """Close the cache."""
 
 
 # The constructor arguments both classes accept (NullCache accepts and ignores them).

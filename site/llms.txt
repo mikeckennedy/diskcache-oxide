@@ -1,6 +1,6 @@
 # diskcache_oxide
 
-> A clean-room Rust reimplementation of diskcache.
+> A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API.
 
 ## Docs
 
@@ -42,11 +42,12 @@
 - [Cache.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__iter__.html)
 - [Cache.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__enter__.html)
 - [Cache.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__exit__.html)
+- [Cache.get](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.get.html)
 
 #### NullCache
 > Switched-off cache behaving as if every entry expires instantly.
 
-- [NullCache](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.html): A switched-off cache. See the module docstring for the rule every method follows
+- [NullCache](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.html): A switched-off cache, so app code needs no `if cache is None` checks
 - [CacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.html): What application code can rely on from a `Cache` or a `NullCache`
 
 #### NullCache Methods
@@ -137,19 +138,28 @@
 
 - [Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html)
 - [Switching from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/switching-from-diskcache.html)
+- [Vision and roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html)
 
 #### Core Features
 
 - [Serialization](https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html)
 - [NullCache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html)
-- [Concurrency and fork safety](https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html)
-- [Storage and WAL management](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html)
+- [Concurrency and forks](https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html)
+- [Storage and WAL](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html)
 
 #### Background & Reference
 
 - [Performance](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html)
 - [Divergences from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)
-- [Project status and roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html)
+
+### Recipes
+
+- [Caching expensive calls](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-expensive-calls.html)
+- [Invalidating groups of keys](https://mkennedy.codes/docs/diskcache-oxide/recipes/invalidating-groups.html)
+- [Rate limiting](https://mkennedy.codes/docs/diskcache-oxide/recipes/rate-limiting.html)
+- [Running a job once across workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/run-once.html)
+- [Testing code that uses a cache](https://mkennedy.codes/docs/diskcache-oxide/recipes/testing.html)
+- [Sharing a cache across web workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/web-workers.html)
 
 ### Agent Skill and Full Context
 

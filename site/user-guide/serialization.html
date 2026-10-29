@@ -73,7 +73,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
 <link href="../user-guide/null-cache.html" rel="next">
-<link href="../user-guide/switching-from-diskcache.html" rel="prev">
+<link href="../user-guide/roadmap.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
@@ -123,16 +123,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="A core design priority in diskcache-oxide is data safety: storing and loading values must be fast, secure, and preserve exact Python types without...">
+  <meta name="description" content="What goes into the cache should come out as exactly what you put in, it should be fast to encode and decode, and reading the cache should never run...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Serialization – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A core design priority in diskcache-oxide is data safety: storing and loading values must be fast, secure, and preserve exact Python types without...">
+  <meta property="og:description" content="What goes into the cache should come out as exactly what you put in, it should be fast to encode and decode, and reading the cache should never run...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Serialization – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A core design priority in diskcache-oxide is data safety: storing and loading values must be fast, secure, and preserve exact Python types without...">
+  <meta name="twitter:description" content="What goes into the cache should come out as exactly what you put in, it should be fast to encode and decode, and reading the cache should never run...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -160,6 +160,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li class="nav-item">
     <a class="nav-link active" href="../user-guide/getting-started.html" aria-current="page"> 
 <span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
@@ -213,6 +217,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Switching from python-diskcache</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Vision and roadmap</span></a>
+  </div>
+</li>
       </ul>
   </li>
         <li class="sidebar-item sidebar-item-section">
@@ -236,13 +246,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Concurrency and fork safety</span></a>
+ <span class="menu-text">Concurrency and forks</span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/storage-and-wal.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storage and WAL management</span></a>
+ <span class="menu-text">Storage and WAL</span></a>
   </div>
 </li>
       </ul>
@@ -265,12 +275,6 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
 </li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Project status and roadmap</span></a>
-  </div>
-</li>
       </ul>
   </li>
     </ul>
@@ -283,21 +287,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#serializer-choices" id="toc-serializer-choices" class="nav-link active" data-scroll-target="#serializer-choices">Serializer choices</a>
-  <ul class="collapse">
-  <li><a href="#msgpack-default" id="toc-msgpack-default" class="nav-link" data-scroll-target="#msgpack-default">msgpack (Default)</a></li>
-  <li><a href="#json" id="toc-json" class="nav-link" data-scroll-target="#json">json</a></li>
-  </ul></li>
-  <li><a href="#exact-type-preservation" id="toc-exact-type-preservation" class="nav-link" data-scroll-target="#exact-type-preservation">Exact type preservation</a>
-  <ul class="collapse">
-  <li><a href="#preserved-types" id="toc-preserved-types" class="nav-link" data-scroll-target="#preserved-types">Preserved types</a></li>
-  <li><a href="#tag-escaping" id="toc-tag-escaping" class="nav-link" data-scroll-target="#tag-escaping">Tag escaping</a></li>
-  </ul></li>
-  <li><a href="#why-pickle-is-disabled-by-default" id="toc-why-pickle-is-disabled-by-default" class="nav-link" data-scroll-target="#why-pickle-is-disabled-by-default">Why pickle is disabled by default</a>
-  <ul class="collapse">
+  <li><a href="#two-formats" id="toc-two-formats" class="nav-link active" data-scroll-target="#two-formats">Two formats</a></li>
+  <li><a href="#exact-types" id="toc-exact-types" class="nav-link" data-scroll-target="#exact-types">Exact types</a></li>
+  <li><a href="#what-isnt-stored" id="toc-what-isnt-stored" class="nav-link" data-scroll-target="#what-isnt-stored">What isn’t stored</a></li>
+  <li><a href="#why-pickle-is-off-by-default" id="toc-why-pickle-is-off-by-default" class="nav-link" data-scroll-target="#why-pickle-is-off-by-default">Why pickle is off by default</a></li>
   <li><a href="#opting-in-to-pickle" id="toc-opting-in-to-pickle" class="nav-link" data-scroll-target="#opting-in-to-pickle">Opting in to pickle</a></li>
-  <li><a href="#safe-reading-and-unsafevalueerror" id="toc-safe-reading-and-unsafevalueerror" class="nav-link" data-scroll-target="#safe-reading-and-unsafevalueerror">Safe reading and <code>UnsafeValueError</code></a></li>
-  </ul></li>
+  <li><a href="#reading-safely-unsafevalueerror" id="toc-reading-safely-unsafevalueerror" class="nav-link" data-scroll-target="#reading-safely-unsafevalueerror">Reading safely: <code>UnsafeValueError</code></a></li>
   </ul>
 </nav>
     </div>
@@ -323,141 +318,102 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>A core design priority in diskcache-oxide is <strong>data safety</strong>: storing and loading values must be fast, secure, and preserve exact Python types without silent coercion or arbitrary code execution.</p>
-<section id="serializer-choices" class="level1">
-<h1>Serializer choices</h1>
-<p>diskcache-oxide supports two structured serializers, selectable via the <code>serializer=</code> argument when initializing <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Default: msgpack (ultra-fast, compact binary)</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/tmp/app-cache'</span>, serializer<span class="op">=</span><span class="st">'msgpack'</span>)</span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Alternative: JSON (human-readable in SQLite)</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>json_cache <span class="op">=</span> Cache(<span class="st">'/tmp/json-cache'</span>, serializer<span class="op">=</span><span class="st">'json'</span>)</span></code></pre></div>
-<p>Both serializers use a per-row <code>mode</code> column in SQLite. If a cache’s configuration is changed from <code>json</code> to <code>msgpack</code> (or vice versa), existing rows remain readable because each row stores its own serialization mode.</p>
-<section id="msgpack-default" class="level2">
-<h2 class="anchored" data-anchor-id="msgpack-default">msgpack (Default)</h2>
-<p><code>msgpack</code> is the recommended format for production:</p>
+<p>What goes into the cache should come out as exactly what you put in, it should be fast to encode and decode, and reading the cache should never run code someone else left there. diskcache’s default, pickle, gets the first two and fails the third. diskcache-oxide gets all three, and pickle becomes something you opt into.</p>
+<section id="two-formats" class="level1">
+<h1>Two formats</h1>
+<p>Each cache picks a structured format with <code>serializer=</code>:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>)                       <span class="co"># msgpack, the default</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>readable <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-json'</span>, serializer<span class="op">=</span><span class="st">'json'</span>)</span></code></pre></div>
 <ul>
-<li><strong>Performance</strong>: Up to 25x faster than tagged JSON on large payloads (e.g.&nbsp;450 KB HTML pages).</li>
-<li><strong>Compactness</strong>: Produces smaller payloads on disk than JSON.</li>
-<li><strong>Binary support</strong>: Natively embeds arbitrary nested <code>bytes</code> without Base64 overhead.</li>
-<li><strong>Timestamp extension</strong>: Stores <code>datetime</code> objects using msgpack’s native timestamp extension format.</li>
+<li><strong>msgpack</strong> (the default) is compact and fast. On a 450 KB page-cache entry it’s about 25× faster than tagged JSON, and it stores nested <code>bytes</code> without base64.</li>
+<li><strong>json</strong> is human-readable: open <code>diskcache-oxide.sqlite</code> in any SQLite browser and read your values. It uses <code>serde_json</code> with exact float round-tripping.</li>
 </ul>
+<p>Plain <code>str</code> and <code>bytes</code> values skip both and are stored raw. Every row records how it was encoded, so if you change a cache’s <code>serializer</code>, existing entries stay readable.</p>
 </section>
-<section id="json" class="level2">
-<h2 class="anchored" data-anchor-id="json">json</h2>
-<p>The <code>json</code> serializer uses <code>serde_json</code> in Rust with float roundtripping:</p>
-<ul>
-<li><strong>Human readable</strong>: You can open <code>diskcache-oxide.sqlite</code> in any SQLite browser or CLI and inspect stored values directly.</li>
-<li><strong>Interoperability</strong>: Standard JSON representation for basic types.</li>
-</ul>
-</section>
-</section>
-<section id="exact-type-preservation" class="level1">
-<h1>Exact type preservation</h1>
-<p>Standard JSON has significant type limitations:</p>
-<ul>
-<li>Tuples are converted to lists.</li>
-<li>Sets cannot be serialized.</li>
-<li>Datetimes must be converted to strings manually.</li>
-<li>Dict keys must be strings.</li>
-<li>Floats can lose precision (<code>NaN</code> and <code>Infinity</code> are not standard JSON).</li>
-<li>Integers wider than 53 or 64 bits overflow.</li>
-</ul>
-<p>diskcache-oxide includes a native type-tagging system in Rust that detects when a value contains types that JSON or msgpack cannot represent natively.</p>
-<section id="preserved-types" class="level2">
-<h2 class="anchored" data-anchor-id="preserved-types">Preserved types</h2>
-<p>The following types round-trip with exact fidelity:</p>
+<section id="exact-types" class="level1">
+<h1>Exact types</h1>
+<p>JSON turns tuples into lists and can’t store sets, datetimes, NaN, very large ints, or dicts with non-<code>str</code> keys. msgpack has some of the same gaps. The usual answer is to coerce quietly and let the bug show up later.</p>
+<p>diskcache-oxide’s encoder, written in Rust, notices anything its format would change and tags it instead, so it decodes back to the same type:</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
-<th>Python Type</th>
-<th>Behavior</th>
+<th>Python value</th>
+<th>Comes back as</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><code>str</code></td>
-<td>Stored raw without container overhead</td>
-</tr>
-<tr class="even">
-<td><code>bytes</code></td>
-<td>Stored raw as SQLite <code>BLOB</code> (or in a spill file if large)</td>
-</tr>
-<tr class="odd">
 <td><code>tuple</code></td>
-<td>Decoded back as an immutable <code>tuple</code> (not a <code>list</code>)</td>
+<td>a <code>tuple</code>, not a list</td>
 </tr>
 <tr class="even">
 <td><a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a></td>
-<td>Decoded back as a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a></td>
+<td>a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a></td>
 </tr>
 <tr class="odd">
 <td><code>datetime.datetime</code></td>
-<td>Decoded back as a <code>datetime.datetime</code> with exact timezone/microsecond precision</td>
+<td>a <code>datetime</code>, with its timezone and microseconds</td>
 </tr>
 <tr class="even">
-<td><code>int</code> (&gt; 64-bit)</td>
-<td>Preserves arbitrarily large integers without precision loss</td>
+<td><code>int</code> wider than 64 bits</td>
+<td>the same int</td>
 </tr>
 <tr class="odd">
-<td><code>float('nan')</code>, <code>inf</code></td>
-<td>Preserves <code>NaN</code>, <code>+Infinity</code>, and <code>-Infinity</code></td>
+<td><code>float('nan')</code>, <code>inf</code>, <code>-inf</code></td>
+<td>the same float</td>
+</tr>
+<tr class="even">
+<td><code>bytes</code> nested in a container</td>
+<td><code>bytes</code></td>
+</tr>
+<tr class="odd">
+<td><code>dict</code> with <code>int</code> (or other non-<code>str</code>) keys</td>
+<td>the same keys</td>
 </tr>
 </tbody>
 </table>
 <div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> datetime</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>data <span class="op">=</span> {</span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">'created'</span>: datetime.datetime.now(datetime.timezone.utc),</span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">'numbers'</span>: (<span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>),</span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">'unique_ids'</span>: {<span class="dv">101</span>, <span class="dv">102</span>, <span class="dv">103</span>},</span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">'big_num'</span>: <span class="dv">2</span><span class="op">**</span><span class="dv">128</span>,</span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>}</span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'record'</span>, data)</span>
-<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>retrieved <span class="op">=</span> cache.get(<span class="st">'record'</span>)</span>
-<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> <span class="bu">isinstance</span>(retrieved[<span class="st">'numbers'</span>], <span class="bu">tuple</span>)</span>
-<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> <span class="bu">isinstance</span>(retrieved[<span class="st">'unique_ids'</span>], <span class="bu">set</span>)</span>
-<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> <span class="bu">isinstance</span>(retrieved[<span class="st">'created'</span>], datetime.datetime)</span>
-<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> retrieved[<span class="st">'big_num'</span>] <span class="op">==</span> <span class="dv">2</span><span class="op">**</span><span class="dv">128</span></span></code></pre></div>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'record'</span>, {</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">'created'</span>: datetime.datetime.now(datetime.UTC),</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">'point'</span>: (<span class="fl">37.77</span>, <span class="op">-</span><span class="fl">122.42</span>),</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">'ids'</span>: {<span class="dv">101</span>, <span class="dv">102</span>},</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">'big'</span>: <span class="dv">2</span><span class="op">**</span><span class="dv">128</span>,</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">'by_id'</span>: {<span class="dv">1</span>: <span class="st">'one'</span>, <span class="dv">2</span>: <span class="st">'two'</span>},</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>})</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>record <span class="op">=</span> cache.get(<span class="st">'record'</span>)</span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> <span class="bu">isinstance</span>(record[<span class="st">'point'</span>], <span class="bu">tuple</span>)</span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> record[<span class="st">'by_id'</span>][<span class="dv">1</span>] <span class="op">==</span> <span class="st">'one'</span></span></code></pre></div>
+<p>User data can’t be mistaken for a tag: a dict that happens to look like one is escaped on the way in and decoded as an ordinary dict on the way out.</p>
 </section>
-<section id="tag-escaping" class="level2">
-<h2 class="anchored" data-anchor-id="tag-escaping">Tag escaping</h2>
-<p>To prevent malicious or accidental collision where user data contains keys matching internal type tags, diskcache-oxide escapes user dictionary keys that mirror internal tag markers. Your data cannot be mistaken for a type tag.</p>
+<section id="what-isnt-stored" class="level1">
+<h1>What isn’t stored</h1>
+<p>A value that neither format can represent exactly, such as an instance of your own class, raises <code>TypeError</code> at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'service'</span>, MyService())</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="co"># TypeError: values of type MyService can't be stored without pickle (only exact built-in types round-trip)</span></span></code></pre></div>
+<p>Only exact built-in types count. A subclass of <code>dict</code> or <code>str</code> isn’t stored as its base type, because it wouldn’t come back as the class you stored. Failing at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> time means you find out where the value was created, not three requests later when something reads it.</p>
 </section>
-</section>
-<section id="why-pickle-is-disabled-by-default" class="level1">
-<h1>Why pickle is disabled by default</h1>
-<p>python-diskcache defaults to <code>pickle</code> for everything. While convenient, pickling presents serious hazards:</p>
-<ol type="1">
-<li><strong>Remote Code Execution</strong>: Any process or user that can write to the cache directory can craft a malicious payload that executes arbitrary Python code when another process calls <code>cache.get()</code>.</li>
-<li><strong>Hidden Serialization of Non-Cacheable Objects</strong>: Pickling open sockets, database connections, or complex generators often silently succeeds or produces invalid objects when re-hydrated.</li>
-</ol>
-<p>In diskcache-oxide, <strong>pickle is off by default</strong>. Storing an unrepresentable type raises a <code>TypeError</code> at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> time:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> LocalService:</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> <span class="fu">__init__</span>(<span class="va">self</span>):</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>        <span class="va">self</span>.endpoint <span class="op">=</span> <span class="st">"internal"</span></span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Raises TypeError: cannot serialize object of type 'LocalService'</span></span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'service'</span>, LocalService())</span></code></pre></div>
-<section id="opting-in-to-pickle" class="level2">
-<h2 class="anchored" data-anchor-id="opting-in-to-pickle">Opting in to pickle</h2>
-<p>If you must cache arbitrary Python objects that cannot be represented in msgpack or JSON, pass <code>pickle=True</code>:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/tmp/pickle-cache'</span>, pickle<span class="op">=</span><span class="va">True</span>)</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'service'</span>, LocalService())  <span class="co"># Works</span></span></code></pre></div>
-</section>
-<section id="safe-reading-and-unsafevalueerror" class="level2">
-<h2 class="anchored" data-anchor-id="safe-reading-and-unsafevalueerror">Safe reading and <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a></h2>
-<p>If multiple processes or worker handles access the same cache directory, diskcache-oxide enforces read-side security:</p>
+<section id="why-pickle-is-off-by-default" class="level1">
+<h1>Why pickle is off by default</h1>
 <ul>
-<li>If a handle created with <code>pickle=False</code> encounters a row that was written by a <code>pickle=True</code> handle, it <strong>refuses to unpickle the data</strong>.</li>
-<li>Instead, it raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">diskcache_oxide.UnsafeValueError</a> (a subclass of <code>TypeError</code>).</li>
-<li>The row remains intact on disk so that legitimate <code>pickle=True</code> handles can still read it.</li>
+<li><strong>Unpickling runs code.</strong> Anyone who can write to the cache directory, including a compromised neighbor process or a shared volume, can make every reader run arbitrary Python.</li>
+<li><strong>Pickle hides mistakes.</strong> Database sessions, open files and other objects that were never meant to be cached get pickled without complaint and fail later in confusing ways.</li>
 </ul>
-
-
 </section>
+<section id="opting-in-to-pickle" class="level1">
+<h1>Opting in to pickle</h1>
+<p>When you really do need to cache arbitrary objects, turn pickle on for that cache. It’s used only for values the structured format can’t represent; everything else is still stored as msgpack or JSON.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>objects <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-objects'</span>, pickle<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>objects.<span class="bu">set</span>(<span class="st">'service'</span>, MyService())</span></code></pre></div>
+<p>A good habit is to give pickled values their own cache directory, and keep everything else in a cache without pickle.</p>
+</section>
+<section id="reading-safely-unsafevalueerror" class="level1">
+<h1>Reading safely: <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a></h1>
+<p>Several processes can open one directory with different settings. A handle opened without <code>pickle=True</code> never unpickles. If it reads a value that a <code>pickle=True</code> handle stored, it raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">diskcache_oxide.UnsafeValueError</a> (a <code>TypeError</code> subclass) and leaves the row in place, so the <code>pickle=True</code> handle can still read it.</p>
+<p>A value whose stored bytes can’t be decoded at all raises <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> (a <code>ValueError</code> subclass).</p>
+
+
 </section>
 
 </main> <!-- /main -->
@@ -801,8 +757,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   </script>
 <nav class="page-navigation">
   <div class="nav-page nav-page-previous">
-      <a href="../user-guide/switching-from-diskcache.html" class="pagination-link" aria-label="Switching from python-diskcache">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Switching from python-diskcache</span>
+      <a href="../user-guide/roadmap.html" class="pagination-link" aria-label="Vision and roadmap">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Vision and roadmap</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">

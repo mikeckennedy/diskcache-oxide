@@ -1,6 +1,9 @@
 ## CacheLike.get()
 
 
+Return the value for `key`, or `default` if it's missing or expired.
+
+
 Usage
 
 ``` python

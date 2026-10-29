@@ -1,14 +1,24 @@
 ## Cache.close()
 
 
-Close this handle. With [checkpoint](Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint), a WAL left larger than half of `wal_size_limit`
+Close this handle and return its connections.
 
 
 Usage
 
 ``` python
-Cache.close(checkpoint=True)
+Cache.close(
+    *,
+    checkpoint=True,
+)
 ```
 
 
-is checkpointed first, waiting at most 1 second; a small WAL costs nothing extra.
+When the last handle on a directory in the process closes, every connection to it closes, whichever threads used them. Using the cache again afterwards reopens it.
+
+
+## Parameters
+
+
+`checkpoint: bool = ``True`  
+If this is the process's last handle and the write-ahead log is over half of `wal_size_limit`, checkpoint it first, waiting at most 1 second. A small log costs nothing extra.

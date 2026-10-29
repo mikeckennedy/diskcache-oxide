@@ -1,0 +1,92 @@
+---
+title: "Running a job once across workers"
+description: "Use add() to make sure only one worker process runs a scheduled job."
+---
+
+A web app served by eight gunicorn workers often has eight copies of its scheduler too, and each one fires the hourly cleanup at the top of the hour. You want the job to run once.
+
+`add()` stores a value only if the key is missing or expired, and it's atomic across every thread and process using the cache directory. When several callers race to add the same key, exactly one gets `True`. That makes the key a claim on the job.
+
+## Claim the run
+
+```python
+import os
+
+from diskcache_oxide import Cache
+
+cache = Cache('/var/cache/my-app')
+
+def hourly_cleanup() -> None:
+    if not cache.add('job:hourly-cleanup', os.getpid(), expire=55 * 60):
+        return  # another worker has it this hour
+    remove_stale_sessions()
+```
+
+The `expire` is the important part. It decides when the job can be claimed again, and it's also what saves you if the worker that claimed the job crashes halfway through: the claim expires and the next run goes ahead. Set it a little shorter than the schedule's interval, so the next run is never blocked by the previous claim.
+
+Storing `os.getpid()` (or a hostname and pid) as the value costs nothing and makes it easy to see who claimed the job: `cache.get('job:hourly-cleanup')`.
+
+## See it work
+
+Here eight threads race for the same claim. Processes behave the same way.
+
+```{python}
+import tempfile
+import threading
+
+from diskcache_oxide import Cache
+
+cache = Cache(tempfile.mkdtemp())
+winners = []
+start = threading.Barrier(8)
+
+def worker(n: int) -> None:
+    start.wait()
+    if cache.add('job:hourly-cleanup', n, expire=3300):
+        winners.append(n)
+
+threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+
+print(f'{len(winners)} winner: worker {winners[0]}')
+print('claim holds:', cache.get('job:hourly-cleanup'))
+```
+
+## Jobs that should run once, then again as soon as they're done
+
+For work that isn't on a fixed schedule (process the queue, rebuild the search index), use `expire` as a lease: a time limit after which a crashed worker's claim lapses. Delete the key when the work finishes, so the next request can claim it right away.
+
+```python
+def rebuild_search_index() -> None:
+    if not cache.add('job:search-index', os.getpid(), expire=10 * 60):
+        return
+    try:
+        do_rebuild()
+    finally:
+        cache.delete('job:search-index')
+```
+
+Make the lease comfortably longer than the job ever takes. If the job outlives it, a second worker can start a second copy.
+
+## Give claims their own small cache
+
+Two things can make a claim vanish early, and both argue for keeping claims out of your main cache:
+
+- **Switching caching off.** A `NullCache` follows the rule "every entry expires the instant it's written", so its `add()` always returns `True`. With caching off, every worker's claim succeeds and the job runs once per worker. That's harmless for idempotent jobs and wrong for jobs with side effects, like sending email.
+- **Eviction.** When a cache is over its `size_limit`, it evicts the least recently stored entries, and a claim is exactly the kind of small, rarely written entry that goes first. If it's evicted before it expires, a second worker can claim the job.
+
+A separate cache directory just for coordination, which is never swapped for a `NullCache` and holds only a handful of tiny keys, avoids both:
+
+```python
+coordination = Cache('/var/cache/my-app-coordination')
+```
+
+Proper cross-process `Lock` and `BoundedSemaphore` recipes are planned for Phase 6e.
+
+```{python}
+#| echo: false
+cache.close()
+```

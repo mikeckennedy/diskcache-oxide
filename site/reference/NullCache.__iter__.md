@@ -1,6 +1,9 @@
 ## NullCache.\_\_iter\_\_()
 
 
+Yields nothing.
+
+
 Usage
 
 ``` python

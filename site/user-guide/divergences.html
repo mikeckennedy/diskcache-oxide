@@ -37,7 +37,6 @@ ul.task-list li input[type="checkbox"] {
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../user-guide/roadmap.html" rel="next">
 <link href="../user-guide/performance.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
@@ -88,16 +87,16 @@ ul.task-list li input[type="checkbox"] {
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="diskcache-oxide aims for high API compatibility with diskcache.Cache 5.6.3. However, where python-diskcache had known bugs, security vulnerabilities,...">
+  <meta name="description" content="diskcache-oxide’s test suite is a conformance suite: the same black-box tests run against real diskcache 5.6.3 and against diskcache-oxide. Where they...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Divergences from python-diskcache – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="diskcache-oxide aims for high API compatibility with diskcache.Cache 5.6.3. However, where python-diskcache had known bugs, security vulnerabilities,...">
+  <meta property="og:description" content="diskcache-oxide’s test suite is a conformance suite: the same black-box tests run against real diskcache 5.6.3 and against diskcache-oxide. Where they...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Divergences from python-diskcache – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="diskcache-oxide aims for high API compatibility with diskcache.Cache 5.6.3. However, where python-diskcache had known bugs, security vulnerabilities,...">
+  <meta name="twitter:description" content="diskcache-oxide’s test suite is a conformance suite: the same black-box tests run against real diskcache 5.6.3 and against diskcache-oxide. Where they...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -125,6 +124,10 @@ ul.task-list li input[type="checkbox"] {
   <li class="nav-item">
     <a class="nav-link active" href="../user-guide/getting-started.html" aria-current="page"> 
 <span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
@@ -178,6 +181,12 @@ ul.task-list li input[type="checkbox"] {
  <span class="menu-text">Switching from python-diskcache</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Vision and roadmap</span></a>
+  </div>
+</li>
       </ul>
   </li>
         <li class="sidebar-item sidebar-item-section">
@@ -201,13 +210,13 @@ ul.task-list li input[type="checkbox"] {
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Concurrency and fork safety</span></a>
+ <span class="menu-text">Concurrency and forks</span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/storage-and-wal.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storage and WAL management</span></a>
+ <span class="menu-text">Storage and WAL</span></a>
   </div>
 </li>
       </ul>
@@ -230,12 +239,6 @@ ul.task-list li input[type="checkbox"] {
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
 </li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Project status and roadmap</span></a>
-  </div>
-</li>
       </ul>
   </li>
     </ul>
@@ -248,18 +251,35 @@ ul.task-list li input[type="checkbox"] {
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#summary-table" id="toc-summary-table" class="nav-link active" data-scroll-target="#summary-table">Summary table</a></li>
-  <li><a href="#detailed-explanations" id="toc-detailed-explanations" class="nav-link" data-scroll-target="#detailed-explanations">Detailed explanations</a>
+  <li><a href="#summary" id="toc-summary" class="nav-link active" data-scroll-target="#summary">Summary</a></li>
+  <li><a href="#safety" id="toc-safety" class="nav-link" data-scroll-target="#safety">Safety</a>
   <ul class="collapse">
-  <li><a href="#d-001-value-serialization-security" id="toc-d-001-value-serialization-security" class="nav-link" data-scroll-target="#d-001-value-serialization-security">D-001: Value serialization &amp; security</a></li>
-  <li><a href="#d-004-string-keys-only" id="toc-d-004-string-keys-only" class="nav-link" data-scroll-target="#d-004-string-keys-only">D-004: String keys only</a></li>
-  <li><a href="#d-009-cache-truthiness" id="toc-d-009-cache-truthiness" class="nav-link" data-scroll-target="#d-009-cache-truthiness">D-009: Cache truthiness</a></li>
-  <li><a href="#d-010-complete-expiration" id="toc-d-010-complete-expiration" class="nav-link" data-scroll-target="#d-010-complete-expiration">D-010: Complete expiration</a></li>
-  <li><a href="#d-011-snapshot-isolated-clear" id="toc-d-011-snapshot-isolated-clear" class="nav-link" data-scroll-target="#d-011-snapshot-isolated-clear">D-011: Snapshot-isolated <code>clear()</code></a></li>
-  <li><a href="#d-012-the-fork-barrier" id="toc-d-012-the-fork-barrier" class="nav-link" data-scroll-target="#d-012-the-fork-barrier">D-012: The fork barrier</a></li>
-  <li><a href="#d-017-d-018-bounded-connection-pool" id="toc-d-017-d-018-bounded-connection-pool" class="nav-link" data-scroll-target="#d-017-d-018-bounded-connection-pool">D-017 &amp; D-018: Bounded connection pool</a></li>
-  <li><a href="#d-024-active-wal-bounds" id="toc-d-024-active-wal-bounds" class="nav-link" data-scroll-target="#d-024-active-wal-bounds">D-024: Active WAL bounds</a></li>
+  <li><a href="#d-001-no-pickle-by-default" id="toc-d-001-no-pickle-by-default" class="nav-link" data-scroll-target="#d-001-no-pickle-by-default">D-001: no pickle by default</a></li>
+  <li><a href="#d-015-owner-only-directories" id="toc-d-015-owner-only-directories" class="nav-link" data-scroll-target="#d-015-owner-only-directories">D-015: owner-only directories</a></li>
+  <li><a href="#d-021-directory-is-required" id="toc-d-021-directory-is-required" class="nav-link" data-scroll-target="#d-021-directory-is-required">D-021: <code>directory</code> is required</a></li>
   </ul></li>
+  <li><a href="#correctness" id="toc-correctness" class="nav-link" data-scroll-target="#correctness">Correctness</a>
+  <ul class="collapse">
+  <li><a href="#d-008-nan-round-trips" id="toc-d-008-nan-round-trips" class="nav-link" data-scroll-target="#d-008-nan-round-trips">D-008: NaN round-trips</a></li>
+  <li><a href="#d-010-expire-removes-everything-that-has-expired" id="toc-d-010-expire-removes-everything-that-has-expired" class="nav-link" data-scroll-target="#d-010-expire-removes-everything-that-has-expired">D-010: <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes everything that has expired</a></li>
+  <li><a href="#d-011-clear-keeps-concurrent-writes" id="toc-d-011-clear-keeps-concurrent-writes" class="nav-link" data-scroll-target="#d-011-clear-keeps-concurrent-writes">D-011: <code>clear()</code> keeps concurrent writes</a></li>
+  <li><a href="#d-013-and-d-016-large-values-under-pressure" id="toc-d-013-and-d-016-large-values-under-pressure" class="nav-link" data-scroll-target="#d-013-and-d-016-large-values-under-pressure">D-013 and D-016: large values under pressure</a></li>
+  <li><a href="#d-014-no-booleans-for-numbers" id="toc-d-014-no-booleans-for-numbers" class="nav-link" data-scroll-target="#d-014-no-booleans-for-numbers">D-014: no booleans for numbers</a></li>
+  </ul></li>
+  <li><a href="#processes-and-forks" id="toc-processes-and-forks" class="nav-link" data-scroll-target="#processes-and-forks">Processes and forks</a>
+  <ul class="collapse">
+  <li><a href="#d-012-forks-while-another-thread-writes" id="toc-d-012-forks-while-another-thread-writes" class="nav-link" data-scroll-target="#d-012-forks-while-another-thread-writes">D-012: forks while another thread writes</a></li>
+  <li><a href="#d-020-forking-inside-your-own-transaction" id="toc-d-020-forking-inside-your-own-transaction" class="nav-link" data-scroll-target="#d-020-forking-inside-your-own-transaction">D-020: forking inside your own transaction</a></li>
+  </ul></li>
+  <li><a href="#resources" id="toc-resources" class="nav-link" data-scroll-target="#resources">Resources</a>
+  <ul class="collapse">
+  <li><a href="#d-017-and-d-018-bounded-connections" id="toc-d-017-and-d-018-bounded-connections" class="nav-link" data-scroll-target="#d-017-and-d-018-bounded-connections">D-017 and D-018: bounded connections</a></li>
+  <li><a href="#d-019-opening-never-writes" id="toc-d-019-opening-never-writes" class="nav-link" data-scroll-target="#d-019-opening-never-writes">D-019: opening never writes</a></li>
+  <li><a href="#d-023-bounded-sqlite-memory" id="toc-d-023-bounded-sqlite-memory" class="nav-link" data-scroll-target="#d-023-bounded-sqlite-memory">D-023: bounded SQLite memory</a></li>
+  <li><a href="#d-024-a-wal-that-shrinks" id="toc-d-024-a-wal-that-shrinks" class="nav-link" data-scroll-target="#d-024-a-wal-that-shrinks">D-024: a WAL that shrinks</a></li>
+  </ul></li>
+  <li><a href="#api-differences" id="toc-api-differences" class="nav-link" data-scroll-target="#api-differences">API differences</a></li>
+  <li><a href="#diskcache-community" id="toc-diskcache-community" class="nav-link" data-scroll-target="#diskcache-community">diskcache-community</a></li>
   </ul>
 </nav>
     </div>
@@ -285,233 +305,254 @@ ul.task-list li input[type="checkbox"] {
 </header>
 
 
-<p>diskcache-oxide aims for high API compatibility with <code>diskcache.Cache</code> 5.6.3. However, where python-diskcache had known bugs, security vulnerabilities, or performance bottlenecks, diskcache-oxide makes deliberate improvements.</p>
-<p>Every intentional divergence is tracked in the project’s test suite and validated with dedicated conformance tests.</p>
-<section id="summary-table" class="level1">
-<h1>Summary table</h1>
+<p>diskcache-oxide’s test suite is a conformance suite: the same black-box tests run against real diskcache 5.6.3 and against diskcache-oxide. Where they behave differently, it’s on purpose, and it’s written down here. Most of these differences are diskcache bugs that the suite found, each with a reproduction in the repository’s <code>upstream/</code> folder.</p>
+<p>A divergence is never a way to skip a failing test. The full record, including test names and measurements, is <a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/tests/DIVERGENCES.md">tests/DIVERGENCES.md</a>.</p>
+<section id="summary" class="level1">
+<h1>Summary</h1>
 <table class="caption-top table">
 <thead>
 <tr class="header">
 <th>Ref</th>
 <th>Topic</th>
-<th>python-diskcache 5.6.3</th>
+<th>diskcache 5.6.3</th>
 <th>diskcache-oxide</th>
-<th>Rationale</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><strong>D-001</strong></td>
-<td>Value serialization</td>
-<td>Pickles every value</td>
-<td>msgpack or JSON; pickle opt-in</td>
-<td>Security against arbitrary code execution; avoids caching invalid types</td>
+<td>D-001</td>
+<td>Values</td>
+<td>Pickles everything</td>
+<td>msgpack or JSON with type tags; pickle opt-in; never unpickles unless opted in</td>
 </tr>
 <tr class="even">
-<td><strong>D-002</strong></td>
-<td>Database filename</td>
+<td>D-002</td>
+<td>Database file</td>
 <td><code>cache.db</code></td>
 <td><code>diskcache-oxide.sqlite</code></td>
-<td>Prevents file collisions when testing or transitioning</td>
 </tr>
 <tr class="odd">
-<td><strong>D-003</strong></td>
-<td>Clock control</td>
-<td>Reads <code>time.time()</code> in Python</td>
-<td>Reads native clock in Rust; takes <code>clock=</code></td>
-<td>Lowers hot read latency; enables mock clocks for testing</td>
+<td>D-003</td>
+<td>Clock</td>
+<td><code>time.time()</code></td>
+<td>Native; <code>clock=</code> to control it</td>
 </tr>
 <tr class="even">
-<td><strong>D-004</strong></td>
-<td>Key types</td>
-<td>Any picklable object</td>
-<td><code>str</code> keys only</td>
-<td>Simplifies indexing and query optimization</td>
+<td>D-004</td>
+<td>Keys</td>
+<td>Anything picklable</td>
+<td><code>str</code> only, for now</td>
 </tr>
 <tr class="odd">
-<td><strong>D-005</strong></td>
+<td>D-005</td>
 <td>Minimum <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a></td>
-<td>Allows arbitrarily small values</td>
-<td>Minimum 1 MiB (<code>MIN_SIZE_LIMIT</code>)</td>
-<td>Prevents silent infinite cull loops on new writes</td>
+<td>None; tiny limits silently empty the cache</td>
+<td>1 MiB, else <code>ValueError</code></td>
 </tr>
 <tr class="even">
-<td><strong>D-007</strong></td>
-<td><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> class</td>
+<td>D-006</td>
+<td>Empty-cache <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a></td>
+<td>Its own value</td>
+<td>A different value</td>
+</tr>
+<tr class="odd">
+<td>D-007</td>
+<td><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
 <td>Subclasses <code>Exception</code></td>
 <td>Subclasses <code>TimeoutError</code></td>
-<td>Follows standard Python exception hierarchy</td>
-</tr>
-<tr class="odd">
-<td><strong>D-008</strong></td>
-<td>Float NaN handling</td>
-<td>Reads top-level NaN as <code>None</code></td>
-<td>Round-trips <code>NaN</code>, <code>inf</code>, <code>-inf</code></td>
-<td>Fixes upstream bug in diskcache</td>
 </tr>
 <tr class="even">
-<td><strong>D-009</strong></td>
-<td>Cache truthiness</td>
-<td>Falsy when <code>len(cache) == 0</code></td>
-<td><code>bool(Cache)</code> is always <code>True</code></td>
-<td>Allows <code>if cache:</code> to mean “is caching enabled?”</td>
+<td>D-008</td>
+<td>Top-level NaN</td>
+<td>Reads back as <code>None</code></td>
+<td>Round-trips</td>
 </tr>
 <tr class="odd">
-<td><strong>D-010</strong></td>
-<td><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> completeness</td>
-<td>Stops early on identical timestamps</td>
-<td>Purges all expired rows</td>
-<td>Fixes upstream bug where expired rows leaked</td>
+<td>D-009</td>
+<td>Truthiness</td>
+<td>Empty cache is falsy</td>
+<td><a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> always truthy, <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> falsy</td>
 </tr>
 <tr class="even">
-<td><strong>D-011</strong></td>
-<td><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> isolation</td>
-<td>Deletes concurrent writes</td>
-<td>Removes only rows present at start</td>
-<td>Snapshot isolation preserves in-flight writes</td>
+<td>D-010</td>
+<td><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a></td>
+<td>Can stop after 100 rows</td>
+<td>Removes every expired entry</td>
 </tr>
 <tr class="odd">
-<td><strong>D-012</strong></td>
-<td>Fork safety</td>
-<td>Can crash SQLite in child</td>
-<td><code>os.register_at_fork</code> barrier</td>
-<td>Safe for Gunicorn/Uvicorn pre-forking workers</td>
+<td>D-011</td>
+<td><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a></td>
+<td>Also deletes writes made while it runs</td>
+<td>Removes only what existed when it started</td>
 </tr>
 <tr class="even">
-<td><strong>D-015</strong></td>
-<td>Directory permissions</td>
-<td>Follows ambient umask</td>
-<td>Sets <code>0700</code> on Unix</td>
-<td>Protects cached credentials and data</td>
+<td>D-012</td>
+<td>Fork during another thread’s write</td>
+<td>Child’s writes stall for the timeout</td>
+<td>Child can always write</td>
 </tr>
 <tr class="odd">
-<td><strong>D-016</strong></td>
-<td>Spilled value racing</td>
-<td>Can return <code>None</code> or error</td>
-<td>Returns old or new value</td>
-<td>Guarantees atomic read safety during file overwrites</td>
+<td>D-013</td>
+<td>Missing value file</td>
+<td>Miss, but the key still reads as present</td>
+<td>Miss, and the row is removed</td>
 </tr>
 <tr class="even">
-<td><strong>D-017</strong></td>
-<td>Connection limits</td>
-<td>1 connection per thread</td>
-<td>Bounded pool (<code>max_connections</code>)</td>
-<td>Prevents file descriptor exhaustion under load</td>
+<td>D-014</td>
+<td><code>expire=True</code>, <code>timeout=True</code></td>
+<td>Treated as <code>1</code></td>
+<td><code>TypeError</code></td>
 </tr>
 <tr class="odd">
-<td><strong>D-018</strong></td>
-<td><a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> cleanup</td>
-<td>Leaves fds open in threads</td>
-<td>Closes all pooled connections</td>
-<td>Eliminates resource warnings and leaks</td>
+<td>D-015</td>
+<td>New directory permissions</td>
+<td>Follow the umask</td>
+<td><code>0700</code></td>
 </tr>
 <tr class="even">
-<td><strong>D-019</strong></td>
-<td>Non-mutating open</td>
-<td>Writes to DB on open</td>
-<td>Opening and reading never write</td>
-<td>Safe for read-only mounts and shared caches</td>
+<td>D-016</td>
+<td>Reading a large value during an overwrite</td>
+<td>Occasional spurious miss</td>
+<td>Always the old or new value</td>
 </tr>
 <tr class="odd">
-<td><strong>D-020</strong></td>
-<td>Counter defaults</td>
-<td><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> with missing key returns 0</td>
-<td>Raises <code>KeyError</code> if <code>default=None</code></td>
-<td>Consistent with dictionary <code>KeyError</code> behavior</td>
+<td>D-017</td>
+<td>Connections and fds</td>
+<td>One connection per thread</td>
+<td>A bounded pool</td>
 </tr>
 <tr class="even">
-<td><strong>D-021</strong></td>
-<td><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a></td>
-<td>Not available</td>
-<td>Built-in <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> class</td>
-<td>Allows turning off caching without code branching</td>
+<td>D-018</td>
+<td><a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a></td>
+<td>Closes only the calling thread’s connection</td>
+<td>Closes every connection</td>
 </tr>
 <tr class="odd">
-<td><strong>D-023</strong></td>
-<td>Memory bounds</td>
-<td>Unbounded SQLite page cache</td>
-<td>Bounded by <code>sqlite_cache_size</code></td>
-<td>Keeps RSS memory flat in long-running processes</td>
+<td>D-019</td>
+<td>Opening an existing cache</td>
+<td>Writes to the database</td>
+<td>Never writes unless settings change</td>
 </tr>
 <tr class="even">
-<td><strong>D-024</strong></td>
-<td>WAL file bounds</td>
-<td>Unbounded WAL file growth</td>
-<td>Bounded by <code>wal_size_limit</code></td>
-<td>Forced checkpoints prevent multi-gigabyte WAL bloat</td>
+<td>D-020</td>
+<td>Forking inside your own transaction</td>
+<td>Child stalls for the timeout</td>
+<td>Fails fast with <code>RuntimeError</code></td>
+</tr>
+<tr class="odd">
+<td>D-021</td>
+<td><a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a></td>
+<td>Optional (temp dir)</td>
+<td>Required</td>
+</tr>
+<tr class="even">
+<td>D-022</td>
+<td><code>disk=</code>, <code>eviction_policy=</code></td>
+<td>Supported</td>
+<td>Not supported (policies coming)</td>
+</tr>
+<tr class="odd">
+<td>D-023</td>
+<td>SQLite memory</td>
+<td>32 MiB cache + 64 MiB mmap per thread</td>
+<td>1 MiB per pooled connection</td>
+</tr>
+<tr class="even">
+<td>D-024</td>
+<td>WAL file size</td>
+<td>Can grow past 1 GiB and stay there</td>
+<td>Trimmed; <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> on demand</td>
 </tr>
 </tbody>
 </table>
-<hr>
 </section>
-<section id="detailed-explanations" class="level1">
-<h1>Detailed explanations</h1>
-<section id="d-001-value-serialization-security" class="level2">
-<h2 class="anchored" data-anchor-id="d-001-value-serialization-security">D-001: Value serialization &amp; security</h2>
+<section id="safety" class="level1">
+<h1>Safety</h1>
+<section id="d-001-no-pickle-by-default" class="level2">
+<h2 class="anchored" data-anchor-id="d-001-no-pickle-by-default">D-001: no pickle by default</h2>
+<p>diskcache pickles every value. diskcache-oxide stores <code>str</code> and <code>bytes</code> raw and everything else as msgpack or tagged JSON. A value the format can’t represent exactly raises <code>TypeError</code> at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> unless the cache was opened with <code>pickle=True</code>. A cache opened without it never unpickles: reading a pickled value written by a <code>pickle=True</code> peer raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> and leaves the row alone. Unpickling runs code from whatever is in the cache directory, and silently pickling hides values that were never meant to be cached. See <a href="../user-guide/serialization.html">Serialization</a>.</p>
+</section>
+<section id="d-015-owner-only-directories" class="level2">
+<h2 class="anchored" data-anchor-id="d-015-owner-only-directories">D-015: owner-only directories</h2>
+<p>A cache directory diskcache-oxide creates, and its value-file subdirectories, are <code>0700</code>. Existing directories are never changed. Anyone who can write to a cache directory can poison the cache, and its contents (keys with IP addresses in them, for example) can be private.</p>
+</section>
+<section id="d-021-directory-is-required" class="level2">
+<h2 class="anchored" data-anchor-id="d-021-directory-is-required">D-021: <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a> is required</h2>
+<p>diskcache creates a temporary directory if you don’t give one. A cache directory is shared state and a security boundary, and an implicit temp directory is almost never what a multi-process app wants.</p>
+</section>
+</section>
+<section id="correctness" class="level1">
+<h1>Correctness</h1>
+<section id="d-008-nan-round-trips" class="level2">
+<h2 class="anchored" data-anchor-id="d-008-nan-round-trips">D-008: NaN round-trips</h2>
+<p>In diskcache, <code>set('k', float('nan'))</code> succeeds but <code>get('k')</code> returns <code>None</code>, ignoring any default. In diskcache-oxide it’s a float like any other.</p>
+</section>
+<section id="d-010-expire-removes-everything-that-has-expired" class="level2">
+<h2 class="anchored" data-anchor-id="d-010-expire-removes-everything-that-has-expired">D-010: <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes everything that has expired</h2>
+<p>diskcache’s <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> works in chunks of 100, and when expired entries share one expiry time it stops after the first chunk. With 250 such entries, one call removes 100. diskcache-oxide removes all of them, still in chunks so writers can get in between.</p>
+</section>
+<section id="d-011-clear-keeps-concurrent-writes" class="level2">
+<h2 class="anchored" data-anchor-id="d-011-clear-keeps-concurrent-writes">D-011: <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> keeps concurrent writes</h2>
+<p>diskcache’s <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> keeps deleting until the cache is empty, including entries written while it runs. In a reproduction with 50,000 entries and a concurrent writer, it deleted 76,000 writes that had already succeeded, and its running time grew with the write rate. diskcache-oxide’s <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> removes only entries that existed when it started, and always finishes.</p>
+</section>
+<section id="d-013-and-d-016-large-values-under-pressure" class="level2">
+<h2 class="anchored" data-anchor-id="d-013-and-d-016-large-values-under-pressure">D-013 and D-016: large values under pressure</h2>
+<p>If a large value’s file disappears, diskcache returns the default but the key still reads as present in <code>in</code> and <code>len</code>. diskcache-oxide treats it as a miss and removes the orphaned row.</p>
+<p>When one process overwrites a large value while others read it, diskcache occasionally returns the default for a key that was never deleted, which makes callers recompute a hot value for nothing. diskcache-oxide’s readers detect the overwrite and retry, so they always get a whole value, old or new.</p>
+</section>
+<section id="d-014-no-booleans-for-numbers" class="level2">
+<h2 class="anchored" data-anchor-id="d-014-no-booleans-for-numbers">D-014: no booleans for numbers</h2>
+<p><code>bool</code> is an <code>int</code> subclass, so in diskcache <code>expire=True</code> is a one-second TTL and <code>expire=False</code> stores an already-expired entry. diskcache-oxide raises <code>TypeError</code>: a bool there is almost always an argument in the wrong position.</p>
+</section>
+</section>
+<section id="processes-and-forks" class="level1">
+<h1>Processes and forks</h1>
+<section id="d-012-forks-while-another-thread-writes" class="level2">
+<h2 class="anchored" data-anchor-id="d-012-forks-while-another-thread-writes">D-012: forks while another thread writes</h2>
+<p>When a process forks while another of its threads is in a write transaction, diskcache’s child inherits a lock nobody in the child will release, and its first write stalls for the full timeout (60 seconds by default). Under a busy read/write load that hits 20-50% of forks. diskcache-oxide’s fork barrier waits for in-flight transactions before the fork, so the child can always write. See <a href="../user-guide/concurrency-and-forks.html">Concurrency and forks</a>.</p>
+</section>
+<section id="d-020-forking-inside-your-own-transaction" class="level2">
+<h2 class="anchored" data-anchor-id="d-020-forking-inside-your-own-transaction">D-020: forking inside your own transaction</h2>
+<p>CPython won’t let a library stop a fork, and a transaction held by the forking thread itself can’t be waited for. In diskcache the child stalls behind it. In diskcache-oxide, the child’s copy of the transaction is poisoned and its writes to that database raise <code>RuntimeError</code> immediately, and the parent gets a <code>RuntimeWarning</code>. This becomes reachable when <code>transact()</code> arrives in Phase 6b.</p>
+</section>
+</section>
+<section id="resources" class="level1">
+<h1>Resources</h1>
+<section id="d-017-and-d-018-bounded-connections" class="level2">
+<h2 class="anchored" data-anchor-id="d-017-and-d-018-bounded-connections">D-017 and D-018: bounded connections</h2>
+<p>diskcache opens a connection for every thread that uses a cache, so 64 threads hold 131 files open in the cache directory, and <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> closes only the calling thread’s connection. diskcache-oxide uses a pool per database file, at most <code>max_connections</code> (default 8), and the last <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> closes every connection, so the directory is safe to move or delete afterwards.</p>
+</section>
+<section id="d-019-opening-never-writes" class="level2">
+<h2 class="anchored" data-anchor-id="d-019-opening-never-writes">D-019: opening never writes</h2>
+<p>Opening an existing diskcache commits a write transaction even when nothing changed. diskcache-oxide’s open, and reads after it, never write, so a read-mostly worker or a read-only copy of the directory never takes the write lock.</p>
+</section>
+<section id="d-023-bounded-sqlite-memory" class="level2">
+<h2 class="anchored" data-anchor-id="d-023-bounded-sqlite-memory">D-023: bounded SQLite memory</h2>
+<p>diskcache’s default is a 32 MiB page cache and a 64 MiB memory map per connection, with one connection per thread. diskcache-oxide’s <code>sqlite_cache_size</code> defaults to 256 pages (1 MiB) per pooled connection, so SQLite’s memory per directory stays around 8 MiB per process.</p>
+</section>
+<section id="d-024-a-wal-that-shrinks" class="level2">
+<h2 class="anchored" data-anchor-id="d-024-a-wal-that-shrinks">D-024: a WAL that shrinks</h2>
+<p>With readers in other processes, a burst of writes makes SQLite’s write-ahead log grow to fit the burst and stay that size: hundreds of MiB to over 1 GiB beside a database of a few MiB. diskcache-oxide trims the log whenever it resets (<code>wal_size_limit</code>), offers <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> to empty it on demand, checkpoints a large log at <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a>, and can checkpoint automatically with <code>wal_checkpoint='auto'</code>. See <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>.</p>
+</section>
+</section>
+<section id="api-differences" class="level1">
+<h1>API differences</h1>
 <ul>
-<li><strong>diskcache</strong>: Pickles all values indiscriminately.</li>
-<li><strong>diskcache-oxide</strong>: Values are stored as raw <code>str</code>, raw <code>bytes</code>, <code>msgpack</code>, or <code>json</code>. Unrepresentable types raise <code>TypeError</code> at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> unless <code>pickle=True</code> is explicitly passed. Reading a pickled row with a <code>pickle=False</code> handle raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> without unpickling.</li>
-<li><strong>Why</strong>: Unpickling arbitrary data stored on disk is an attack vector in multi-user or containerized environments. Explicit serializers also surface non-serializable objects immediately rather than hiding them.</li>
+<li><strong>D-002:</strong> the database file is <code>diskcache-oxide.sqlite</code>, so the two libraries never misread each other’s files.</li>
+<li><strong>D-003:</strong> the clock is read natively; pass <code>clock=</code> to control it in tests.</li>
+<li><strong>D-004:</strong> keys are <code>str</code> only until Phase 6a. They’re stored with a type tag, so other key types won’t need a format change.</li>
+<li><strong>D-005:</strong> <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> must be at least 1 MiB. In diskcache, a limit below the empty database’s size silently evicts every value, including the one just stored.</li>
+<li><strong>D-006:</strong> an empty cache’s <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> differs, so a <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> leaves slightly different room.</li>
+<li><strong>D-007:</strong> <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> subclasses <code>TimeoutError</code>, so <code>except TimeoutError</code> catches it too.</li>
+<li><strong>D-009:</strong> <code>bool(Cache)</code> is always True and <code>bool(NullCache)</code> is False, so <code>if cache:</code> means “caching is on”.</li>
+<li><strong>D-022:</strong> there’s no <code>disk=</code> (a Python <code>Disk</code> class would put Python code on every read and write) and no <code>eviction_policy=</code> until Phase 6a adds the other policies.</li>
 </ul>
 </section>
-<section id="d-004-string-keys-only" class="level2">
-<h2 class="anchored" data-anchor-id="d-004-string-keys-only">D-004: String keys only</h2>
-<ul>
-<li><strong>diskcache</strong>: Accepts any picklable object as a key (ints, tuples, bytes).</li>
-<li><strong>diskcache-oxide</strong>: Accepts <code>str</code> keys only. Non-string keys raise <code>TypeError</code>.</li>
-<li><strong>Why</strong>: String keys allow direct, highly-optimized SQLite B-tree index traversal and prefix range scans. Keys are stored in a type-tagged column so structured keys can be added in a future phase without schema migrations.</li>
-</ul>
-</section>
-<section id="d-009-cache-truthiness" class="level2">
-<h2 class="anchored" data-anchor-id="d-009-cache-truthiness">D-009: Cache truthiness</h2>
-<ul>
-<li><strong>diskcache</strong>: Implements <a href="../reference/Cache.__bool__.html#diskcache_oxide.Cache.__bool__" class="gdls-link gdls-code">__bool__</a> using <a href="../reference/Cache.__len__.html#diskcache_oxide.Cache.__len__" class="gdls-link gdls-code">__len__</a>, so an empty cache evaluates to <code>False</code>.</li>
-<li><strong>diskcache-oxide</strong>: <code>bool(Cache)</code> is always <code>True</code>, and <a href="../reference/Cache.enabled.html#diskcache_oxide.Cache.enabled" class="gdls-link gdls-code">Cache.enabled</a> is <code>True</code>. Conversely, <code>bool(NullCache)</code> is <code>False</code>, and <a href="../reference/NullCache.enabled.html#diskcache_oxide.NullCache.enabled" class="gdls-link gdls-code">NullCache.enabled</a> is <code>False</code>.</li>
-<li><strong>Why</strong>: In application code, <code>if cache:</code> is frequently used to check if caching is configured and enabled. Treating an empty cache as falsy caused applications to bypass caching after a restart or deployment.</li>
-</ul>
-</section>
-<section id="d-010-complete-expiration" class="level2">
-<h2 class="anchored" data-anchor-id="d-010-complete-expiration">D-010: Complete expiration</h2>
-<ul>
-<li><strong>diskcache</strong>: <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> purges in batches of 100, but halts prematurely if multiple rows share an identical expiration timestamp.</li>
-<li><strong>diskcache-oxide</strong>: <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes every expired entry regardless of timestamp clustering, while still yielding between batches so concurrent writers are not starved.</li>
-<li><strong>Why</strong>: Upstream diskcache left expired rows on disk indefinitely in hourly cleanup jobs.</li>
-</ul>
-</section>
-<section id="d-011-snapshot-isolated-clear" class="level2">
-<h2 class="anchored" data-anchor-id="d-011-snapshot-isolated-clear">D-011: Snapshot-isolated <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a></h2>
-<ul>
-<li><strong>diskcache</strong>: <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> runs a delete loop until the database is empty, deleting rows that were inserted by other threads while <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> was running.</li>
-<li><strong>diskcache-oxide</strong>: Records the highest monotonic <code>store_seq</code> when <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> begins and deletes only rows up to that sequence number.</li>
-<li><strong>Why</strong>: Writes that succeed during a <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> call are preserved rather than silently destroyed.</li>
-</ul>
-</section>
-<section id="d-012-the-fork-barrier" class="level2">
-<h2 class="anchored" data-anchor-id="d-012-the-fork-barrier">D-012: The fork barrier</h2>
-<ul>
-<li><strong>diskcache</strong>: Inherits SQLite handles across <code>os.fork()</code>. In pre-forking web servers, children using inherited connections frequently encounter database corruption or crashes.</li>
-<li><strong>diskcache-oxide</strong>: Registers before/after fork hooks using <code>os.register_at_fork</code>. Writers in other threads are completed before the fork, and children safely discard inherited connection handles and reopen fresh ones.</li>
-<li><strong>Why</strong>: Essential for production stability under Gunicorn, Celery, and Uvicorn.</li>
-</ul>
-</section>
-<section id="d-017-d-018-bounded-connection-pool" class="level2">
-<h2 class="anchored" data-anchor-id="d-017-d-018-bounded-connection-pool">D-017 &amp; D-018: Bounded connection pool</h2>
-<ul>
-<li><strong>diskcache</strong>: Creates a new SQLite connection for every thread that interacts with the cache, storing it in thread-local storage. Under high thread counts, this exhausts OS file descriptors.</li>
-<li><strong>diskcache-oxide</strong>: Implements a bounded connection pool (<code>max_connections</code>, default 8). Connections are checked out temporarily and returned immediately. <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> shuts down all pooled connections.</li>
-<li><strong>Why</strong>: Predictable resource consumption regardless of application concurrency.</li>
-</ul>
-</section>
-<section id="d-024-active-wal-bounds" class="level2">
-<h2 class="anchored" data-anchor-id="d-024-active-wal-bounds">D-024: Active WAL bounds</h2>
-<ul>
-<li><strong>diskcache</strong>: Leaves SQLite WAL checkpointing to default OS behavior. With concurrent readers in separate worker processes, WAL checkpoints are continuously blocked, causing the <code>-wal</code> file to balloon into gigabytes.</li>
-<li><strong>diskcache-oxide</strong>: Implements active forced checkpoints (<code>PASSIVE</code>, then <code>TRUNCATE</code> with a 2 ms timeout) and autocheckpoint scaling governed by <code>wal_size_limit</code> (default 64 MiB).</li>
-<li><strong>Why</strong>: Prevents unbounded disk growth in multi-process production deployments.</li>
-</ul>
+<section id="diskcache-community" class="level1">
+<h1>diskcache-community</h1>
+<p><a href="https://github.com/secondwindoss/diskcache-community">diskcache-community</a> is an actively maintained fork of diskcache, and the conformance suite can run against it too. It has fixed some of the same bugs (D-012, D-018, D-019, and the <code>0700</code> directories of D-015) and keeps others (D-008, D-016, D-017). The full comparison is at the end of <a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/tests/DIVERGENCES.md">tests/DIVERGENCES.md</a>.</p>
 
 
-</section>
 </section>
 
 </main> <!-- /main -->
@@ -860,9 +901,6 @@ ul.task-list li input[type="checkbox"] {
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../user-guide/roadmap.html" class="pagination-link" aria-label="Project status and roadmap">
-        <span class="nav-page-text">Project status and roadmap</span> <i class="bi bi-arrow-right-short"></i>
-      </a>
   </div>
 </nav>
 </div> <!-- /content -->

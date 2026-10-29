@@ -64,12 +64,13 @@ it removed.
 
 volume(self, /)
 
-checkpoint(self, /)
+checkpoint(self, /, timeout=None)
 
 Checkpoints the write-ahead log and truncates it to zero (D-024), retrying until `timeout`.
 True if the WAL was reset; False if readers or writers in other processes kept it busy.
+`timeout`: how long to keep trying, in seconds (default: the cache's timeout).
 
-close(self, /, checkpoint=True)
+close(self, /, *, checkpoint=True)
 
 Releases this handle. When the last handle on a directory closes, every connection closes
 (D-018). Using the cache again afterwards reopens it, as diskcache does.
@@ -109,6 +110,8 @@ __enter__(self, /)
 
 __exit__(self, exc_type, exc, tb, /)
 
+get(self, /, key, default=None, *, expire_time=False)
+
 
 ## NullCache
 
@@ -117,7 +120,18 @@ Switched-off cache behaving as if every entry expires instantly.
 
 NullCache(directory: 'str | os.PathLike[str] | None' = None, timeout: 'float' = 60.0, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, serializer: "Literal['msgpack', 'json']" = 'msgpack', pickle: 'bool' = False, clock: 'Callable[[], float] | None' = None, max_connections: 'int' = 8, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', invalidate: 'CacheLike | None' = None) -> 'None'
 
-A switched-off cache. See the module docstring for the rule every method follows.
+A switched-off cache, so app code needs no `if cache is None` checks.
+
+It behaves like a real cache in which every entry expires the instant it's written and is
+swept straight away: reads miss, writes succeed, and it's always empty. It's falsy, and its
+`enabled` is False.
+
+Args:
+    directory: Accepted and ignored, like every other `Cache` argument, so switching between
+        the two is a one-line change.
+    invalidate: A real cache to forward removals to (`delete`, `pop`, `clear` and `iterkeys`),
+        so invalidations still land while caching is off and nothing stale is served once
+        it's back on.
 
 CacheLike(*args, **kwargs)
 
@@ -134,63 +148,128 @@ Methods for the NullCache class
 
 __repr__(self) -> 'str'
 
+Shows the directory and any `invalidate=` cache.
+
 directory
+
+The directory passed to the constructor, or None. Nothing is created there.
 
 timeout
 
+The timeout passed to the constructor (default 60). Unused.
+
 size_limit
+
+The size limit passed to the constructor (default 1 GiB). Unused.
 
 cull_limit
 
+The cull limit passed to the constructor (default 10). Unused.
+
 enabled
+
+Always False: caching is off.
 
 get(self, key: 'str', default: 'Any' = None, *, expire_time: 'bool' = False) -> 'Any'
 
+Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`.
+
 __getitem__(self, key: 'str') -> 'Any'
+
+Always raises `KeyError`, as every entry has already expired.
 
 __contains__(self, key: 'object') -> 'bool'
 
+Always False.
+
 __len__(self) -> 'int'
+
+Always 0.
 
 __bool__(self) -> 'bool'
 
+Always False, so `if cache:` means "caching is on".
+
 __iter__(self) -> 'Iterator[str]'
+
+Yields nothing.
 
 volume(self) -> 'int'
 
-checkpoint(self) -> 'bool'
+Always 0: a `NullCache` uses no disk.
+
+checkpoint(self, timeout: 'float | None' = None) -> 'bool'
+
+Always True: there is no write-ahead log to reset.
 
 set(self, key: 'str', value: 'Any', expire: 'float | None' = None) -> 'bool'
 
+Return True without storing anything: the write succeeds, then expires instantly.
+
 __setitem__(self, key: 'str', value: 'Any') -> 'None'
+
+Store nothing, as `set()` does.
 
 add(self, key: 'str', value: 'Any', expire: 'float | None' = None) -> 'bool'
 
+Return True without storing anything: the key is always absent, so the add succeeds.
+
+With caching off, every caller's `add()` succeeds, so don't rely on it for job claims or locks.
+
 touch(self, key: 'str', expire: 'float | None' = None) -> 'bool'
+
+Always False: the key never exists.
 
 incr(self, key: 'str', delta: 'int | float' = 1, default: 'int | float | None' = 0) -> 'int | float'
 
+Return `default + delta`, since every count starts again from `default`.
+
+Raises:
+    KeyError: `default` is None.
+
 decr(self, key: 'str', delta: 'int | float' = 1, default: 'int | float | None' = 0) -> 'int | float'
+
+Return `default - delta`. See `incr()`.
 
 delete(self, key: 'str') -> 'bool'
 
+False, or with `invalidate=`, delete the key from that cache and return its result.
+
 __delitem__(self, key: 'str') -> 'None'
+
+Raise `KeyError`, or with `invalidate=`, delete the key from that cache.
 
 pop(self, key: 'str', default: 'Any' = None) -> 'Any'
 
+Return `default`. With `invalidate=`, also delete the key from that cache.
+
 clear(self) -> 'int'
+
+0, or with `invalidate=`, clear that cache and return its count.
 
 iterkeys(self, *, prefix: 'str | None' = None, reverse: 'bool' = False) -> 'Iterator[str]'
 
+Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works.
+
 expire(self) -> 'int'
+
+Always 0.
 
 cull(self) -> 'int'
 
-close(self, checkpoint: 'bool' = True) -> 'None'
+Always 0.
+
+close(self, *, checkpoint: 'bool' = True) -> 'None'
+
+Do nothing. An `invalidate=` cache is never closed: it belongs to whoever created it.
 
 __enter__(self) -> 'Self'
 
+Return the cache, for `with NullCache() as cache:`.
+
 __exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | None', tb: 'TracebackType | None', /) -> 'None'
+
+Do nothing, as `close()` does.
 
 
 ## CacheLike Methods
@@ -200,61 +279,119 @@ Methods for the CacheLike class
 
 directory
 
+The cache directory (None for a `NullCache` created without one).
+
 timeout
+
+Seconds a write waits for another process's lock before raising `Timeout`.
 
 size_limit
 
+The disk budget in bytes.
+
 cull_limit
+
+The most entries one `set()` evicts when over `size_limit`.
 
 enabled
 
+True if caching is on (`Cache`), False if it's off (`NullCache`).
+
 get(self, key: 'str', default: 'Any' = None, *, expire_time: 'bool' = False) -> 'Any'
+
+Return the value for `key`, or `default` if it's missing or expired.
 
 set(self, key: 'str', value: 'Any', expire: 'float | None' = None) -> 'bool'
 
+Store `value` under `key`, with an optional expiry in seconds.
+
 add(self, key: 'str', value: 'Any', expire: 'float | None' = None) -> 'bool'
+
+Store `value` only if `key` is missing or expired. True if it was stored.
 
 delete(self, key: 'str') -> 'bool'
 
+Remove `key`. True if a live entry was removed.
+
 pop(self, key: 'str', default: 'Any' = None) -> 'Any'
+
+Remove `key` and return its value, or `default`.
 
 touch(self, key: 'str', expire: 'float | None' = None) -> 'bool'
 
+Change an existing entry's expiry. True if the entry existed.
+
 incr(self, key: 'str', delta: 'int | float' = 1, default: 'int | float | None' = 0) -> 'int | float'
+
+Add `delta` to the number under `key`, atomically, and return the result.
 
 decr(self, key: 'str', delta: 'int | float' = 1, default: 'int | float | None' = 0) -> 'int | float'
 
+Subtract `delta` from the number under `key`, atomically, and return the result.
+
 iterkeys(self, *, prefix: 'str | None' = None, reverse: 'bool' = False) -> 'Iterator[str]'
+
+Iterate over keys in sorted order, optionally only those starting with `prefix`.
 
 expire(self) -> 'int'
 
+Remove every expired entry. Returns how many were removed.
+
 clear(self) -> 'int'
+
+Remove every entry that existed when the call started. Returns how many.
 
 cull(self) -> 'int'
 
+Remove expired entries, then evict until under `size_limit`. Returns how many.
+
 volume(self) -> 'int'
 
-checkpoint(self) -> 'bool'
+The size on disk in bytes.
 
-close(self, checkpoint: 'bool' = True) -> 'None'
+checkpoint(self, timeout: 'float | None' = None) -> 'bool'
+
+Empty the write-ahead log. True if it was reset, False if other processes kept it busy.
+
+close(self, *, checkpoint: 'bool' = True) -> 'None'
+
+Close this handle and return its connections.
 
 __getitem__(self, key: 'str') -> 'Any'
 
+`cache[key]`: the value, or `KeyError` if it's missing or expired.
+
 __setitem__(self, key: 'str', value: 'Any') -> 'None'
+
+`cache[key] = value`: store a value that never expires.
 
 __delitem__(self, key: 'str') -> 'None'
 
+`del cache[key]`: remove the entry, or raise `KeyError`.
+
 __contains__(self, key: 'object') -> 'bool'
+
+`key in cache`: True if the key holds a live value.
 
 __len__(self) -> 'int'
 
+The number of entries.
+
 __bool__(self) -> 'bool'
+
+True if caching is on, so `if cache:` reads naturally.
 
 __iter__(self) -> 'Iterator[str]'
 
+Iterate over keys in insertion order.
+
 __enter__(self) -> 'Self'
 
+Return the cache, for use in a `with` block.
+
 __exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | None', tb: 'TracebackType | None', /) -> 'None'
+
+Close the cache.
 
 
 ## Errors
@@ -315,337 +452,306 @@ This is the User Guide documentation for the package.
 
 ### Getting started
 
-This guide walks through installing **diskcache-oxide**, creating a cache, storing and
-retrieving data, managing expiration and eviction, and cleaning up resources.
+A `Cache` is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a restart. This page covers installing diskcache-oxide, the everyday operations, and how to shut down cleanly.
 
 ## Install
 
-Install diskcache-oxide with `uv` or `pip`:
+diskcache-oxide isn't on PyPI yet. Until the first release, build it from source, which needs a Rust toolchain:
 
 ```bash
-uv pip install diskcache-oxide
+uv pip install git+https://github.com/mikeckennedy/diskcache-oxide
 ```
 
-Requirements:
+- **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
+- **Platforms:** macOS and Linux. Windows support is planned.
+- **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter (`diskcache_oxide.sqlite_version()` reports the one in use).
 
-- **Python**: CPython 3.14 or 3.15, including free-threaded builds (`3.14t`, `3.15t`).
-- **Platforms**: macOS (Apple Silicon and Intel) and Linux (x86_64 and aarch64). Windows support is planned.
-- **Dependencies**: None. The pre-compiled wheel includes the Rust core and the bundled SQLite library.
-
-## Creating a cache
-
-The `Cache` class is the central interface. Pass a directory path where cache files and database records should be stored:
+## Open a cache
 
 ```python
 from diskcache_oxide import Cache
 
-cache = Cache('/tmp/my-app-cache')
+cache = Cache('/var/cache/my-app')
 ```
 
-If the directory does not exist, diskcache-oxide creates it (with `0700` permissions on Unix).
+The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`), because anyone who can write to a cache directory can poison the cache.
 
-### Clean shutdown with context managers
+Every process that should share the cache opens the same path. Inside one process, opening the same directory twice gives two handles on one shared engine, with one connection pool between them.
 
-Every `Cache` handle maintains a pooled set of SQLite connections. Use a context manager
-to automatically close connection handles when done, or call `cache.close()` explicitly:
+### Close it, or use `with`
 
 ```python
-with Cache('/tmp/my-app-cache') as cache:
-    cache.set('key', 'value')
-    # All connections are cleanly closed upon exiting the block
+with Cache('/var/cache/my-app') as cache:
+    cache.set('greeting', 'hello')
 ```
 
-## Basic operations
+`close()` returns the handle's SQLite connections. Once the last handle on a directory in a process closes, nothing in that directory is held open, so it's safe to move or delete.
 
-`Cache` implements both method-based and standard Python dictionary interfaces.
-
-### Storing values
-
-Use `cache.set(key, value, expire=None)`:
+## Store and read values
 
 ```python
-# Store a string for 10 minutes (600 seconds)
-cache.set('session:123', 'active', expire=600.0)
+cache.set('user:42', {'name': 'Sam', 'roles': {'admin', 'editor'}}, expire=600)
 
-# Store complex structured data (encoded with msgpack by default)
-cache.set('user:42', {
-    'name': 'Bob',
-    'roles': {'admin', 'editor'},  # Sets and tuples are preserved!
-    'metadata': {'login_count': 12}
-})
+user = cache.get('user:42')                 # the dict, with roles still a set
+missing = cache.get('user:99', default={})  # {}
+
+value, expires_at = cache.get('user:42', expire_time=True)
 ```
 
-Keys must be `str`. Values can be strings, bytes, numbers, booleans, dicts, lists, tuples,
-sets, or datetimes.
+- Keys are `str`. Other key types raise `TypeError` for now (they're planned).
+- Values can be `str`, `bytes`, `int`, `float`, `bool`, `None`, and lists, tuples, dicts, sets and datetimes made of those. They come back as the types you stored. See [Serialization](serialization.qmd).
+- `expire` is in seconds. Leave it out for an entry that never expires. `touch(key, expire=...)` changes the expiry of an existing entry.
 
-### Conditional add
-
-To store a value only if the key does not already exist (or has expired), use `add()`:
+### Dictionary syntax
 
 ```python
-created = cache.add('lock:job-1', 'locked', expire=30)
-if created:
-    print("Acquired lock!")
-else:
-    print("Lock already held by another worker")
+cache['alpha'] = 100
+assert 'alpha' in cache
+assert cache['alpha'] == 100
+del cache['alpha']        # KeyError if it's missing, like a dict
 ```
 
-### Retrieving values
-
-Use `cache.get(key, default=None)`:
+### Remove values
 
 ```python
-user = cache.get('user:42')
-if user is not None:
-    print(user['name'])
-
-# Providing a custom default
-missing = cache.get('nonexistent', default='fallback')
-assert missing == 'fallback'
+cache.delete('user:42')             # True if it was there
+value = cache.pop('session:7')      # the value, or the default if it was missing
 ```
 
-To also retrieve the expiration timestamp, pass `expire_time=True`:
+## Atomic operations across processes
+
+These are what make a shared cache useful for coordination, not only for caching. Each one is a single SQLite transaction, so it's atomic across every thread and process using the directory.
 
 ```python
-val, exp = cache.get('session:123', expire_time=True)
-print(f"Value: {val}, Expires at: {exp}")
+# Store only if the key is absent (or expired). Exactly one caller wins.
+if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
+    refresh_feeds()
+
+# Counters. incr() keeps the entry's existing expiry.
+cache.incr('page_views')          # 1
+cache.incr('page_views', 5)       # 6
+cache.decr('page_views', 2)       # 4
 ```
 
-### Removing values
+`incr()` on a missing key starts from `default` (0). Pass `default=None` to get a `KeyError` instead. A key holding a non-number raises `TypeError`.
 
-- `cache.delete(key)`: Deletes the key. Returns `True` if the key was deleted, `False` if it was not present.
-- `cache.pop(key, default=None)`: Removes the key and returns its value, or returns `default`.
+## List keys
 
 ```python
-deleted = cache.delete('session:123')
-assert deleted is True
-
-val = cache.pop('nonexistent', default=None)
-assert val is None
+for key in cache.iterkeys(prefix='user:'):
+    print(key)
 ```
 
-## Dictionary syntax
+`iterkeys()` yields keys in sorted order (`reverse=True` for descending), and with `prefix=` it's an indexed range scan: 400,000 keys scan in about 10 ms, against about 25 seconds for diskcache. Iterating the cache itself (`for key in cache`) yields keys in insertion order.
 
-`Cache` supports standard Python `Mapping` and `MutableMapping` item access:
-
-```python
-with Cache('/tmp/my-app-cache') as cache:
-    cache['alpha'] = 100
-    assert 'alpha' in cache
-    assert cache['alpha'] == 100
-
-    del cache['alpha']
-    assert 'alpha' not in cache
-```
-
-> [!NOTE]
-> Like a standard Python dictionary, accessing a missing key with `cache['missing']` or deleting
-> a missing key with `del cache['missing']` raises a standard `KeyError`.
-
-## Atomic counters
-
-`incr()` and `decr()` adjust integer or float counters atomically in SQLite without requiring
-separate transaction locks:
-
-```python
-with Cache('/tmp/my-app-cache') as cache:
-    # Increments key by delta (default 1), starting from default (default 0)
-    count = cache.incr('page_views')      # returns 1
-    count = cache.incr('page_views', 5)   # returns 6
-    count = cache.decr('page_views', 2)   # returns 4
-```
-
-If the key exists but holds a non-numeric value, `incr()` raises `TypeError`.
-
-## Iterating and scanning keys
-
-`Cache` supports fast key listing and prefix-based scanning via `iterkeys()`:
-
-```python
-with Cache('/tmp/my-app-cache') as cache:
-    cache.set('user:1', 'Alice')
-    cache.set('user:2', 'Bob')
-    cache.set('post:1', 'Hello')
-
-    # Iterate over all keys matching a prefix
-    user_keys = list(cache.iterkeys(prefix='user:'))
-    print(user_keys)  # ['user:1', 'user:2']
-```
-
-The prefix scan is evaluated directly in SQLite using indexed range queries, avoiding full table scans.
-
-## Eviction and size limits
-
-A cache can be configured with disk limits:
+## Size limits and eviction
 
 ```python
 cache = Cache(
-    '/tmp/bounded-cache',
-    size_limit=100 * 1024 * 1024,  # 100 MiB (default: 1 GiB)
-    cull_limit=20,                 # Evict up to 20 items when limit is exceeded
+    '/var/cache/my-app',
+    size_limit=500 * 1024 * 1024,   # 500 MiB (default 1 GiB, minimum 1 MiB)
+    cull_limit=10,                  # entries evicted per set() when over the limit (default 10)
 )
 ```
 
-- **`size_limit`**: Total disk volume in bytes (database + spill files). Minimum is 1 MiB (`MIN_SIZE_LIMIT = 1048576`).
-- **`cull_limit`**: Number of least-recently-stored items removed when disk volume exceeds `size_limit`.
-- **`cache.volume()`**: Reports the total disk space in bytes consumed by the database and spilled value files.
-- **`cache.cull()`**: Manually triggers eviction of up to `cull_limit` entries if the cache is over `size_limit`.
-- **`cache.expire()`**: Sweeps and deletes all expired entries from disk.
-- **`cache.clear()`**: Deletes all entries that were present when the call began.
+When the cache's on-disk volume goes over `size_limit`, each `set()` evicts up to `cull_limit` of the least recently stored entries. `cache.volume()` reports the current size in bytes.
+
+Maintenance calls, all safe to run while other processes use the cache:
+
+- `cache.expire()` removes every expired entry and returns how many.
+- `cache.clear()` removes every entry that existed when it started, and keeps anything written while it runs.
+- `cache.cull()` evicts down to the size limit.
+
+## Timeouts
+
+When another process holds SQLite's write lock, a write waits for it, up to the cache's `timeout` (60 seconds by default), then raises `diskcache_oxide.Timeout`, a subclass of the built-in `TimeoutError`:
+
+```python
+from diskcache_oxide import Cache, Timeout
+
+cache = Cache('/var/cache/my-app', timeout=1.0)
+try:
+    cache.set('key', 'value')
+except Timeout:
+    ...  # the cache was too busy; carry on without it
+```
+
+## Shutting down
+
+Call `cache.checkpoint()` at shutdown if you can. It isn't required. With readers in other processes, a burst of writes (a big fill, or a `clear()`) can leave SQLite's write-ahead log much larger than the database, and SQLite only shrinks it when it gets a moment with no readers. `checkpoint()` makes that moment: it waits briefly for in-flight reads, copies the log into the database, and truncates it. It returns `False` instead of raising if other processes keep it busy.
+
+`close()` does the same by default, but only when the log is large, and it waits at most a second, so closing stays cheap. [Storage and WAL](storage-and-wal.qmd) has the details.
+
+## Testing code that uses a cache
+
+Two tools help here:
+
+- **`NullCache`** is a cache that's switched off: every write succeeds and every read misses. Swap it in for tests or local development without touching call sites. See [NullCache](null-cache.qmd).
+- **`clock=`** controls the cache's clock. diskcache-oxide reads time natively in Rust, so patching `time.time` doesn't affect it on its own. Pass `clock=lambda: time.time()` and the cache follows your patched clock:
+
+```python
+cache = Cache(tmp_path, clock=lambda: time.time())
+```
 
 
 ### Switching from python-diskcache
 
-diskcache-oxide is designed to be **API compatible** with [python-diskcache](https://github.com/grantjenks/python-diskcache)
-5.6.3 for `Cache`, but intentionally **not data compatible**. This page details the migration steps,
-structural differences, and deliberate improvements.
+diskcache-oxide is **API compatible** with [python-diskcache](https://github.com/grantjenks/python-diskcache) 5.6.3's `Cache`, and deliberately **not data compatible**. Keeping diskcache's API makes switching a one-line change. Not keeping its on-disk format is what allowed fixing its design instead of inheriting it.
 
-## Coexistence and on-disk files
-
-python-diskcache stores its metadata in `cache.db`. diskcache-oxide uses its own optimized schema in
-`diskcache-oxide.sqlite`.
-
-> [!IMPORTANT]
-> Both engines can point to the same directory without interfering with each other, but
-> **diskcache-oxide does not read or convert existing `cache.db` databases**.
-> When deploying diskcache-oxide, start with a fresh directory or let diskcache-oxide create
-> its own `diskcache-oxide.sqlite` file.
+For most apps, switching looks like this:
 
 ```python
-# Old code:
-import diskcache
-cache = diskcache.Cache('/var/cache/app')
+# from diskcache import Cache, Timeout
+from diskcache_oxide import Cache, Timeout
 
-# New code:
-import diskcache_oxide
-cache = diskcache_oxide.Cache('/var/cache/app')
+cache = Cache('/var/cache/my-app-oxide')
 ```
 
-## Key differences at a glance
+## Start with a fresh cache
 
-| Behavior | python-diskcache 5.6.3 | diskcache-oxide |
+diskcache-oxide stores its data in `diskcache-oxide.sqlite`, not diskcache's `cache.db`, and never opens or converts a diskcache database. The two can even share a directory without seeing each other's data. Your cache starts cold after the switch, which for a cache is usually fine. Once you've switched, delete the old `cache.db*` files and value files to get the disk space back.
+
+## What you might notice
+
+Most of these are fixes. Each one has a conformance test, or an entry in [Divergences](divergences.qmd) that explains why.
+
+| | python-diskcache 5.6.3 | diskcache-oxide |
 |---|---|---|
-| **Database file** | `cache.db` | `diskcache-oxide.sqlite` |
-| **Default serialization** | `pickle` | `msgpack` (or `json`) |
-| **Unpicklable / unrepresentable types** | Serialized via pickle | Raises `TypeError` (opt-in `pickle=True`) |
-| **Reading pickled data without pickle** | Executes arbitrary pickle code | Raises `UnsafeValueError` |
-| **Key types** | Any picklable object (tuples, ints, etc.) | `str` only (`TypeError` otherwise) |
-| **Cache truthiness** | `bool(cache)` is `len(cache) > 0` | `bool(cache)` is always `True`; `cache.enabled` is `True` |
-| **`Timeout` exception** | Inherits only from `Exception` | Inherits from standard `TimeoutError` |
-| **Minimum `size_limit`** | None (culls everything under ~32 KB) | 1 MiB minimum (`MIN_SIZE_LIMIT = 1048576`) |
-| **`expire()` behavior** | Stops early if entries share identical expiry | Removes all expired entries across chunks |
-| **`clear()` behavior** | Can delete concurrently written keys | Removes only entries present when clear began |
-| **Fork safety** | Can crash or corrupt SQLite in child processes | Guarded by `os.register_at_fork` barrier |
-| **Connection limit** | Unbounded (1 connection per thread) | Bounded by pool (`max_connections`, default 8) |
-| **WAL file growth** | Unbounded under multi-process readers | Bounded by active checkpoints (`wal_size_limit`) |
+| Values | Pickled | msgpack (default) or JSON with exact type tags. Pickle is opt-in with `pickle=True`. |
+| Unrepresentable values | Pickled | `TypeError` at `set()`, unless `pickle=True` |
+| Keys | Anything picklable | `str` only for now |
+| `bool(cache)` | False when empty | Always True; `NullCache` is False |
+| `Timeout` | Subclasses `Exception` | Subclasses `TimeoutError` |
+| `directory` | Optional (makes a temp dir) | Required |
+| Clock | Reads `time.time()` | Reads the clock in Rust; pass `clock=` to control it |
+| `size_limit` | Anything (tiny values silently empty the cache) | At least 1 MiB |
+| `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
+| `disk=`, `eviction_policy=` | Supported | Not supported (eviction policies are coming) |
+| `transact()`, tags, `memoize`, `FanoutCache` | Supported | Coming in later phases |
 
-## String keys only
+## Values: no pickle unless you ask
 
-In python-diskcache, keys could be integers, tuples, or custom objects. In diskcache-oxide:
+diskcache pickles every value. That's convenient, but anyone who can write to the cache directory can make your app run arbitrary code the next time it reads, and objects that were never meant to be cached get stored without complaint.
 
-- **All keys must be `str`**.
-- Attempting to pass an `int`, `bytes`, or other key type raises a `TypeError`:
+diskcache-oxide stores values as msgpack (or JSON), and tags the types those formats would otherwise change, so tuples, sets, datetimes, big ints, NaN, nested bytes and non-`str` dict keys all come back exactly as stored. Something that can't be represented raises `TypeError` when you store it, not later when you read it:
 
 ```python
-cache.set('user:100', 'data')  # OK
-cache.set(100, 'data')         # Raises TypeError: cache keys must be str, not int
+cache.set('job', MyJob())
+# TypeError: values of type MyJob can't be stored without pickle (only exact built-in types round-trip)
 ```
 
-> [!NOTE]
-> Keys are stored internally in a type-tagged column in SQLite, so structured key support
-> can be introduced in future phases without requiring database migrations.
-
-## Safe serialization by default
-
-python-diskcache pickles every value. This causes two major issues in production:
-
-1. **Security**: Any process with write access to the cache directory can execute arbitrary code inside any reader process upon unpickling.
-2. **Hidden bugs**: Objects not intended to be cached (database handles, active sockets, unpicklable closures) either fail obscurely or bloat the cache.
-
-diskcache-oxide uses `msgpack` by default (or standard `json`), with native tag support for Python
-types that JSON normally corrupts (tuples, sets, datetimes, 64-bit ints, and nested bytes).
+If you really do need to cache arbitrary objects, opt in for that cache:
 
 ```python
-# Values serialize cleanly without pickle:
-cache.set('item', {
-    'created': datetime.datetime.now(datetime.timezone.utc),
-    'tags': {'production', 'web'},
-    'coordinates': (37.7749, -122.4194)
-})
-
-# Types round-trip with exact fidelity:
-val = cache.get('item')
-assert isinstance(val['tags'], set)
-assert isinstance(val['coordinates'], tuple)
+objects = Cache('/var/cache/my-app-objects', pickle=True)
 ```
 
-If you store a custom class instance that cannot be represented in msgpack or JSON:
+A cache opened without `pickle=True` never unpickles. If it finds a pickled value written by a `pickle=True` peer, it raises `UnsafeValueError` and leaves the value alone. More in [Serialization](serialization.qmd).
+
+## String keys
+
+Only `str` keys are accepted today; anything else raises `TypeError`. Keys are already stored with a type tag, so other key types can be added in Phase 6a without changing the file format. In the meantime, build string keys yourself (`f'user:{user_id}'`).
+
+## Truthiness
+
+In diskcache, an empty cache is falsy, so `if cache:` quietly skips caching right after every deploy, when the cache is empty. In diskcache-oxide, `bool(Cache)` is always True and `bool(NullCache)` is always False, so `if cache:` means "is caching on?". Both have an `enabled` property that says the same thing.
+
+## Tests that patch `time.time`
+
+diskcache reads `time.time()` in Python, so tests could advance its clock with `unittest.mock.patch` or a freezegun-style fixture. diskcache-oxide reads the clock natively, which keeps a Python call off every operation. To make it follow a patched clock, pass `clock=`:
 
 ```python
-class CustomJob: ...
+cache = Cache(tmp_path, clock=lambda: time.time())
 
-cache.set('job', CustomJob())  # Raises TypeError!
-```
-
-To enable the pickle fallback for a specific cache instance:
-
-```python
-cache = Cache('/tmp/my-cache', pickle=True)
-cache.set('job', CustomJob())  # Stored using pickle
-```
-
-When a cache configured with `pickle=False` attempts to read a row stored with pickle, it raises
-`UnsafeValueError` (a `TypeError` subclass) instead of unpickling the payload.
-
-## Cache truthiness
-
-In python-diskcache, `bool(cache)` evaluated `len(cache) > 0`. As a result, an empty, fully-functioning
-cache was considered falsy:
-
-```python
-# In python-diskcache:
-cache = diskcache.Cache('/tmp/cache')
-if not cache:
-    print("Warning: cache is empty, but code thought caching was disabled!")
-```
-
-In diskcache-oxide:
-
-- `bool(Cache)` is **always `True`**, and `cache.enabled` is `True`.
-- `bool(NullCache)` is **always `False`**, and `null_cache.enabled` is `False`.
-
-This allows pattern checks like `if cache:` to reliably mean "is caching enabled?".
-
-## Timeouts and errors
-
-In python-diskcache, `Timeout` inherited only from base `Exception`. In diskcache-oxide:
-
-- `diskcache_oxide.Timeout` subclasses Python's built-in `TimeoutError`.
-- Any existing code catching `Timeout` or `Exception` continues to work, while code catching
-  standard `TimeoutError` now catches diskcache-oxide timeouts as well.
-
-## Testing with custom clocks
-
-python-diskcache read `time.time()` directly from Python, which allowed test suites to manipulate
-time using `unittest.mock.patch('time.time')`. However, calling Python's clock on every hot read
-incurred noticeable overhead.
-
-diskcache-oxide reads the system monotonic/wall clock natively in Rust for maximum speed. To test
-expiration logic with monkeypatched clocks, pass the `clock=` argument:
-
-```python
-import time
-from unittest.mock import patch
-from diskcache_oxide import Cache
-
-with patch('time.time') as mock_time:
-    mock_time.return_value = 1000.0
-    cache = Cache('/tmp/test-cache', clock=lambda: time.time())
+with patch('time.time', return_value=1000.0):
     cache.set('k', 'v', expire=10)
-
-    mock_time.return_value = 1015.0
-    assert cache.get('k') is None  # Expired according to the mock clock
+with patch('time.time', return_value=1015.0):
+    assert cache.get('k') is None
 ```
+
+## Things that just get better
+
+You don't have to change anything for these:
+
+- Reads take about half the time, and threaded throughput no longer collapses as threads are added. See [Performance](performance.qmd).
+- A child process forked while another thread was writing can always write. In diskcache it can stall for the full 60-second timeout.
+- `clear()` keeps writes that land while it runs, `expire()` removes every expired entry, and a read during an overwrite never misses.
+- File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache.
+- Opening a cache and reading from it never writes to the database.
+
+
+## The vision
+
+A shared cache is one of the first pieces of infrastructure a Python web app grows into, and today the choice is awkward. An in-process dict is fast, but each worker has its own copy and it's gone on restart. Redis is shared and durable, but it's a separate server, a network hop on every read, and one more thing to run. [python-diskcache](https://github.com/grantjenks/python-diskcache) showed there's a lot of room between those two: a cache that is just a directory, shared by every thread and process on the machine, built on SQLite.
+
+diskcache-oxide is a bet that this middle option can be much bigger than it has been. With a Rust engine underneath, a directory-backed cache can be fast enough to call on the event loop, safe enough for pre-forking servers and free-threaded Python, and complete enough to cover the jobs people now reach for Redis to do: caching, counters, rate limits, locks, job claims and queues. And when one machine isn't enough, the same engine can be served over the network.
+
+It's being built in three stages.
+
+### Stage 1: a better diskcache (now)
+
+Keep diskcache's API, fix what's wrong underneath it, and make it fast. Behavior comes first: every phase keeps a conformance suite green against real diskcache 5.6.3 before chasing speed, and every deliberate difference is written down in [Divergences](divergences.qmd).
+
+### Stage 2: the complete local caching toolkit
+
+Everything diskcache offers that real apps use, plus the things a modern Python stack needs that it never had: an async API, sharding designed for many threads, and coordination recipes that are atomic across every process on the machine.
+
+### Stage 3: a cache server
+
+The same Rust core, served over HTTP to many clients: a Redis-style central cache with SQLite underneath, for when your app outgrows one machine. A server that is the only owner of its files can run SQLite in exclusive locking mode, which keeps the WAL index in heap memory instead of a shared file. Measured on the development machine:
+
+| Storage mode | Read | Write | Shared by several processes? |
+|---|---|---|---|
+| WAL (the library today) | 1.18 µs | 13.9 µs | Yes |
+| WAL with exclusive locking (the server) | 0.69 µs | 16.5 µs | No, one owner |
+
+## Where things stand
+
+### Done: the core `Cache`
+
+- `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`, with expiry.
+- The dictionary interface: `cache[k]`, `k in cache`, `del cache[k]`, `len(cache)`, iteration.
+- Indexed prefix scans: `iterkeys(prefix=..., reverse=...)`.
+- Maintenance: `expire()`, `clear()`, `cull()`, `volume()`, and `checkpoint()` for the write-ahead log.
+- Least-recently-stored eviction with `size_limit` and `cull_limit`.
+- Large values spilled to files, with readers that never see a spurious miss during an overwrite.
+- msgpack (default) and JSON serializers with exact type tags; pickle only when you opt in.
+- Thread-, process- and fork-safe, on GIL and free-threaded builds of 3.14 and 3.15.
+- Bounded connections, memory and WAL size.
+- `NullCache`, the `CacheLike` protocol, `py.typed`.
+
+### Now: concurrency review and soak (Phase 2.5)
+
+The concurrency core is where serious bugs hide, so it gets its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and `clear()` under load, checking for corruption, lost writes, leaks and latency drift. The soak has already paid for itself: it found the unbounded WAL growth that `wal_size_limit` and `checkpoint()` now fix.
+
+### Next
+
+| Phase | What it delivers |
+|---|---|
+| **3. Production** | diskcache-oxide replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers. First release to PyPI after that. |
+| **4. Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
+| **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one. |
+| **6a. Cache options** | More eviction policies (LRU, LFU, none), tags and `evict(tag)`, statistics, `memoize`, `peek`/`pull`/`push`, `check()`, `retry=`, and non-`str` keys. |
+| **6b. `transact()`** | Multi-operation transactions. |
+| **6c. `FanoutCache`** | Sharding across several databases, so writers stop queueing on one write lock. A strong candidate for the recommended default in threaded apps. |
+| **6d. `Deque` and `Index`** | diskcache's persistent collections. |
+| **6e. Recipes** | `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, and stampede-proof `memoize`. |
+| **7. Network server** | Stage 3, above. |
+| **Windows** | Supported as a development platform once macOS and Linux are solid. |
+
+## Further out
+
+Ideas being considered, not yet committed to:
+
+- **Expiry that's exact everywhere.** Lookups already treat an expired entry as gone at the moment it expires. The plan is to make `len()` and iteration do the same, and move the physical cleanup to a small background sweeper written in Rust, coordinated across processes so eight workers don't all sweep at once.
+- **Encryption at rest**, if a real need appears: SQLCipher for the database, authenticated encryption for spill files.
+
+## Non-goals
+
+- Reading existing diskcache directories. diskcache-oxide uses its own on-disk format, so caches start cold when you switch.
+- A module named `diskcache` (it would collide with the real package).
+- `DjangoCache`.
+- Python older than 3.14.
 
 
 
@@ -653,451 +759,329 @@ with patch('time.time') as mock_time:
 
 ### Serialization
 
-A core design priority in diskcache-oxide is **data safety**: storing and loading values
-must be fast, secure, and preserve exact Python types without silent coercion or arbitrary code execution.
+What goes into the cache should come out as exactly what you put in, it should be fast to encode and decode, and reading the cache should never run code someone else left there. diskcache's default, pickle, gets the first two and fails the third. diskcache-oxide gets all three, and pickle becomes something you opt into.
 
-## Serializer choices
+## Two formats
 
-diskcache-oxide supports two structured serializers, selectable via the `serializer=` argument when initializing `Cache`:
+Each cache picks a structured format with `serializer=`:
 
 ```python
-# Default: msgpack (ultra-fast, compact binary)
-cache = Cache('/tmp/app-cache', serializer='msgpack')
-
-# Alternative: JSON (human-readable in SQLite)
-json_cache = Cache('/tmp/json-cache', serializer='json')
+cache = Cache('/var/cache/my-app')                       # msgpack, the default
+readable = Cache('/var/cache/my-app-json', serializer='json')
 ```
 
-Both serializers use a per-row `mode` column in SQLite. If a cache's configuration is changed
-from `json` to `msgpack` (or vice versa), existing rows remain readable because each row stores its own serialization mode.
+- **msgpack** (the default) is compact and fast. On a 450 KB page-cache entry it's about 25× faster than tagged JSON, and it stores nested `bytes` without base64.
+- **json** is human-readable: open `diskcache-oxide.sqlite` in any SQLite browser and read your values. It uses `serde_json` with exact float round-tripping.
 
-### msgpack (Default)
+Plain `str` and `bytes` values skip both and are stored raw. Every row records how it was encoded, so if you change a cache's `serializer`, existing entries stay readable.
 
-`msgpack` is the recommended format for production:
+## Exact types
 
-- **Performance**: Up to 25x faster than tagged JSON on large payloads (e.g. 450 KB HTML pages).
-- **Compactness**: Produces smaller payloads on disk than JSON.
-- **Binary support**: Natively embeds arbitrary nested `bytes` without Base64 overhead.
-- **Timestamp extension**: Stores `datetime` objects using msgpack's native timestamp extension format.
+JSON turns tuples into lists and can't store sets, datetimes, NaN, very large ints, or dicts with non-`str` keys. msgpack has some of the same gaps. The usual answer is to coerce quietly and let the bug show up later.
 
-### json
+diskcache-oxide's encoder, written in Rust, notices anything its format would change and tags it instead, so it decodes back to the same type:
 
-The `json` serializer uses `serde_json` in Rust with float roundtripping:
-
-- **Human readable**: You can open `diskcache-oxide.sqlite` in any SQLite browser or CLI and inspect stored values directly.
-- **Interoperability**: Standard JSON representation for basic types.
-
-## Exact type preservation
-
-Standard JSON has significant type limitations:
-
-- Tuples are converted to lists.
-- Sets cannot be serialized.
-- Datetimes must be converted to strings manually.
-- Dict keys must be strings.
-- Floats can lose precision (`NaN` and `Infinity` are not standard JSON).
-- Integers wider than 53 or 64 bits overflow.
-
-diskcache-oxide includes a native type-tagging system in Rust that detects when a value contains
-types that JSON or msgpack cannot represent natively.
-
-### Preserved types
-
-The following types round-trip with exact fidelity:
-
-| Python Type | Behavior |
+| Python value | Comes back as |
 |---|---|
-| `str` | Stored raw without container overhead |
-| `bytes` | Stored raw as SQLite `BLOB` (or in a spill file if large) |
-| `tuple` | Decoded back as an immutable `tuple` (not a `list`) |
-| `set` | Decoded back as a `set` |
-| `datetime.datetime` | Decoded back as a `datetime.datetime` with exact timezone/microsecond precision |
-| `int` (> 64-bit) | Preserves arbitrarily large integers without precision loss |
-| `float('nan')`, `inf` | Preserves `NaN`, `+Infinity`, and `-Infinity` |
+| `tuple` | a `tuple`, not a list |
+| `set` | a `set` |
+| `datetime.datetime` | a `datetime`, with its timezone and microseconds |
+| `int` wider than 64 bits | the same int |
+| `float('nan')`, `inf`, `-inf` | the same float |
+| `bytes` nested in a container | `bytes` |
+| `dict` with `int` (or other non-`str`) keys | the same keys |
 
 ```python
 import datetime
 
-data = {
-    'created': datetime.datetime.now(datetime.timezone.utc),
-    'numbers': (1, 2, 3),
-    'unique_ids': {101, 102, 103},
-    'big_num': 2**128,
-}
+cache.set('record', {
+    'created': datetime.datetime.now(datetime.UTC),
+    'point': (37.77, -122.42),
+    'ids': {101, 102},
+    'big': 2**128,
+    'by_id': {1: 'one', 2: 'two'},
+})
 
-cache.set('record', data)
-retrieved = cache.get('record')
-
-assert isinstance(retrieved['numbers'], tuple)
-assert isinstance(retrieved['unique_ids'], set)
-assert isinstance(retrieved['created'], datetime.datetime)
-assert retrieved['big_num'] == 2**128
+record = cache.get('record')
+assert isinstance(record['point'], tuple)
+assert record['by_id'][1] == 'one'
 ```
 
-### Tag escaping
+User data can't be mistaken for a tag: a dict that happens to look like one is escaped on the way in and decoded as an ordinary dict on the way out.
 
-To prevent malicious or accidental collision where user data contains keys matching internal type tags,
-diskcache-oxide escapes user dictionary keys that mirror internal tag markers. Your data cannot be
-mistaken for a type tag.
+## What isn't stored
 
-## Why pickle is disabled by default
-
-python-diskcache defaults to `pickle` for everything. While convenient, pickling presents serious hazards:
-
-1. **Remote Code Execution**: Any process or user that can write to the cache directory can craft
-   a malicious payload that executes arbitrary Python code when another process calls `cache.get()`.
-2. **Hidden Serialization of Non-Cacheable Objects**: Pickling open sockets, database connections,
-   or complex generators often silently succeeds or produces invalid objects when re-hydrated.
-
-In diskcache-oxide, **pickle is off by default**. Storing an unrepresentable type raises a `TypeError` at `set()` time:
+A value that neither format can represent exactly, such as an instance of your own class, raises `TypeError` at `set()`:
 
 ```python
-class LocalService:
-    def __init__(self):
-        self.endpoint = "internal"
-
-# Raises TypeError: cannot serialize object of type 'LocalService'
-cache.set('service', LocalService())
+cache.set('service', MyService())
+# TypeError: values of type MyService can't be stored without pickle (only exact built-in types round-trip)
 ```
 
-### Opting in to pickle
+Only exact built-in types count. A subclass of `dict` or `str` isn't stored as its base type, because it wouldn't come back as the class you stored. Failing at `set()` time means you find out where the value was created, not three requests later when something reads it.
 
-If you must cache arbitrary Python objects that cannot be represented in msgpack or JSON, pass `pickle=True`:
+## Why pickle is off by default
+
+- **Unpickling runs code.** Anyone who can write to the cache directory, including a compromised neighbor process or a shared volume, can make every reader run arbitrary Python.
+- **Pickle hides mistakes.** Database sessions, open files and other objects that were never meant to be cached get pickled without complaint and fail later in confusing ways.
+
+## Opting in to pickle
+
+When you really do need to cache arbitrary objects, turn pickle on for that cache. It's used only for values the structured format can't represent; everything else is still stored as msgpack or JSON.
 
 ```python
-cache = Cache('/tmp/pickle-cache', pickle=True)
-cache.set('service', LocalService())  # Works
+objects = Cache('/var/cache/my-app-objects', pickle=True)
+objects.set('service', MyService())
 ```
 
-### Safe reading and `UnsafeValueError`
+A good habit is to give pickled values their own cache directory, and keep everything else in a cache without pickle.
 
-If multiple processes or worker handles access the same cache directory, diskcache-oxide enforces
-read-side security:
+## Reading safely: `UnsafeValueError`
 
-- If a handle created with `pickle=False` encounters a row that was written by a `pickle=True` handle,
-  it **refuses to unpickle the data**.
-- Instead, it raises `diskcache_oxide.UnsafeValueError` (a subclass of `TypeError`).
-- The row remains intact on disk so that legitimate `pickle=True` handles can still read it.
+Several processes can open one directory with different settings. A handle opened without `pickle=True` never unpickles. If it reads a value that a `pickle=True` handle stored, it raises `diskcache_oxide.UnsafeValueError` (a `TypeError` subclass) and leaves the row in place, so the `pickle=True` handle can still read it.
+
+A value whose stored bytes can't be decoded at all raises `CorruptValueError` (a `ValueError` subclass).
 
 
 ### NullCache
 
-A common challenge in production applications is turning caching off: during local development,
-inside unit test suites, or temporarily in production while diagnosing an issue.
+Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry. Without help, that means `if cache is not None:` around every call, or a hand-written fake that drifts out of sync with the real API.
 
-Without a dedicated abstraction, developers are forced to write defensive guards around every cache call:
+`NullCache` is a cache that's switched off. It has the same methods and signatures as `Cache`, so swapping one for the other is a one-line change, and the code that uses it never knows.
 
 ```python
-# The anti-pattern: defensive null checks everywhere
-if cache is not None:
-    cache.set('key', value)
+from diskcache_oxide import Cache, CacheLike, NullCache
 
-# Retrieving:
-if cache is not None:
-    value = cache.get('key')
-else:
-    value = fetch_from_db()
+def make_cache(settings) -> CacheLike:
+    if settings.cache_enabled:
+        return Cache(settings.cache_dir)
+    return NullCache()
 ```
 
-diskcache-oxide provides **`NullCache`**: a drop-in implementation of the cache interface that turns
-caching off cleanly without changing call sites.
+## One rule
 
-## The governing rule
+> **A `NullCache` behaves like a real cache in which every entry expires the instant it's written and is swept straight away.**
 
-A `NullCache` follows one simple rule:
+Every result follows from that sentence, so you never have to guess:
 
-> **A `NullCache` behaves like a real cache in which every entry expires the instant it is written and is swept immediately.**
-
-Every method's return value follows directly from this rule:
-
-| Method | Behavior | Rationale |
+| Call | Result | Because |
 |---|---|---|
-| `get(key, default=None)` | Returns `default` | Key is expired/missing |
-| `cache[key]` | Raises `KeyError` | Key is expired/missing |
-| `set(key, value, expire=...)` | Returns `True` | Write succeeded, then expired |
-| `add(key, value, expire=...)` | Returns `True` | Key was absent, so add succeeded |
-| `delete(key)` | Returns `False` | Nothing to delete |
-| `pop(key, default=None)` | Returns `default` | Nothing to remove |
-| `touch(key)` | Returns `False` | Key does not exist |
-| `incr(key, delta=1, default=0)` | Returns `default + delta` | Starts at default and increments |
-| `key in cache` | Returns `False` | Nothing is cached |
-| `len(cache)` | Returns `0` | Cache is empty |
-| `volume(cache)` | Returns `0` | Consumes no disk |
-| `bool(cache)` | Returns `False` | `cache.enabled` is `False` |
-| `iter(cache)` / `iterkeys()` | Yields nothing | Empty collection |
-| `expire()`, `clear()`, `cull()` | Returns `0` | No entries affected |
+| `get(key, default)` | `default` | the entry already expired |
+| `cache[key]` | raises `KeyError` | the entry already expired |
+| `set(...)` | `True` | the write succeeded, then expired |
+| `add(...)` | `True` | the key was absent, so the add succeeded |
+| `incr(key, delta, default)` | `default + delta` | it starts from the default each time; `KeyError` if `default=None` |
+| `delete`, `touch`, `key in cache` | `False` | there's nothing there |
+| `pop(key, default)` | `default` | there's nothing there |
+| `len(cache)`, `cache.volume()` | `0` | it's empty and uses no disk |
+| `expire()`, `clear()`, `cull()` | `0` | nothing to remove |
+| iteration, `iterkeys()` | nothing | it's empty |
+| `bool(cache)`, `cache.enabled` | `False` | caching is off |
 
-## Truthiness and `enabled`
+The constructor accepts the same arguments as `Cache` and ignores them, and the directory is optional. Bad argument *types* still raise as they would on `Cache` (a non-`str` key, `expire=True`), so code that passes with a `NullCache` in tests also works with a real one.
 
-Unlike python-diskcache (where truthiness depended on whether `len()` was greater than zero),
-diskcache-oxide distinguishes between an empty active cache and a disabled cache:
+### Watch `add()`
 
-- `bool(Cache(...))` is **always `True`**, and `cache.enabled` is `True`.
-- `bool(NullCache(...))` is **always `False`**, and `null_cache.enabled` is `False`.
+The rule means `add()` always succeeds on a `NullCache`. If you use `add()` to claim a job so only one worker runs it, then with caching off every worker's claim succeeds and the job runs once per worker. That's harmless for idempotent work and wrong for work with side effects, like sending email. Keep claims like that on a cache that's never switched off.
 
-This makes feature checks readable and idiomatic:
+## `if cache:` means "caching is on"
+
+`bool(Cache(...))` is always True and `bool(NullCache())` is always False, and both have an `enabled` property. (In diskcache, an empty real cache is falsy, which makes this check unreliable.)
 
 ```python
 if cache:
-    print("Caching is active!")
-else:
-    print("Caching is disabled.")
+    log.info('Caching is on')
 ```
 
-## Invalidation forwarding with `invalidate=`
+## Keep invalidating while caching is off: `invalidate=`
 
-A common dilemma when disabling caching is handling mutation endpoints. If caching is switched off
-and a user updates their profile, simply bypassing the cache means old, stale entries remain in the
-real database for when caching is turned back on.
+Turning caching off creates a trap. While it's off, your app keeps changing data, and the code that would have deleted the now-stale cache entries is talking to a `NullCache`. When you turn caching back on, the real cache serves the stale values.
 
-To solve this, `NullCache` supports `invalidate=`:
+`invalidate=` closes the trap. Give the `NullCache` the real cache, and it forwards the operations that *remove* data to it, while everything else stays switched off:
 
 ```python
-from diskcache_oxide import Cache, NullCache
+real = Cache('/var/cache/my-app')
+cache = NullCache(invalidate=real)
 
-real_cache = Cache('/var/cache/app')
-
-# Invalidate forwards mutations to the real cache, but keeps reads null
-null_cache = NullCache(invalidate=real_cache)
-
-# Writes and reads remain null:
-null_cache.set('user:42', {'name': 'New Name'})
-assert null_cache.get('user:42') is None
-
-# BUT removals forward directly to the real cache:
-null_cache.delete('user:42')       # Deletes 'user:42' from real_cache!
-null_cache.pop('session:99')        # Deletes 'session:99' from real_cache!
-null_cache.clear()                  # Clears real_cache!
+cache.set('user:42', profile)    # not cached
+cache.get('user:42')             # None
+cache.delete('user:42')          # deleted from the real cache
+cache.pop('user:42')             # deleted from the real cache; returns the default
+cache.clear()                    # clears the real cache
+cache.iterkeys(prefix='user:')   # the real cache's keys, so list-then-delete still works
 ```
 
-This guarantees that while caching is disabled, cache-busting logic in your business layer continues
-to purge stale data from the backing store.
+When caching comes back on, nothing stale is waiting.
 
-## The `CacheLike` protocol
+## `CacheLike`
 
-To support strict static type checking with Mypy or Pyright, diskcache-oxide exports the `CacheLike`
-runtime-checkable protocol:
+`CacheLike` is a `typing.Protocol` that both `Cache` and `NullCache` satisfy. Annotate with it and mypy or pyright will accept either:
 
 ```python
-from diskcache_oxide import Cache, NullCache, CacheLike
+from diskcache_oxide import CacheLike
 
-def create_cache(dev_mode: bool) -> CacheLike:
-    if dev_mode:
-        return NullCache()
-    return Cache('/var/cache/production')
-
-def fetch_user_data(user_id: str, cache: CacheLike) -> dict:
-    cached = cache.get(f'user:{user_id}')
-    if cached is not None:
-        return cached
-
-    data = compute_user_data(user_id)
-    cache.set(f'user:{user_id}', data, expire=300)
-    return data
+def load_user(user_id: str, cache: CacheLike) -> dict:
+    if (user := cache.get(f'user:{user_id}')) is not None:
+        return user
+    user = db.load_user(user_id)
+    cache.set(f'user:{user_id}', user, expire=300)
+    return user
 ```
 
-A test in the diskcache-oxide test suite guarantees that `Cache` and `NullCache` signatures remain
-100% synchronized with `CacheLike`.
+A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `CacheLike` keep identical public signatures, so they can't drift apart.
 
 
-### Concurrency and fork safety
+### Concurrency and forks
 
-High-concurrency Python web servers present unique challenges for disk-backed caches:
-multiple threads accessing a single cache instance, multiple worker processes sharing a directory,
-and pre-forking application servers (`gunicorn`, `celery`, `uvicorn --workers`).
+A production Python web app is many things at once: several worker processes, often several threads in each, a pre-forking server that creates and recycles those workers, and background jobs and scripts opening the same cache on the side. More and more, it's also free-threaded Python, with threads truly running in parallel. diskcache-oxide is designed for all of that at the same time, and its test suite runs each of these cases on every change.
 
-diskcache-oxide is engineered from the ground up to handle these workloads safely and predictably.
+## Threads
 
-## Free-threaded Python (3.14t and 3.15t)
+One `Cache` can be shared by any number of threads. There's nothing to lock and no per-thread setup.
 
-diskcache-oxide is compiled with `#[pymodule(gil_used = false)]`.
+- **Free-threaded ready.** The extension declares `gil_used = false` and never relies on the GIL for correctness. Its shared state is guarded by Rust's own locks and atomics. Every change is tested on 3.14, 3.14t, 3.15 and 3.15t.
+- **Waits don't hold up Python.** Anything that can wait, such as a busy write lock, reading a large value file, or a chunk of `clear()`, releases the interpreter while it waits, so other Python threads keep running on GIL builds too.
+- **Threads queue fairly.** Writers in one process queue on an in-process lock for each database file instead of all retrying against SQLite's busy handler, and long maintenance calls like `clear()` and `expire()` step aside between chunks so a waiting write gets in.
 
-On free-threaded CPython builds, Python's Global Interpreter Lock (GIL) is disabled. Threads
-run simultaneously across all available CPU cores.
+### A bounded connection pool
 
-- **No GIL reliance**: diskcache-oxide uses Rust standard synchronization primitives (`std::sync::Mutex`,
-  `Arc`, atomic variables) internally. It never relies on the GIL to prevent race conditions.
-- **Detached locks**: Long-running operations (such as waiting on SQLite write locks or reading large file spills)
-  detach the Python thread so they never block garbage collection or other Python threads.
-- **Tested in CI**: Every change is continuously tested on Python 3.14, 3.14t, 3.15, and 3.15t.
+diskcache opens a SQLite connection for every thread that touches the cache and keeps it. With 64 threads that's 131 open files in the cache directory, and a server with enough threads runs out of file descriptors.
 
-## Multi-process architecture
-
-Multiple independent Python processes (such as Gunicorn workers or Celery tasks) can safely point
-to the same cache directory:
-
-- **SQLite WAL Mode**: diskcache-oxide always operates in Write-Ahead Logging (`journal_mode=WAL`) mode.
-  Readers never block writers, and writers never block readers.
-- **Cross-process coordination**: Writers coordinate through SQLite's internal WAL locks (`-shm` and `-wal` files).
-- **Atomic sequence numbers**: Every write receives a monotonically increasing `store_seq` generated inside
-  the SQLite transaction. Eviction, expiration, and clear operations use this sequence to ensure that
-  concurrent writes are never accidentally wiped out by a running maintenance sweep.
-
-## The fork barrier (`os.register_at_fork`)
-
-Pre-forking web servers create worker processes using POSIX `fork()`. When `fork()` is called after
-a parent process has initialized SQLite connections, standard SQLite libraries can deadlock, corrupt
-shared locks, or crash. On macOS, using SQLite across a fork can trigger an immediate abort in Apple's
-system libraries.
-
-diskcache-oxide implements an automatic **process-wide fork barrier**:
-
-```
-[ Parent Process ]
- Thread 1: In-flight write transaction ───┐
- Thread 2: About to start transaction ────┼── (Blocked by barrier)
- Main Thread: Calls os.fork() ────────────┴── Barrier waits for Thread 1 to commit
-                                              │
-                      ┌───────────────────────┴───────────────────────┐
-                      ▼                                               ▼
-              [ Parent Process ]                              [ Child Process ]
-          Resumes Thread 2 & writers                   Drops inherited connection handles
-                                                       Starts fresh connection pool lazily
-```
-
-1. **Before fork (`before`)**: The barrier releases the Python GIL and waits for all active SQLite
-   transactions in other threads to complete. It temporarily blocks any new transactions from starting.
-2. **After fork in parent (`after_in_parent`)**: Releases the barrier and unblocks waiting writers in the parent.
-3. **After fork in child (`after_in_child`)**: Resets the process generation counter. Inherited SQLite
-   connection pointers are discarded immediately without closing the inherited file descriptors
-   (which would drop POSIX locks held by the parent). The child opens clean, independent connections
-   on its next cache call.
-
-This barrier is registered automatically when `diskcache_oxide` is imported.
-
-## Bounded connection pooling
-
-In python-diskcache, each thread that touched the cache created and retained its own SQLite connection.
-In an application running short-lived worker threads or high thread counts (e.g. 64 threads),
-this resulted in hundreds of open file descriptors inside the cache directory, leading to file
-descriptor exhaustion ("Too many open files" / `EMFILE`).
-
-diskcache-oxide uses a bounded connection pool:
+diskcache-oxide shares a pool of connections per database file across every handle in the process:
 
 ```python
-cache = Cache('/tmp/my-cache', max_connections=8)  # Default: 8
+cache = Cache('/var/cache/my-app', max_connections=8)   # the default
 ```
 
-- **Fixed pool size**: At most `max_connections` SQLite connections are opened per cache directory in a process.
-- **Fast checkout**: Connections are checked out using an uncontended mutex, held for the duration of
-  the query or transaction, and immediately returned to the pool.
-- **Bounded file descriptors**: Even with hundreds of concurrent threads, file descriptor usage remains
-  strictly bounded.
+The pool never holds more than `max_connections` connections, so at most `2 × max_connections + 1` files are open in the cache directory, however many threads you run. A thread that finds every connection busy waits for one, up to the cache's `timeout`. When the last handle on a directory closes, every connection closes with it, whichever threads used them.
+
+## Processes
+
+Any number of processes can open the same directory, each with its own `Cache`. That's the normal deployment: every gunicorn or uvicorn worker opens the cache at startup.
+
+- **WAL mode, always.** SQLite runs in write-ahead-log mode, so readers never block writers and writers never block readers. One writer at a time commits to each database file. diskcache-oxide checks that WAL mode is really on when it opens a cache, and fails loudly if it isn't (on some network filesystems, for example).
+- **Atomic across processes.** `add()`, `incr()`, `decr()`, `pop()` and every other write is a single transaction. Two processes can't both win an `add()`, and two `incr()` calls never lose an update.
+- **Maintenance that doesn't destroy work.** Every write gets a new sequence number. `clear()` and `expire()` note the latest number when they start and only touch older rows, so writes from other processes that land while they run are kept.
+- **Large values are always whole.** A process reading a large value while another overwrites it gets the old value or the new one, never a miss. (diskcache's standalone reproduction of that race sees about 40 misses in every 325,000 reads.)
+- **Opening never writes.** Opening a cache with unchanged settings and reading from it never takes the write lock or touches the database file, so a read-mostly worker costs the writers nothing.
+
+## Forks
+
+Pre-forking servers (gunicorn, Celery's prefork pool, `multiprocessing` with the fork start method) create workers with `fork()`. A fork copies the whole process, including any SQLite lock state that one of its threads held at that moment. In diskcache, a child forked while another thread was in a write transaction inherits a lock nobody in the child will ever release: its first write stalls for the full timeout (60 seconds by default). Under a busy read/write load, that hits 20-50% of forks.
+
+diskcache-oxide prevents it with a **fork barrier**, installed when `diskcache_oxide` is imported:
+
+1. **Before the fork,** the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish.
+2. **In the parent,** it lets the held-off writes continue.
+3. **In the child,** it drops the inherited connections without closing them (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.
+
+The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every `Cache` in the process, not just the one you're holding.
+
+A forked child deliberately leaves its inherited connections' file descriptors open, so each fork can carry up to the pool's descriptor budget into the child. That's by design, and it's bounded.
+
+### Forking from inside your own transaction
+
+CPython won't let a library refuse a fork, so the barrier can't wait for a transaction held by the very thread that is forking. Once `transact()` arrives (Phase 6b), the child's copy of that transaction is poisoned: anything done inside it raises `RuntimeError` and nothing commits, and the child's writes to that database raise `RuntimeError` straight away instead of stalling for a minute. The parent gets a `RuntimeWarning`. A clear error at the call site beats a mysterious 60-second hang in a fresh worker.
+
+## Free-threaded performance today
+
+On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that's only about 1.6× its single-thread number, so threads don't scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is the goal of Phase 4. See [Performance](performance.qmd).
 
 
-### Storage and WAL management
+### Storage and WAL
 
-diskcache-oxide is designed to keep both **memory usage** and **disk usage** strictly bounded,
-even under heavy concurrent write bursts and sustained multi-process reads.
+A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps up until an alert fires. This page covers what diskcache-oxide puts on disk, and the settings that keep memory and disk bounded.
 
-## On-disk layout
-
-Inside each cache directory, diskcache-oxide manages the following files:
+## What's in the directory
 
 ```
 /var/cache/my-app/
-├── diskcache-oxide.sqlite        # SQLite database (metadata, indexes, inline values)
-├── diskcache-oxide.sqlite-wal    # Write-Ahead Log file (bounded by wal_size_limit)
-├── diskcache-oxide.sqlite-shm    # Shared-memory index for WAL coordination
-└── 0a/                           # Subdirectories holding spilled value files
-    └── 0a1b2c3d4e...blob
+├── diskcache-oxide.sqlite        # keys, metadata and small values
+├── diskcache-oxide.sqlite-wal    # SQLite's write-ahead log
+├── diskcache-oxide.sqlite-shm    # SQLite's shared-memory index for the log
+└── 3f/
+    └── a2/
+        └── 3fa2…c91e.val         # one large value
 ```
 
-- **Database file**: `diskcache-oxide.sqlite` stores row metadata, timestamps, expiry times, keys,
-  and small-to-medium values.
-- **Directory permissions**: Cache directories created by diskcache-oxide are initialized with `0700`
-  permissions (owner read/write/execute only) on Unix systems to protect cached credentials and data.
+The database file carries a format version. A future build that can't read it raises `FormatMismatchError` rather than guessing.
 
-## Inline values vs file spills
+## Small values inline, large values in files
 
-To balance latency and SQLite database size, diskcache-oxide splits storage into two paths:
+- **Under 64 KiB** (after encoding), a value is stored in its database row. Reading it is one indexed lookup.
+- **64 KiB or more**, it's written to its own file, and the row points to it. This keeps the database small and its page cache hot, and large values stream straight from the file.
 
-1. **Inline values**: Values below the spill threshold are stored directly inside the SQLite database
-   as a `BLOB` or text column. Reading an inline value requires a single SQLite indexed lookup.
-2. **File spills**: Large values (e.g., cached image blobs, large API payloads) are written to standalone
-   files in subdirectories. The database row stores only the relative file path, size, and metadata.
+Writing a large value never holds the database lock while the bytes go to disk: the value goes to a temporary file first, then inside a short transaction the file is renamed into place and the row updated. The old file is removed after the commit, and file names are never reused.
 
-### Atomic spill writes
+A reader racing an overwrite always gets a whole value, old or new. If a value's file really is gone (deleted by hand, or cut short by a crash, since value files aren't fsynced), `get` returns the default and the orphaned row is cleaned up, so `in` and `len` don't keep reporting an entry that can't be read.
 
-When writing a spilled value:
+## Size limit and eviction
 
-- The payload is written to a temporary file in the destination folder and renamed into place atomically.
-- The SQLite transaction then commits the row pointing to the file.
-- When an entry is overwritten, deleted, or evicted, the database row is deleted first, and the backing file is unlinked.
-- **Concurrency safe**: If a reader races an overwrite of a spilled entry, the reader receives either the old value or the new value—never an empty read, a `None`, or an I/O error.
+```python
+cache = Cache('/var/cache/my-app', size_limit=500 * 1024 * 1024, cull_limit=10)
+```
 
-## Bounded memory (`sqlite_cache_size`)
+- `size_limit` is the cache's disk budget in bytes: the database plus value files. The default is 1 GiB and the minimum is 1 MiB.
+- When a `set()` finds the cache over its limit, it evicts up to `cull_limit` of the least recently stored entries (default 10). `cull()` evicts down to the limit on demand.
+- `volume()` reports the current size.
 
-Standard SQLite configurations can cause unexpected memory growth in long-running Python web processes.
-As queries run, SQLite caches database pages in process memory. In a multi-worker deployment, each worker
-process can accumulate hundreds of megabytes of RSS cache memory.
+Least-recently-stored eviction means a `get` never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU policies are planned for Phase 6a.
 
-diskcache-oxide bounds page cache memory on every connection:
+## Memory: `max_connections` and `sqlite_cache_size`
+
+diskcache gives each thread its own connection with a 32 MiB page cache plus a 64 MiB memory map, so its memory grows with your thread count. diskcache-oxide bounds it:
 
 ```python
 cache = Cache(
-    '/tmp/bounded-cache',
-    max_connections=8,
-    sqlite_cache_size=256,  # 256 pages of 4 KiB = 1 MiB per connection (default)
+    '/var/cache/my-app',
+    max_connections=8,       # connections per database file, per process (default 8)
+    sqlite_cache_size=256,   # 4 KiB pages per connection: 1 MiB (default)
 )
 ```
 
-With 8 pooled connections, the maximum SQLite memory consumed per process is bounded to approximately 8 MiB.
+SQLite's memory for a directory stays around `max_connections × sqlite_cache_size` pages, 8 MiB per process by default, however many threads use it. The 1 MiB default is the smallest size that left hot reads, writes and the threaded benchmarks unchanged. If your cache is large and read uniformly at random, raising it helps: 2,000 pages measured about 17% faster on that workload.
 
-## Bounded WAL files (`wal_size_limit`)
+## The write-ahead log
 
-SQLite's Write-Ahead Log (WAL) mode provides high read and write concurrency. However, standard SQLite
-has a well-known vulnerability in multi-process environments:
+SQLite's write-ahead log (WAL) is what lets readers and a writer work at the same time. It has a weak spot in multi-process apps: SQLite can only reset the log when it finds a moment with no readers, and with readers in other processes, a burst of writes (a big fill, or a `clear()`) makes the log grow to fit the burst and then stay that size. diskcache-oxide's soak tests saw logs over 1 GiB next to databases of a few MiB.
 
-> **The WAL growth problem**: When multiple processes are continuously reading from the database, SQLite
-> cannot checkpoint the WAL back into the main database file because active reader locks prevent it.
-> A burst of writes (such as an initial cache warm-up or mass invalidation) causes the `-wal` file to grow
-> to hundreds of megabytes or gigabytes, and standard SQLite never shrinks it back down.
+diskcache-oxide handles this in layers, from free and always on to explicit.
 
-diskcache-oxide actively monitors and bounds the `-wal` file:
+### Always on: `wal_size_limit`
 
 ```python
-cache = Cache(
-    '/tmp/bounded-cache',
-    wal_size_limit=64 * 1024 * 1024,  # 64 MiB limit (default)
-)
+cache = Cache('/var/cache/my-app', wal_size_limit=64 * 1024 * 1024)   # the default
 ```
 
-1. **Size limits**: Sets SQLite's `journal_size_limit` to half the limit, instructing SQLite to truncate
-   the log when reset.
-2. **Autocheckpoint scaling**: Scales SQLite's `wal_autocheckpoint` frequency based on the limit.
-3. **Forced checkpoints**: After writes, if the WAL file exceeds `wal_size_limit`, diskcache-oxide
-   attempts a forced checkpoint (`PASSIVE`, then `TRUNCATE` with a 2 ms busy timeout).
-4. **Adaptive backoff**: If other readers hold locks, the checkpoint attempt yields and backs off
-   for 1 second, ensuring that write calls are never failed or delayed by maintenance.
+This tells SQLite to trim the log back to half the limit (32 MiB by default) whenever it resets, and scales how often SQLite checkpoints automatically. These are connection settings, so they never pause anything. At normal load they keep the log at a few MiB.
 
-## Eviction and disk bounds
-
-You can configure an overall disk budget for the cache:
+### On demand: `checkpoint()`
 
 ```python
-cache = Cache(
-    '/tmp/app-cache',
-    size_limit=500 * 1024 * 1024,  # 500 MiB total limit
-    cull_limit=20,                 # Evict 20 items per cull pass
-)
+cache.checkpoint()   # True if the log was reset and truncated
 ```
 
-- **`size_limit`**: Total disk budget for the cache directory, including both database files and spilled
-  value files. Default: 1 GiB. Minimum: 1 MiB (`MIN_SIZE_LIMIT = 1048576`).
-- **`cull_limit`**: Maximum number of entries evicted during a single `set()` pass when the cache exceeds
-  `size_limit`. Default: 10.
-- **Least-Recently-Stored (LRS)**: Eviction prioritizes entries with the lowest monotonic `store_seq`.
-  Entries written earliest are culled first.
-- **`volume()`**: Returns the accurate on-disk volume in bytes consumed by database and spill files.
+`checkpoint()` copies the log into the database and truncates it to zero. It waits briefly for in-flight reads, retrying up to the cache's `timeout`, and returns `False` instead of raising if other processes keep the database busy. Call it when a short pause suits your app: at shutdown, in a maintenance job, or after a large `clear()`.
 
-## Maintenance operations
+### At close
 
-- `cache.expire()`: Scans the database and purges all expired records and their associated spill files.
-  Runs in non-blocking batches so concurrent writers can interleave between chunks.
-- `cache.cull()`: Manually triggers an eviction cycle if the cache currently exceeds `size_limit`.
-- `cache.clear()`: Deletes all entries that were present when `clear()` was called. Uses snapshot
-  boundaries so that writes occurring during the clear operation are preserved.
+`close()` runs the same checkpoint when this is the process's last handle on the cache and the log is over half the limit, waiting at most a second. A small log, the usual case, costs nothing extra. Pass `close(checkpoint=False)` to skip it.
+
+### Opt-in: automatic checkpoints
+
+```python
+cache = Cache('/var/cache/my-app', wal_checkpoint='auto')
+```
+
+With `'auto'`, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it's over the limit, with the interpreter released and a 1-second backoff if other processes are busy. It never fails a write. It isn't the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. The plan is to move this into a background maintenance thread so writes never pay for it at all.
+
+## Maintenance calls
+
+All of these work in chunks, release the database between chunks so other writers get in, and are safe to call while other processes use the cache:
+
+- `expire()` removes every expired entry and its value file.
+- `clear()` removes every entry that existed when it started, and keeps writes that land while it runs.
+- `cull()` evicts down to `size_limit`.
 
 
 
@@ -1105,262 +1089,177 @@ cache = Cache(
 
 ### Performance
 
-diskcache-oxide is engineered for low latency on hot reads, high concurrency across multiple threads
-and processes, and strictly bounded memory and disk usage.
+Web apps call their cache on almost every request, often straight from the asyncio event loop, where a slow call holds up every other request. So diskcache-oxide's performance work starts with read latency, then throughput under many threads, then predictable resource use. Correctness always comes first: every speedup has to keep the conformance suite green.
 
-## Read and write latency
+## The numbers
 
-In web applications, caching is primarily read-dominated. Every microsecond saved on a cache read
-directly decreases response time and increases request throughput.
+Measured with `bench/gate.py`, which runs diskcache 5.6.3 and diskcache-oxide in the same session on the same machine, in four interleaved rounds. This is the Phase 2 final gate, on Linux (Ubuntu 26.04 LTS in Docker on Apple Silicon), matching Talk Python's servers. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
 
-Key performance optimizations in diskcache-oxide:
+| Workload | 3.14 | 3.14t (free-threaded) |
+|---|---|---|
+| `get`, small value, hit | **0.76 µs** (0.42×) | **0.75 µs** (0.46×) |
+| `get`, miss | **0.65 µs** (0.45×) | **0.62 µs** (0.46×) |
+| `get`, small dict | **1.18 µs** (0.47×) | **1.26 µs** (0.54×) |
+| `get`, random keys over a large database | **2.21 µs** (0.65×) | **2.41 µs** (0.79×) |
+| `set`, small value | **22.6 µs** (0.77×) | **24.0 µs** (0.82×) |
 
-- **Direct PyO3 integration**: Calls pass directly from Python into compiled Rust without intermediate Python wrapper frames.
-- **Compiled SQLite statements**: Prepared statements are cached per connection in the pool, avoiding query compilation on every lookup.
-- **Fast zero-copy decoding**: Small inline values are deserialized directly from SQLite's memory buffers into Python objects without intermediate allocations.
-- **Native clock reads**: By default, diskcache-oxide reads the system clock in Rust without calling back into Python's `time.time()`.
+Threaded throughput, every thread sharing one `Cache`, in thousands of operations per second at 1/2/4/8 threads (ratios are oxide's throughput over diskcache's, so higher is better):
 
-### Benchmark comparison (Apple Silicon, Python 3.14)
+| Mix | 3.14 | 3.14t (free-threaded) |
+|---|---|---|
+| 99:1 reads to writes | **750 / 745 / 723 / 723** (2.0-16.5×) | **701 / 639 / 680 / 729** (1.7-1.8×) |
+| 1,000:1 reads to writes | **900 / 886 / 876 / 875** (2.1-18.9×) | **903 / 680 / 1,181 / 1,416** (1.25-2.2×) |
 
-Measured on Python 3.14 (GIL and free-threaded 3.14t) using `bench/baseline.py`:
+Two things stand out:
 
-| Operation | python-diskcache 5.6.3 | diskcache-oxide | Notes |
-|---|---|---|---|
-| **`get_hit_small`** (small string / int) | ~1.89 µs p50 | **~0.95 µs p50** | ~2x faster read latency |
-| **`get_miss`** (nonexistent key) | ~1.48 µs p50 | **~0.82 µs p50** | Immediate index exit |
-| **`get_page_entry_450k`** (450 KB HTML/dict) | ~29.1 µs p50 | **~18.2 µs p50** | Fast msgpack deserialization |
-| **`set_page_entry_450k`** (spill to file) | ~465 µs p50 | **~380 µs p50** | Direct atomic file spill |
-| **`incr()` / `decr()`** (atomic counter) | ~20.9 µs p50 | **~12.4 µs p50** | Direct SQLite transaction |
+- **On GIL builds, diskcache collapses as threads are added and oxide doesn't.** At 99:1, diskcache drops from about 375k to 44k operations per second going from 1 to 8 threads; oxide stays flat around 720-750k. diskcache's per-thread connections end up fighting over the GIL and SQLite's locks.
+- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That's the Phase 4 target, below.
 
-## Multithreaded throughput
+Run them yourself with `python -m bench.gate`. Numbers vary by machine; the ratios are what the gate enforces.
 
-In multi-threaded workloads, python-diskcache incurs Python GIL contention and per-thread SQLite
-connection overhead.
+## Where the speed comes from
 
-On free-threaded Python (CPython 3.14t and 3.15t), diskcache-oxide operates with `gil_used = false`:
+- **Rust from the call to the disk.** A `get` goes from Python straight into compiled Rust: one prepared SQLite statement, decode, done. There's no Python wrapper in between.
+- **Statements prepared once.** Each pooled connection caches its prepared statements, so a lookup never recompiles SQL.
+- **The clock is read in Rust.** Checking expiry doesn't call back into Python's `time.time()`.
+- **Fast codecs.** msgpack and tagged JSON are encoded and decoded in Rust, building Python objects directly.
+- **Reads never write.** Least-recently-stored eviction means a `get` never updates anything, so any number of readers proceed in parallel.
+- **A smarter write lock.** Writers in one process queue on an in-process lock per database file, instead of every thread retrying against SQLite's busy handler.
+- **SQLite tuned for it.** The bundled SQLite is built with its global memory statistics turned off, which removes a process-wide mutex from every allocation: 2-10% more threaded throughput.
 
-- **True multi-core scaling**: Threads reading and writing to the cache execute concurrently across all available CPU cores.
-- **High throughput**: In 8-thread mixed read/write workloads, throughput scales smoothly without GIL contention bottlenecks.
+## Prefix scans at scale
 
-## Prefix scanning at scale
+diskcache's `iterkeys()` gets slower faster than the cache grows: about 1.7 seconds at 100,000 keys, and over 25 seconds at 400,000. diskcache-oxide's `iterkeys(prefix=...)` is an indexed range scan, paged in batches so no read transaction is held between them. **400,000 keys scan in about 10 ms.**
 
-python-diskcache's `iterkeys()` uses a generator that scans keys in memory. As key counts grow,
-scanning keys matching a prefix exhibits super-linear latency:
+## Memory that stays flat
 
-- At 100,000 keys: python-diskcache takes ~1.65 seconds to scan a prefix.
-- At 400,000 keys: python-diskcache takes ~26.4 seconds (a 16x slowdown for 4x more keys).
+Memory is bounded by configuration, not by how many threads touch the cache: at most `max_connections` connections per database file (default 8), each with a 1 MiB page cache. A separate memory-instrumented build runs `bench/memory.py` and the memory tests under heavy load to hold that bound. See [Storage and WAL](storage-and-wal.qmd).
 
-diskcache-oxide implements prefix filtering directly in SQLite:
+## Next: Phase 4
 
-- Evaluates `key >= prefix AND key < prefix_bound` using SQLite's clustered B-tree index.
-- Only matching keys are fetched and streamed across the PyO3 boundary, keeping prefix scan latency
-  proportional to the number of *matching* results rather than the total database size.
+Profiling a cached `get` shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. Phase 4 goes after it, along with:
 
-## Memory stability
+- a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
+- thread-affine connections;
+- cheaper reference counting on shared `Cache` objects in free-threaded builds;
+- `FanoutCache`, if sharding across database files turns out to be the answer for threaded writers.
 
-Long-running web workers often suffer from slow memory bloat due to unbounded SQLite page caches
-and thread-local connection proliferation.
-
-diskcache-oxide guarantees bounded memory:
-
-- **`max_connections` (default 8)**: Prevents file descriptor and connection bloat, regardless of how many threads touch the cache.
-- **`sqlite_cache_size` (default 256 pages / 1 MiB)**: Restricts SQLite's internal page cache on each connection.
-
-In memory soak benchmarks (`bench/memory.py`), diskcache-oxide maintains a flat, predictable RSS profile
-over millions of reads and writes.
+Past that, the [network server](roadmap.qmd) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. Measured reads drop from 1.18 µs to 0.69 µs.
 
 
 ### Divergences from python-diskcache
 
-diskcache-oxide aims for high API compatibility with `diskcache.Cache` 5.6.3. However, where
-python-diskcache had known bugs, security vulnerabilities, or performance bottlenecks, diskcache-oxide
-makes deliberate improvements.
+diskcache-oxide's test suite is a conformance suite: the same black-box tests run against real diskcache 5.6.3 and against diskcache-oxide. Where they behave differently, it's on purpose, and it's written down here. Most of these differences are diskcache bugs that the suite found, each with a reproduction in the repository's `upstream/` folder.
 
-Every intentional divergence is tracked in the project's test suite and validated with dedicated
-conformance tests.
+A divergence is never a way to skip a failing test. The full record, including test names and measurements, is [tests/DIVERGENCES.md](https://github.com/mikeckennedy/diskcache-oxide/blob/main/tests/DIVERGENCES.md).
 
-## Summary table
+## Summary
 
-| Ref | Topic | python-diskcache 5.6.3 | diskcache-oxide | Rationale |
-|---|---|---|---|---|
-| **D-001** | Value serialization | Pickles every value | msgpack or JSON; pickle opt-in | Security against arbitrary code execution; avoids caching invalid types |
-| **D-002** | Database filename | `cache.db` | `diskcache-oxide.sqlite` | Prevents file collisions when testing or transitioning |
-| **D-003** | Clock control | Reads `time.time()` in Python | Reads native clock in Rust; takes `clock=` | Lowers hot read latency; enables mock clocks for testing |
-| **D-004** | Key types | Any picklable object | `str` keys only | Simplifies indexing and query optimization |
-| **D-005** | Minimum `size_limit` | Allows arbitrarily small values | Minimum 1 MiB (`MIN_SIZE_LIMIT`) | Prevents silent infinite cull loops on new writes |
-| **D-007** | `Timeout` class | Subclasses `Exception` | Subclasses `TimeoutError` | Follows standard Python exception hierarchy |
-| **D-008** | Float NaN handling | Reads top-level NaN as `None` | Round-trips `NaN`, `inf`, `-inf` | Fixes upstream bug in diskcache |
-| **D-009** | Cache truthiness | Falsy when `len(cache) == 0` | `bool(Cache)` is always `True` | Allows `if cache:` to mean "is caching enabled?" |
-| **D-010** | `expire()` completeness | Stops early on identical timestamps | Purges all expired rows | Fixes upstream bug where expired rows leaked |
-| **D-011** | `clear()` isolation | Deletes concurrent writes | Removes only rows present at start | Snapshot isolation preserves in-flight writes |
-| **D-012** | Fork safety | Can crash SQLite in child | `os.register_at_fork` barrier | Safe for Gunicorn/Uvicorn pre-forking workers |
-| **D-015** | Directory permissions | Follows ambient umask | Sets `0700` on Unix | Protects cached credentials and data |
-| **D-016** | Spilled value racing | Can return `None` or error | Returns old or new value | Guarantees atomic read safety during file overwrites |
-| **D-017** | Connection limits | 1 connection per thread | Bounded pool (`max_connections`) | Prevents file descriptor exhaustion under load |
-| **D-018** | `close()` cleanup | Leaves fds open in threads | Closes all pooled connections | Eliminates resource warnings and leaks |
-| **D-019** | Non-mutating open | Writes to DB on open | Opening and reading never write | Safe for read-only mounts and shared caches |
-| **D-020** | Counter defaults | `incr()` with missing key returns 0 | Raises `KeyError` if `default=None` | Consistent with dictionary `KeyError` behavior |
-| **D-021** | `NullCache` | Not available | Built-in `NullCache` class | Allows turning off caching without code branching |
-| **D-023** | Memory bounds | Unbounded SQLite page cache | Bounded by `sqlite_cache_size` | Keeps RSS memory flat in long-running processes |
-| **D-024** | WAL file bounds | Unbounded WAL file growth | Bounded by `wal_size_limit` | Forced checkpoints prevent multi-gigabyte WAL bloat |
+| Ref | Topic | diskcache 5.6.3 | diskcache-oxide |
+|---|---|---|---|
+| D-001 | Values | Pickles everything | msgpack or JSON with type tags; pickle opt-in; never unpickles unless opted in |
+| D-002 | Database file | `cache.db` | `diskcache-oxide.sqlite` |
+| D-003 | Clock | `time.time()` | Native; `clock=` to control it |
+| D-004 | Keys | Anything picklable | `str` only, for now |
+| D-005 | Minimum `size_limit` | None; tiny limits silently empty the cache | 1 MiB, else `ValueError` |
+| D-006 | Empty-cache `volume()` | Its own value | A different value |
+| D-007 | `Timeout` | Subclasses `Exception` | Subclasses `TimeoutError` |
+| D-008 | Top-level NaN | Reads back as `None` | Round-trips |
+| D-009 | Truthiness | Empty cache is falsy | `Cache` always truthy, `NullCache` falsy |
+| D-010 | `expire()` | Can stop after 100 rows | Removes every expired entry |
+| D-011 | `clear()` | Also deletes writes made while it runs | Removes only what existed when it started |
+| D-012 | Fork during another thread's write | Child's writes stall for the timeout | Child can always write |
+| D-013 | Missing value file | Miss, but the key still reads as present | Miss, and the row is removed |
+| D-014 | `expire=True`, `timeout=True` | Treated as `1` | `TypeError` |
+| D-015 | New directory permissions | Follow the umask | `0700` |
+| D-016 | Reading a large value during an overwrite | Occasional spurious miss | Always the old or new value |
+| D-017 | Connections and fds | One connection per thread | A bounded pool |
+| D-018 | `close()` | Closes only the calling thread's connection | Closes every connection |
+| D-019 | Opening an existing cache | Writes to the database | Never writes unless settings change |
+| D-020 | Forking inside your own transaction | Child stalls for the timeout | Fails fast with `RuntimeError` |
+| D-021 | `directory` | Optional (temp dir) | Required |
+| D-022 | `disk=`, `eviction_policy=` | Supported | Not supported (policies coming) |
+| D-023 | SQLite memory | 32 MiB cache + 64 MiB mmap per thread | 1 MiB per pooled connection |
+| D-024 | WAL file size | Can grow past 1 GiB and stay there | Trimmed; `checkpoint()` on demand |
 
----
+## Safety
 
-## Detailed explanations
+### D-001: no pickle by default
 
-### D-001: Value serialization & security
+diskcache pickles every value. diskcache-oxide stores `str` and `bytes` raw and everything else as msgpack or tagged JSON. A value the format can't represent exactly raises `TypeError` at `set()` unless the cache was opened with `pickle=True`. A cache opened without it never unpickles: reading a pickled value written by a `pickle=True` peer raises `UnsafeValueError` and leaves the row alone. Unpickling runs code from whatever is in the cache directory, and silently pickling hides values that were never meant to be cached. See [Serialization](serialization.qmd).
 
-- **diskcache**: Pickles all values indiscriminately.
-- **diskcache-oxide**: Values are stored as raw `str`, raw `bytes`, `msgpack`, or `json`.
-  Unrepresentable types raise `TypeError` at `set()` unless `pickle=True` is explicitly passed.
-  Reading a pickled row with a `pickle=False` handle raises `UnsafeValueError` without unpickling.
-- **Why**: Unpickling arbitrary data stored on disk is an attack vector in multi-user or containerized
-  environments. Explicit serializers also surface non-serializable objects immediately rather than hiding them.
+### D-015: owner-only directories
 
-### D-004: String keys only
+A cache directory diskcache-oxide creates, and its value-file subdirectories, are `0700`. Existing directories are never changed. Anyone who can write to a cache directory can poison the cache, and its contents (keys with IP addresses in them, for example) can be private.
 
-- **diskcache**: Accepts any picklable object as a key (ints, tuples, bytes).
-- **diskcache-oxide**: Accepts `str` keys only. Non-string keys raise `TypeError`.
-- **Why**: String keys allow direct, highly-optimized SQLite B-tree index traversal and prefix range scans.
-  Keys are stored in a type-tagged column so structured keys can be added in a future phase without schema migrations.
+### D-021: `directory` is required
 
-### D-009: Cache truthiness
+diskcache creates a temporary directory if you don't give one. A cache directory is shared state and a security boundary, and an implicit temp directory is almost never what a multi-process app wants.
 
-- **diskcache**: Implements `__bool__` using `__len__`, so an empty cache evaluates to `False`.
-- **diskcache-oxide**: `bool(Cache)` is always `True`, and `Cache.enabled` is `True`. Conversely,
-  `bool(NullCache)` is `False`, and `NullCache.enabled` is `False`.
-- **Why**: In application code, `if cache:` is frequently used to check if caching is configured and enabled.
-  Treating an empty cache as falsy caused applications to bypass caching after a restart or deployment.
+## Correctness
 
-### D-010: Complete expiration
+### D-008: NaN round-trips
 
-- **diskcache**: `expire()` purges in batches of 100, but halts prematurely if multiple rows share
-  an identical expiration timestamp.
-- **diskcache-oxide**: `expire()` removes every expired entry regardless of timestamp clustering,
-  while still yielding between batches so concurrent writers are not starved.
-- **Why**: Upstream diskcache left expired rows on disk indefinitely in hourly cleanup jobs.
+In diskcache, `set('k', float('nan'))` succeeds but `get('k')` returns `None`, ignoring any default. In diskcache-oxide it's a float like any other.
 
-### D-011: Snapshot-isolated `clear()`
+### D-010: `expire()` removes everything that has expired
 
-- **diskcache**: `clear()` runs a delete loop until the database is empty, deleting rows that were
-  inserted by other threads while `clear()` was running.
-- **diskcache-oxide**: Records the highest monotonic `store_seq` when `clear()` begins and deletes
-  only rows up to that sequence number.
-- **Why**: Writes that succeed during a `clear()` call are preserved rather than silently destroyed.
+diskcache's `expire()` works in chunks of 100, and when expired entries share one expiry time it stops after the first chunk. With 250 such entries, one call removes 100. diskcache-oxide removes all of them, still in chunks so writers can get in between.
 
-### D-012: The fork barrier
+### D-011: `clear()` keeps concurrent writes
 
-- **diskcache**: Inherits SQLite handles across `os.fork()`. In pre-forking web servers, children
-  using inherited connections frequently encounter database corruption or crashes.
-- **diskcache-oxide**: Registers before/after fork hooks using `os.register_at_fork`. Writers in other
-  threads are completed before the fork, and children safely discard inherited connection handles
-  and reopen fresh ones.
-- **Why**: Essential for production stability under Gunicorn, Celery, and Uvicorn.
+diskcache's `clear()` keeps deleting until the cache is empty, including entries written while it runs. In a reproduction with 50,000 entries and a concurrent writer, it deleted 76,000 writes that had already succeeded, and its running time grew with the write rate. diskcache-oxide's `clear()` removes only entries that existed when it started, and always finishes.
 
-### D-017 & D-018: Bounded connection pool
+### D-013 and D-016: large values under pressure
 
-- **diskcache**: Creates a new SQLite connection for every thread that interacts with the cache,
-  storing it in thread-local storage. Under high thread counts, this exhausts OS file descriptors.
-- **diskcache-oxide**: Implements a bounded connection pool (`max_connections`, default 8). Connections
-  are checked out temporarily and returned immediately. `close()` shuts down all pooled connections.
-- **Why**: Predictable resource consumption regardless of application concurrency.
+If a large value's file disappears, diskcache returns the default but the key still reads as present in `in` and `len`. diskcache-oxide treats it as a miss and removes the orphaned row.
 
-### D-024: Active WAL bounds
+When one process overwrites a large value while others read it, diskcache occasionally returns the default for a key that was never deleted, which makes callers recompute a hot value for nothing. diskcache-oxide's readers detect the overwrite and retry, so they always get a whole value, old or new.
 
-- **diskcache**: Leaves SQLite WAL checkpointing to default OS behavior. With concurrent readers in
-  separate worker processes, WAL checkpoints are continuously blocked, causing the `-wal` file to
-  balloon into gigabytes.
-- **diskcache-oxide**: Implements active forced checkpoints (`PASSIVE`, then `TRUNCATE` with a 2 ms timeout)
-  and autocheckpoint scaling governed by `wal_size_limit` (default 64 MiB).
-- **Why**: Prevents unbounded disk growth in multi-process production deployments.
+### D-014: no booleans for numbers
 
+`bool` is an `int` subclass, so in diskcache `expire=True` is a one-second TTL and `expire=False` stores an already-expired entry. diskcache-oxide raises `TypeError`: a bool there is almost always an argument in the wrong position.
 
-### Project status and roadmap
+## Processes and forks
 
-diskcache-oxide is an active, clean-room reimplementation of python-diskcache in Rust.
-It is currently approximately **60% complete**.
+### D-012: forks while another thread writes
 
-This page outlines what is fully implemented and tested today, and what features are scheduled
-for future phases.
+When a process forks while another of its threads is in a write transaction, diskcache's child inherits a lock nobody in the child will release, and its first write stalls for the full timeout (60 seconds by default). Under a busy read/write load that hits 20-50% of forks. diskcache-oxide's fork barrier waits for in-flight transactions before the fork, so the child can always write. See [Concurrency and forks](concurrency-and-forks.qmd).
 
-## What is complete today (Phase 0 – Phase 2)
+### D-020: forking inside your own transaction
 
-The core foundation and the primary `Cache` interface are fully operational, tested against
-both diskcache 5.6.3 and the diskcache-community fork across multiple Python versions (3.14, 3.14t, 3.15, 3.15t):
+CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide, the child's copy of the transaction is poisoned and its writes to that database raise `RuntimeError` immediately, and the parent gets a `RuntimeWarning`. This becomes reachable when `transact()` arrives in Phase 6b.
 
-- **Core `Cache` operations**:
-  - `get()`, `set()`, `add()`, `delete()`, `pop()`, `touch()`.
-  - Atomic counters: `incr()`, `decr()`.
-  - Fast prefix iteration: `iterkeys(prefix=...)`.
-  - Dictionary interface: `cache[k]`, `k in cache`, `del cache[k]`, `len(cache)`, `bool(cache)`.
-  - Resource cleanup: `close()`, context manager (`with Cache(...) as cache:`).
-- **Storage and file spills**:
-  - Inline small values in SQLite; automatic file spilling for large values.
-  - Atomic temporary file creation and rename.
-  - Race-condition safety: readers racing an overwrite always receive consistent old or new data.
-- **Serialization & Data Safety**:
-  - `serializer="msgpack"` (default): ultra-fast binary format.
-  - `serializer="json"`: standard JSON with float roundtrip.
-  - Type-tagging system: exact preservation of `tuple`, `set`, `datetime`, `NaN`/`inf`, nested `bytes`, and large ints.
-  - Safe by default: `pickle=False` default; `pickle=True` opt-in.
-  - `UnsafeValueError` safety check for non-pickle handles.
-- **Process and thread concurrency**:
-  - `#[pymodule(gil_used = false)]` for free-threaded Python 3.14t and 3.15t.
-  - Process-wide fork barrier via `os.register_at_fork`: safe for Gunicorn, Celery, and Uvicorn.
-  - Bounded connection pool (`max_connections`, default 8).
-- **Resource bounds**:
-  - Bounded SQLite page cache per connection (`sqlite_cache_size`).
-  - Active forced WAL checkpoints (`wal_size_limit`, default 64 MiB).
-  - Least-Recently-Stored (LRS) eviction with `size_limit` and `cull_limit`.
-- **`NullCache` & Typing**:
-  - Complete `NullCache` implementation with instant-expiry semantics and `invalidate=` forwarding.
-  - `CacheLike` protocol for static type checkers.
-  - Shipped with `py.typed`.
+## Resources
 
----
+### D-017 and D-018: bounded connections
 
-## In progress
+diskcache opens a connection for every thread that uses a cache, so 64 threads hold 131 files open in the cache directory, and `close()` closes only the calling thread's connection. diskcache-oxide uses a pool per database file, at most `max_connections` (default 8), and the last `close()` closes every connection, so the directory is safe to move or delete afterwards.
 
-### Phase 2.5: Concurrency deep review and soak testing
+### D-019: opening never writes
 
-- Long-duration multi-hour soak tests (`soak/`) running multi-process writers, readers, and random SIGKILL crash recovery.
-- Concurrency audit of SQLite WAL lock transitions and edge-case deadlocks.
-- Proactive background sweeper thread: a lightweight Rust background thread per cache store to
-  proactively purge expired entries and run periodic WAL checkpoints off the hot request path.
+Opening an existing diskcache commits a write transaction even when nothing changed. diskcache-oxide's open, and reads after it, never write, so a read-mostly worker or a read-only copy of the directory never takes the write lock.
 
-### Platform expansion: Windows support
+### D-023: bounded SQLite memory
 
-- Porting the fork barrier and file inode metadata handling to Windows.
+diskcache's default is a 32 MiB page cache and a 64 MiB memory map per connection, with one connection per thread. diskcache-oxide's `sqlite_cache_size` defaults to 256 pages (1 MiB) per pooled connection, so SQLite's memory per directory stays around 8 MiB per process.
 
----
+### D-024: a WAL that shrinks
 
-## Upcoming roadmap
+With readers in other processes, a burst of writes makes SQLite's write-ahead log grow to fit the burst and stay that size: hundreds of MiB to over 1 GiB beside a database of a few MiB. diskcache-oxide trims the log whenever it resets (`wal_size_limit`), offers `checkpoint()` to empty it on demand, checkpoints a large log at `close()`, and can checkpoint automatically with `wal_checkpoint='auto'`. See [Storage and WAL](storage-and-wal.qmd).
 
-### Phase 3: Production adoption
+## API differences
 
-- Initial deployment and validation across high-traffic production web applications at Talk Python.
-- Real-world validation of WAL bounds, latency, and cache hit rates under live web traffic.
+- **D-002:** the database file is `diskcache-oxide.sqlite`, so the two libraries never misread each other's files.
+- **D-003:** the clock is read natively; pass `clock=` to control it in tests.
+- **D-004:** keys are `str` only until Phase 6a. They're stored with a type tag, so other key types won't need a format change.
+- **D-005:** `size_limit` must be at least 1 MiB. In diskcache, a limit below the empty database's size silently evicts every value, including the one just stored.
+- **D-006:** an empty cache's `volume()` differs, so a `size_limit` leaves slightly different room.
+- **D-007:** `Timeout` subclasses `TimeoutError`, so `except TimeoutError` catches it too.
+- **D-009:** `bool(Cache)` is always True and `bool(NullCache)` is False, so `if cache:` means "caching is on".
+- **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
 
-### Phase 4: Free-threaded optimization
+## diskcache-community
 
-- Deep profiling on multi-core workloads with CPython 3.14t / 3.15t.
-- Evaluating zero-GIL lockless read paths and memory cache optimization.
-
-### Phase 5: `AsyncCache`
-
-- Native async interface (`AsyncCache`) designed for asynchronous web frameworks: FastAPI, Starlette, Litestar, Quart, and Sanic.
-- Non-blocking disk I/O offloaded to background thread pools without slowing down the synchronous path.
-
-### Phase 6: Parity features
-
-- **Phase 6a: `FanoutCache` & Structured Keys**: Sharding across multiple SQLite databases for extreme write concurrency, plus arbitrary key types beyond `str`.
-- **Phase 6b: Tags**: Tagging cached entries and invalidating groups of keys by tag (`cache.evict(tag=...)`).
-- **Phase 6c: Data structures**: `Deque` and `Index` disk-backed collections.
-- **Phase 6d: Recipes**: `@cache.memoize()` function decorators, rate limiters, distributed locks.
-- **`transact()`**: Full multi-statement write transactions.
-
-### Phase 7: Standalone network cache server
-
-- A high-performance, standalone network cache server powered by diskcache-oxide's Rust core,
-  providing a disk-backed alternative to Redis with minimal operational overhead.
+[diskcache-community](https://github.com/secondwindoss/diskcache-community) is an actively maintained fork of diskcache, and the conformance suite can run against it too. It has fixed some of the same bugs (D-012, D-018, D-019, and the `0700` directories of D-015) and keeps others (D-008, D-016, D-017). The full comparison is at the end of [tests/DIVERGENCES.md](https://github.com/mikeckennedy/diskcache-oxide/blob/main/tests/DIVERGENCES.md).
 

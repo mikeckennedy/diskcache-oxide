@@ -2,66 +2,59 @@
 title: "Performance"
 ---
 
-diskcache-oxide is engineered for low latency on hot reads, high concurrency across multiple threads
-and processes, and strictly bounded memory and disk usage.
+Web apps call their cache on almost every request, often straight from the asyncio event loop, where a slow call holds up every other request. So diskcache-oxide's performance work starts with read latency, then throughput under many threads, then predictable resource use. Correctness always comes first: every speedup has to keep the conformance suite green.
 
-## Read and write latency
+## The numbers
 
-In web applications, caching is primarily read-dominated. Every microsecond saved on a cache read
-directly decreases response time and increases request throughput.
+Measured with `bench/gate.py`, which runs diskcache 5.6.3 and diskcache-oxide in the same session on the same machine, in four interleaved rounds. This is the Phase 2 final gate, on Linux (Ubuntu 26.04 LTS in Docker on Apple Silicon), matching Talk Python's servers. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
 
-Key performance optimizations in diskcache-oxide:
+| Workload | 3.14 | 3.14t (free-threaded) |
+|---|---|---|
+| `get`, small value, hit | **0.76 µs** (0.42×) | **0.75 µs** (0.46×) |
+| `get`, miss | **0.65 µs** (0.45×) | **0.62 µs** (0.46×) |
+| `get`, small dict | **1.18 µs** (0.47×) | **1.26 µs** (0.54×) |
+| `get`, random keys over a large database | **2.21 µs** (0.65×) | **2.41 µs** (0.79×) |
+| `set`, small value | **22.6 µs** (0.77×) | **24.0 µs** (0.82×) |
 
-- **Direct PyO3 integration**: Calls pass directly from Python into compiled Rust without intermediate Python wrapper frames.
-- **Compiled SQLite statements**: Prepared statements are cached per connection in the pool, avoiding query compilation on every lookup.
-- **Fast zero-copy decoding**: Small inline values are deserialized directly from SQLite's memory buffers into Python objects without intermediate allocations.
-- **Native clock reads**: By default, diskcache-oxide reads the system clock in Rust without calling back into Python's `time.time()`.
+Threaded throughput, every thread sharing one `Cache`, in thousands of operations per second at 1/2/4/8 threads (ratios are oxide's throughput over diskcache's, so higher is better):
 
-### Benchmark comparison (Apple Silicon, Python 3.14)
+| Mix | 3.14 | 3.14t (free-threaded) |
+|---|---|---|
+| 99:1 reads to writes | **750 / 745 / 723 / 723** (2.0-16.5×) | **701 / 639 / 680 / 729** (1.7-1.8×) |
+| 1,000:1 reads to writes | **900 / 886 / 876 / 875** (2.1-18.9×) | **903 / 680 / 1,181 / 1,416** (1.25-2.2×) |
 
-Measured on Python 3.14 (GIL and free-threaded 3.14t) using `bench/baseline.py`:
+Two things stand out:
 
-| Operation | python-diskcache 5.6.3 | diskcache-oxide | Notes |
-|---|---|---|---|
-| **`get_hit_small`** (small string / int) | ~1.89 µs p50 | **~0.95 µs p50** | ~2x faster read latency |
-| **`get_miss`** (nonexistent key) | ~1.48 µs p50 | **~0.82 µs p50** | Immediate index exit |
-| **`get_page_entry_450k`** (450 KB HTML/dict) | ~29.1 µs p50 | **~18.2 µs p50** | Fast msgpack deserialization |
-| **`set_page_entry_450k`** (spill to file) | ~465 µs p50 | **~380 µs p50** | Direct atomic file spill |
-| **`incr()` / `decr()`** (atomic counter) | ~20.9 µs p50 | **~12.4 µs p50** | Direct SQLite transaction |
+- **On GIL builds, diskcache collapses as threads are added and oxide doesn't.** At 99:1, diskcache drops from about 375k to 44k operations per second going from 1 to 8 threads; oxide stays flat around 720-750k. diskcache's per-thread connections end up fighting over the GIL and SQLite's locks.
+- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That's the Phase 4 target, below.
 
-## Multithreaded throughput
+Run them yourself with `python -m bench.gate`. Numbers vary by machine; the ratios are what the gate enforces.
 
-In multi-threaded workloads, python-diskcache incurs Python GIL contention and per-thread SQLite
-connection overhead.
+## Where the speed comes from
 
-On free-threaded Python (CPython 3.14t and 3.15t), diskcache-oxide operates with `gil_used = false`:
+- **Rust from the call to the disk.** A `get` goes from Python straight into compiled Rust: one prepared SQLite statement, decode, done. There's no Python wrapper in between.
+- **Statements prepared once.** Each pooled connection caches its prepared statements, so a lookup never recompiles SQL.
+- **The clock is read in Rust.** Checking expiry doesn't call back into Python's `time.time()`.
+- **Fast codecs.** msgpack and tagged JSON are encoded and decoded in Rust, building Python objects directly.
+- **Reads never write.** Least-recently-stored eviction means a `get` never updates anything, so any number of readers proceed in parallel.
+- **A smarter write lock.** Writers in one process queue on an in-process lock per database file, instead of every thread retrying against SQLite's busy handler.
+- **SQLite tuned for it.** The bundled SQLite is built with its global memory statistics turned off, which removes a process-wide mutex from every allocation: 2-10% more threaded throughput.
 
-- **True multi-core scaling**: Threads reading and writing to the cache execute concurrently across all available CPU cores.
-- **High throughput**: In 8-thread mixed read/write workloads, throughput scales smoothly without GIL contention bottlenecks.
+## Prefix scans at scale
 
-## Prefix scanning at scale
+diskcache's `iterkeys()` gets slower faster than the cache grows: about 1.7 seconds at 100,000 keys, and over 25 seconds at 400,000. diskcache-oxide's `iterkeys(prefix=...)` is an indexed range scan, paged in batches so no read transaction is held between them. **400,000 keys scan in about 10 ms.**
 
-python-diskcache's `iterkeys()` uses a generator that scans keys in memory. As key counts grow,
-scanning keys matching a prefix exhibits super-linear latency:
+## Memory that stays flat
 
-- At 100,000 keys: python-diskcache takes ~1.65 seconds to scan a prefix.
-- At 400,000 keys: python-diskcache takes ~26.4 seconds (a 16x slowdown for 4x more keys).
+Memory is bounded by configuration, not by how many threads touch the cache: at most `max_connections` connections per database file (default 8), each with a 1 MiB page cache. A separate memory-instrumented build runs `bench/memory.py` and the memory tests under heavy load to hold that bound. See [Storage and WAL](storage-and-wal.qmd).
 
-diskcache-oxide implements prefix filtering directly in SQLite:
+## Next: Phase 4
 
-- Evaluates `key >= prefix AND key < prefix_bound` using SQLite's clustered B-tree index.
-- Only matching keys are fetched and streamed across the PyO3 boundary, keeping prefix scan latency
-  proportional to the number of *matching* results rather than the total database size.
+Profiling a cached `get` shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. Phase 4 goes after it, along with:
 
-## Memory stability
+- a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
+- thread-affine connections;
+- cheaper reference counting on shared `Cache` objects in free-threaded builds;
+- `FanoutCache`, if sharding across database files turns out to be the answer for threaded writers.
 
-Long-running web workers often suffer from slow memory bloat due to unbounded SQLite page caches
-and thread-local connection proliferation.
-
-diskcache-oxide guarantees bounded memory:
-
-- **`max_connections` (default 8)**: Prevents file descriptor and connection bloat, regardless of how many threads touch the cache.
-- **`sqlite_cache_size` (default 256 pages / 1 MiB)**: Restricts SQLite's internal page cache on each connection.
-
-In memory soak benchmarks (`bench/memory.py`), diskcache-oxide maintains a flat, predictable RSS profile
-over millions of reads and writes.
+Past that, the [network server](roadmap.qmd) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. Measured reads drop from 1.18 µs to 0.69 µs.

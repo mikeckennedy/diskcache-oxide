@@ -88,16 +88,16 @@ ul.task-list li input[type="checkbox"] {
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="diskcache-oxide is engineered for low latency on hot reads, high concurrency across multiple threads and processes, and strictly bounded memory and...">
+  <meta name="description" content="Web apps call their cache on almost every request, often straight from the asyncio event loop, where a slow call holds up every other request. So...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Performance – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="diskcache-oxide is engineered for low latency on hot reads, high concurrency across multiple threads and processes, and strictly bounded memory and...">
+  <meta property="og:description" content="Web apps call their cache on almost every request, often straight from the asyncio event loop, where a slow call holds up every other request. So...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Performance – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="diskcache-oxide is engineered for low latency on hot reads, high concurrency across multiple threads and processes, and strictly bounded memory and...">
+  <meta name="twitter:description" content="Web apps call their cache on almost every request, often straight from the asyncio event loop, where a slow call holds up every other request. So...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -125,6 +125,10 @@ ul.task-list li input[type="checkbox"] {
   <li class="nav-item">
     <a class="nav-link active" href="../user-guide/getting-started.html" aria-current="page"> 
 <span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
@@ -178,6 +182,12 @@ ul.task-list li input[type="checkbox"] {
  <span class="menu-text">Switching from python-diskcache</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Vision and roadmap</span></a>
+  </div>
+</li>
       </ul>
   </li>
         <li class="sidebar-item sidebar-item-section">
@@ -201,13 +211,13 @@ ul.task-list li input[type="checkbox"] {
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Concurrency and fork safety</span></a>
+ <span class="menu-text">Concurrency and forks</span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/storage-and-wal.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storage and WAL management</span></a>
+ <span class="menu-text">Storage and WAL</span></a>
   </div>
 </li>
       </ul>
@@ -230,12 +240,6 @@ ul.task-list li input[type="checkbox"] {
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
 </li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Project status and roadmap</span></a>
-  </div>
-</li>
       </ul>
   </li>
     </ul>
@@ -248,13 +252,11 @@ ul.task-list li input[type="checkbox"] {
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#read-and-write-latency" id="toc-read-and-write-latency" class="nav-link active" data-scroll-target="#read-and-write-latency">Read and write latency</a>
-  <ul class="collapse">
-  <li><a href="#benchmark-comparison-apple-silicon-python-3.14" id="toc-benchmark-comparison-apple-silicon-python-3.14" class="nav-link" data-scroll-target="#benchmark-comparison-apple-silicon-python-3.14">Benchmark comparison (Apple Silicon, Python 3.14)</a></li>
-  </ul></li>
-  <li><a href="#multithreaded-throughput" id="toc-multithreaded-throughput" class="nav-link" data-scroll-target="#multithreaded-throughput">Multithreaded throughput</a></li>
-  <li><a href="#prefix-scanning-at-scale" id="toc-prefix-scanning-at-scale" class="nav-link" data-scroll-target="#prefix-scanning-at-scale">Prefix scanning at scale</a></li>
-  <li><a href="#memory-stability" id="toc-memory-stability" class="nav-link" data-scroll-target="#memory-stability">Memory stability</a></li>
+  <li><a href="#the-numbers" id="toc-the-numbers" class="nav-link active" data-scroll-target="#the-numbers">The numbers</a></li>
+  <li><a href="#where-the-speed-comes-from" id="toc-where-the-speed-comes-from" class="nav-link" data-scroll-target="#where-the-speed-comes-from">Where the speed comes from</a></li>
+  <li><a href="#prefix-scans-at-scale" id="toc-prefix-scans-at-scale" class="nav-link" data-scroll-target="#prefix-scans-at-scale">Prefix scans at scale</a></li>
+  <li><a href="#memory-that-stays-flat" id="toc-memory-that-stays-flat" class="nav-link" data-scroll-target="#memory-that-stays-flat">Memory that stays flat</a></li>
+  <li><a href="#next-phase-4" id="toc-next-phase-4" class="nav-link" data-scroll-target="#next-phase-4">Next: Phase 4</a></li>
   </ul>
 </nav>
     </div>
@@ -280,95 +282,105 @@ ul.task-list li input[type="checkbox"] {
 </header>
 
 
-<p>diskcache-oxide is engineered for low latency on hot reads, high concurrency across multiple threads and processes, and strictly bounded memory and disk usage.</p>
-<section id="read-and-write-latency" class="level1">
-<h1>Read and write latency</h1>
-<p>In web applications, caching is primarily read-dominated. Every microsecond saved on a cache read directly decreases response time and increases request throughput.</p>
-<p>Key performance optimizations in diskcache-oxide:</p>
-<ul>
-<li><strong>Direct PyO3 integration</strong>: Calls pass directly from Python into compiled Rust without intermediate Python wrapper frames.</li>
-<li><strong>Compiled SQLite statements</strong>: Prepared statements are cached per connection in the pool, avoiding query compilation on every lookup.</li>
-<li><strong>Fast zero-copy decoding</strong>: Small inline values are deserialized directly from SQLite’s memory buffers into Python objects without intermediate allocations.</li>
-<li><strong>Native clock reads</strong>: By default, diskcache-oxide reads the system clock in Rust without calling back into Python’s <code>time.time()</code>.</li>
-</ul>
-<section id="benchmark-comparison-apple-silicon-python-3.14" class="level2">
-<h2 class="anchored" data-anchor-id="benchmark-comparison-apple-silicon-python-3.14">Benchmark comparison (Apple Silicon, Python 3.14)</h2>
-<p>Measured on Python 3.14 (GIL and free-threaded 3.14t) using <code>bench/baseline.py</code>:</p>
+<p>Web apps call their cache on almost every request, often straight from the asyncio event loop, where a slow call holds up every other request. So diskcache-oxide’s performance work starts with read latency, then throughput under many threads, then predictable resource use. Correctness always comes first: every speedup has to keep the conformance suite green.</p>
+<section id="the-numbers" class="level1">
+<h1>The numbers</h1>
+<p>Measured with <code>bench/gate.py</code>, which runs diskcache 5.6.3 and diskcache-oxide in the same session on the same machine, in four interleaved rounds. This is the Phase 2 final gate, on Linux (Ubuntu 26.04 LTS in Docker on Apple Silicon), matching Talk Python’s servers. Latencies are p50 in microseconds. Ratios are oxide’s time divided by diskcache’s, so lower is better.</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
-<th>Operation</th>
-<th>python-diskcache 5.6.3</th>
-<th>diskcache-oxide</th>
-<th>Notes</th>
+<th>Workload</th>
+<th>3.14</th>
+<th>3.14t (free-threaded)</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><strong><code>get_hit_small</code></strong> (small string / int)</td>
-<td>~1.89 µs p50</td>
-<td><strong>~0.95 µs p50</strong></td>
-<td>~2x faster read latency</td>
+<td><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, small value, hit</td>
+<td><strong>0.76 µs</strong> (0.42×)</td>
+<td><strong>0.75 µs</strong> (0.46×)</td>
 </tr>
 <tr class="even">
-<td><strong><code>get_miss</code></strong> (nonexistent key)</td>
-<td>~1.48 µs p50</td>
-<td><strong>~0.82 µs p50</strong></td>
-<td>Immediate index exit</td>
+<td><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, miss</td>
+<td><strong>0.65 µs</strong> (0.45×)</td>
+<td><strong>0.62 µs</strong> (0.46×)</td>
 </tr>
 <tr class="odd">
-<td><strong><code>get_page_entry_450k</code></strong> (450 KB HTML/dict)</td>
-<td>~29.1 µs p50</td>
-<td><strong>~18.2 µs p50</strong></td>
-<td>Fast msgpack deserialization</td>
+<td><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, small dict</td>
+<td><strong>1.18 µs</strong> (0.47×)</td>
+<td><strong>1.26 µs</strong> (0.54×)</td>
 </tr>
 <tr class="even">
-<td><strong><code>set_page_entry_450k</code></strong> (spill to file)</td>
-<td>~465 µs p50</td>
-<td><strong>~380 µs p50</strong></td>
-<td>Direct atomic file spill</td>
+<td><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, random keys over a large database</td>
+<td><strong>2.21 µs</strong> (0.65×)</td>
+<td><strong>2.41 µs</strong> (0.79×)</td>
 </tr>
 <tr class="odd">
-<td><strong><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> / <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr()</a></strong> (atomic counter)</td>
-<td>~20.9 µs p50</td>
-<td><strong>~12.4 µs p50</strong></td>
-<td>Direct SQLite transaction</td>
+<td><a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, small value</td>
+<td><strong>22.6 µs</strong> (0.77×)</td>
+<td><strong>24.0 µs</strong> (0.82×)</td>
 </tr>
 </tbody>
 </table>
-</section>
-</section>
-<section id="multithreaded-throughput" class="level1">
-<h1>Multithreaded throughput</h1>
-<p>In multi-threaded workloads, python-diskcache incurs Python GIL contention and per-thread SQLite connection overhead.</p>
-<p>On free-threaded Python (CPython 3.14t and 3.15t), diskcache-oxide operates with <code>gil_used = false</code>:</p>
+<p>Threaded throughput, every thread sharing one <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, in thousands of operations per second at 1/2/4/8 threads (ratios are oxide’s throughput over diskcache’s, so higher is better):</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Mix</th>
+<th>3.14</th>
+<th>3.14t (free-threaded)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>99:1 reads to writes</td>
+<td><strong>750 / 745 / 723 / 723</strong> (2.0-16.5×)</td>
+<td><strong>701 / 639 / 680 / 729</strong> (1.7-1.8×)</td>
+</tr>
+<tr class="even">
+<td>1,000:1 reads to writes</td>
+<td><strong>900 / 886 / 876 / 875</strong> (2.1-18.9×)</td>
+<td><strong>903 / 680 / 1,181 / 1,416</strong> (1.25-2.2×)</td>
+</tr>
+</tbody>
+</table>
+<p>Two things stand out:</p>
 <ul>
-<li><strong>True multi-core scaling</strong>: Threads reading and writing to the cache execute concurrently across all available CPU cores.</li>
-<li><strong>High throughput</strong>: In 8-thread mixed read/write workloads, throughput scales smoothly without GIL contention bottlenecks.</li>
+<li><strong>On GIL builds, diskcache collapses as threads are added and oxide doesn’t.</strong> At 99:1, diskcache drops from about 375k to 44k operations per second going from 1 to 8 threads; oxide stays flat around 720-750k. diskcache’s per-thread connections end up fighting over the GIL and SQLite’s locks.</li>
+<li><strong>On free-threaded builds, oxide is faster at every thread count, but it doesn’t scale yet.</strong> 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That’s the Phase 4 target, below.</li>
+</ul>
+<p>Run them yourself with <code>python -m bench.gate</code>. Numbers vary by machine; the ratios are what the gate enforces.</p>
+</section>
+<section id="where-the-speed-comes-from" class="level1">
+<h1>Where the speed comes from</h1>
+<ul>
+<li><strong>Rust from the call to the disk.</strong> A <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> goes from Python straight into compiled Rust: one prepared SQLite statement, decode, done. There’s no Python wrapper in between.</li>
+<li><strong>Statements prepared once.</strong> Each pooled connection caches its prepared statements, so a lookup never recompiles SQL.</li>
+<li><strong>The clock is read in Rust.</strong> Checking expiry doesn’t call back into Python’s <code>time.time()</code>.</li>
+<li><strong>Fast codecs.</strong> msgpack and tagged JSON are encoded and decoded in Rust, building Python objects directly.</li>
+<li><strong>Reads never write.</strong> Least-recently-stored eviction means a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> never updates anything, so any number of readers proceed in parallel.</li>
+<li><strong>A smarter write lock.</strong> Writers in one process queue on an in-process lock per database file, instead of every thread retrying against SQLite’s busy handler.</li>
+<li><strong>SQLite tuned for it.</strong> The bundled SQLite is built with its global memory statistics turned off, which removes a process-wide mutex from every allocation: 2-10% more threaded throughput.</li>
 </ul>
 </section>
-<section id="prefix-scanning-at-scale" class="level1">
-<h1>Prefix scanning at scale</h1>
-<p>python-diskcache’s <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> uses a generator that scans keys in memory. As key counts grow, scanning keys matching a prefix exhibits super-linear latency:</p>
-<ul>
-<li>At 100,000 keys: python-diskcache takes ~1.65 seconds to scan a prefix.</li>
-<li>At 400,000 keys: python-diskcache takes ~26.4 seconds (a 16x slowdown for 4x more keys).</li>
-</ul>
-<p>diskcache-oxide implements prefix filtering directly in SQLite:</p>
-<ul>
-<li>Evaluates <code>key &gt;= prefix AND key &lt; prefix_bound</code> using SQLite’s clustered B-tree index.</li>
-<li>Only matching keys are fetched and streamed across the PyO3 boundary, keeping prefix scan latency proportional to the number of <em>matching</em> results rather than the total database size.</li>
-</ul>
+<section id="prefix-scans-at-scale" class="level1">
+<h1>Prefix scans at scale</h1>
+<p>diskcache’s <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> gets slower faster than the cache grows: about 1.7 seconds at 100,000 keys, and over 25 seconds at 400,000. diskcache-oxide’s <code>iterkeys(prefix=...)</code> is an indexed range scan, paged in batches so no read transaction is held between them. <strong>400,000 keys scan in about 10 ms.</strong></p>
 </section>
-<section id="memory-stability" class="level1">
-<h1>Memory stability</h1>
-<p>Long-running web workers often suffer from slow memory bloat due to unbounded SQLite page caches and thread-local connection proliferation.</p>
-<p>diskcache-oxide guarantees bounded memory:</p>
+<section id="memory-that-stays-flat" class="level1">
+<h1>Memory that stays flat</h1>
+<p>Memory is bounded by configuration, not by how many threads touch the cache: at most <code>max_connections</code> connections per database file (default 8), each with a 1 MiB page cache. A separate memory-instrumented build runs <code>bench/memory.py</code> and the memory tests under heavy load to hold that bound. See <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>.</p>
+</section>
+<section id="next-phase-4" class="level1">
+<h1>Next: Phase 4</h1>
+<p>Profiling a cached <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the <code>-shm</code> file, under a process-wide mutex. It’s the biggest single cost on every read, and it’s also what keeps free-threaded throughput from scaling. Phase 4 goes after it, along with:</p>
 <ul>
-<li><strong><code>max_connections</code> (default 8)</strong>: Prevents file descriptor and connection bloat, regardless of how many threads touch the cache.</li>
-<li><strong><code>sqlite_cache_size</code> (default 256 pages / 1 MiB)</strong>: Restricts SQLite’s internal page cache on each connection.</li>
+<li>a per-process lock-caching layer under SQLite, or longer-lived read snapshots;</li>
+<li>thread-affine connections;</li>
+<li>cheaper reference counting on shared <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> objects in free-threaded builds;</li>
+<li><code>FanoutCache</code>, if sharding across database files turns out to be the answer for threaded writers.</li>
 </ul>
-<p>In memory soak benchmarks (<code>bench/memory.py</code>), diskcache-oxide maintains a flat, predictable RSS profile over millions of reads and writes.</p>
+<p>Past that, the <a href="../user-guide/roadmap.html">network server</a> can go further still: as the only owner of its files, it can use SQLite’s exclusive locking mode, which keeps that lock in ordinary memory. Measured reads drop from 1.18 µs to 0.69 µs.</p>
 
 
 </section>
@@ -714,8 +726,8 @@ ul.task-list li input[type="checkbox"] {
   </script>
 <nav class="page-navigation">
   <div class="nav-page nav-page-previous">
-      <a href="../user-guide/storage-and-wal.html" class="pagination-link" aria-label="Storage and WAL management">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Storage and WAL management</span>
+      <a href="../user-guide/storage-and-wal.html" class="pagination-link" aria-label="Storage and WAL">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Storage and WAL</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">

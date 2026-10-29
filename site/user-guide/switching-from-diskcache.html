@@ -72,7 +72,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../user-guide/serialization.html" rel="next">
+<link href="../user-guide/roadmap.html" rel="next">
 <link href="../user-guide/getting-started.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
@@ -123,16 +123,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="diskcache-oxide is designed to be API compatible with python-diskcache 5.6.3 for Cache, but intentionally not data compatible. This page details the...">
+  <meta name="description" content="diskcache-oxide is API compatible with python-diskcache 5.6.3’s Cache, and deliberately not data compatible. Keeping diskcache’s API makes switching a...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Switching from python-diskcache – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="diskcache-oxide is designed to be API compatible with python-diskcache 5.6.3 for Cache, but intentionally not data compatible. This page details the...">
+  <meta property="og:description" content="diskcache-oxide is API compatible with python-diskcache 5.6.3’s Cache, and deliberately not data compatible. Keeping diskcache’s API makes switching a...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/switching-from-diskcache.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Switching from python-diskcache – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="diskcache-oxide is designed to be API compatible with python-diskcache 5.6.3 for Cache, but intentionally not data compatible. This page details the...">
+  <meta name="twitter:description" content="diskcache-oxide is API compatible with python-diskcache 5.6.3’s Cache, and deliberately not data compatible. Keeping diskcache’s API makes switching a...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -160,6 +160,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li class="nav-item">
     <a class="nav-link active" href="../user-guide/getting-started.html" aria-current="page"> 
 <span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
@@ -213,6 +217,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Switching from python-diskcache</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Vision and roadmap</span></a>
+  </div>
+</li>
       </ul>
   </li>
         <li class="sidebar-item sidebar-item-section">
@@ -236,13 +246,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Concurrency and fork safety</span></a>
+ <span class="menu-text">Concurrency and forks</span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/storage-and-wal.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storage and WAL management</span></a>
+ <span class="menu-text">Storage and WAL</span></a>
   </div>
 </li>
       </ul>
@@ -265,12 +275,6 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
 </li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Project status and roadmap</span></a>
-  </div>
-</li>
       </ul>
   </li>
     </ul>
@@ -283,13 +287,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#coexistence-and-on-disk-files" id="toc-coexistence-and-on-disk-files" class="nav-link active" data-scroll-target="#coexistence-and-on-disk-files">Coexistence and on-disk files</a></li>
-  <li><a href="#key-differences-at-a-glance" id="toc-key-differences-at-a-glance" class="nav-link" data-scroll-target="#key-differences-at-a-glance">Key differences at a glance</a></li>
-  <li><a href="#string-keys-only" id="toc-string-keys-only" class="nav-link" data-scroll-target="#string-keys-only">String keys only</a></li>
-  <li><a href="#safe-serialization-by-default" id="toc-safe-serialization-by-default" class="nav-link" data-scroll-target="#safe-serialization-by-default">Safe serialization by default</a></li>
-  <li><a href="#cache-truthiness" id="toc-cache-truthiness" class="nav-link" data-scroll-target="#cache-truthiness">Cache truthiness</a></li>
-  <li><a href="#timeouts-and-errors" id="toc-timeouts-and-errors" class="nav-link" data-scroll-target="#timeouts-and-errors">Timeouts and errors</a></li>
-  <li><a href="#testing-with-custom-clocks" id="toc-testing-with-custom-clocks" class="nav-link" data-scroll-target="#testing-with-custom-clocks">Testing with custom clocks</a></li>
+  <li><a href="#start-with-a-fresh-cache" id="toc-start-with-a-fresh-cache" class="nav-link active" data-scroll-target="#start-with-a-fresh-cache">Start with a fresh cache</a></li>
+  <li><a href="#what-you-might-notice" id="toc-what-you-might-notice" class="nav-link" data-scroll-target="#what-you-might-notice">What you might notice</a></li>
+  <li><a href="#values-no-pickle-unless-you-ask" id="toc-values-no-pickle-unless-you-ask" class="nav-link" data-scroll-target="#values-no-pickle-unless-you-ask">Values: no pickle unless you ask</a></li>
+  <li><a href="#string-keys" id="toc-string-keys" class="nav-link" data-scroll-target="#string-keys">String keys</a></li>
+  <li><a href="#truthiness" id="toc-truthiness" class="nav-link" data-scroll-target="#truthiness">Truthiness</a></li>
+  <li><a href="#tests-that-patch-time.time" id="toc-tests-that-patch-time.time" class="nav-link" data-scroll-target="#tests-that-patch-time.time">Tests that patch <code>time.time</code></a></li>
+  <li><a href="#things-that-just-get-better" id="toc-things-that-just-get-better" class="nav-link" data-scroll-target="#things-that-just-get-better">Things that just get better</a></li>
   </ul>
 </nav>
     </div>
@@ -315,178 +319,124 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>diskcache-oxide is designed to be <strong>API compatible</strong> with <a href="https://github.com/grantjenks/python-diskcache">python-diskcache</a> 5.6.3 for <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, but intentionally <strong>not data compatible</strong>. This page details the migration steps, structural differences, and deliberate improvements.</p>
-<section id="coexistence-and-on-disk-files" class="level1">
-<h1>Coexistence and on-disk files</h1>
-<p>python-diskcache stores its metadata in <code>cache.db</code>. diskcache-oxide uses its own optimized schema in <code>diskcache-oxide.sqlite</code>.</p>
-<blockquote class="blockquote">
-<p>[!IMPORTANT] Both engines can point to the same directory without interfering with each other, but <strong>diskcache-oxide does not read or convert existing <code>cache.db</code> databases</strong>. When deploying diskcache-oxide, start with a fresh directory or let diskcache-oxide create its own <code>diskcache-oxide.sqlite</code> file.</p>
-</blockquote>
-<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Old code:</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> diskcache</span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> diskcache.Cache(<span class="st">'/var/cache/app'</span>)</span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="co"># New code:</span></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> diskcache_oxide</span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> diskcache_oxide.Cache(<span class="st">'/var/cache/app'</span>)</span></code></pre></div>
+<p>diskcache-oxide is <strong>API compatible</strong> with <a href="https://github.com/grantjenks/python-diskcache">python-diskcache</a> 5.6.3’s <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, and deliberately <strong>not data compatible</strong>. Keeping diskcache’s API makes switching a one-line change. Not keeping its on-disk format is what allowed fixing its design instead of inheriting it.</p>
+<p>For most apps, switching looks like this:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># from diskcache import Cache, Timeout</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, Timeout</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-oxide'</span>)</span></code></pre></div>
+<section id="start-with-a-fresh-cache" class="level1">
+<h1>Start with a fresh cache</h1>
+<p>diskcache-oxide stores its data in <code>diskcache-oxide.sqlite</code>, not diskcache’s <code>cache.db</code>, and never opens or converts a diskcache database. The two can even share a directory without seeing each other’s data. Your cache starts cold after the switch, which for a cache is usually fine. Once you’ve switched, delete the old <code>cache.db*</code> files and value files to get the disk space back.</p>
 </section>
-<section id="key-differences-at-a-glance" class="level1">
-<h1>Key differences at a glance</h1>
+<section id="what-you-might-notice" class="level1">
+<h1>What you might notice</h1>
+<p>Most of these are fixes. Each one has a conformance test, or an entry in <a href="../user-guide/divergences.html">Divergences</a> that explains why.</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
-<th>Behavior</th>
+<th></th>
 <th>python-diskcache 5.6.3</th>
 <th>diskcache-oxide</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><strong>Database file</strong></td>
-<td><code>cache.db</code></td>
-<td><code>diskcache-oxide.sqlite</code></td>
+<td>Values</td>
+<td>Pickled</td>
+<td>msgpack (default) or JSON with exact type tags. Pickle is opt-in with <code>pickle=True</code>.</td>
 </tr>
 <tr class="even">
-<td><strong>Default serialization</strong></td>
-<td><code>pickle</code></td>
-<td><code>msgpack</code> (or <code>json</code>)</td>
+<td>Unrepresentable values</td>
+<td>Pickled</td>
+<td><code>TypeError</code> at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>, unless <code>pickle=True</code></td>
 </tr>
 <tr class="odd">
-<td><strong>Unpicklable / unrepresentable types</strong></td>
-<td>Serialized via pickle</td>
-<td>Raises <code>TypeError</code> (opt-in <code>pickle=True</code>)</td>
+<td>Keys</td>
+<td>Anything picklable</td>
+<td><code>str</code> only for now</td>
 </tr>
 <tr class="even">
-<td><strong>Reading pickled data without pickle</strong></td>
-<td>Executes arbitrary pickle code</td>
-<td>Raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a></td>
+<td><code>bool(cache)</code></td>
+<td>False when empty</td>
+<td>Always True; <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> is False</td>
 </tr>
 <tr class="odd">
-<td><strong>Key types</strong></td>
-<td>Any picklable object (tuples, ints, etc.)</td>
-<td><code>str</code> only (<code>TypeError</code> otherwise)</td>
+<td><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
+<td>Subclasses <code>Exception</code></td>
+<td>Subclasses <code>TimeoutError</code></td>
 </tr>
 <tr class="even">
-<td><strong>Cache truthiness</strong></td>
-<td><code>bool(cache)</code> is <code>len(cache) &gt; 0</code></td>
-<td><code>bool(cache)</code> is always <code>True</code>; <code>cache.enabled</code> is <code>True</code></td>
+<td><a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a></td>
+<td>Optional (makes a temp dir)</td>
+<td>Required</td>
 </tr>
 <tr class="odd">
-<td><strong><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> exception</strong></td>
-<td>Inherits only from <code>Exception</code></td>
-<td>Inherits from standard <code>TimeoutError</code></td>
+<td>Clock</td>
+<td>Reads <code>time.time()</code></td>
+<td>Reads the clock in Rust; pass <code>clock=</code> to control it</td>
 </tr>
 <tr class="even">
-<td><strong>Minimum <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a></strong></td>
-<td>None (culls everything under ~32 KB)</td>
-<td>1 MiB minimum (<code>MIN_SIZE_LIMIT = 1048576</code>)</td>
+<td><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a></td>
+<td>Anything (tiny values silently empty the cache)</td>
+<td>At least 1 MiB</td>
 </tr>
 <tr class="odd">
-<td><strong><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> behavior</strong></td>
-<td>Stops early if entries share identical expiry</td>
-<td>Removes all expired entries across chunks</td>
+<td><code>expire=True</code> / <code>timeout=True</code></td>
+<td>Treated as <code>1</code></td>
+<td><code>TypeError</code></td>
 </tr>
 <tr class="even">
-<td><strong><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> behavior</strong></td>
-<td>Can delete concurrently written keys</td>
-<td>Removes only entries present when clear began</td>
+<td><code>disk=</code>, <code>eviction_policy=</code></td>
+<td>Supported</td>
+<td>Not supported (eviction policies are coming)</td>
 </tr>
 <tr class="odd">
-<td><strong>Fork safety</strong></td>
-<td>Can crash or corrupt SQLite in child processes</td>
-<td>Guarded by <code>os.register_at_fork</code> barrier</td>
-</tr>
-<tr class="even">
-<td><strong>Connection limit</strong></td>
-<td>Unbounded (1 connection per thread)</td>
-<td>Bounded by pool (<code>max_connections</code>, default 8)</td>
-</tr>
-<tr class="odd">
-<td><strong>WAL file growth</strong></td>
-<td>Unbounded under multi-process readers</td>
-<td>Bounded by active checkpoints (<code>wal_size_limit</code>)</td>
+<td><code>transact()</code>, tags, <code>memoize</code>, <code>FanoutCache</code></td>
+<td>Supported</td>
+<td>Coming in later phases</td>
 </tr>
 </tbody>
 </table>
 </section>
-<section id="string-keys-only" class="level1">
-<h1>String keys only</h1>
-<p>In python-diskcache, keys could be integers, tuples, or custom objects. In diskcache-oxide:</p>
-<ul>
-<li><strong>All keys must be <code>str</code></strong>.</li>
-<li>Attempting to pass an <code>int</code>, <code>bytes</code>, or other key type raises a <code>TypeError</code>:</li>
-</ul>
-<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'user:100'</span>, <span class="st">'data'</span>)  <span class="co"># OK</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="dv">100</span>, <span class="st">'data'</span>)         <span class="co"># Raises TypeError: cache keys must be str, not int</span></span></code></pre></div>
-<blockquote class="blockquote">
-<p>[!NOTE] Keys are stored internally in a type-tagged column in SQLite, so structured key support can be introduced in future phases without requiring database migrations.</p>
-</blockquote>
+<section id="values-no-pickle-unless-you-ask" class="level1">
+<h1>Values: no pickle unless you ask</h1>
+<p>diskcache pickles every value. That’s convenient, but anyone who can write to the cache directory can make your app run arbitrary code the next time it reads, and objects that were never meant to be cached get stored without complaint.</p>
+<p>diskcache-oxide stores values as msgpack (or JSON), and tags the types those formats would otherwise change, so tuples, sets, datetimes, big ints, NaN, nested bytes and non-<code>str</code> dict keys all come back exactly as stored. Something that can’t be represented raises <code>TypeError</code> when you store it, not later when you read it:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'job'</span>, MyJob())</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co"># TypeError: values of type MyJob can't be stored without pickle (only exact built-in types round-trip)</span></span></code></pre></div>
+<p>If you really do need to cache arbitrary objects, opt in for that cache:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>objects <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-objects'</span>, pickle<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
+<p>A cache opened without <code>pickle=True</code> never unpickles. If it finds a pickled value written by a <code>pickle=True</code> peer, it raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> and leaves the value alone. More in <a href="../user-guide/serialization.html">Serialization</a>.</p>
 </section>
-<section id="safe-serialization-by-default" class="level1">
-<h1>Safe serialization by default</h1>
-<p>python-diskcache pickles every value. This causes two major issues in production:</p>
-<ol type="1">
-<li><strong>Security</strong>: Any process with write access to the cache directory can execute arbitrary code inside any reader process upon unpickling.</li>
-<li><strong>Hidden bugs</strong>: Objects not intended to be cached (database handles, active sockets, unpicklable closures) either fail obscurely or bloat the cache.</li>
-</ol>
-<p>diskcache-oxide uses <code>msgpack</code> by default (or standard <code>json</code>), with native tag support for Python types that JSON normally corrupts (tuples, sets, datetimes, 64-bit ints, and nested bytes).</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Values serialize cleanly without pickle:</span></span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'item'</span>, {</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">'created'</span>: datetime.datetime.now(datetime.timezone.utc),</span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">'tags'</span>: {<span class="st">'production'</span>, <span class="st">'web'</span>},</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">'coordinates'</span>: (<span class="fl">37.7749</span>, <span class="op">-</span><span class="fl">122.4194</span>)</span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>})</span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Types round-trip with exact fidelity:</span></span>
-<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>val <span class="op">=</span> cache.get(<span class="st">'item'</span>)</span>
-<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> <span class="bu">isinstance</span>(val[<span class="st">'tags'</span>], <span class="bu">set</span>)</span>
-<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> <span class="bu">isinstance</span>(val[<span class="st">'coordinates'</span>], <span class="bu">tuple</span>)</span></code></pre></div>
-<p>If you store a custom class instance that cannot be represented in msgpack or JSON:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> CustomJob: ...</span>
+<section id="string-keys" class="level1">
+<h1>String keys</h1>
+<p>Only <code>str</code> keys are accepted today; anything else raises <code>TypeError</code>. Keys are already stored with a type tag, so other key types can be added in Phase 6a without changing the file format. In the meantime, build string keys yourself (<code>f'user:{user_id}'</code>).</p>
+</section>
+<section id="truthiness" class="level1">
+<h1>Truthiness</h1>
+<p>In diskcache, an empty cache is falsy, so <code>if cache:</code> quietly skips caching right after every deploy, when the cache is empty. In diskcache-oxide, <code>bool(Cache)</code> is always True and <code>bool(NullCache)</code> is always False, so <code>if cache:</code> means “is caching on?”. Both have an <a href="../reference/Cache.enabled.html#diskcache_oxide.Cache.enabled" class="gdls-link gdls-code">enabled</a> property that says the same thing.</p>
+</section>
+<section id="tests-that-patch-time.time" class="level1">
+<h1>Tests that patch <code>time.time</code></h1>
+<p>diskcache reads <code>time.time()</code> in Python, so tests could advance its clock with <code>unittest.mock.patch</code> or a freezegun-style fixture. diskcache-oxide reads the clock natively, which keeps a Python call off every operation. To make it follow a patched clock, pass <code>clock=</code>:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tmp_path, clock<span class="op">=</span><span class="kw">lambda</span>: time.time())</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'job'</span>, CustomJob())  <span class="co"># Raises TypeError!</span></span></code></pre></div>
-<p>To enable the pickle fallback for a specific cache instance:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/tmp/my-cache'</span>, pickle<span class="op">=</span><span class="va">True</span>)</span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'job'</span>, CustomJob())  <span class="co"># Stored using pickle</span></span></code></pre></div>
-<p>When a cache configured with <code>pickle=False</code> attempts to read a row stored with pickle, it raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> (a <code>TypeError</code> subclass) instead of unpickling the payload.</p>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> patch(<span class="st">'time.time'</span>, return_value<span class="op">=</span><span class="fl">1000.0</span>):</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'k'</span>, <span class="st">'v'</span>, expire<span class="op">=</span><span class="dv">10</span>)</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> patch(<span class="st">'time.time'</span>, return_value<span class="op">=</span><span class="fl">1015.0</span>):</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">assert</span> cache.get(<span class="st">'k'</span>) <span class="kw">is</span> <span class="va">None</span></span></code></pre></div>
 </section>
-<section id="cache-truthiness" class="level1">
-<h1>Cache truthiness</h1>
-<p>In python-diskcache, <code>bool(cache)</code> evaluated <code>len(cache) &gt; 0</code>. As a result, an empty, fully-functioning cache was considered falsy:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># In python-diskcache:</span></span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> diskcache.Cache(<span class="st">'/tmp/cache'</span>)</span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="kw">not</span> cache:</span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="st">"Warning: cache is empty, but code thought caching was disabled!"</span>)</span></code></pre></div>
-<p>In diskcache-oxide:</p>
+<section id="things-that-just-get-better" class="level1">
+<h1>Things that just get better</h1>
+<p>You don’t have to change anything for these:</p>
 <ul>
-<li><code>bool(Cache)</code> is <strong>always <code>True</code></strong>, and <code>cache.enabled</code> is <code>True</code>.</li>
-<li><code>bool(NullCache)</code> is <strong>always <code>False</code></strong>, and <code>null_cache.enabled</code> is <code>False</code>.</li>
+<li>Reads take about half the time, and threaded throughput no longer collapses as threads are added. See <a href="../user-guide/performance.html">Performance</a>.</li>
+<li>A child process forked while another thread was writing can always write. In diskcache it can stall for the full 60-second timeout.</li>
+<li><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> keeps writes that land while it runs, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes every expired entry, and a read during an overwrite never misses.</li>
+<li>File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache.</li>
+<li>Opening a cache and reading from it never writes to the database.</li>
 </ul>
-<p>This allows pattern checks like <code>if cache:</code> to reliably mean “is caching enabled?”.</p>
-</section>
-<section id="timeouts-and-errors" class="level1">
-<h1>Timeouts and errors</h1>
-<p>In python-diskcache, <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> inherited only from base <code>Exception</code>. In diskcache-oxide:</p>
-<ul>
-<li><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">diskcache_oxide.Timeout</a> subclasses Python’s built-in <code>TimeoutError</code>.</li>
-<li>Any existing code catching <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> or <code>Exception</code> continues to work, while code catching standard <code>TimeoutError</code> now catches diskcache-oxide timeouts as well.</li>
-</ul>
-</section>
-<section id="testing-with-custom-clocks" class="level1">
-<h1>Testing with custom clocks</h1>
-<p>python-diskcache read <code>time.time()</code> directly from Python, which allowed test suites to manipulate time using <code>unittest.mock.patch('time.time')</code>. However, calling Python’s clock on every hot read incurred noticeable overhead.</p>
-<p>diskcache-oxide reads the system monotonic/wall clock natively in Rust for maximum speed. To test expiration logic with monkeypatched clocks, pass the <code>clock=</code> argument:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> unittest.mock <span class="im">import</span> patch</span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> patch(<span class="st">'time.time'</span>) <span class="im">as</span> mock_time:</span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>    mock_time.return_value <span class="op">=</span> <span class="fl">1000.0</span></span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>    cache <span class="op">=</span> Cache(<span class="st">'/tmp/test-cache'</span>, clock<span class="op">=</span><span class="kw">lambda</span>: time.time())</span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'k'</span>, <span class="st">'v'</span>, expire<span class="op">=</span><span class="dv">10</span>)</span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>    mock_time.return_value <span class="op">=</span> <span class="fl">1015.0</span></span>
-<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>    <span class="cf">assert</span> cache.get(<span class="st">'k'</span>) <span class="kw">is</span> <span class="va">None</span>  <span class="co"># Expired according to the mock clock</span></span></code></pre></div>
 
 
 </section>
@@ -837,8 +787,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../user-guide/serialization.html" class="pagination-link" aria-label="Serialization">
-        <span class="nav-page-text">Serialization</span> <i class="bi bi-arrow-right-short"></i>
+      <a href="../user-guide/roadmap.html" class="pagination-link" aria-label="Vision and roadmap">
+        <span class="nav-page-text">Vision and roadmap</span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

@@ -3,107 +3,89 @@
 pagetitle: "diskcache-oxide"
 ---
 
-**A fast, robust, pure-Rust disk cache for Python. Thread-safe, process-safe, fork-safe.**
+**Python cache. Rust engine. SQLite storage.**
 
-diskcache-oxide is a clean-room reimplementation of [python-diskcache](https://github.com/grantjenks/python-diskcache)
-in Rust via PyO3, with a minimal Python layer. It provides an API compatible with `diskcache.Cache`,
-running on a modernized SQLite storage engine and file spill manager designed from the ground up for
-high-concurrency web apps, free-threaded CPython (3.14t, 3.15t), and multi-process deployments.
+Almost every Python web app reaches the point where it needs a cache that more than one process can see. An in-memory dict dies with its worker and isn't shared with the others. Redis is another server to deploy, secure, monitor and pay for. [python-diskcache](https://github.com/grantjenks/python-diskcache) made the middle path popular: a cache that is just a directory on disk, shared by every thread and process on the machine, and still there after a restart.
 
-**Source on GitHub: <https://github.com/mikeckennedy/diskcache-oxide>** ·
-[Issues](https://github.com/mikeckennedy/diskcache-oxide/issues)
+diskcache-oxide rebuilds that idea for where Python is going: many cores, many worker processes, free-threaded CPython, and async web frameworks. The engine is Rust, the storage is SQLite, and the Python layer is as thin as it can be. You keep diskcache's API. You get reads in well under a microsecond, threads that no longer fight each other, no pickle on your disk, and memory and disk use you can predict.
+
+**Source on GitHub: <https://github.com/mikeckennedy/diskcache-oxide>** · [Issues](https://github.com/mikeckennedy/diskcache-oxide/issues)
 
 ```python
+import os
+
 from diskcache_oxide import Cache
 
-with Cache('/tmp/my-cache') as cache:
-    # Storing values (msgpack by default; JSON also supported)
-    cache.set('user:42', {'name': 'Alice', 'role': 'admin'}, expire=3600)
+# Every worker process opens the same directory and sees the same cache.
+cache = Cache('/var/cache/my-app')
 
-    # Reading values
-    user = cache.get('user:42')
-    print(user['name'])  # Alice
+def popular_episodes() -> list[dict]:
+    if (episodes := cache.get('episodes:popular')) is not None:
+        return episodes
+    episodes = db.load_popular_episodes()
+    cache.set('episodes:popular', episodes, expire=300)
+    return episodes
 
-    # Dictionary syntax works identically
-    cache['session:xyz'] = {'active': True}
-    if 'session:xyz' in cache:
-        print(cache['session:xyz'])
+# Only one worker in the whole fleet runs the hourly job: add() is atomic across processes.
+if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
+    refresh_feeds()
 ```
 
-## Install
+## Where this is going
 
-```bash
-uv pip install diskcache-oxide
-```
+diskcache-oxide is being built in three stages. The first is working today.
 
-Supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t, 3.15t). Pre-compiled wheels
-for Linux and macOS include the compiled Rust engine and bundled SQLite, so no Rust toolchain or
-system SQLite development packages are required.
+1. **A better diskcache.** The `Cache` you already know, rebuilt in Rust: about half the read latency, many times the threaded throughput, safe across `fork()`, safe on free-threaded Python, and no pickle by default. *This is the core that exists now.*
+2. **The complete local caching toolkit.** `FanoutCache` sharding for write-heavy and threaded apps, a native `AsyncCache` for FastAPI, Litestar and friends, `memoize`, tags, more eviction policies, transactions, `Deque` and `Index`, and the coordination recipes (locks, semaphores, throttles, stampede protection) that make a shared cache useful as more than a cache.
+3. **A cache server.** The same Rust engine served over the network: a Redis-style central cache for a fleet of machines, with SQLite underneath instead of RAM. As the only owner of its files, the server can use SQLite's exclusive locking mode, which already measures about 40% faster reads than the shared-directory library.
+
+See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
+
+## Why diskcache-oxide
+
+- **[Fast where web apps spend their time.](user-guide/performance.qmd)** A cached `get` takes about 0.75 µs, 0.42× diskcache's latency. At a 99:1 read/write mix with 8 threads on a GIL build, it handles 16× diskcache's throughput, because diskcache's per-thread connections collapse under contention and oxide's don't. Fast enough to call straight from the event loop.
+- **[Built for free-threaded Python.](user-guide/concurrency-and-forks.qmd)** The extension is compiled with `gil_used = false` and tested on 3.14, 3.14t, 3.15 and 3.15t on every change. It never relies on the GIL for correctness.
+- **[Safe across `fork()`.](user-guide/concurrency-and-forks.qmd)** gunicorn, Celery prefork and multiprocessing fork while other threads may be writing. A process-wide fork barrier makes sure no child ever starts life holding half a SQLite transaction.
+- **[No pickle on your disk.](user-guide/serialization.qmd)** Values are msgpack (or JSON) with exact type tags, so tuples, sets, datetimes, big ints and NaN come back as what you stored. Pickle is opt-in, and a cache that didn't opt in refuses to unpickle anything it finds.
+- **[Predictable memory and disk.](user-guide/storage-and-wal.qmd)** A bounded connection pool, a 1 MiB page cache per connection, a write-ahead log that trims itself back down, and a `checkpoint()` you can call when you want it empty.
+- **[Correct under pressure.](user-guide/divergences.qmd)** `clear()` never deletes writes that landed while it ran, `expire()` removes every expired entry, and a reader racing an overwrite gets the old value or the new one, never a spurious miss. Each of these is a bug in diskcache with a reproduction in the repo.
+- **[A real off switch.](user-guide/null-cache.qmd)** `NullCache` turns caching off without a single `if cache is not None:` in your code, and can still forward invalidations to the real cache while it's off.
+- **Typed.** Ships `py.typed` and a `CacheLike` protocol that both `Cache` and `NullCache` satisfy.
 
 ## Status
 
-> **Pre-release (~60% complete).** The core `Cache` is fully functional, thread-safe, process-safe,
-> fork-safe, and passes the strict conformance suite run against `diskcache` 5.6.3 (except for deliberate,
-> documented improvements). Features like `FanoutCache`, `transact()`, tags, non-str keys, `Deque`/`Index`,
-> and memoize decorators are coming in subsequent phases. See the [Roadmap](user-guide/roadmap.qmd).
+::: {.callout-warning}
+**Pre-release: not on PyPI yet, and not yet in production.** The core `Cache` is complete. It passes a conformance suite that runs the same tests against real diskcache 5.6.3, apart from the [documented divergences](user-guide/divergences.qmd). It's now in a deep concurrency review and 24-hour soak runs, and then it goes into production at [Talk Python](https://talkpython.fm). `FanoutCache`, `AsyncCache`, `transact()`, tags, non-`str` keys and the recipes come in later phases.
+:::
 
-## Already on diskcache?
+## Install
 
-Point diskcache-oxide at a new directory. diskcache-oxide uses its own optimized database schema
-(`diskcache-oxide.sqlite`) and does not read diskcache 5.x files (`cache.db`):
+Until the first release, build it from source (needs a Rust toolchain):
 
-```python
-# Old:
-# from diskcache import Cache
-
-# New:
-from diskcache_oxide import Cache
-
-cache = Cache('/tmp/app-cache-oxide')
+```bash
+uv pip install git+https://github.com/mikeckennedy/diskcache-oxide
 ```
 
-- **Drop-in API for `Cache`**: `get()`, `set()`, `add()`, `delete()`, `pop()`, `touch()`, `incr()`,
-  `decr()`, `iterkeys()`, `expire()`, `clear()`, `cull()`, `volume()`, and dictionary operations
-  (`cache[k]`, `k in cache`, `len(cache)`) work as expected.
-- **Predictable, safe serialization**: Pickle is disabled by default. Values are encoded as compact
-  `msgpack` or `json` with type preservation for tuples, sets, datetimes, and large ints.
-- **Truthy cache**: An empty `Cache` is always truthy (`bool(cache) is True`), so `if cache:`
-  reliably checks whether caching is active.
-- **See [Switching from diskcache](user-guide/switching-from-diskcache.qmd)** for full transition details.
+It supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t and 3.15t), on macOS and Linux. Windows support is planned. Release wheels will include the compiled engine and a bundled SQLite, so there's nothing else to install.
 
-## Why diskcache-oxide?
+## Coming from diskcache?
 
-- **[Roughly half the latency on cached reads](user-guide/performance.qmd).** Direct PyO3 integration,
-  cached SQLite statements, and fast zero-copy deserialization deliver significantly lower latency than
-  pure Python diskcache, with much higher multi-threaded throughput.
-- **[Free-threaded Python ready](user-guide/concurrency-and-forks.qmd).** Compiled with `gil_used = false`.
-  Runs safely and scalably on CPython 3.14t and 3.15t without the Global Interpreter Lock.
-- **[Safe across `fork()`](user-guide/concurrency-and-forks.qmd).** Gunicorn and Uvicorn pre-forking web
-  servers frequently trigger SQLite crashes or corruption in child processes. diskcache-oxide's
-  `os.register_at_fork` transaction barrier prevents forks during active write transactions and drops
-  stale connection handles across process boundaries.
-- **[Bounded memory & connection pooling](user-guide/storage-and-wal.qmd).** Each cache directory is
-  serviced by a bounded pool of at most `max_connections` SQLite connections (default 8), each with a
-  fixed page cache (`sqlite_cache_size`, default 1 MiB), preventing file descriptor leaks and unbounded memory.
-- **[Bounded disk & WAL management](user-guide/storage-and-wal.qmd).** Standard SQLite WAL files grow
-  without limit when readers in other processes prevent checkpoints. diskcache-oxide actively monitors
-  and bounds the WAL file (`wal_size_limit`, default 64 MiB) through forced checkpoints.
-- **[No pickle by default](user-guide/serialization.qmd).** Arbitrary unpickling from disk is a security
-  hazard and masks bugs. diskcache-oxide stores values as `msgpack` or `json` with type tags. Opt-in
-  `pickle=True` is available when strictly necessary.
-- **[Built-in `NullCache`](user-guide/null-cache.qmd).** Switch off caching in tests or development
-  environments without adding `if cache is not None:` branches across your codebase. Supports
-  `invalidate=real_cache` forwarding for safe mutation handling.
-- **[Full typing](user-guide/getting-started.qmd).** Shipped with `py.typed` and the `CacheLike`
-  structural protocol.
+Change the import and point it at a new directory. diskcache-oxide keeps diskcache's API but uses its own file format (`diskcache-oxide.sqlite`), so it never reads or touches an existing `cache.db`:
+
+```python
+# from diskcache import Cache
+from diskcache_oxide import Cache
+
+cache = Cache('/var/cache/my-app-oxide')
+```
+
+[Switching from diskcache](user-guide/switching-from-diskcache.qmd) covers every difference you might notice.
 
 ## Where to next
 
-- [Getting started](user-guide/getting-started.qmd): Installation, quickstart, and core cache operations.
-- [Switching from diskcache](user-guide/switching-from-diskcache.qmd): Differences, transition steps, and compatibility.
-- [Serialization](user-guide/serialization.qmd): Msgpack vs JSON, type tags, and why pickle is opt-in.
-- [NullCache](user-guide/null-cache.qmd): Zero-overhead cache toggling and invalidation forwarding.
-- [Concurrency & Forks](user-guide/concurrency-and-forks.qmd): Threads, processes, free-threading, and the fork barrier.
-- [Storage & WAL](user-guide/storage-and-wal.qmd): Files, blobs, page caches, and bounded WAL files.
-- [Divergences](user-guide/divergences.qmd): Detailed log of all intentional improvements over diskcache 5.6.3.
-- [Roadmap](user-guide/roadmap.qmd): Current status and feature roadmap for future releases.
+- [Getting started](user-guide/getting-started.qmd): create a cache, store and read values, expiry, counters and eviction.
+- [Switching from diskcache](user-guide/switching-from-diskcache.qmd): what changes, and why.
+- [Recipes](recipes/index.qmd): caching expensive calls, invalidation, job claims, rate limiting, deployment and testing.
+- [Vision and roadmap](user-guide/roadmap.qmd): what exists today and what's coming.
+- [Concurrency and forks](user-guide/concurrency-and-forks.qmd): threads, processes, free-threading and the fork barrier.
+- [Performance](user-guide/performance.qmd): the measured numbers, and where the next speedups come from.

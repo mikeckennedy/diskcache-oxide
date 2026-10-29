@@ -1,115 +1,96 @@
 ---
-title: "Storage and WAL management"
+title: "Storage and WAL"
 ---
 
-diskcache-oxide is designed to keep both **memory usage** and **disk usage** strictly bounded,
-even under heavy concurrent write bursts and sustained multi-process reads.
+A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps up until an alert fires. This page covers what diskcache-oxide puts on disk, and the settings that keep memory and disk bounded.
 
-## On-disk layout
-
-Inside each cache directory, diskcache-oxide manages the following files:
+## What's in the directory
 
 ```
 /var/cache/my-app/
-├── diskcache-oxide.sqlite        # SQLite database (metadata, indexes, inline values)
-├── diskcache-oxide.sqlite-wal    # Write-Ahead Log file (bounded by wal_size_limit)
-├── diskcache-oxide.sqlite-shm    # Shared-memory index for WAL coordination
-└── 0a/                           # Subdirectories holding spilled value files
-    └── 0a1b2c3d4e...blob
+├── diskcache-oxide.sqlite        # keys, metadata and small values
+├── diskcache-oxide.sqlite-wal    # SQLite's write-ahead log
+├── diskcache-oxide.sqlite-shm    # SQLite's shared-memory index for the log
+└── 3f/
+    └── a2/
+        └── 3fa2…c91e.val         # one large value
 ```
 
-- **Database file**: `diskcache-oxide.sqlite` stores row metadata, timestamps, expiry times, keys,
-  and small-to-medium values.
-- **Directory permissions**: Cache directories created by diskcache-oxide are initialized with `0700`
-  permissions (owner read/write/execute only) on Unix systems to protect cached credentials and data.
+The database file carries a format version. A future build that can't read it raises `FormatMismatchError` rather than guessing.
 
-## Inline values vs file spills
+## Small values inline, large values in files
 
-To balance latency and SQLite database size, diskcache-oxide splits storage into two paths:
+- **Under 64 KiB** (after encoding), a value is stored in its database row. Reading it is one indexed lookup.
+- **64 KiB or more**, it's written to its own file, and the row points to it. This keeps the database small and its page cache hot, and large values stream straight from the file.
 
-1. **Inline values**: Values below the spill threshold are stored directly inside the SQLite database
-   as a `BLOB` or text column. Reading an inline value requires a single SQLite indexed lookup.
-2. **File spills**: Large values (e.g., cached image blobs, large API payloads) are written to standalone
-   files in subdirectories. The database row stores only the relative file path, size, and metadata.
+Writing a large value never holds the database lock while the bytes go to disk: the value goes to a temporary file first, then inside a short transaction the file is renamed into place and the row updated. The old file is removed after the commit, and file names are never reused.
 
-### Atomic spill writes
+A reader racing an overwrite always gets a whole value, old or new. If a value's file really is gone (deleted by hand, or cut short by a crash, since value files aren't fsynced), `get` returns the default and the orphaned row is cleaned up, so `in` and `len` don't keep reporting an entry that can't be read.
 
-When writing a spilled value:
+## Size limit and eviction
 
-- The payload is written to a temporary file in the destination folder and renamed into place atomically.
-- The SQLite transaction then commits the row pointing to the file.
-- When an entry is overwritten, deleted, or evicted, the database row is deleted first, and the backing file is unlinked.
-- **Concurrency safe**: If a reader races an overwrite of a spilled entry, the reader receives either the old value or the new value—never an empty read, a `None`, or an I/O error.
+```python
+cache = Cache('/var/cache/my-app', size_limit=500 * 1024 * 1024, cull_limit=10)
+```
 
-## Bounded memory (`sqlite_cache_size`)
+- `size_limit` is the cache's disk budget in bytes: the database plus value files. The default is 1 GiB and the minimum is 1 MiB.
+- When a `set()` finds the cache over its limit, it evicts up to `cull_limit` of the least recently stored entries (default 10). `cull()` evicts down to the limit on demand.
+- `volume()` reports the current size.
 
-Standard SQLite configurations can cause unexpected memory growth in long-running Python web processes.
-As queries run, SQLite caches database pages in process memory. In a multi-worker deployment, each worker
-process can accumulate hundreds of megabytes of RSS cache memory.
+Least-recently-stored eviction means a `get` never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU policies are planned for Phase 6a.
 
-diskcache-oxide bounds page cache memory on every connection:
+## Memory: `max_connections` and `sqlite_cache_size`
+
+diskcache gives each thread its own connection with a 32 MiB page cache plus a 64 MiB memory map, so its memory grows with your thread count. diskcache-oxide bounds it:
 
 ```python
 cache = Cache(
-    '/tmp/bounded-cache',
-    max_connections=8,
-    sqlite_cache_size=256,  # 256 pages of 4 KiB = 1 MiB per connection (default)
+    '/var/cache/my-app',
+    max_connections=8,       # connections per database file, per process (default 8)
+    sqlite_cache_size=256,   # 4 KiB pages per connection: 1 MiB (default)
 )
 ```
 
-With 8 pooled connections, the maximum SQLite memory consumed per process is bounded to approximately 8 MiB.
+SQLite's memory for a directory stays around `max_connections × sqlite_cache_size` pages, 8 MiB per process by default, however many threads use it. The 1 MiB default is the smallest size that left hot reads, writes and the threaded benchmarks unchanged. If your cache is large and read uniformly at random, raising it helps: 2,000 pages measured about 17% faster on that workload.
 
-## Bounded WAL files (`wal_size_limit`)
+## The write-ahead log
 
-SQLite's Write-Ahead Log (WAL) mode provides high read and write concurrency. However, standard SQLite
-has a well-known vulnerability in multi-process environments:
+SQLite's write-ahead log (WAL) is what lets readers and a writer work at the same time. It has a weak spot in multi-process apps: SQLite can only reset the log when it finds a moment with no readers, and with readers in other processes, a burst of writes (a big fill, or a `clear()`) makes the log grow to fit the burst and then stay that size. diskcache-oxide's soak tests saw logs over 1 GiB next to databases of a few MiB.
 
-> **The WAL growth problem**: When multiple processes are continuously reading from the database, SQLite
-> cannot checkpoint the WAL back into the main database file because active reader locks prevent it.
-> A burst of writes (such as an initial cache warm-up or mass invalidation) causes the `-wal` file to grow
-> to hundreds of megabytes or gigabytes, and standard SQLite never shrinks it back down.
+diskcache-oxide handles this in layers, from free and always on to explicit.
 
-diskcache-oxide actively monitors and bounds the `-wal` file:
+### Always on: `wal_size_limit`
 
 ```python
-cache = Cache(
-    '/tmp/bounded-cache',
-    wal_size_limit=64 * 1024 * 1024,  # 64 MiB limit (default)
-)
+cache = Cache('/var/cache/my-app', wal_size_limit=64 * 1024 * 1024)   # the default
 ```
 
-1. **Size limits**: Sets SQLite's `journal_size_limit` to half the limit, instructing SQLite to truncate
-   the log when reset.
-2. **Autocheckpoint scaling**: Scales SQLite's `wal_autocheckpoint` frequency based on the limit.
-3. **Forced checkpoints**: After writes, if the WAL file exceeds `wal_size_limit`, diskcache-oxide
-   attempts a forced checkpoint (`PASSIVE`, then `TRUNCATE` with a 2 ms busy timeout).
-4. **Adaptive backoff**: If other readers hold locks, the checkpoint attempt yields and backs off
-   for 1 second, ensuring that write calls are never failed or delayed by maintenance.
+This tells SQLite to trim the log back to half the limit (32 MiB by default) whenever it resets, and scales how often SQLite checkpoints automatically. These are connection settings, so they never pause anything. At normal load they keep the log at a few MiB.
 
-## Eviction and disk bounds
-
-You can configure an overall disk budget for the cache:
+### On demand: `checkpoint()`
 
 ```python
-cache = Cache(
-    '/tmp/app-cache',
-    size_limit=500 * 1024 * 1024,  # 500 MiB total limit
-    cull_limit=20,                 # Evict 20 items per cull pass
-)
+cache.checkpoint()   # True if the log was reset and truncated
 ```
 
-- **`size_limit`**: Total disk budget for the cache directory, including both database files and spilled
-  value files. Default: 1 GiB. Minimum: 1 MiB (`MIN_SIZE_LIMIT = 1048576`).
-- **`cull_limit`**: Maximum number of entries evicted during a single `set()` pass when the cache exceeds
-  `size_limit`. Default: 10.
-- **Least-Recently-Stored (LRS)**: Eviction prioritizes entries with the lowest monotonic `store_seq`.
-  Entries written earliest are culled first.
-- **`volume()`**: Returns the accurate on-disk volume in bytes consumed by database and spill files.
+`checkpoint()` copies the log into the database and truncates it to zero. It waits briefly for in-flight reads, retrying up to the cache's `timeout`, and returns `False` instead of raising if other processes keep the database busy. Call it when a short pause suits your app: at shutdown, in a maintenance job, or after a large `clear()`.
 
-## Maintenance operations
+### At close
 
-- `cache.expire()`: Scans the database and purges all expired records and their associated spill files.
-  Runs in non-blocking batches so concurrent writers can interleave between chunks.
-- `cache.cull()`: Manually triggers an eviction cycle if the cache currently exceeds `size_limit`.
-- `cache.clear()`: Deletes all entries that were present when `clear()` was called. Uses snapshot
-  boundaries so that writes occurring during the clear operation are preserved.
+`close()` runs the same checkpoint when this is the process's last handle on the cache and the log is over half the limit, waiting at most a second. A small log, the usual case, costs nothing extra. Pass `close(checkpoint=False)` to skip it.
+
+### Opt-in: automatic checkpoints
+
+```python
+cache = Cache('/var/cache/my-app', wal_checkpoint='auto')
+```
+
+With `'auto'`, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it's over the limit, with the interpreter released and a 1-second backoff if other processes are busy. It never fails a write. It isn't the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. The plan is to move this into a background maintenance thread so writes never pay for it at all.
+
+## Maintenance calls
+
+All of these work in chunks, release the database between chunks so other writers get in, and are safe to call while other processes use the cache:
+
+- `expire()` removes every expired entry and its value file.
+- `clear()` removes every entry that existed when it started, and keeps writes that land while it runs.
+- `cull()` evicts down to `size_limit`.

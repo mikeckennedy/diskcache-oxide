@@ -18,7 +18,7 @@ favicon: assets/diskcache-oxide-logo.png
 hero:
   enabled: true
   logo: assets/diskcache-oxide-slogan.jpg
-  logo_height: 220px
+  logo_height: 480px
 
 social_cards:
   # Absolute: with a relative path, great-docs 0.13.0 points og:image at the site root, where
@@ -58,6 +58,7 @@ user_guide:
     contents:
       - getting-started.qmd
       - switching-from-diskcache.qmd
+      - roadmap.qmd
   - section: "Core Features"
     contents:
       - serialization.qmd
@@ -68,7 +69,12 @@ user_guide:
     contents:
       - performance.qmd
       - divergences.qmd
-      - roadmap.qmd
+
+sections:
+  - title: Recipes
+    dir: recipes
+    index: true
+    navbar_after: User Guide
 
 skill:
   extra_body: skill_extra_body.md
@@ -87,6 +93,7 @@ skill:
     - "Use serializer='msgpack' (the default) for maximum performance and compactness, or serializer='json' if human inspection in SQLite is desired."
     - "Use NullCache in tests or local dev environments to disable caching cleanly without adding conditional checks in application code."
     - "Type application functions that accept either cache type with CacheLike from diskcache_oxide.protocol."
+    - "Call cache.checkpoint() at shutdown or from a maintenance job to empty the write-ahead log after write bursts; it returns False rather than raising when other processes keep it busy."
     - "Leave wal_size_limit and sqlite_cache_size at their defaults unless tuning for extreme read-heavy or memory-constrained workloads."
 
 include_in_header:

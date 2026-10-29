@@ -8,7 +8,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 
-<title>Concurrency and fork safety – diskcache-oxide | diskcache-oxide</title>
+<title>Concurrency and forks – diskcache-oxide | diskcache-oxide</title>
 <style>
 /* Default styles provided by pandoc.
 ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
@@ -123,16 +123,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="High-concurrency Python web servers present unique challenges for disk-backed caches: multiple threads accessing a single cache instance, multiple...">
+  <meta name="description" content="A production Python web app is many things at once: several worker processes, often several threads in each, a pre-forking server that creates and...">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Concurrency and fork safety – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="High-concurrency Python web servers present unique challenges for disk-backed caches: multiple threads accessing a single cache instance, multiple...">
+  <meta property="og:title" content="Concurrency and forks – diskcache-oxide | diskcache-oxide">
+  <meta property="og:description" content="A production Python web app is many things at once: several worker processes, often several threads in each, a pre-forking server that creates and...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Concurrency and fork safety – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="High-concurrency Python web servers present unique challenges for disk-backed caches: multiple threads accessing a single cache instance, multiple...">
+  <meta name="twitter:title" content="Concurrency and forks – diskcache-oxide | diskcache-oxide">
+  <meta name="twitter:description" content="A production Python web app is many things at once: several worker processes, often several threads in each, a pre-forking server that creates and...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -162,6 +162,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span class="menu-text">User Guide</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -183,7 +187,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
         <i class="bi bi-layout-text-sidebar-reverse"></i>
       </button>
-        <h1 class="quarto-secondary-nav-title no-breadcrumbs">Concurrency and fork safety</h1>
+        <h1 class="quarto-secondary-nav-title no-breadcrumbs">Concurrency and forks</h1>
         <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
         </a>
     </div>
@@ -213,6 +217,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Switching from python-diskcache</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Vision and roadmap</span></a>
+  </div>
+</li>
       </ul>
   </li>
         <li class="sidebar-item sidebar-item-section">
@@ -236,13 +246,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link active">
- <span class="menu-text">Concurrency and fork safety</span></a>
+ <span class="menu-text">Concurrency and forks</span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/storage-and-wal.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storage and WAL management</span></a>
+ <span class="menu-text">Storage and WAL</span></a>
   </div>
 </li>
       </ul>
@@ -265,12 +275,6 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
 </li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Project status and roadmap</span></a>
-  </div>
-</li>
       </ul>
   </li>
     </ul>
@@ -283,10 +287,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#free-threaded-python-3.14t-and-3.15t" id="toc-free-threaded-python-3.14t-and-3.15t" class="nav-link active" data-scroll-target="#free-threaded-python-3.14t-and-3.15t">Free-threaded Python (3.14t and 3.15t)</a></li>
-  <li><a href="#multi-process-architecture" id="toc-multi-process-architecture" class="nav-link" data-scroll-target="#multi-process-architecture">Multi-process architecture</a></li>
-  <li><a href="#the-fork-barrier-os.register_at_fork" id="toc-the-fork-barrier-os.register_at_fork" class="nav-link" data-scroll-target="#the-fork-barrier-os.register_at_fork">The fork barrier (<code>os.register_at_fork</code>)</a></li>
-  <li><a href="#bounded-connection-pooling" id="toc-bounded-connection-pooling" class="nav-link" data-scroll-target="#bounded-connection-pooling">Bounded connection pooling</a></li>
+  <li><a href="#threads" id="toc-threads" class="nav-link active" data-scroll-target="#threads">Threads</a>
+  <ul class="collapse">
+  <li><a href="#a-bounded-connection-pool" id="toc-a-bounded-connection-pool" class="nav-link" data-scroll-target="#a-bounded-connection-pool">A bounded connection pool</a></li>
+  </ul></li>
+  <li><a href="#processes" id="toc-processes" class="nav-link" data-scroll-target="#processes">Processes</a></li>
+  <li><a href="#forks" id="toc-forks" class="nav-link" data-scroll-target="#forks">Forks</a>
+  <ul class="collapse">
+  <li><a href="#forking-from-inside-your-own-transaction" id="toc-forking-from-inside-your-own-transaction" class="nav-link" data-scroll-target="#forking-from-inside-your-own-transaction">Forking from inside your own transaction</a></li>
+  </ul></li>
+  <li><a href="#free-threaded-performance-today" id="toc-free-threaded-performance-today" class="nav-link" data-scroll-target="#free-threaded-performance-today">Free-threaded performance today</a></li>
   </ul>
 </nav>
     </div>
@@ -295,7 +305,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 <header id="title-block-header" class="quarto-title-block default">
 <div class="quarto-title">
-<h1 class="title d-none d-lg-block">Concurrency and fork safety</h1>
+<h1 class="title d-none d-lg-block">Concurrency and forks</h1>
 </div>
 
 
@@ -312,58 +322,53 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>High-concurrency Python web servers present unique challenges for disk-backed caches: multiple threads accessing a single cache instance, multiple worker processes sharing a directory, and pre-forking application servers (<code>gunicorn</code>, <code>celery</code>, <code>uvicorn --workers</code>).</p>
-<p>diskcache-oxide is engineered from the ground up to handle these workloads safely and predictably.</p>
-<section id="free-threaded-python-3.14t-and-3.15t" class="level1">
-<h1>Free-threaded Python (3.14t and 3.15t)</h1>
-<p>diskcache-oxide is compiled with <code>#[pymodule(gil_used = false)]</code>.</p>
-<p>On free-threaded CPython builds, Python’s Global Interpreter Lock (GIL) is disabled. Threads run simultaneously across all available CPU cores.</p>
+<p>A production Python web app is many things at once: several worker processes, often several threads in each, a pre-forking server that creates and recycles those workers, and background jobs and scripts opening the same cache on the side. More and more, it’s also free-threaded Python, with threads truly running in parallel. diskcache-oxide is designed for all of that at the same time, and its test suite runs each of these cases on every change.</p>
+<section id="threads" class="level1">
+<h1>Threads</h1>
+<p>One <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> can be shared by any number of threads. There’s nothing to lock and no per-thread setup.</p>
 <ul>
-<li><strong>No GIL reliance</strong>: diskcache-oxide uses Rust standard synchronization primitives (<code>std::sync::Mutex</code>, <code>Arc</code>, atomic variables) internally. It never relies on the GIL to prevent race conditions.</li>
-<li><strong>Detached locks</strong>: Long-running operations (such as waiting on SQLite write locks or reading large file spills) detach the Python thread so they never block garbage collection or other Python threads.</li>
-<li><strong>Tested in CI</strong>: Every change is continuously tested on Python 3.14, 3.14t, 3.15, and 3.15t.</li>
+<li><strong>Free-threaded ready.</strong> The extension declares <code>gil_used = false</code> and never relies on the GIL for correctness. Its shared state is guarded by Rust’s own locks and atomics. Every change is tested on 3.14, 3.14t, 3.15 and 3.15t.</li>
+<li><strong>Waits don’t hold up Python.</strong> Anything that can wait, such as a busy write lock, reading a large value file, or a chunk of <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, releases the interpreter while it waits, so other Python threads keep running on GIL builds too.</li>
+<li><strong>Threads queue fairly.</strong> Writers in one process queue on an in-process lock for each database file instead of all retrying against SQLite’s busy handler, and long maintenance calls like <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> and <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> step aside between chunks so a waiting write gets in.</li>
+</ul>
+<section id="a-bounded-connection-pool" class="level2">
+<h2 class="anchored" data-anchor-id="a-bounded-connection-pool">A bounded connection pool</h2>
+<p>diskcache opens a SQLite connection for every thread that touches the cache and keeps it. With 64 threads that’s 131 open files in the cache directory, and a server with enough threads runs out of file descriptors.</p>
+<p>diskcache-oxide shares a pool of connections per database file across every handle in the process:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, max_connections<span class="op">=</span><span class="dv">8</span>)   <span class="co"># the default</span></span></code></pre></div>
+<p>The pool never holds more than <code>max_connections</code> connections, so at most <code>2 × max_connections + 1</code> files are open in the cache directory, however many threads you run. A thread that finds every connection busy waits for one, up to the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>. When the last handle on a directory closes, every connection closes with it, whichever threads used them.</p>
+</section>
+</section>
+<section id="processes" class="level1">
+<h1>Processes</h1>
+<p>Any number of processes can open the same directory, each with its own <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. That’s the normal deployment: every gunicorn or uvicorn worker opens the cache at startup.</p>
+<ul>
+<li><strong>WAL mode, always.</strong> SQLite runs in write-ahead-log mode, so readers never block writers and writers never block readers. One writer at a time commits to each database file. diskcache-oxide checks that WAL mode is really on when it opens a cache, and fails loudly if it isn’t (on some network filesystems, for example).</li>
+<li><strong>Atomic across processes.</strong> <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a>, <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a>, <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr()</a>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> and every other write is a single transaction. Two processes can’t both win an <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a>, and two <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> calls never lose an update.</li>
+<li><strong>Maintenance that doesn’t destroy work.</strong> Every write gets a new sequence number. <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> and <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> note the latest number when they start and only touch older rows, so writes from other processes that land while they run are kept.</li>
+<li><strong>Large values are always whole.</strong> A process reading a large value while another overwrites it gets the old value or the new one, never a miss. (diskcache’s standalone reproduction of that race sees about 40 misses in every 325,000 reads.)</li>
+<li><strong>Opening never writes.</strong> Opening a cache with unchanged settings and reading from it never takes the write lock or touches the database file, so a read-mostly worker costs the writers nothing.</li>
 </ul>
 </section>
-<section id="multi-process-architecture" class="level1">
-<h1>Multi-process architecture</h1>
-<p>Multiple independent Python processes (such as Gunicorn workers or Celery tasks) can safely point to the same cache directory:</p>
-<ul>
-<li><strong>SQLite WAL Mode</strong>: diskcache-oxide always operates in Write-Ahead Logging (<code>journal_mode=WAL</code>) mode. Readers never block writers, and writers never block readers.</li>
-<li><strong>Cross-process coordination</strong>: Writers coordinate through SQLite’s internal WAL locks (<code>-shm</code> and <code>-wal</code> files).</li>
-<li><strong>Atomic sequence numbers</strong>: Every write receives a monotonically increasing <code>store_seq</code> generated inside the SQLite transaction. Eviction, expiration, and clear operations use this sequence to ensure that concurrent writes are never accidentally wiped out by a running maintenance sweep.</li>
-</ul>
-</section>
-<section id="the-fork-barrier-os.register_at_fork" class="level1">
-<h1>The fork barrier (<code>os.register_at_fork</code>)</h1>
-<p>Pre-forking web servers create worker processes using POSIX <code>fork()</code>. When <code>fork()</code> is called after a parent process has initialized SQLite connections, standard SQLite libraries can deadlock, corrupt shared locks, or crash. On macOS, using SQLite across a fork can trigger an immediate abort in Apple’s system libraries.</p>
-<p>diskcache-oxide implements an automatic <strong>process-wide fork barrier</strong>:</p>
-<pre><code>[ Parent Process ]
- Thread 1: In-flight write transaction ───┐
- Thread 2: About to start transaction ────┼── (Blocked by barrier)
- Main Thread: Calls os.fork() ────────────┴── Barrier waits for Thread 1 to commit
-                                              │
-                      ┌───────────────────────┴───────────────────────┐
-                      ▼                                               ▼
-              [ Parent Process ]                              [ Child Process ]
-          Resumes Thread 2 &amp; writers                   Drops inherited connection handles
-                                                       Starts fresh connection pool lazily</code></pre>
+<section id="forks" class="level1">
+<h1>Forks</h1>
+<p>Pre-forking servers (gunicorn, Celery’s prefork pool, <code>multiprocessing</code> with the fork start method) create workers with <code>fork()</code>. A fork copies the whole process, including any SQLite lock state that one of its threads held at that moment. In diskcache, a child forked while another thread was in a write transaction inherits a lock nobody in the child will ever release: its first write stalls for the full timeout (60 seconds by default). Under a busy read/write load, that hits 20-50% of forks.</p>
+<p>diskcache-oxide prevents it with a <strong>fork barrier</strong>, installed when <code>diskcache_oxide</code> is imported:</p>
 <ol type="1">
-<li><strong>Before fork (<code>before</code>)</strong>: The barrier releases the Python GIL and waits for all active SQLite transactions in other threads to complete. It temporarily blocks any new transactions from starting.</li>
-<li><strong>After fork in parent (<code>after_in_parent</code>)</strong>: Releases the barrier and unblocks waiting writers in the parent.</li>
-<li><strong>After fork in child (<code>after_in_child</code>)</strong>: Resets the process generation counter. Inherited SQLite connection pointers are discarded immediately without closing the inherited file descriptors (which would drop POSIX locks held by the parent). The child opens clean, independent connections on its next cache call.</li>
+<li><strong>Before the fork,</strong> the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish.</li>
+<li><strong>In the parent,</strong> it lets the held-off writes continue.</li>
+<li><strong>In the child,</strong> it drops the inherited connections without closing them (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.</li>
 </ol>
-<p>This barrier is registered automatically when <code>diskcache_oxide</code> is imported.</p>
+<p>The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> in the process, not just the one you’re holding.</p>
+<p>A forked child deliberately leaves its inherited connections’ file descriptors open, so each fork can carry up to the pool’s descriptor budget into the child. That’s by design, and it’s bounded.</p>
+<section id="forking-from-inside-your-own-transaction" class="level2">
+<h2 class="anchored" data-anchor-id="forking-from-inside-your-own-transaction">Forking from inside your own transaction</h2>
+<p>CPython won’t let a library refuse a fork, so the barrier can’t wait for a transaction held by the very thread that is forking. Once <code>transact()</code> arrives (Phase 6b), the child’s copy of that transaction is poisoned: anything done inside it raises <code>RuntimeError</code> and nothing commits, and the child’s writes to that database raise <code>RuntimeError</code> straight away instead of stalling for a minute. The parent gets a <code>RuntimeWarning</code>. A clear error at the call site beats a mysterious 60-second hang in a fresh worker.</p>
 </section>
-<section id="bounded-connection-pooling" class="level1">
-<h1>Bounded connection pooling</h1>
-<p>In python-diskcache, each thread that touched the cache created and retained its own SQLite connection. In an application running short-lived worker threads or high thread counts (e.g.&nbsp;64 threads), this resulted in hundreds of open file descriptors inside the cache directory, leading to file descriptor exhaustion (“Too many open files” / <code>EMFILE</code>).</p>
-<p>diskcache-oxide uses a bounded connection pool:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/tmp/my-cache'</span>, max_connections<span class="op">=</span><span class="dv">8</span>)  <span class="co"># Default: 8</span></span></code></pre></div>
-<ul>
-<li><strong>Fixed pool size</strong>: At most <code>max_connections</code> SQLite connections are opened per cache directory in a process.</li>
-<li><strong>Fast checkout</strong>: Connections are checked out using an uncontended mutex, held for the duration of the query or transaction, and immediately returned to the pool.</li>
-<li><strong>Bounded file descriptors</strong>: Even with hundreds of concurrent threads, file descriptor usage remains strictly bounded.</li>
-</ul>
+</section>
+<section id="free-threaded-performance-today" class="level1">
+<h1>Free-threaded performance today</h1>
+<p>On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that’s only about 1.6× its single-thread number, so threads don’t scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is the goal of Phase 4. See <a href="../user-guide/performance.html">Performance</a>.</p>
 
 
 </section>
@@ -714,8 +719,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../user-guide/storage-and-wal.html" class="pagination-link" aria-label="Storage and WAL management">
-        <span class="nav-page-text">Storage and WAL management</span> <i class="bi bi-arrow-right-short"></i>
+      <a href="../user-guide/storage-and-wal.html" class="pagination-link" aria-label="Storage and WAL">
+        <span class="nav-page-text">Storage and WAL</span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

@@ -1,103 +1,83 @@
 ## What diskcache-oxide is
 
-A clean-room reimplementation of [python-diskcache](https://github.com/grantjenks/python-diskcache)
-in Rust via PyO3, with a minimal Python layer (`import diskcache_oxide`, PyPI `diskcache-oxide`).
-It is API compatible with `diskcache.Cache`, but intentionally not data compatible: it uses its own
-on-disk format and separate database file (`diskcache-oxide.sqlite`), roughly halving read latency,
-providing higher multithreaded throughput, safe cross-process concurrency, fork safety, and
-free-threaded CPython (3.14t/3.15t) support with `gil_used = false`.
+A shared, durable disk cache for Python, built on a Rust engine (PyO3) and SQLite storage, with a minimal Python layer (`import diskcache_oxide`, distribution `diskcache-oxide`). It is API compatible with [python-diskcache](https://github.com/grantjenks/python-diskcache)'s `Cache`, but deliberately not data compatible: it uses its own database file (`diskcache-oxide.sqlite`) and never reads diskcache's `cache.db`. Every thread and process that opens the same directory shares one cache. Compared with diskcache it has about half the read latency, much higher threaded throughput, fork safety, bounded memory and WAL size, and free-threaded CPython (3.14t/3.15t) support with `gil_used = false`.
 
-> **Status:** ~60% complete (pre-release). The core `Cache`, `NullCache`, file spilling, msgpack/JSON
-> serialization, fork barrier, connection pool, and WAL limits are fully working and conformance tested.
-> `FanoutCache`, `transact()`, tags, non-str keys, `Deque`/`Index`, and recipes come in subsequent phases.
+> **Status:** pre-release, not yet on PyPI (install from GitHub; building needs a Rust toolchain). The core `Cache`, `NullCache`, large-value files, msgpack/JSON serialization, the fork barrier, the connection pool and WAL management are working and conformance tested against diskcache 5.6.3. `FanoutCache`, `AsyncCache`, `transact()`, tags, `memoize`, non-str keys, `Deque`/`Index` and the recipes (locks, throttles) are planned, not available.
 
 ## Quickstart
 
 ```python
 from diskcache_oxide import Cache
 
-# Always use a context manager or close() when done
-with Cache('/tmp/my-app-cache') as cache:
-    # Storing values (msgpack by default; JSON also supported)
-    cache.set('user:42', {'name': 'Alice', 'role': 'admin'}, expire=3600)
-
-    # Reading values
+with Cache('/var/cache/my-app') as cache:
+    cache.set('user:42', {'name': 'Sam', 'role': 'admin'}, expire=3600)
     user = cache.get('user:42')
-    print(user['name'])  # Alice
 
-    # Dictionary syntax works identically
     cache['session:xyz'] = {'active': True}
     if 'session:xyz' in cache:
         print(cache['session:xyz'])
+
+    # Atomic across processes: exactly one caller wins.
+    if cache.add('job:nightly', 'claimed', expire=3600):
+        run_nightly_job()
+
+    # Optional, at shutdown: empty the write-ahead log. Returns False if other processes keep it busy.
+    cache.checkpoint()
 ```
 
 ## Switching from python-diskcache
 
-1. **Point to a fresh directory**: diskcache-oxide stores data in `diskcache-oxide.sqlite` (diskcache
-   uses `cache.db`). Both can coexist in one parent directory without collisions, but diskcache-oxide
-   does not read old diskcache databases.
-2. **String keys only**: keys must be `str`. Integers, bytes, or tuples as keys raise `TypeError`.
-3. **No pickle by default**: values are stored using `msgpack` (default) or `json` with type tags
-   for sets, tuples, datetimes, and big ints. If unpicklable types are passed, `set()` raises
-   `TypeError`. Pass `pickle=True` if you explicitly need pickle fallback.
-4. **Truthy cache**: `bool(Cache)` is always `True` (diskcache is falsy when empty).
-5. **TimeoutError**: `diskcache_oxide.Timeout` subclasses Python's standard `TimeoutError`.
+1. **Use a fresh directory, or accept a cold start.** diskcache-oxide stores data in `diskcache-oxide.sqlite` and never reads diskcache's `cache.db`.
+2. **String keys only.** Non-`str` keys raise `TypeError` for now.
+3. **No pickle by default.** Values are stored as msgpack (default) or JSON with type tags for tuples, sets, datetimes, big ints, NaN and non-str dict keys. A value that can't be represented raises `TypeError` at `set()`. Pass `pickle=True` to allow a pickle fallback.
+4. **`bool(Cache)` is always True** (diskcache is falsy when empty).
+5. **`Timeout` subclasses `TimeoutError`.**
+6. **`directory` is required**, and there's no `disk=` or `eviction_policy=` argument.
+7. **Tests that patch `time.time`** must pass `clock=lambda: time.time()`, because the cache reads the clock natively.
 
 ```python
-# Old:
-# import diskcache
-# cache = diskcache.Cache('/tmp/cache')
+# from diskcache import Cache
+from diskcache_oxide import Cache
 
-# New:
-import diskcache_oxide
-cache = diskcache_oxide.Cache('/tmp/cache', serializer='msgpack')
+cache = Cache('/var/cache/my-app-oxide')
 ```
 
 ## The NullCache pattern
 
-Use `NullCache` to turn caching off entirely (e.g. in tests or local development) without altering
-call sites or adding `if cache is not None:` guards everywhere:
+`NullCache` turns caching off without changing call sites. It behaves like a cache where every entry expires the instant it's written: `get` returns the default, `set` and `add` return True, `len` is 0, and `bool(cache)` is False. Its constructor accepts and ignores `Cache`'s arguments.
 
 ```python
 import os
-from diskcache_oxide import Cache, NullCache, CacheLike
+from diskcache_oxide import Cache, CacheLike, NullCache
 
 def get_cache(path: str) -> CacheLike:
     if os.getenv('DISABLE_CACHE'):
         return NullCache(path)
     return Cache(path)
-
-cache = get_cache('/tmp/app')
-# Works identically, but every entry expires instantly
-cache.set('k', 'v')
-assert cache.get('k') is None
-assert bool(cache) is False  # if cache: checks if caching is enabled
 ```
+
+Because `add()` always succeeds on a `NullCache`, don't rely on `add()` for job claims or locks on a cache that might be switched off.
 
 ### Invalidation forwarding with `invalidate=`
 
-When caching is toggled off, passing `invalidate=real_cache` forwards `delete()`, `pop()`,
-`clear()`, and `iterkeys()` to the real cache so mutations don't leave stale entries behind:
+`NullCache(invalidate=real_cache)` forwards `delete()`, `pop()` (as a delete), `clear()` and `iterkeys()` to the real cache, so invalidations still land while caching is off:
 
 ```python
-real_cache = Cache('/tmp/cache')
+real_cache = Cache('/var/cache/my-app')
 null = NullCache(invalidate=real_cache)
 
-null.delete('user:42')  # deletes from real_cache!
-assert null.get('user:42') is None  # reads remain disabled
+null.delete('user:42')               # deleted from real_cache
+assert null.get('user:42') is None   # reads stay disabled
 ```
 
 ## Key gotchas
 
-- **Keys must be `str`**: non-string keys raise `TypeError`.
-- **Pickle is disabled by default**: storing objects that msgpack/JSON cannot serialize raises
-  `TypeError`. Pass `pickle=True` on `Cache(...)` only if necessary.
-- **Reading pickled data on `pickle=False`**: raises `UnsafeValueError` (a `TypeError` subclass)
-  rather than executing unpickling code.
-- **`size_limit` minimum**: minimum is 1 MiB (`1048576` bytes). Values below this raise `ValueError`.
-- **Atomic counters**: `incr()` and `decr()` operate atomically across processes. If a key is absent
-  and `default=None`, `KeyError` is raised.
-- **Fork safety**: fork is guarded by an `os.register_at_fork` barrier that blocks forks during
-  write transactions and closes/reopens SQLite connection handles safely in child processes.
-- **Iterkeys prefix scan**: `iterkeys(prefix="user:")` efficiently scans matching keys without
-  loading the whole database into memory.
+- **Keys must be `str`.**
+- **Pickle is off by default.** Only exact built-in types round-trip; a `dict` subclass or a custom class raises `TypeError` unless `pickle=True`.
+- **Reading a pickled value with `pickle=False`** raises `UnsafeValueError` (a `TypeError` subclass) and never unpickles.
+- **`size_limit` minimum** is 1 MiB; smaller raises `ValueError`.
+- **`incr()`/`decr()`** are atomic across processes and keep the entry's expiry. With `default=None`, a missing key raises `KeyError`.
+- **`expire=True` / `timeout=True`** raise `TypeError` (diskcache treats them as 1).
+- **Fork safety:** an `os.register_at_fork` barrier waits for other threads' write transactions before a fork, and the child drops its inherited connections and opens fresh ones. No action needed.
+- **`iterkeys(prefix=...)`** is an indexed range scan in sorted order; iterating the cache directly yields insertion order.
+- **WAL size:** with readers in other processes, write bursts can leave a large `-wal` file. Call `cache.checkpoint()` at shutdown or in a maintenance job; `close()` checkpoints a large WAL automatically.

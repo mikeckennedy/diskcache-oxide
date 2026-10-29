@@ -2,153 +2,85 @@
 title: "Switching from python-diskcache"
 ---
 
-diskcache-oxide is designed to be **API compatible** with [python-diskcache](https://github.com/grantjenks/python-diskcache)
-5.6.3 for `Cache`, but intentionally **not data compatible**. This page details the migration steps,
-structural differences, and deliberate improvements.
+diskcache-oxide is **API compatible** with [python-diskcache](https://github.com/grantjenks/python-diskcache) 5.6.3's `Cache`, and deliberately **not data compatible**. Keeping diskcache's API makes switching a one-line change. Not keeping its on-disk format is what allowed fixing its design instead of inheriting it.
 
-## Coexistence and on-disk files
-
-python-diskcache stores its metadata in `cache.db`. diskcache-oxide uses its own optimized schema in
-`diskcache-oxide.sqlite`.
-
-> [!IMPORTANT]
-> Both engines can point to the same directory without interfering with each other, but
-> **diskcache-oxide does not read or convert existing `cache.db` databases**.
-> When deploying diskcache-oxide, start with a fresh directory or let diskcache-oxide create
-> its own `diskcache-oxide.sqlite` file.
+For most apps, switching looks like this:
 
 ```python
-# Old code:
-import diskcache
-cache = diskcache.Cache('/var/cache/app')
+# from diskcache import Cache, Timeout
+from diskcache_oxide import Cache, Timeout
 
-# New code:
-import diskcache_oxide
-cache = diskcache_oxide.Cache('/var/cache/app')
+cache = Cache('/var/cache/my-app-oxide')
 ```
 
-## Key differences at a glance
+## Start with a fresh cache
 
-| Behavior | python-diskcache 5.6.3 | diskcache-oxide |
+diskcache-oxide stores its data in `diskcache-oxide.sqlite`, not diskcache's `cache.db`, and never opens or converts a diskcache database. The two can even share a directory without seeing each other's data. Your cache starts cold after the switch, which for a cache is usually fine. Once you've switched, delete the old `cache.db*` files and value files to get the disk space back.
+
+## What you might notice
+
+Most of these are fixes. Each one has a conformance test, or an entry in [Divergences](divergences.qmd) that explains why.
+
+| | python-diskcache 5.6.3 | diskcache-oxide |
 |---|---|---|
-| **Database file** | `cache.db` | `diskcache-oxide.sqlite` |
-| **Default serialization** | `pickle` | `msgpack` (or `json`) |
-| **Unpicklable / unrepresentable types** | Serialized via pickle | Raises `TypeError` (opt-in `pickle=True`) |
-| **Reading pickled data without pickle** | Executes arbitrary pickle code | Raises `UnsafeValueError` |
-| **Key types** | Any picklable object (tuples, ints, etc.) | `str` only (`TypeError` otherwise) |
-| **Cache truthiness** | `bool(cache)` is `len(cache) > 0` | `bool(cache)` is always `True`; `cache.enabled` is `True` |
-| **`Timeout` exception** | Inherits only from `Exception` | Inherits from standard `TimeoutError` |
-| **Minimum `size_limit`** | None (culls everything under ~32 KB) | 1 MiB minimum (`MIN_SIZE_LIMIT = 1048576`) |
-| **`expire()` behavior** | Stops early if entries share identical expiry | Removes all expired entries across chunks |
-| **`clear()` behavior** | Can delete concurrently written keys | Removes only entries present when clear began |
-| **Fork safety** | Can crash or corrupt SQLite in child processes | Guarded by `os.register_at_fork` barrier |
-| **Connection limit** | Unbounded (1 connection per thread) | Bounded by pool (`max_connections`, default 8) |
-| **WAL file growth** | Unbounded under multi-process readers | Bounded by active checkpoints (`wal_size_limit`) |
+| Values | Pickled | msgpack (default) or JSON with exact type tags. Pickle is opt-in with `pickle=True`. |
+| Unrepresentable values | Pickled | `TypeError` at `set()`, unless `pickle=True` |
+| Keys | Anything picklable | `str` only for now |
+| `bool(cache)` | False when empty | Always True; `NullCache` is False |
+| `Timeout` | Subclasses `Exception` | Subclasses `TimeoutError` |
+| `directory` | Optional (makes a temp dir) | Required |
+| Clock | Reads `time.time()` | Reads the clock in Rust; pass `clock=` to control it |
+| `size_limit` | Anything (tiny values silently empty the cache) | At least 1 MiB |
+| `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
+| `disk=`, `eviction_policy=` | Supported | Not supported (eviction policies are coming) |
+| `transact()`, tags, `memoize`, `FanoutCache` | Supported | Coming in later phases |
 
-## String keys only
+## Values: no pickle unless you ask
 
-In python-diskcache, keys could be integers, tuples, or custom objects. In diskcache-oxide:
+diskcache pickles every value. That's convenient, but anyone who can write to the cache directory can make your app run arbitrary code the next time it reads, and objects that were never meant to be cached get stored without complaint.
 
-- **All keys must be `str`**.
-- Attempting to pass an `int`, `bytes`, or other key type raises a `TypeError`:
+diskcache-oxide stores values as msgpack (or JSON), and tags the types those formats would otherwise change, so tuples, sets, datetimes, big ints, NaN, nested bytes and non-`str` dict keys all come back exactly as stored. Something that can't be represented raises `TypeError` when you store it, not later when you read it:
 
 ```python
-cache.set('user:100', 'data')  # OK
-cache.set(100, 'data')         # Raises TypeError: cache keys must be str, not int
+cache.set('job', MyJob())
+# TypeError: values of type MyJob can't be stored without pickle (only exact built-in types round-trip)
 ```
 
-> [!NOTE]
-> Keys are stored internally in a type-tagged column in SQLite, so structured key support
-> can be introduced in future phases without requiring database migrations.
-
-## Safe serialization by default
-
-python-diskcache pickles every value. This causes two major issues in production:
-
-1. **Security**: Any process with write access to the cache directory can execute arbitrary code inside any reader process upon unpickling.
-2. **Hidden bugs**: Objects not intended to be cached (database handles, active sockets, unpicklable closures) either fail obscurely or bloat the cache.
-
-diskcache-oxide uses `msgpack` by default (or standard `json`), with native tag support for Python
-types that JSON normally corrupts (tuples, sets, datetimes, 64-bit ints, and nested bytes).
+If you really do need to cache arbitrary objects, opt in for that cache:
 
 ```python
-# Values serialize cleanly without pickle:
-cache.set('item', {
-    'created': datetime.datetime.now(datetime.timezone.utc),
-    'tags': {'production', 'web'},
-    'coordinates': (37.7749, -122.4194)
-})
-
-# Types round-trip with exact fidelity:
-val = cache.get('item')
-assert isinstance(val['tags'], set)
-assert isinstance(val['coordinates'], tuple)
+objects = Cache('/var/cache/my-app-objects', pickle=True)
 ```
 
-If you store a custom class instance that cannot be represented in msgpack or JSON:
+A cache opened without `pickle=True` never unpickles. If it finds a pickled value written by a `pickle=True` peer, it raises `UnsafeValueError` and leaves the value alone. More in [Serialization](serialization.qmd).
+
+## String keys
+
+Only `str` keys are accepted today; anything else raises `TypeError`. Keys are already stored with a type tag, so other key types can be added in Phase 6a without changing the file format. In the meantime, build string keys yourself (`f'user:{user_id}'`).
+
+## Truthiness
+
+In diskcache, an empty cache is falsy, so `if cache:` quietly skips caching right after every deploy, when the cache is empty. In diskcache-oxide, `bool(Cache)` is always True and `bool(NullCache)` is always False, so `if cache:` means "is caching on?". Both have an `enabled` property that says the same thing.
+
+## Tests that patch `time.time`
+
+diskcache reads `time.time()` in Python, so tests could advance its clock with `unittest.mock.patch` or a freezegun-style fixture. diskcache-oxide reads the clock natively, which keeps a Python call off every operation. To make it follow a patched clock, pass `clock=`:
 
 ```python
-class CustomJob: ...
+cache = Cache(tmp_path, clock=lambda: time.time())
 
-cache.set('job', CustomJob())  # Raises TypeError!
-```
-
-To enable the pickle fallback for a specific cache instance:
-
-```python
-cache = Cache('/tmp/my-cache', pickle=True)
-cache.set('job', CustomJob())  # Stored using pickle
-```
-
-When a cache configured with `pickle=False` attempts to read a row stored with pickle, it raises
-`UnsafeValueError` (a `TypeError` subclass) instead of unpickling the payload.
-
-## Cache truthiness
-
-In python-diskcache, `bool(cache)` evaluated `len(cache) > 0`. As a result, an empty, fully-functioning
-cache was considered falsy:
-
-```python
-# In python-diskcache:
-cache = diskcache.Cache('/tmp/cache')
-if not cache:
-    print("Warning: cache is empty, but code thought caching was disabled!")
-```
-
-In diskcache-oxide:
-
-- `bool(Cache)` is **always `True`**, and `cache.enabled` is `True`.
-- `bool(NullCache)` is **always `False`**, and `null_cache.enabled` is `False`.
-
-This allows pattern checks like `if cache:` to reliably mean "is caching enabled?".
-
-## Timeouts and errors
-
-In python-diskcache, `Timeout` inherited only from base `Exception`. In diskcache-oxide:
-
-- `diskcache_oxide.Timeout` subclasses Python's built-in `TimeoutError`.
-- Any existing code catching `Timeout` or `Exception` continues to work, while code catching
-  standard `TimeoutError` now catches diskcache-oxide timeouts as well.
-
-## Testing with custom clocks
-
-python-diskcache read `time.time()` directly from Python, which allowed test suites to manipulate
-time using `unittest.mock.patch('time.time')`. However, calling Python's clock on every hot read
-incurred noticeable overhead.
-
-diskcache-oxide reads the system monotonic/wall clock natively in Rust for maximum speed. To test
-expiration logic with monkeypatched clocks, pass the `clock=` argument:
-
-```python
-import time
-from unittest.mock import patch
-from diskcache_oxide import Cache
-
-with patch('time.time') as mock_time:
-    mock_time.return_value = 1000.0
-    cache = Cache('/tmp/test-cache', clock=lambda: time.time())
+with patch('time.time', return_value=1000.0):
     cache.set('k', 'v', expire=10)
-
-    mock_time.return_value = 1015.0
-    assert cache.get('k') is None  # Expired according to the mock clock
+with patch('time.time', return_value=1015.0):
+    assert cache.get('k') is None
 ```
+
+## Things that just get better
+
+You don't have to change anything for these:
+
+- Reads take about half the time, and threaded throughput no longer collapses as threads are added. See [Performance](performance.qmd).
+- A child process forked while another thread was writing can always write. In diskcache it can stall for the full 60-second timeout.
+- `clear()` keeps writes that land while it runs, `expire()` removes every expired entry, and a read during an overwrite never misses.
+- File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache.
+- Opening a cache and reading from it never writes to the database.

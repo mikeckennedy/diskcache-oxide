@@ -123,16 +123,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="A common challenge in production applications is turning caching off: during local development, inside unit test suites, or temporarily in production...">
+  <meta name="description" content="Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry....">
   <meta property="og:type" content="website">
   <meta property="og:title" content="NullCache – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A common challenge in production applications is turning caching off: during local development, inside unit test suites, or temporarily in production...">
+  <meta property="og:description" content="Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry....">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="NullCache – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A common challenge in production applications is turning caching off: during local development, inside unit test suites, or temporarily in production...">
+  <meta name="twitter:description" content="Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry....">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -160,6 +160,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li class="nav-item">
     <a class="nav-link active" href="../user-guide/getting-started.html" aria-current="page"> 
 <span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
@@ -213,6 +217,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Switching from python-diskcache</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Vision and roadmap</span></a>
+  </div>
+</li>
       </ul>
   </li>
         <li class="sidebar-item sidebar-item-section">
@@ -236,13 +246,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Concurrency and fork safety</span></a>
+ <span class="menu-text">Concurrency and forks</span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/storage-and-wal.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storage and WAL management</span></a>
+ <span class="menu-text">Storage and WAL</span></a>
   </div>
 </li>
       </ul>
@@ -265,12 +275,6 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
 </li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Project status and roadmap</span></a>
-  </div>
-</li>
       </ul>
   </li>
     </ul>
@@ -283,10 +287,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#the-governing-rule" id="toc-the-governing-rule" class="nav-link active" data-scroll-target="#the-governing-rule">The governing rule</a></li>
-  <li><a href="#truthiness-and-enabled" id="toc-truthiness-and-enabled" class="nav-link" data-scroll-target="#truthiness-and-enabled">Truthiness and <code>enabled</code></a></li>
-  <li><a href="#invalidation-forwarding-with-invalidate" id="toc-invalidation-forwarding-with-invalidate" class="nav-link" data-scroll-target="#invalidation-forwarding-with-invalidate">Invalidation forwarding with <code>invalidate=</code></a></li>
-  <li><a href="#the-cachelike-protocol" id="toc-the-cachelike-protocol" class="nav-link" data-scroll-target="#the-cachelike-protocol">The <code>CacheLike</code> protocol</a></li>
+  <li><a href="#one-rule" id="toc-one-rule" class="nav-link active" data-scroll-target="#one-rule">One rule</a>
+  <ul class="collapse">
+  <li><a href="#watch-add" id="toc-watch-add" class="nav-link" data-scroll-target="#watch-add">Watch <code>add()</code></a></li>
+  </ul></li>
+  <li><a href="#if-cache-means-caching-is-on" id="toc-if-cache-means-caching-is-on" class="nav-link" data-scroll-target="#if-cache-means-caching-is-on"><code>if cache:</code> means “caching is on”</a></li>
+  <li><a href="#keep-invalidating-while-caching-is-off-invalidate" id="toc-keep-invalidating-while-caching-is-off-invalidate" class="nav-link" data-scroll-target="#keep-invalidating-while-caching-is-off-invalidate">Keep invalidating while caching is off: <code>invalidate=</code></a></li>
+  <li><a href="#cachelike" id="toc-cachelike" class="nav-link" data-scroll-target="#cachelike"><code>CacheLike</code></a></li>
   </ul>
 </nav>
     </div>
@@ -312,160 +319,125 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>A common challenge in production applications is turning caching off: during local development, inside unit test suites, or temporarily in production while diagnosing an issue.</p>
-<p>Without a dedicated abstraction, developers are forced to write defensive guards around every cache call:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># The anti-pattern: defensive null checks everywhere</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> cache <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'key'</span>, value)</span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Retrieving:</span></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> cache <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    value <span class="op">=</span> cache.get(<span class="st">'key'</span>)</span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="cf">else</span>:</span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    value <span class="op">=</span> fetch_from_db()</span></code></pre></div>
-<p>diskcache-oxide provides <strong><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a></strong>: a drop-in implementation of the cache interface that turns caching off cleanly without changing call sites.</p>
-<section id="the-governing-rule" class="level1">
-<h1>The governing rule</h1>
-<p>A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> follows one simple rule:</p>
+<p>Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry. Without help, that means <code>if cache is not None:</code> around every call, or a hand-written fake that drifts out of sync with the real API.</p>
+<p><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> is a cache that’s switched off. It has the same methods and signatures as <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, so swapping one for the other is a one-line change, and the code that uses it never knows.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, CacheLike, NullCache</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> make_cache(settings) <span class="op">-&gt;</span> CacheLike:</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> settings.cache_enabled:</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> Cache(settings.cache_dir)</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> NullCache()</span></code></pre></div>
+<section id="one-rule" class="level1">
+<h1>One rule</h1>
 <blockquote class="blockquote">
-<p><strong>A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> behaves like a real cache in which every entry expires the instant it is written and is swept immediately.</strong></p>
+<p><strong>A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> behaves like a real cache in which every entry expires the instant it’s written and is swept straight away.</strong></p>
 </blockquote>
-<p>Every method’s return value follows directly from this rule:</p>
+<p>Every result follows from that sentence, so you never have to guess:</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
-<th>Method</th>
-<th>Behavior</th>
-<th>Rationale</th>
+<th>Call</th>
+<th>Result</th>
+<th>Because</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><code>get(key, default=None)</code></td>
-<td>Returns <code>default</code></td>
-<td>Key is expired/missing</td>
+<td><code>get(key, default)</code></td>
+<td><code>default</code></td>
+<td>the entry already expired</td>
 </tr>
 <tr class="even">
 <td><code>cache[key]</code></td>
-<td>Raises <code>KeyError</code></td>
-<td>Key is expired/missing</td>
+<td>raises <code>KeyError</code></td>
+<td>the entry already expired</td>
 </tr>
 <tr class="odd">
-<td><code>set(key, value, expire=...)</code></td>
-<td>Returns <code>True</code></td>
-<td>Write succeeded, then expired</td>
+<td><code>set(...)</code></td>
+<td><code>True</code></td>
+<td>the write succeeded, then expired</td>
 </tr>
 <tr class="even">
-<td><code>add(key, value, expire=...)</code></td>
-<td>Returns <code>True</code></td>
-<td>Key was absent, so add succeeded</td>
+<td><code>add(...)</code></td>
+<td><code>True</code></td>
+<td>the key was absent, so the add succeeded</td>
 </tr>
 <tr class="odd">
-<td><code>delete(key)</code></td>
-<td>Returns <code>False</code></td>
-<td>Nothing to delete</td>
+<td><code>incr(key, delta, default)</code></td>
+<td><code>default + delta</code></td>
+<td>it starts from the default each time; <code>KeyError</code> if <code>default=None</code></td>
 </tr>
 <tr class="even">
-<td><code>pop(key, default=None)</code></td>
-<td>Returns <code>default</code></td>
-<td>Nothing to remove</td>
+<td><a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, <a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a>, <code>key in cache</code></td>
+<td><code>False</code></td>
+<td>there’s nothing there</td>
 </tr>
 <tr class="odd">
-<td><code>touch(key)</code></td>
-<td>Returns <code>False</code></td>
-<td>Key does not exist</td>
+<td><code>pop(key, default)</code></td>
+<td><code>default</code></td>
+<td>there’s nothing there</td>
 </tr>
 <tr class="even">
-<td><code>incr(key, delta=1, default=0)</code></td>
-<td>Returns <code>default + delta</code></td>
-<td>Starts at default and increments</td>
+<td><code>len(cache)</code>, <code>cache.volume()</code></td>
+<td><code>0</code></td>
+<td>it’s empty and uses no disk</td>
 </tr>
 <tr class="odd">
-<td><code>key in cache</code></td>
-<td>Returns <code>False</code></td>
-<td>Nothing is cached</td>
-</tr>
-<tr class="even">
-<td><code>len(cache)</code></td>
-<td>Returns <code>0</code></td>
-<td>Cache is empty</td>
-</tr>
-<tr class="odd">
-<td><code>volume(cache)</code></td>
-<td>Returns <code>0</code></td>
-<td>Consumes no disk</td>
-</tr>
-<tr class="even">
-<td><code>bool(cache)</code></td>
-<td>Returns <code>False</code></td>
-<td><code>cache.enabled</code> is <code>False</code></td>
-</tr>
-<tr class="odd">
-<td><code>iter(cache)</code> / <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a></td>
-<td>Yields nothing</td>
-<td>Empty collection</td>
-</tr>
-<tr class="even">
 <td><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>, <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a></td>
-<td>Returns <code>0</code></td>
-<td>No entries affected</td>
+<td><code>0</code></td>
+<td>nothing to remove</td>
+</tr>
+<tr class="even">
+<td>iteration, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a></td>
+<td>nothing</td>
+<td>it’s empty</td>
+</tr>
+<tr class="odd">
+<td><code>bool(cache)</code>, <code>cache.enabled</code></td>
+<td><code>False</code></td>
+<td>caching is off</td>
 </tr>
 </tbody>
 </table>
+<p>The constructor accepts the same arguments as <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and ignores them, and the directory is optional. Bad argument <em>types</em> still raise as they would on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (a non-<code>str</code> key, <code>expire=True</code>), so code that passes with a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> in tests also works with a real one.</p>
+<section id="watch-add" class="level2">
+<h2 class="anchored" data-anchor-id="watch-add">Watch <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a></h2>
+<p>The rule means <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> always succeeds on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. If you use <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> to claim a job so only one worker runs it, then with caching off every worker’s claim succeeds and the job runs once per worker. That’s harmless for idempotent work and wrong for work with side effects, like sending email. Keep claims like that on a cache that’s never switched off.</p>
 </section>
-<section id="truthiness-and-enabled" class="level1">
-<h1>Truthiness and <a href="../reference/Cache.enabled.html#diskcache_oxide.Cache.enabled" class="gdls-link gdls-code">enabled</a></h1>
-<p>Unlike python-diskcache (where truthiness depended on whether <code>len()</code> was greater than zero), diskcache-oxide distinguishes between an empty active cache and a disabled cache:</p>
-<ul>
-<li><code>bool(Cache(...))</code> is <strong>always <code>True</code></strong>, and <code>cache.enabled</code> is <code>True</code>.</li>
-<li><code>bool(NullCache(...))</code> is <strong>always <code>False</code></strong>, and <code>null_cache.enabled</code> is <code>False</code>.</li>
-</ul>
-<p>This makes feature checks readable and idiomatic:</p>
+</section>
+<section id="if-cache-means-caching-is-on" class="level1">
+<h1><code>if cache:</code> means “caching is on”</h1>
+<p><code>bool(Cache(...))</code> is always True and <code>bool(NullCache())</code> is always False, and both have an <a href="../reference/Cache.enabled.html#diskcache_oxide.Cache.enabled" class="gdls-link gdls-code">enabled</a> property. (In diskcache, an empty real cache is falsy, which makes this check unreliable.)</p>
 <div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> cache:</span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="st">"Caching is active!"</span>)</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="cf">else</span>:</span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="st">"Caching is disabled."</span>)</span></code></pre></div>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    log.info(<span class="st">'Caching is on'</span>)</span></code></pre></div>
 </section>
-<section id="invalidation-forwarding-with-invalidate" class="level1">
-<h1>Invalidation forwarding with <code>invalidate=</code></h1>
-<p>A common dilemma when disabling caching is handling mutation endpoints. If caching is switched off and a user updates their profile, simply bypassing the cache means old, stale entries remain in the real database for when caching is turned back on.</p>
-<p>To solve this, <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> supports <code>invalidate=</code>:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, NullCache</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>real_cache <span class="op">=</span> Cache(<span class="st">'/var/cache/app'</span>)</span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Invalidate forwards mutations to the real cache, but keeps reads null</span></span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>null_cache <span class="op">=</span> NullCache(invalidate<span class="op">=</span>real_cache)</span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Writes and reads remain null:</span></span>
-<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>null_cache.<span class="bu">set</span>(<span class="st">'user:42'</span>, {<span class="st">'name'</span>: <span class="st">'New Name'</span>})</span>
-<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> null_cache.get(<span class="st">'user:42'</span>) <span class="kw">is</span> <span class="va">None</span></span>
-<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="co"># BUT removals forward directly to the real cache:</span></span>
-<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a>null_cache.delete(<span class="st">'user:42'</span>)       <span class="co"># Deletes 'user:42' from real_cache!</span></span>
-<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a>null_cache.pop(<span class="st">'session:99'</span>)        <span class="co"># Deletes 'session:99' from real_cache!</span></span>
-<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a>null_cache.clear()                  <span class="co"># Clears real_cache!</span></span></code></pre></div>
-<p>This guarantees that while caching is disabled, cache-busting logic in your business layer continues to purge stale data from the backing store.</p>
+<section id="keep-invalidating-while-caching-is-off-invalidate" class="level1">
+<h1>Keep invalidating while caching is off: <code>invalidate=</code></h1>
+<p>Turning caching off creates a trap. While it’s off, your app keeps changing data, and the code that would have deleted the now-stale cache entries is talking to a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. When you turn caching back on, the real cache serves the stale values.</p>
+<p><code>invalidate=</code> closes the trap. Give the <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> the real cache, and it forwards the operations that <em>remove</em> data to it, while everything else stays switched off:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>real <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>)</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> NullCache(invalidate<span class="op">=</span>real)</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'user:42'</span>, profile)    <span class="co"># not cached</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>cache.get(<span class="st">'user:42'</span>)             <span class="co"># None</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>cache.delete(<span class="st">'user:42'</span>)          <span class="co"># deleted from the real cache</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>cache.pop(<span class="st">'user:42'</span>)             <span class="co"># deleted from the real cache; returns the default</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>cache.clear()                    <span class="co"># clears the real cache</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>cache.iterkeys(prefix<span class="op">=</span><span class="st">'user:'</span>)   <span class="co"># the real cache's keys, so list-then-delete still works</span></span></code></pre></div>
+<p>When caching comes back on, nothing stale is waiting.</p>
 </section>
-<section id="the-cachelike-protocol" class="level1">
-<h1>The <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> protocol</h1>
-<p>To support strict static type checking with Mypy or Pyright, diskcache-oxide exports the <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> runtime-checkable protocol:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, NullCache, CacheLike</span>
+<section id="cachelike" class="level1">
+<h1><a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a></h1>
+<p><a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> is a <code>typing.Protocol</code> that both <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> satisfy. Annotate with it and mypy or pyright will accept either:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> CacheLike</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> create_cache(dev_mode: <span class="bu">bool</span>) <span class="op">-&gt;</span> CacheLike:</span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> dev_mode:</span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> NullCache()</span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> Cache(<span class="st">'/var/cache/production'</span>)</span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> fetch_user_data(user_id: <span class="bu">str</span>, cache: CacheLike) <span class="op">-&gt;</span> <span class="bu">dict</span>:</span>
-<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>    cached <span class="op">=</span> cache.get(<span class="ss">f'user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">'</span>)</span>
-<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> cached <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
-<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> cached</span>
-<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>    data <span class="op">=</span> compute_user_data(user_id)</span>
-<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="ss">f'user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">'</span>, data, expire<span class="op">=</span><span class="dv">300</span>)</span>
-<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> data</span></code></pre></div>
-<p>A test in the diskcache-oxide test suite guarantees that <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> signatures remain 100% synchronized with <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a>.</p>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> load_user(user_id: <span class="bu">str</span>, cache: CacheLike) <span class="op">-&gt;</span> <span class="bu">dict</span>:</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> (user <span class="op">:=</span> cache.get(<span class="ss">f'user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">'</span>)) <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> user</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    user <span class="op">=</span> db.load_user(user_id)</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="ss">f'user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">'</span>, user, expire<span class="op">=</span><span class="dv">300</span>)</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> user</span></code></pre></div>
+<p>A test in diskcache-oxide’s own suite checks that <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> keep identical public signatures, so they can’t drift apart.</p>
 
 
 </section>
@@ -816,8 +788,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../user-guide/concurrency-and-forks.html" class="pagination-link" aria-label="Concurrency and fork safety">
-        <span class="nav-page-text">Concurrency and fork safety</span> <i class="bi bi-arrow-right-short"></i>
+      <a href="../user-guide/concurrency-and-forks.html" class="pagination-link" aria-label="Concurrency and forks">
+        <span class="nav-page-text">Concurrency and forks</span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

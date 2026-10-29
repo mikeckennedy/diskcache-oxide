@@ -1,127 +1,90 @@
 # Serialization
 
-A core design priority in diskcache-oxide is **data safety**: storing and loading values must be fast, secure, and preserve exact Python types without silent coercion or arbitrary code execution.
+What goes into the cache should come out as exactly what you put in, it should be fast to encode and decode, and reading the cache should never run code someone else left there. diskcache's default, pickle, gets the first two and fails the third. diskcache-oxide gets all three, and pickle becomes something you opt into.
 
 
-# Serializer choices
+# Two formats
 
-diskcache-oxide supports two structured serializers, selectable via the `serializer=` argument when initializing [Cache](../reference/Cache.md#diskcache_oxide.Cache):
+Each cache picks a structured format with `serializer=`:
 
 ``` python
-# Default: msgpack (ultra-fast, compact binary)
-cache = Cache('/tmp/app-cache', serializer='msgpack')
-
-# Alternative: JSON (human-readable in SQLite)
-json_cache = Cache('/tmp/json-cache', serializer='json')
+cache = Cache('/var/cache/my-app')                       # msgpack, the default
+readable = Cache('/var/cache/my-app-json', serializer='json')
 ```
 
-Both serializers use a per-row `mode` column in SQLite. If a cache's configuration is changed from `json` to `msgpack` (or vice versa), existing rows remain readable because each row stores its own serialization mode.
+- **msgpack** (the default) is compact and fast. On a 450 KB page-cache entry it's about 25× faster than tagged JSON, and it stores nested `bytes` without base64.
+- **json** is human-readable: open `diskcache-oxide.sqlite` in any SQLite browser and read your values. It uses `serde_json` with exact float round-tripping.
+
+Plain `str` and `bytes` values skip both and are stored raw. Every row records how it was encoded, so if you change a cache's `serializer`, existing entries stay readable.
 
 
-## msgpack (Default)
+# Exact types
 
-`msgpack` is the recommended format for production:
+JSON turns tuples into lists and can't store sets, datetimes, NaN, very large ints, or dicts with non-`str` keys. msgpack has some of the same gaps. The usual answer is to coerce quietly and let the bug show up later.
 
-- **Performance**: Up to 25x faster than tagged JSON on large payloads (e.g. 450 KB HTML pages).
-- **Compactness**: Produces smaller payloads on disk than JSON.
-- **Binary support**: Natively embeds arbitrary nested `bytes` without Base64 overhead.
-- **Timestamp extension**: Stores `datetime` objects using msgpack's native timestamp extension format.
+diskcache-oxide's encoder, written in Rust, notices anything its format would change and tags it instead, so it decodes back to the same type:
 
-
-## json
-
-The `json` serializer uses `serde_json` in Rust with float roundtripping:
-
-- **Human readable**: You can open `diskcache-oxide.sqlite` in any SQLite browser or CLI and inspect stored values directly.
-- **Interoperability**: Standard JSON representation for basic types.
-
-
-# Exact type preservation
-
-Standard JSON has significant type limitations:
-
-- Tuples are converted to lists.
-- Sets cannot be serialized.
-- Datetimes must be converted to strings manually.
-- Dict keys must be strings.
-- Floats can lose precision (`NaN` and `Infinity` are not standard JSON).
-- Integers wider than 53 or 64 bits overflow.
-
-diskcache-oxide includes a native type-tagging system in Rust that detects when a value contains types that JSON or msgpack cannot represent natively.
-
-
-## Preserved types
-
-The following types round-trip with exact fidelity:
-
-| Python Type | Behavior |
+| Python value | Comes back as |
 |----|----|
-| `str` | Stored raw without container overhead |
-| `bytes` | Stored raw as SQLite `BLOB` (or in a spill file if large) |
-| `tuple` | Decoded back as an immutable `tuple` (not a `list`) |
-| [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) | Decoded back as a [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) |
-| `datetime.datetime` | Decoded back as a `datetime.datetime` with exact timezone/microsecond precision |
-| `int` (\> 64-bit) | Preserves arbitrarily large integers without precision loss |
-| `float('nan')`, `inf` | Preserves `NaN`, `+Infinity`, and `-Infinity` |
+| `tuple` | a `tuple`, not a list |
+| [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) | a [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) |
+| `datetime.datetime` | a `datetime`, with its timezone and microseconds |
+| `int` wider than 64 bits | the same int |
+| `float('nan')`, `inf`, `-inf` | the same float |
+| `bytes` nested in a container | `bytes` |
+| `dict` with `int` (or other non-`str`) keys | the same keys |
 
 ``` python
 import datetime
 
-data = {
-    'created': datetime.datetime.now(datetime.timezone.utc),
-    'numbers': (1, 2, 3),
-    'unique_ids': {101, 102, 103},
-    'big_num': 2**128,
-}
+cache.set('record', {
+    'created': datetime.datetime.now(datetime.UTC),
+    'point': (37.77, -122.42),
+    'ids': {101, 102},
+    'big': 2**128,
+    'by_id': {1: 'one', 2: 'two'},
+})
 
-cache.set('record', data)
-retrieved = cache.get('record')
-
-assert isinstance(retrieved['numbers'], tuple)
-assert isinstance(retrieved['unique_ids'], set)
-assert isinstance(retrieved['created'], datetime.datetime)
-assert retrieved['big_num'] == 2**128
+record = cache.get('record')
+assert isinstance(record['point'], tuple)
+assert record['by_id'][1] == 'one'
 ```
 
-
-## Tag escaping
-
-To prevent malicious or accidental collision where user data contains keys matching internal type tags, diskcache-oxide escapes user dictionary keys that mirror internal tag markers. Your data cannot be mistaken for a type tag.
+User data can't be mistaken for a tag: a dict that happens to look like one is escaped on the way in and decoded as an ordinary dict on the way out.
 
 
-# Why pickle is disabled by default
+# What isn't stored
 
-python-diskcache defaults to `pickle` for everything. While convenient, pickling presents serious hazards:
-
-1.  **Remote Code Execution**: Any process or user that can write to the cache directory can craft a malicious payload that executes arbitrary Python code when another process calls `cache.get()`.
-2.  **Hidden Serialization of Non-Cacheable Objects**: Pickling open sockets, database connections, or complex generators often silently succeeds or produces invalid objects when re-hydrated.
-
-In diskcache-oxide, **pickle is off by default**. Storing an unrepresentable type raises a `TypeError` at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) time:
+A value that neither format can represent exactly, such as an instance of your own class, raises `TypeError` at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set):
 
 ``` python
-class LocalService:
-    def __init__(self):
-        self.endpoint = "internal"
-
-# Raises TypeError: cannot serialize object of type 'LocalService'
-cache.set('service', LocalService())
+cache.set('service', MyService())
+# TypeError: values of type MyService can't be stored without pickle (only exact built-in types round-trip)
 ```
 
+Only exact built-in types count. A subclass of `dict` or `str` isn't stored as its base type, because it wouldn't come back as the class you stored. Failing at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) time means you find out where the value was created, not three requests later when something reads it.
 
-## Opting in to pickle
 
-If you must cache arbitrary Python objects that cannot be represented in msgpack or JSON, pass `pickle=True`:
+# Why pickle is off by default
+
+- **Unpickling runs code.** Anyone who can write to the cache directory, including a compromised neighbor process or a shared volume, can make every reader run arbitrary Python.
+- **Pickle hides mistakes.** Database sessions, open files and other objects that were never meant to be cached get pickled without complaint and fail later in confusing ways.
+
+
+# Opting in to pickle
+
+When you really do need to cache arbitrary objects, turn pickle on for that cache. It's used only for values the structured format can't represent; everything else is still stored as msgpack or JSON.
 
 ``` python
-cache = Cache('/tmp/pickle-cache', pickle=True)
-cache.set('service', LocalService())  # Works
+objects = Cache('/var/cache/my-app-objects', pickle=True)
+objects.set('service', MyService())
 ```
 
+A good habit is to give pickled values their own cache directory, and keep everything else in a cache without pickle.
 
-## Safe reading and [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError)
 
-If multiple processes or worker handles access the same cache directory, diskcache-oxide enforces read-side security:
+# Reading safely: [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError)
 
-- If a handle created with `pickle=False` encounters a row that was written by a `pickle=True` handle, it **refuses to unpickle the data**.
-- Instead, it raises [diskcache_oxide.UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) (a subclass of `TypeError`).
-- The row remains intact on disk so that legitimate `pickle=True` handles can still read it.
+Several processes can open one directory with different settings. A handle opened without `pickle=True` never unpickles. If it reads a value that a `pickle=True` handle stored, it raises [diskcache_oxide.UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) (a `TypeError` subclass) and leaves the row in place, so the `pickle=True` handle can still read it.
+
+A value whose stored bytes can't be decoded at all raises [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) (a `ValueError` subclass).

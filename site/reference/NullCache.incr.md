@@ -1,6 +1,9 @@
 ## NullCache.incr()
 
 
+Return `default + delta`, since every count starts again from `default`.
+
+
 Usage
 
 ``` python
@@ -10,3 +13,10 @@ NullCache.incr(
     default=0,
 )
 ```
+
+
+## Raises
+
+
+`KeyError`  
+`default` is None.
