@@ -44,7 +44,7 @@ diskcache-oxide prevents it with a **fork barrier**, installed when `diskcache_o
 2. **In the parent,** it lets the held-off writes continue.
 3. **In the child,** it drops any connection still inherited without closing it (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.
 
-The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every `Cache` in the process, not just the one you're holding.
+The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every `Cache` in the process, not just the one you're holding. Your own `os.register_at_fork(after_in_child=...)` hooks can use a cache too, whether they were registered before or after `diskcache_oxide` was imported.
 
 Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process's last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.
 

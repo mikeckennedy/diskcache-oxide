@@ -307,7 +307,7 @@ Proven in Spike 5 (`crates/diskcache-oxide-core/src/{gate,pool}.rs`, and the hoo
 
 All 9 Phase 0.5 fork tests passed 20/20 with `--backend=oxide` on 3.14 and 3.14t: the deterministic D-012 holder test, both hammer tests, C1, C2 and the idle tests. A stress run with 8 threads on get/set/incr and 50 forks passed with exact counters and no hangs, including on 3.14t with a parallel `gc.collect()` loop (40k collections, no stall). `get` was unchanged, at 0.80 µs.
 
-- **Hooks:** `os.register_at_fork` hooks are registered in the `#[pymodule]` init, not `pthread_atfork`. The before-hook waits with the interpreter released.
+- **Hooks:** `os.register_at_fork` hooks are registered in the `#[pymodule]` init, not `pthread_atfork`. The before-hook waits with the interpreter released. CPython runs `after_in_child` hooks in registration order, so another library's hook registered before the import can use a cache in the child before ours runs. The forking thread's first gate entry in the child (its `forking` flag still set, `getpid()` no longer the forker's) therefore runs the child-side reset itself, and the after-hook then does nothing (2026-10-29, review 07; without it, such a hook wrote straight into a transaction the parent forked inside).
 - **Gate:**
   - a custom gate with an atomic holder count, an atomic fork-pending claim and a thread-local depth, so shared entry is reentrant;
   - there's no mutex or condvar anywhere in it. A fork claims the gate with a compare-and-swap on `pending`, so concurrent forks take turns, and nothing is locked across `fork()`;

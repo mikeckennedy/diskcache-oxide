@@ -135,7 +135,7 @@ crate::sync::thread_local! {
 }
 
 /// The process-wide gate every store uses.
-pub static GATE: Gate = Gate::new(&GLOBAL_THREAD);
+pub static GATE: Gate = Gate::with_early_child_entry(&GLOBAL_THREAD, enter_child_early);
 
 /// Bumped in the forked child. Anything tagged with an older generation was inherited from the
 /// parent and must be dropped without being closed (`mem::forget`), never used.
@@ -163,13 +163,32 @@ pub struct Gate {
     /// Bumped in the forked child, see [`Owner::epoch`].
     epoch: AtomicU64,
     local: &'static LocalKey<ThreadState>,
+    /// Run when the forking thread enters at depth 0 before its fork has ended (see
+    /// [`enter_child_early`]).
+    early_child_entry: Option<fn()>,
 }
 
 impl Gate {
     /// A gate whose per-thread state lives in `local`. Each gate needs its own thread-local.
     #[must_use]
     pub const fn new(local: &'static LocalKey<ThreadState>) -> Self {
-        Self { counts: AtomicU64::new(0), pending: AtomicBool::new(false), epoch: AtomicU64::new(0), local }
+        Self::with_early_child_entry_opt(local, None)
+    }
+
+    /// [`Gate::new`], running `early` when the forking thread enters at depth 0 between
+    /// [`Gate::begin_fork`] and the end of its fork.
+    const fn with_early_child_entry(local: &'static LocalKey<ThreadState>, early: fn()) -> Self {
+        Self::with_early_child_entry_opt(local, Some(early))
+    }
+
+    const fn with_early_child_entry_opt(local: &'static LocalKey<ThreadState>, early: Option<fn()>) -> Self {
+        Self {
+            counts: AtomicU64::new(0),
+            pending: AtomicBool::new(false),
+            epoch: AtomicU64::new(0),
+            local,
+            early_child_entry: early,
+        }
     }
 
     /// Enters in shared mode without waiting. Returns `None` only if a fork is pending and this
@@ -177,6 +196,12 @@ impl Gate {
     pub fn try_enter_shared(&self) -> Option<SharedGuard<'_>> {
         self.local.with(|t| {
             let depth = t.depth.get();
+            if depth == 0
+                && t.forking.get()
+                && let Some(early) = self.early_child_entry
+            {
+                early();
+            }
             // Increment, then check: paired with begin_fork's store-then-load, either we see the
             // pending flag or begin_fork sees our level. The held levels are read last, so only
             // while a fork is pending.
@@ -462,6 +487,24 @@ thread_local! {
     static HELD_FORK: RefCell<Option<ForkGuard>> = const { RefCell::new(None) };
 }
 
+/// The process [`begin_fork`] ran in, so a gate entry can tell it's in the child before
+/// [`end_fork_child`] has run (see [`enter_child_early`]).
+static FORKING_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The process [`end_fork_child`] last ran in, so it runs once per child.
+static CHILD_RESET_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// [`GATE`]'s early child entry: the forking thread entering at depth 0 before its after-fork hook
+/// ran. In the child that's another library's `after_in_child` hook registered before ours (they
+/// run in registration order) using a cache: run the child-side reset now, so it doesn't see
+/// the parent's connections, write lock or unpoisoned transactions. In the parent (other
+/// libraries' fork hooks around ours) it does nothing.
+fn enter_child_early() {
+    if std::process::id() != FORKING_PID.load(Ordering::Acquire) {
+        end_fork_child();
+    }
+}
+
 /// The before-fork hook: takes [`GATE`] exclusively, checks that no connection pool is mid-update,
 /// and closes every pool's idle connections, so the child doesn't inherit SQLite's per-file lock
 /// records (see [`crate::pool`]). Call it with the interpreter released.
@@ -473,6 +516,8 @@ pub fn begin_fork() {
     if let Some(stale) = HELD_FORK.with(|held| held.borrow_mut().take()) {
         stale.end_parent();
     }
+    // Before the claim, which is what sets this thread's `forking` flag.
+    FORKING_PID.store(std::process::id(), Ordering::Release);
     let guard = GATE.begin_fork();
     crate::pool::quiesce_all();
     crate::store::quiesce_registry();
@@ -488,8 +533,13 @@ pub fn end_fork_parent() {
 }
 
 /// The after-fork hook in the child: bumps the process generation, poisons the databases a write
-/// transaction was held on at the fork (D-020, see [`crate::poison`]), then reopens the gate.
+/// transaction was held on at the fork (D-020, see [`crate::poison`]), then reopens the gate. Runs
+/// once per child: the first gate entry by an earlier `after_in_child` hook may have run it already.
 pub fn end_fork_child() {
+    let pid = std::process::id();
+    if CHILD_RESET_PID.swap(pid, Ordering::AcqRel) == pid {
+        return;
+    }
     GENERATION.fetch_add(1, Ordering::AcqRel);
     crate::poison::poison_live_holds();
     match HELD_FORK.with(|held| held.borrow_mut().take()) {

@@ -302,3 +302,57 @@ def test_a_held_transaction_ended_from_another_thread_mid_operation_waits_detach
         timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# Another library's after-fork hook that runs before ours and uses the cache
+# ---------------------------------------------------------------------------
+
+# A fresh process: the hook must be registered before diskcache_oxide is imported, since CPython
+# runs after_in_child hooks in registration order.
+EARLY_CHILD_HOOK = """
+import os
+import sys
+import warnings
+
+outcome = []
+
+def early_hook():
+    try:
+        CACHE.set('from-early-hook', 1)
+        outcome.append('wrote')
+    except RuntimeError:
+        outcome.append('refused')
+
+os.register_at_fork(after_in_child=early_hook)
+
+from diskcache_oxide import Cache
+
+CACHE = Cache(sys.argv[1])
+CACHE.set('before', 1)
+hold = CACHE._hold_write_transaction()
+hold.__enter__()
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore', RuntimeWarning)
+    pid = os.fork()
+if pid == 0:
+    os._exit(0 if outcome == ['refused'] else 1)
+_, status = os.waitpid(pid, 0)
+hold.__exit__(None, None, None)
+assert os.waitstatus_to_exitcode(status) == 0, 'the early hook wrote inside the inherited transaction'
+assert CACHE.get('from-early-hook') is None
+assert CACHE.get('before') == 1
+"""
+
+
+def test_an_earlier_after_fork_hook_sees_the_child_side_reset(tmp_path: Path) -> None:
+    # The child-side reset ran in our own after_in_child hook, so a hook registered earlier saw the
+    # parent's state: here, the transaction the parent forked inside, not yet poisoned, which the
+    # hook's write went straight into.
+    proc = subprocess.run(
+        [sys.executable, '-c', EARLY_CHILD_HOOK, str(tmp_path / 'c')],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
