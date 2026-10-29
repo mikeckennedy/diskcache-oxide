@@ -1,0 +1,113 @@
+# Great Docs configuration for diskcache-oxide.
+# See https://posit-dev.github.io/great-docs/user-guide/configuration.html
+#
+# Build with `make docs` (or `python scripts/build_docs.py`), preview with
+# `make docs-serve`. The site is mirrored into site/ (committed), not docs/.
+
+display_name: diskcache-oxide
+
+module: diskcache_oxide
+parser: google
+dynamic: false
+
+# Subpath hosting: drives Quarto's base path so CSS/JS/nav resolve under the subdirectory.
+site_url: "https://mkennedy.codes/docs/diskcache-oxide/"
+
+# The sitemap / robots / canonical base
+seo:
+  canonical:
+    base_url: "https://mkennedy.codes/docs/diskcache-oxide/"
+
+repo: https://github.com/mikeckennedy/diskcache-oxide
+github_style: widget
+source:
+  enabled: true
+  branch: main
+  path: python/diskcache_oxide
+  placement: usage
+
+pypi: true
+
+mcp:
+  enabled: false
+
+exclude:
+  - _core
+
+user_guide:
+  - section: "Get started"
+    contents:
+      - getting-started.qmd
+      - switching-from-diskcache.qmd
+  - section: "Core Features"
+    contents:
+      - serialization.qmd
+      - null-cache.qmd
+      - concurrency-and-forks.qmd
+      - storage-and-wal.qmd
+  - section: "Background & Reference"
+    contents:
+      - performance.qmd
+      - divergences.qmd
+      - roadmap.qmd
+
+skill:
+  extra_body: skill_extra_body.md
+  gotchas:
+    - "diskcache-oxide accepts only str keys for now; non-string keys raise TypeError."
+    - "pickle is disabled by default: storing unrepresentable types raises TypeError at set time unless Cache(..., pickle=True) is passed."
+    - "Reading pickled data with a pickle=False cache raises UnsafeValueError (a TypeError subclass) rather than executing arbitrary unpickle code."
+    - "bool(Cache) is always True and Cache.enabled is True (unlike python-diskcache where an empty cache is falsy). bool(NullCache) is False."
+    - "diskcache-oxide uses diskcache-oxide.sqlite (not cache.db); it does not read existing diskcache files."
+    - "size_limit must be at least 1 MiB (MIN_SIZE_LIMIT); passing smaller raises ValueError."
+    - "Timeout inherits from TimeoutError (unlike python-diskcache which only inherits from Exception)."
+    - "NullCache behaves as if every entry expires the moment it is written and is instantly swept: get() returns default, set() returns True, volume() is 0."
+    - "NullCache(invalidate=real_cache) forwards deletes and clears to the underlying cache while keeping caching off."
+  best_practices:
+    - "Always use a context manager (with Cache(...) as cache:) or call cache.close() to cleanly return SQLite connections."
+    - "Use serializer='msgpack' (the default) for maximum performance and compactness, or serializer='json' if human inspection in SQLite is desired."
+    - "Use NullCache in tests or local dev environments to disable caching cleanly without adding conditional checks in application code."
+    - "Type application functions that accept either cache type with CacheLike from diskcache_oxide.protocol."
+    - "Leave wal_size_limit and sqlite_cache_size at their defaults unless tuning for extreme read-heavy or memory-constrained workloads."
+
+include_in_header:
+  - text: |
+      <script async src="https://uma.mkennedy.codes/script.js" data-website-id="fc9b6770-3b44-4073-944e-4a4f0e79f66a"></script>
+
+jupyter: python3
+
+authors:
+  - name: Michael Kennedy
+    role: Author
+    email: michael@mkennedy.tech
+    github: mikeckennedy
+    homepage: https://mkennedy.codes
+
+reference:
+  title: "API Reference"
+  desc: >-
+    The public API of diskcache-oxide: Cache, NullCache, CacheLike protocol,
+    exceptions, and SQLite utilities.
+  sections:
+    - title: Cache
+      desc: "Disk-backed cache backed by SQLite, shared safely across threads and processes."
+      contents:
+        - Cache
+    - title: NullCache
+      desc: "Switched-off cache behaving as if every entry expires instantly."
+      contents:
+        - NullCache
+        - CacheLike
+    - title: Errors
+      desc: "Exceptions raised by cache operations."
+      contents:
+        - Timeout
+        - UnsafeValueError
+        - CorruptValueError
+        - FormatMismatchError
+    - title: SQLite and System
+      desc: "Information about the bundled SQLite and environment."
+      contents:
+        - sqlite_version
+        - sqlite_compile_options
+        - BUNDLED_SQLITE_VERSION

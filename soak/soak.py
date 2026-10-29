@@ -69,14 +69,24 @@ class Soak:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.rng = random.Random(args.seed)
+        # A fresh directory per run, even for two runs started in the same second.
+        out = Path(args.out).resolve()
+        out.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime('%Y%m%d-%H%M%S')
-        self.dir = Path(args.out).resolve() / stamp
+        for n in range(100):
+            self.dir = out / (stamp if n == 0 else f'{stamp}-{n}')
+            try:
+                self.dir.mkdir()
+                break
+            except FileExistsError:
+                continue
         for sub in ('stats', 'logs', 'stalls'):
-            (self.dir / sub).mkdir(parents=True, exist_ok=True)
-        latest = self.dir.parent / 'latest'
-        if latest.is_symlink() or latest.exists():
-            latest.unlink()
-        latest.symlink_to(self.dir.name)
+            (self.dir / sub).mkdir()
+        # Point `latest` here atomically: a new link, renamed over the old one.
+        link = out / f'.latest-{os.getpid()}'
+        link.unlink(missing_ok=True)
+        link.symlink_to(self.dir.name)
+        os.replace(link, out / 'latest')
         # absolute(), not resolve(): a venv's python is a symlink to the base interpreter, and
         # resolving it would run the workers outside the venv.
         self.pythons = [str(Path(p).absolute()) for p in args.pythons.split(',')]
@@ -385,8 +395,10 @@ class Soak:
                 'forks_failed': s.get('forks_failed'),
                 'get_p50_us': (s.get('latency', {}).get('get') or {}).get('p50_us'),
                 'get_p99_us': (s.get('latency', {}).get('get') or {}).get('p99_us'),
+                'get_max_us': (s.get('latency', {}).get('get') or {}).get('max_us'),
                 'set_p50_us': (s.get('latency', {}).get('set') or {}).get('p50_us'),
                 'set_p99_us': (s.get('latency', {}).get('set') or {}).get('p99_us'),
+                'set_max_us': (s.get('latency', {}).get('set') or {}).get('max_us'),
                 'stalled': int(w.stalled),
             }
             self.workers_csv[1].writerow(row)
@@ -407,6 +419,8 @@ class Soak:
             'get_p99_us': max([x['p99_us'] for x in lat['get']], default=None),
             'set_p50_us': median([x['p50_us'] for x in lat['set']]),
             'set_p99_us': max([x['p99_us'] for x in lat['set']], default=None),
+            'get_max_us': max([x['max_us'] for x in lat['get']], default=None),
+            'set_max_us': max([x['max_us'] for x in lat['set']], default=None),
             'rss_total_mib': round(sum(w.stats.get('rss', 0) for w in live) / 2**20, 1),
             'fds_total': sum(w.stats.get('fds', 0) or 0 for w in live),
             'timeouts_total': self.total('timeouts'),
@@ -418,11 +432,11 @@ class Soak:
             'stalls': self.counts['stalls'],
             **{f'{n}_{k}': db.get(n, {}).get(k) for n in ('chaos', 'ledger') for k in ('rows', 'db_bytes', 'wal_bytes', 'value_files')},
             'chaos_orphans': self.last_orphans.get('chaos'),
-            # Forced WAL checkpoints (D-024), summed over live workers; the pause is the worst seen.
-            'wal_ckpt_attempts': sum((w.stats.get('wal') or {}).get('attempts', 0) for w in live),
-            'wal_ckpt_busy': sum((w.stats.get('wal') or {}).get('busy', 0) for w in live),
-            'wal_ckpt_max_pause_us': max(((w.stats.get('wal') or {}).get('max_pause_us', 0) for w in live), default=0),
-            'wal_ckpt_slow': sum((w.stats.get('wal') or {}).get('slow', 0) for w in live),
+            # Forced WAL checkpoints (D-024), over every worker of the run (killed ones included).
+            'wal_ckpt_attempts': self.wal_total('attempts'),
+            'wal_ckpt_busy': self.wal_total('busy'),
+            'wal_ckpt_max_pause_us': max(((s.get('wal') or {}).get('max_pause_us', 0) for s in self.last_stats.values()), default=0),
+            'wal_ckpt_slow': self.wal_total('slow'),
         }
         self.timeline[1].writerow(trow)
         self.write_status(trow, ops)
@@ -432,6 +446,10 @@ class Soak:
             build(self.dir, final=False)
         except Exception as ex:  # The report must never stop the soak.
             self.event('report-error', error=repr(ex))
+
+    def wal_total(self, key: str) -> int:
+        """A forced-checkpoint counter summed over every worker of the run."""
+        return sum((s.get('wal') or {}).get(key, 0) or 0 for s in self.last_stats.values())
 
     def total(self, key: str) -> int:
         """A counter summed over every worker of the run, including ones that exited."""
@@ -546,11 +564,11 @@ TIMELINE_FIELDS = [
     'rss_total_mib', 'fds_total', 'timeouts_total', 'problems', 'kills', 'forks_ok', 'forks_failed', 'maint_calls',
     'stalls', 'chaos_rows', 'chaos_db_bytes', 'chaos_wal_bytes', 'chaos_value_files', 'ledger_rows', 'ledger_db_bytes',
     'ledger_wal_bytes', 'ledger_value_files', 'chaos_orphans', 'wal_ckpt_attempts', 'wal_ckpt_busy',
-    'wal_ckpt_max_pause_us', 'wal_ckpt_slow',
+    'wal_ckpt_max_pause_us', 'wal_ckpt_slow', 'get_max_us', 'set_max_us',
 ]  # fmt: skip
 WORKER_FIELDS = [
     'time', 'elapsed_h', 'id', 'python', 'long_lived', 'rss_mib', 'fds', 'ops', 'timeouts', 'problems', 'forks_ok',
-    'forks_failed', 'get_p50_us', 'get_p99_us', 'set_p50_us', 'set_p99_us', 'stalled',
+    'forks_failed', 'get_p50_us', 'get_p99_us', 'set_p50_us', 'set_p99_us', 'stalled', 'get_max_us', 'set_max_us',
 ]  # fmt: skip
 
 

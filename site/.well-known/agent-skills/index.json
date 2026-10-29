@@ -1,0 +1,11 @@
+{
+  "skills": [
+    {
+      "name": "diskcache-oxide",
+      "description": "A clean-room Rust reimplementation of diskcache. Use when writing Python code that uses the diskcache_oxide package.",
+      "files": [
+        "SKILL.md"
+      ]
+    }
+  ]
+}

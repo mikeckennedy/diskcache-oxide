@@ -216,8 +216,8 @@ def build(run: Path, final: bool) -> dict[str, Any]:
     mib = 1 / 2**20
     charts = [
         chart('Throughput', {'ops/s': col(t, 'ops_per_s')}),
-        chart('get latency', {'p50': col(t, 'get_p50_us'), 'p99 (worst worker)': col(t, 'get_p99_us')}, 'µs', log=True),
-        chart('set latency', {'p50': col(t, 'set_p50_us'), 'p99 (worst worker)': col(t, 'set_p99_us')}, 'µs', log=True),
+        chart('get latency', {'p50': col(t, 'get_p50_us'), 'p99 (worst worker)': col(t, 'get_p99_us'), 'max': col(t, 'get_max_us')}, 'µs', log=True),
+        chart('set latency', {'p50': col(t, 'set_p50_us'), 'p99 (worst worker)': col(t, 'set_p99_us'), 'max': col(t, 'set_max_us')}, 'µs', log=True),
         chart('RSS of long-lived workers (leak check)', per_worker(a['workers'], 'rss_mib', True), 'MiB'),
         chart('Open fds of long-lived workers (leak check)', per_worker(a['workers'], 'fds', True)),
         chart('Total RSS and fds, all workers', {'RSS MiB': col(t, 'rss_total_mib'), 'fds': col(t, 'fds_total')}),

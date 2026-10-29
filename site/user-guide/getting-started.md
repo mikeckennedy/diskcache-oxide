@@ -1,0 +1,185 @@
+# Getting started
+
+This guide walks through installing **diskcache-oxide**, creating a cache, storing and retrieving data, managing expiration and eviction, and cleaning up resources.
+
+
+# Install
+
+Install diskcache-oxide with `uv` or `pip`:
+
+``` bash
+uv pip install diskcache-oxide
+```
+
+Requirements:
+
+- **Python**: CPython 3.14 or 3.15, including free-threaded builds (`3.14t`, `3.15t`).
+- **Platforms**: macOS (Apple Silicon and Intel) and Linux (x86_64 and aarch64). Windows support is planned.
+- **Dependencies**: None. The pre-compiled wheel includes the Rust core and the bundled SQLite library.
+
+
+# Creating a cache
+
+The [Cache](../reference/Cache.md#diskcache_oxide.Cache) class is the central interface. Pass a directory path where cache files and database records should be stored:
+
+``` python
+from diskcache_oxide import Cache
+
+cache = Cache('/tmp/my-app-cache')
+```
+
+If the directory does not exist, diskcache-oxide creates it (with `0700` permissions on Unix).
+
+
+## Clean shutdown with context managers
+
+Every [Cache](../reference/Cache.md#diskcache_oxide.Cache) handle maintains a pooled set of SQLite connections. Use a context manager to automatically close connection handles when done, or call `cache.close()` explicitly:
+
+``` python
+with Cache('/tmp/my-app-cache') as cache:
+    cache.set('key', 'value')
+    # All connections are cleanly closed upon exiting the block
+```
+
+
+# Basic operations
+
+[Cache](../reference/Cache.md#diskcache_oxide.Cache) implements both method-based and standard Python dictionary interfaces.
+
+
+## Storing values
+
+Use `cache.set(key, value, expire=None)`:
+
+``` python
+# Store a string for 10 minutes (600 seconds)
+cache.set('session:123', 'active', expire=600.0)
+
+# Store complex structured data (encoded with msgpack by default)
+cache.set('user:42', {
+    'name': 'Bob',
+    'roles': {'admin', 'editor'},  # Sets and tuples are preserved!
+    'metadata': {'login_count': 12}
+})
+```
+
+Keys must be `str`. Values can be strings, bytes, numbers, booleans, dicts, lists, tuples, sets, or datetimes.
+
+
+## Conditional add
+
+To store a value only if the key does not already exist (or has expired), use [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add):
+
+``` python
+created = cache.add('lock:job-1', 'locked', expire=30)
+if created:
+    print("Acquired lock!")
+else:
+    print("Lock already held by another worker")
+```
+
+
+## Retrieving values
+
+Use `cache.get(key, default=None)`:
+
+``` python
+user = cache.get('user:42')
+if user is not None:
+    print(user['name'])
+
+# Providing a custom default
+missing = cache.get('nonexistent', default='fallback')
+assert missing == 'fallback'
+```
+
+To also retrieve the expiration timestamp, pass `expire_time=True`:
+
+``` python
+val, exp = cache.get('session:123', expire_time=True)
+print(f"Value: {val}, Expires at: {exp}")
+```
+
+
+## Removing values
+
+- `cache.delete(key)`: Deletes the key. Returns `True` if the key was deleted, `False` if it was not present.
+- `cache.pop(key, default=None)`: Removes the key and returns its value, or returns `default`.
+
+``` python
+deleted = cache.delete('session:123')
+assert deleted is True
+
+val = cache.pop('nonexistent', default=None)
+assert val is None
+```
+
+
+# Dictionary syntax
+
+[Cache](../reference/Cache.md#diskcache_oxide.Cache) supports standard Python `Mapping` and `MutableMapping` item access:
+
+``` python
+with Cache('/tmp/my-app-cache') as cache:
+    cache['alpha'] = 100
+    assert 'alpha' in cache
+    assert cache['alpha'] == 100
+
+    del cache['alpha']
+    assert 'alpha' not in cache
+```
+
+> \[!NOTE\] Like a standard Python dictionary, accessing a missing key with `cache['missing']` or deleting a missing key with `del cache['missing']` raises a standard `KeyError`.
+
+
+# Atomic counters
+
+[incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) and [decr()](../reference/Cache.decr.md#diskcache_oxide.Cache.decr) adjust integer or float counters atomically in SQLite without requiring separate transaction locks:
+
+``` python
+with Cache('/tmp/my-app-cache') as cache:
+    # Increments key by delta (default 1), starting from default (default 0)
+    count = cache.incr('page_views')      # returns 1
+    count = cache.incr('page_views', 5)   # returns 6
+    count = cache.decr('page_views', 2)   # returns 4
+```
+
+If the key exists but holds a non-numeric value, [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) raises `TypeError`.
+
+
+# Iterating and scanning keys
+
+[Cache](../reference/Cache.md#diskcache_oxide.Cache) supports fast key listing and prefix-based scanning via [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys):
+
+``` python
+with Cache('/tmp/my-app-cache') as cache:
+    cache.set('user:1', 'Alice')
+    cache.set('user:2', 'Bob')
+    cache.set('post:1', 'Hello')
+
+    # Iterate over all keys matching a prefix
+    user_keys = list(cache.iterkeys(prefix='user:'))
+    print(user_keys)  # ['user:1', 'user:2']
+```
+
+The prefix scan is evaluated directly in SQLite using indexed range queries, avoiding full table scans.
+
+
+# Eviction and size limits
+
+A cache can be configured with disk limits:
+
+``` python
+cache = Cache(
+    '/tmp/bounded-cache',
+    size_limit=100 * 1024 * 1024,  # 100 MiB (default: 1 GiB)
+    cull_limit=20,                 # Evict up to 20 items when limit is exceeded
+)
+```
+
+- **[size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit)**: Total disk volume in bytes (database + spill files). Minimum is 1 MiB (`MIN_SIZE_LIMIT = 1048576`).
+- **[cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit)**: Number of least-recently-stored items removed when disk volume exceeds [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit).
+- **`cache.volume()`**: Reports the total disk space in bytes consumed by the database and spilled value files.
+- **`cache.cull()`**: Manually triggers eviction of up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) entries if the cache is over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit).
+- **`cache.expire()`**: Sweeps and deletes all expired entries from disk.
+- **`cache.clear()`**: Deletes all entries that were present when the call began.

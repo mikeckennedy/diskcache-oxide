@@ -1,0 +1,99 @@
+# Storage and WAL management
+
+diskcache-oxide is designed to keep both **memory usage** and **disk usage** strictly bounded, even under heavy concurrent write bursts and sustained multi-process reads.
+
+
+# On-disk layout
+
+Inside each cache directory, diskcache-oxide manages the following files:
+
+    /var/cache/my-app/
+    ├── diskcache-oxide.sqlite        # SQLite database (metadata, indexes, inline values)
+    ├── diskcache-oxide.sqlite-wal    # Write-Ahead Log file (bounded by wal_size_limit)
+    ├── diskcache-oxide.sqlite-shm    # Shared-memory index for WAL coordination
+    └── 0a/                           # Subdirectories holding spilled value files
+        └── 0a1b2c3d4e...blob
+
+- **Database file**: `diskcache-oxide.sqlite` stores row metadata, timestamps, expiry times, keys, and small-to-medium values.
+- **Directory permissions**: Cache directories created by diskcache-oxide are initialized with `0700` permissions (owner read/write/execute only) on Unix systems to protect cached credentials and data.
+
+
+# Inline values vs file spills
+
+To balance latency and SQLite database size, diskcache-oxide splits storage into two paths:
+
+1.  **Inline values**: Values below the spill threshold are stored directly inside the SQLite database as a `BLOB` or text column. Reading an inline value requires a single SQLite indexed lookup.
+2.  **File spills**: Large values (e.g., cached image blobs, large API payloads) are written to standalone files in subdirectories. The database row stores only the relative file path, size, and metadata.
+
+
+## Atomic spill writes
+
+When writing a spilled value:
+
+- The payload is written to a temporary file in the destination folder and renamed into place atomically.
+- The SQLite transaction then commits the row pointing to the file.
+- When an entry is overwritten, deleted, or evicted, the database row is deleted first, and the backing file is unlinked.
+- **Concurrency safe**: If a reader races an overwrite of a spilled entry, the reader receives either the old value or the new value--never an empty read, a `None`, or an I/O error.
+
+
+# Bounded memory (`sqlite_cache_size`)
+
+Standard SQLite configurations can cause unexpected memory growth in long-running Python web processes. As queries run, SQLite caches database pages in process memory. In a multi-worker deployment, each worker process can accumulate hundreds of megabytes of RSS cache memory.
+
+diskcache-oxide bounds page cache memory on every connection:
+
+``` python
+cache = Cache(
+    '/tmp/bounded-cache',
+    max_connections=8,
+    sqlite_cache_size=256,  # 256 pages of 4 KiB = 1 MiB per connection (default)
+)
+```
+
+With 8 pooled connections, the maximum SQLite memory consumed per process is bounded to approximately 8 MiB.
+
+
+# Bounded WAL files (`wal_size_limit`)
+
+SQLite's Write-Ahead Log (WAL) mode provides high read and write concurrency. However, standard SQLite has a well-known vulnerability in multi-process environments:
+
+> **The WAL growth problem**: When multiple processes are continuously reading from the database, SQLite cannot checkpoint the WAL back into the main database file because active reader locks prevent it. A burst of writes (such as an initial cache warm-up or mass invalidation) causes the `-wal` file to grow to hundreds of megabytes or gigabytes, and standard SQLite never shrinks it back down.
+
+diskcache-oxide actively monitors and bounds the `-wal` file:
+
+``` python
+cache = Cache(
+    '/tmp/bounded-cache',
+    wal_size_limit=64 * 1024 * 1024,  # 64 MiB limit (default)
+)
+```
+
+1.  **Size limits**: Sets SQLite's `journal_size_limit` to half the limit, instructing SQLite to truncate the log when reset.
+2.  **Autocheckpoint scaling**: Scales SQLite's `wal_autocheckpoint` frequency based on the limit.
+3.  **Forced checkpoints**: After writes, if the WAL file exceeds `wal_size_limit`, diskcache-oxide attempts a forced checkpoint (`PASSIVE`, then `TRUNCATE` with a 2 ms busy timeout).
+4.  **Adaptive backoff**: If other readers hold locks, the checkpoint attempt yields and backs off for 1 second, ensuring that write calls are never failed or delayed by maintenance.
+
+
+# Eviction and disk bounds
+
+You can configure an overall disk budget for the cache:
+
+``` python
+cache = Cache(
+    '/tmp/app-cache',
+    size_limit=500 * 1024 * 1024,  # 500 MiB total limit
+    cull_limit=20,                 # Evict 20 items per cull pass
+)
+```
+
+- **[size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit)**: Total disk budget for the cache directory, including both database files and spilled value files. Default: 1 GiB. Minimum: 1 MiB (`MIN_SIZE_LIMIT = 1048576`).
+- **[cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit)**: Maximum number of entries evicted during a single [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) pass when the cache exceeds [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit). Default: 10.
+- **Least-Recently-Stored (LRS)**: Eviction prioritizes entries with the lowest monotonic `store_seq`. Entries written earliest are culled first.
+- **[volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume)**: Returns the accurate on-disk volume in bytes consumed by database and spill files.
+
+
+# Maintenance operations
+
+- `cache.expire()`: Scans the database and purges all expired records and their associated spill files. Runs in non-blocking batches so concurrent writers can interleave between chunks.
+- `cache.cull()`: Manually triggers an eviction cycle if the cache currently exceeds [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit).
+- `cache.clear()`: Deletes all entries that were present when [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) was called. Uses snapshot boundaries so that writes occurring during the clear operation are preserved.

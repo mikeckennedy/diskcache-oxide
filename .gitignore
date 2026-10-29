@@ -194,9 +194,6 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
-# mkdocs/Zensical documentation
-/site
-
 # mypy
 .mypy_cache/
 .dmypy.json
@@ -257,3 +254,7 @@ bench/results/*.tmp
 # Soak runs (soak/)
 soak-results/
 soak.out
+
+# Great Docs' build directory; the deployable site is mirrored into site/ (committed).
+/great-docs/
+

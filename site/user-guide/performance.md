@@ -1,0 +1,63 @@
+# Performance
+
+diskcache-oxide is engineered for low latency on hot reads, high concurrency across multiple threads and processes, and strictly bounded memory and disk usage.
+
+
+# Read and write latency
+
+In web applications, caching is primarily read-dominated. Every microsecond saved on a cache read directly decreases response time and increases request throughput.
+
+Key performance optimizations in diskcache-oxide:
+
+- **Direct PyO3 integration**: Calls pass directly from Python into compiled Rust without intermediate Python wrapper frames.
+- **Compiled SQLite statements**: Prepared statements are cached per connection in the pool, avoiding query compilation on every lookup.
+- **Fast zero-copy decoding**: Small inline values are deserialized directly from SQLite's memory buffers into Python objects without intermediate allocations.
+- **Native clock reads**: By default, diskcache-oxide reads the system clock in Rust without calling back into Python's `time.time()`.
+
+
+## Benchmark comparison (Apple Silicon, Python 3.14)
+
+Measured on Python 3.14 (GIL and free-threaded 3.14t) using `bench/baseline.py`:
+
+| Operation | python-diskcache 5.6.3 | diskcache-oxide | Notes |
+|----|----|----|----|
+| **`get_hit_small`** (small string / int) | ~1.89 µs p50 | **~0.95 µs p50** | ~2x faster read latency |
+| **`get_miss`** (nonexistent key) | ~1.48 µs p50 | **~0.82 µs p50** | Immediate index exit |
+| **`get_page_entry_450k`** (450 KB HTML/dict) | ~29.1 µs p50 | **~18.2 µs p50** | Fast msgpack deserialization |
+| **`set_page_entry_450k`** (spill to file) | ~465 µs p50 | **~380 µs p50** | Direct atomic file spill |
+| **[incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) / [decr()](../reference/Cache.decr.md#diskcache_oxide.Cache.decr)** (atomic counter) | ~20.9 µs p50 | **~12.4 µs p50** | Direct SQLite transaction |
+
+
+# Multithreaded throughput
+
+In multi-threaded workloads, python-diskcache incurs Python GIL contention and per-thread SQLite connection overhead.
+
+On free-threaded Python (CPython 3.14t and 3.15t), diskcache-oxide operates with `gil_used = false`:
+
+- **True multi-core scaling**: Threads reading and writing to the cache execute concurrently across all available CPU cores.
+- **High throughput**: In 8-thread mixed read/write workloads, throughput scales smoothly without GIL contention bottlenecks.
+
+
+# Prefix scanning at scale
+
+python-diskcache's [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) uses a generator that scans keys in memory. As key counts grow, scanning keys matching a prefix exhibits super-linear latency:
+
+- At 100,000 keys: python-diskcache takes ~1.65 seconds to scan a prefix.
+- At 400,000 keys: python-diskcache takes ~26.4 seconds (a 16x slowdown for 4x more keys).
+
+diskcache-oxide implements prefix filtering directly in SQLite:
+
+- Evaluates `key >= prefix AND key < prefix_bound` using SQLite's clustered B-tree index.
+- Only matching keys are fetched and streamed across the PyO3 boundary, keeping prefix scan latency proportional to the number of *matching* results rather than the total database size.
+
+
+# Memory stability
+
+Long-running web workers often suffer from slow memory bloat due to unbounded SQLite page caches and thread-local connection proliferation.
+
+diskcache-oxide guarantees bounded memory:
+
+- **`max_connections` (default 8)**: Prevents file descriptor and connection bloat, regardless of how many threads touch the cache.
+- **`sqlite_cache_size` (default 256 pages / 1 MiB)**: Restricts SQLite's internal page cache on each connection.
+
+In memory soak benchmarks (`bench/memory.py`), diskcache-oxide maintains a flat, predictable RSS profile over millions of reads and writes.

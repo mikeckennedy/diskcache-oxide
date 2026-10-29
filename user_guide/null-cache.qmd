@@ -1,0 +1,120 @@
+---
+title: "NullCache"
+---
+
+A common challenge in production applications is turning caching off: during local development,
+inside unit test suites, or temporarily in production while diagnosing an issue.
+
+Without a dedicated abstraction, developers are forced to write defensive guards around every cache call:
+
+```python
+# The anti-pattern: defensive null checks everywhere
+if cache is not None:
+    cache.set('key', value)
+
+# Retrieving:
+if cache is not None:
+    value = cache.get('key')
+else:
+    value = fetch_from_db()
+```
+
+diskcache-oxide provides **`NullCache`**: a drop-in implementation of the cache interface that turns
+caching off cleanly without changing call sites.
+
+## The governing rule
+
+A `NullCache` follows one simple rule:
+
+> **A `NullCache` behaves like a real cache in which every entry expires the instant it is written and is swept immediately.**
+
+Every method's return value follows directly from this rule:
+
+| Method | Behavior | Rationale |
+|---|---|---|
+| `get(key, default=None)` | Returns `default` | Key is expired/missing |
+| `cache[key]` | Raises `KeyError` | Key is expired/missing |
+| `set(key, value, expire=...)` | Returns `True` | Write succeeded, then expired |
+| `add(key, value, expire=...)` | Returns `True` | Key was absent, so add succeeded |
+| `delete(key)` | Returns `False` | Nothing to delete |
+| `pop(key, default=None)` | Returns `default` | Nothing to remove |
+| `touch(key)` | Returns `False` | Key does not exist |
+| `incr(key, delta=1, default=0)` | Returns `default + delta` | Starts at default and increments |
+| `key in cache` | Returns `False` | Nothing is cached |
+| `len(cache)` | Returns `0` | Cache is empty |
+| `volume(cache)` | Returns `0` | Consumes no disk |
+| `bool(cache)` | Returns `False` | `cache.enabled` is `False` |
+| `iter(cache)` / `iterkeys()` | Yields nothing | Empty collection |
+| `expire()`, `clear()`, `cull()` | Returns `0` | No entries affected |
+
+## Truthiness and `enabled`
+
+Unlike python-diskcache (where truthiness depended on whether `len()` was greater than zero),
+diskcache-oxide distinguishes between an empty active cache and a disabled cache:
+
+- `bool(Cache(...))` is **always `True`**, and `cache.enabled` is `True`.
+- `bool(NullCache(...))` is **always `False`**, and `null_cache.enabled` is `False`.
+
+This makes feature checks readable and idiomatic:
+
+```python
+if cache:
+    print("Caching is active!")
+else:
+    print("Caching is disabled.")
+```
+
+## Invalidation forwarding with `invalidate=`
+
+A common dilemma when disabling caching is handling mutation endpoints. If caching is switched off
+and a user updates their profile, simply bypassing the cache means old, stale entries remain in the
+real database for when caching is turned back on.
+
+To solve this, `NullCache` supports `invalidate=`:
+
+```python
+from diskcache_oxide import Cache, NullCache
+
+real_cache = Cache('/var/cache/app')
+
+# Invalidate forwards mutations to the real cache, but keeps reads null
+null_cache = NullCache(invalidate=real_cache)
+
+# Writes and reads remain null:
+null_cache.set('user:42', {'name': 'New Name'})
+assert null_cache.get('user:42') is None
+
+# BUT removals forward directly to the real cache:
+null_cache.delete('user:42')       # Deletes 'user:42' from real_cache!
+null_cache.pop('session:99')        # Deletes 'session:99' from real_cache!
+null_cache.clear()                  # Clears real_cache!
+```
+
+This guarantees that while caching is disabled, cache-busting logic in your business layer continues
+to purge stale data from the backing store.
+
+## The `CacheLike` protocol
+
+To support strict static type checking with Mypy or Pyright, diskcache-oxide exports the `CacheLike`
+runtime-checkable protocol:
+
+```python
+from diskcache_oxide import Cache, NullCache, CacheLike
+
+def create_cache(dev_mode: bool) -> CacheLike:
+    if dev_mode:
+        return NullCache()
+    return Cache('/var/cache/production')
+
+def fetch_user_data(user_id: str, cache: CacheLike) -> dict:
+    cached = cache.get(f'user:{user_id}')
+    if cached is not None:
+        return cached
+
+    data = compute_user_data(user_id)
+    cache.set(f'user:{user_id}', data, expire=300)
+    return data
+```
+
+A test in the diskcache-oxide test suite guarantees that `Cache` and `NullCache` signatures remain
+100% synchronized with `CacheLike`.

@@ -1,0 +1,154 @@
+# diskcache_oxide
+
+> A clean-room Rust reimplementation of diskcache.
+
+## Docs
+
+### API Reference
+
+#### Cache
+> Disk-backed cache backed by SQLite, shared safely across threads and processes.
+
+- [Cache](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.html): A disk cache backed by SQLite, shared safely across threads and processes
+
+#### Cache Methods
+> Methods for the Cache class
+
+- [Cache.directory](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.directory.html)
+- [Cache.timeout](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.timeout.html)
+- [Cache.size_limit](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.size_limit.html)
+- [Cache.cull_limit](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.cull_limit.html)
+- [Cache.enabled](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.enabled.html)
+- [Cache.set](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.set.html)
+- [Cache.add](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.add.html)
+- [Cache.delete](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.delete.html)
+- [Cache.pop](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.pop.html)
+- [Cache.touch](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.touch.html)
+- [Cache.incr](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.incr.html)
+- [Cache.decr](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.decr.html)
+- [Cache.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.iterkeys.html)
+- [Cache.expire](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.expire.html)
+- [Cache.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.clear.html)
+- [Cache.cull](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.cull.html)
+- [Cache.volume](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.volume.html)
+- [Cache.close](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.close.html)
+- [Cache.__getitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__getitem__.html)
+- [Cache.__setitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__setitem__.html)
+- [Cache.__delitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__delitem__.html)
+- [Cache.__contains__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__contains__.html)
+- [Cache.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__len__.html)
+- [Cache.__bool__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__bool__.html)
+- [Cache.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__iter__.html)
+- [Cache.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__enter__.html)
+- [Cache.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__exit__.html)
+
+#### NullCache
+> Switched-off cache behaving as if every entry expires instantly.
+
+- [NullCache](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.html): A switched-off cache. See the module docstring for the rule every method follows
+- [CacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.html): What application code can rely on from a `Cache` or a `NullCache`
+
+#### NullCache Methods
+> Methods for the NullCache class
+
+- [NullCache.__repr__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__repr__.html)
+- [NullCache.directory](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.directory.html)
+- [NullCache.timeout](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.timeout.html)
+- [NullCache.size_limit](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.size_limit.html)
+- [NullCache.cull_limit](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.cull_limit.html)
+- [NullCache.enabled](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.enabled.html)
+- [NullCache.get](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.get.html)
+- [NullCache.__getitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__getitem__.html)
+- [NullCache.__contains__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__contains__.html)
+- [NullCache.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__len__.html)
+- [NullCache.__bool__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__bool__.html)
+- [NullCache.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__iter__.html)
+- [NullCache.volume](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.volume.html)
+- [NullCache.set](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.set.html)
+- [NullCache.__setitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__setitem__.html)
+- [NullCache.add](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.add.html)
+- [NullCache.touch](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.touch.html)
+- [NullCache.incr](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.incr.html)
+- [NullCache.decr](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.decr.html)
+- [NullCache.delete](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.delete.html)
+- [NullCache.__delitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__delitem__.html)
+- [NullCache.pop](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.pop.html)
+- [NullCache.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.clear.html)
+- [NullCache.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.iterkeys.html)
+- [NullCache.expire](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.expire.html)
+- [NullCache.cull](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.cull.html)
+- [NullCache.close](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.close.html)
+- [NullCache.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__enter__.html)
+- [NullCache.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__exit__.html)
+
+#### CacheLike Methods
+> Methods for the CacheLike class
+
+- [CacheLike.directory](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.directory.html)
+- [CacheLike.timeout](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.timeout.html)
+- [CacheLike.size_limit](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.size_limit.html)
+- [CacheLike.cull_limit](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.cull_limit.html)
+- [CacheLike.enabled](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.enabled.html)
+- [CacheLike.get](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.get.html)
+- [CacheLike.set](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.set.html)
+- [CacheLike.add](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.add.html)
+- [CacheLike.delete](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.delete.html)
+- [CacheLike.pop](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.pop.html)
+- [CacheLike.touch](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.touch.html)
+- [CacheLike.incr](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.incr.html)
+- [CacheLike.decr](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.decr.html)
+- [CacheLike.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.iterkeys.html)
+- [CacheLike.expire](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.expire.html)
+- [CacheLike.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.clear.html)
+- [CacheLike.cull](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.cull.html)
+- [CacheLike.volume](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.volume.html)
+- [CacheLike.close](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.close.html)
+- [CacheLike.__getitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__getitem__.html)
+- [CacheLike.__setitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__setitem__.html)
+- [CacheLike.__delitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__delitem__.html)
+- [CacheLike.__contains__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__contains__.html)
+- [CacheLike.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__len__.html)
+- [CacheLike.__bool__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__bool__.html)
+- [CacheLike.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__iter__.html)
+- [CacheLike.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__enter__.html)
+- [CacheLike.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__exit__.html)
+
+#### Errors
+> Exceptions raised by cache operations.
+
+- [Timeout](https://mkennedy.codes/docs/diskcache-oxide/reference/Timeout.html): The database stayed locked for longer than the cache's timeout
+- [UnsafeValueError](https://mkennedy.codes/docs/diskcache-oxide/reference/UnsafeValueError.html): A pickle=False cache read a value that was stored with pickle
+- [CorruptValueError](https://mkennedy.codes/docs/diskcache-oxide/reference/CorruptValueError.html): A stored value couldn't be decoded: an unknown mode, or bytes that don't parse
+- [FormatMismatchError](https://mkennedy.codes/docs/diskcache-oxide/reference/FormatMismatchError.html): The cache directory holds a database in a format this version doesn't support
+
+#### SQLite and System
+> Information about the bundled SQLite and environment.
+
+- [sqlite_version](https://mkennedy.codes/docs/diskcache-oxide/reference/sqlite_version.html): The SQLite version reported at runtime by `sqlite3_libversion()`
+- [sqlite_compile_options](https://mkennedy.codes/docs/diskcache-oxide/reference/sqlite_compile_options.html): The compile-time options of the linked SQLite (`PRAGMA compile_options`)
+- [BUNDLED_SQLITE_VERSION](https://mkennedy.codes/docs/diskcache-oxide/reference/BUNDLED_SQLITE_VERSION.html): str(object='') -> str
+
+### User Guide
+
+#### Get started
+
+- [Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html)
+- [Switching from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/switching-from-diskcache.html)
+
+#### Core Features
+
+- [Serialization](https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html)
+- [NullCache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html)
+- [Concurrency and fork safety](https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html)
+- [Storage and WAL management](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html)
+
+#### Background & Reference
+
+- [Performance](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html)
+- [Divergences from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)
+- [Project status and roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html)
+
+### Agent Skill and Full Context
+
+- [Agent Skill (SKILL.md)](https://mkennedy.codes/docs/diskcache-oxide/skill.md): Compact guide, decision table, gotchas and examples for AI coding agents
+- [Full Documentation (llms-full.txt)](https://mkennedy.codes/docs/diskcache-oxide/llms-full.txt): Complete API reference and User Guide in a single file

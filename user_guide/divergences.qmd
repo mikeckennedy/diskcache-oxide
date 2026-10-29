@@ -1,0 +1,105 @@
+---
+title: "Divergences from python-diskcache"
+---
+
+diskcache-oxide aims for high API compatibility with `diskcache.Cache` 5.6.3. However, where
+python-diskcache had known bugs, security vulnerabilities, or performance bottlenecks, diskcache-oxide
+makes deliberate improvements.
+
+Every intentional divergence is tracked in the project's test suite and validated with dedicated
+conformance tests.
+
+## Summary table
+
+| Ref | Topic | python-diskcache 5.6.3 | diskcache-oxide | Rationale |
+|---|---|---|---|---|
+| **D-001** | Value serialization | Pickles every value | msgpack or JSON; pickle opt-in | Security against arbitrary code execution; avoids caching invalid types |
+| **D-002** | Database filename | `cache.db` | `diskcache-oxide.sqlite` | Prevents file collisions when testing or transitioning |
+| **D-003** | Clock control | Reads `time.time()` in Python | Reads native clock in Rust; takes `clock=` | Lowers hot read latency; enables mock clocks for testing |
+| **D-004** | Key types | Any picklable object | `str` keys only | Simplifies indexing and query optimization |
+| **D-005** | Minimum `size_limit` | Allows arbitrarily small values | Minimum 1 MiB (`MIN_SIZE_LIMIT`) | Prevents silent infinite cull loops on new writes |
+| **D-007** | `Timeout` class | Subclasses `Exception` | Subclasses `TimeoutError` | Follows standard Python exception hierarchy |
+| **D-008** | Float NaN handling | Reads top-level NaN as `None` | Round-trips `NaN`, `inf`, `-inf` | Fixes upstream bug in diskcache |
+| **D-009** | Cache truthiness | Falsy when `len(cache) == 0` | `bool(Cache)` is always `True` | Allows `if cache:` to mean "is caching enabled?" |
+| **D-010** | `expire()` completeness | Stops early on identical timestamps | Purges all expired rows | Fixes upstream bug where expired rows leaked |
+| **D-011** | `clear()` isolation | Deletes concurrent writes | Removes only rows present at start | Snapshot isolation preserves in-flight writes |
+| **D-012** | Fork safety | Can crash SQLite in child | `os.register_at_fork` barrier | Safe for Gunicorn/Uvicorn pre-forking workers |
+| **D-015** | Directory permissions | Follows ambient umask | Sets `0700` on Unix | Protects cached credentials and data |
+| **D-016** | Spilled value racing | Can return `None` or error | Returns old or new value | Guarantees atomic read safety during file overwrites |
+| **D-017** | Connection limits | 1 connection per thread | Bounded pool (`max_connections`) | Prevents file descriptor exhaustion under load |
+| **D-018** | `close()` cleanup | Leaves fds open in threads | Closes all pooled connections | Eliminates resource warnings and leaks |
+| **D-019** | Non-mutating open | Writes to DB on open | Opening and reading never write | Safe for read-only mounts and shared caches |
+| **D-020** | Counter defaults | `incr()` with missing key returns 0 | Raises `KeyError` if `default=None` | Consistent with dictionary `KeyError` behavior |
+| **D-021** | `NullCache` | Not available | Built-in `NullCache` class | Allows turning off caching without code branching |
+| **D-023** | Memory bounds | Unbounded SQLite page cache | Bounded by `sqlite_cache_size` | Keeps RSS memory flat in long-running processes |
+| **D-024** | WAL file bounds | Unbounded WAL file growth | Bounded by `wal_size_limit` | Forced checkpoints prevent multi-gigabyte WAL bloat |
+
+---
+
+## Detailed explanations
+
+### D-001: Value serialization & security
+
+- **diskcache**: Pickles all values indiscriminately.
+- **diskcache-oxide**: Values are stored as raw `str`, raw `bytes`, `msgpack`, or `json`.
+  Unrepresentable types raise `TypeError` at `set()` unless `pickle=True` is explicitly passed.
+  Reading a pickled row with a `pickle=False` handle raises `UnsafeValueError` without unpickling.
+- **Why**: Unpickling arbitrary data stored on disk is an attack vector in multi-user or containerized
+  environments. Explicit serializers also surface non-serializable objects immediately rather than hiding them.
+
+### D-004: String keys only
+
+- **diskcache**: Accepts any picklable object as a key (ints, tuples, bytes).
+- **diskcache-oxide**: Accepts `str` keys only. Non-string keys raise `TypeError`.
+- **Why**: String keys allow direct, highly-optimized SQLite B-tree index traversal and prefix range scans.
+  Keys are stored in a type-tagged column so structured keys can be added in a future phase without schema migrations.
+
+### D-009: Cache truthiness
+
+- **diskcache**: Implements `__bool__` using `__len__`, so an empty cache evaluates to `False`.
+- **diskcache-oxide**: `bool(Cache)` is always `True`, and `Cache.enabled` is `True`. Conversely,
+  `bool(NullCache)` is `False`, and `NullCache.enabled` is `False`.
+- **Why**: In application code, `if cache:` is frequently used to check if caching is configured and enabled.
+  Treating an empty cache as falsy caused applications to bypass caching after a restart or deployment.
+
+### D-010: Complete expiration
+
+- **diskcache**: `expire()` purges in batches of 100, but halts prematurely if multiple rows share
+  an identical expiration timestamp.
+- **diskcache-oxide**: `expire()` removes every expired entry regardless of timestamp clustering,
+  while still yielding between batches so concurrent writers are not starved.
+- **Why**: Upstream diskcache left expired rows on disk indefinitely in hourly cleanup jobs.
+
+### D-011: Snapshot-isolated `clear()`
+
+- **diskcache**: `clear()` runs a delete loop until the database is empty, deleting rows that were
+  inserted by other threads while `clear()` was running.
+- **diskcache-oxide**: Records the highest monotonic `store_seq` when `clear()` begins and deletes
+  only rows up to that sequence number.
+- **Why**: Writes that succeed during a `clear()` call are preserved rather than silently destroyed.
+
+### D-012: The fork barrier
+
+- **diskcache**: Inherits SQLite handles across `os.fork()`. In pre-forking web servers, children
+  using inherited connections frequently encounter database corruption or crashes.
+- **diskcache-oxide**: Registers before/after fork hooks using `os.register_at_fork`. Writers in other
+  threads are completed before the fork, and children safely discard inherited connection handles
+  and reopen fresh ones.
+- **Why**: Essential for production stability under Gunicorn, Celery, and Uvicorn.
+
+### D-017 & D-018: Bounded connection pool
+
+- **diskcache**: Creates a new SQLite connection for every thread that interacts with the cache,
+  storing it in thread-local storage. Under high thread counts, this exhausts OS file descriptors.
+- **diskcache-oxide**: Implements a bounded connection pool (`max_connections`, default 8). Connections
+  are checked out temporarily and returned immediately. `close()` shuts down all pooled connections.
+- **Why**: Predictable resource consumption regardless of application concurrency.
+
+### D-024: Active WAL bounds
+
+- **diskcache**: Leaves SQLite WAL checkpointing to default OS behavior. With concurrent readers in
+  separate worker processes, WAL checkpoints are continuously blocked, causing the `-wal` file to
+  balloon into gigabytes.
+- **diskcache-oxide**: Implements active forced checkpoints (`PASSIVE`, then `TRUNCATE` with a 2 ms timeout)
+  and autocheckpoint scaling governed by `wal_size_limit` (default 64 MiB).
+- **Why**: Prevents unbounded disk growth in multi-process production deployments.

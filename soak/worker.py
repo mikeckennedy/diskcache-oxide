@@ -174,7 +174,8 @@ class Worker:
 
     def one_op(self, rng: random.Random, i: int, every: int) -> None:
         key = f'c:{rng.randrange(CHAOS_KEYS)}'
-        sample = i % LATENCY_SAMPLE_EVERY == 0
+        # Paced runs are slow enough to time every call, so the maximum is the true worst case.
+        sample = self.thread_rate > 0 or i % LATENCY_SAMPLE_EVERY == 0
         if i % every == 0:
             expire = rng.choice((None, None, rng.uniform(1, 60)))
             expire_at = None if expire is None else time.time() + expire
