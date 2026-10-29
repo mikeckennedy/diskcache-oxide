@@ -157,3 +157,13 @@ As in the roadmap: every review finding resolved or explicitly accepted, a clean
   - **Differences from the note:** shuttle is a `[target.'cfg(shuttle)'.dependencies]` normal dependency (the shim's non-test code uses it), not a dev-dependency, and `cargo deny` sees it (it passes). shuttle 0.9.9 has `try_update` and `const fn` atomics, so there's no extension trait, and `static GATE` compiles under the cfg. `sleep` under shuttle is the logical clock's advance plus `yield_now` (so PCT deprioritizes pollers), and a 60 s logical-time watchdog reports livelock (shuttle's deadlock detector never fires on sleep-poll loops). `STARVE_AFTER` is 200 µs under the cfg. Models 1b and 4 assert counts and an exclusivity witness rather than durations or "no entry while pending". Model 7, the composition (write lock, slot, gate, nested write, forker), was added.
   - **Review follow-ups applied:** one gate per OS thread, reset each execution, instead of one leaked per execution (1M schedules: 45 MB peak, not the projected 2.5-3 GB); `debug_assert` on every holders decrement; "reached" guards so no model passes vacuously (a fork that waited for a running level, the waiter starving, a share dropped while its owner was parked); `DCO_MODEL_REPLAY` replays a printed schedule. Reintroducing bug B fails a model at 100k.
   - **Running:** `scripts/model-check.sh [iterations]`, in `scripts/check.sh` at 100k (about 3 s) or 1M under `--slow` (about 25 s).
+- **`clear()`'s pause and yield between chunks, measured for Michael's decision (2026-10-29, night).** `clear()` of 100k rows on the laptop, median of 3, 3.14 and 3.14t alike:
+
+  | Variant | idle | 2 writer threads | their p99 / worst wait | writer in another process | its p99 / worst |
+  |---|---|---|---|---|---|
+  | A, today: 100 µs pause every chunk, then yield up to 2 ms while a writer waits | 0.29 s | 2.4 s | 0.3-0.6 / 20 ms | 2.33 s | 0.11 / 2.3 ms |
+  | B: pause and yield only while an in-process writer waits | 0.13 s | 2.4 s | 0.2-0.5 / 19 ms | 0.29 s | 0.06 / 4.0 ms |
+  | C: yield up to 500 µs | 0.29 s | 0.93 s | 1.1 / 15-20 ms | | |
+  | D: no pause, no yield | 0.13 s | 0.13 s | 0.04 / **127-140 ms** | | |
+
+  D shows the yield earns its keep: without it a writer waits out the whole `clear()`. B is 2.2× faster idle and 8× faster beside another process's writer, at the price of that writer's worst wait rising from about 2.3 to 4 ms (the unconditional pause was the gap other processes used). C halves the contended time for a higher writer p99. Recommendation: B, and keep the 2 ms yield; both are one-line changes in `maintenance.rs` (`pause_between_chunks`, `MAX_YIELD`). Not changed yet: cross-process fairness is Michael's call.
