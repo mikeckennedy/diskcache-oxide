@@ -38,3 +38,11 @@ Not planned; recorded so it isn't re-derived (Michael, 2026-10-28: "interesting,
 - **Why it's on hold:** an `mmap`'d counter file and its cross-process memory ordering are hard to get right, and harder across platforms (Windows is on the roadmap).
 - **Rejected variant, buffering writes in memory and flushing them periodically:** it breaks cross-process `add()`/`incr()` atomicity (the rate limiter), makes writes invisible to other processes until the flush, loses them on a crash, and duplicates them across `fork()`.
 
+
+## A large-file cache
+
+Pure speculation (Michael, 2026-10-28): "a complicated feature, but it also might be neat". A sibling of `Cache`, as `NullCache` is, for caching whole files: rendered images, downloads, generated PDFs, model outputs. Each file is stored **unmodified** in a files folder inside the cache directory (compression is possible, but probably not), and the database holds only its key and metadata: size, store and access times, expiry, content type, perhaps a checksum. Everything the cache already does for keys then manages real files: `expire`, `cull` and `size_limit`, eviction, `delete`, the cross-process write lock, `add()` atomicity.
+
+- **What it would add over spilled values:** large values already go to value files, but encoded and readable only through the cache. Unmodified files could be handed out by path, so a web app could serve them directly (`sendfile`, the web server's `X-Accel-Redirect`/`X-Sendfile`, streaming) without reading them into Python. They could also be added by moving a file in instead of copying its bytes through Python.
+- **The hard parts:** a reader holding a path while the file is evicted, overwritten or culled (hand out an open file, not a path, or rely on POSIX unlink-while-open and write to a temp name then rename); writing a large file atomically, then committing its row, without orphans after a crash (the spill protocol's temp-then-rename, and `check()`'s orphan scan, cover the shape); quota accounting that counts files, not pages; and what "unmodified" means for metadata like the original file name or `mtime`.
+- **API sketch, not decided:** `set_file(key, path_or_fileobj, *, move=False, expire=None)`, `get_path(key)` or `open(key)` (returns a read-only file object), `get_file(key, dest)`, plus everything `Cache` has for keys.
