@@ -272,11 +272,65 @@ def parent_closes_after_fork(directory: Path) -> list[str]:
     return failures
 
 
+def shared_iterator_while_a_fork_waits(directory: Path) -> list[str]:
+    """Two threads call next() on one key iterator while a fork waits for a held transaction.
+
+    The first next() waits for the pending fork with the interpreter released. The second must not
+    block on the iterator while attached (holding the GIL, or stalling the fork's stop-the-world on
+    a free-threaded build): nobody could then run Python to end the transaction, and the whole
+    process hung. It raises ValueError at once instead, as a generator shared that way does.
+    """
+    cache = Cache(directory, timeout=TIMEOUT)
+    for i in range(5):
+        cache.set(f'k{i}', i)
+    it = iter(cache)
+    release = threading.Event()
+    held = threading.Event()
+
+    def holder() -> None:
+        with cache._hold_write_transaction():
+            held.set()
+            release.wait(TIMEOUT)
+
+    codes: list[int | None] = []
+    threading.Thread(target=holder, daemon=True).start()
+    held.wait(TIMEOUT)
+    forker = threading.Thread(target=lambda: codes.append(wait(fork(lambda: None))), daemon=True)
+    forker.start()
+    time.sleep(0.2)  # The fork is now pending, waiting for the holder.
+
+    got: list[object] = []
+    first = threading.Thread(target=lambda: got.append(next(it)), daemon=True)
+    first.start()
+    time.sleep(0.2)  # Well into its wait for the fork, inside the iterator.
+    failures = []
+    try:
+        second = next(it)
+    except ValueError:
+        pass
+    else:
+        failures.append(f'the second next() returned {second!r} instead of raising ValueError')
+    release.set()
+    first.join(TIMEOUT)
+    forker.join(CHILD_DEADLINE)
+    if first.is_alive() or forker.is_alive():
+        failures.append('the first next() or the fork never finished')
+    if got != ['k0']:
+        failures.append(f'the first next() returned {got!r}')
+    if codes != [0]:
+        failures.append(f'child exit codes {codes}')
+    if list(it) != ['k1', 'k2', 'k3', 'k4']:
+        failures.append('the iterator lost its place')
+    cache.close()
+    return failures
+
+
 SCENARIOS = {
     'd020': d020,
     'fork-while-a-write-waits': fork_while_a_write_waits,
     'two-forkers': two_forkers,
     'parent-closes-after-fork': parent_closes_after_fork,
+    'shared-iterator-while-a-fork-waits': shared_iterator_while_a_fork_waits,
 }
 
 

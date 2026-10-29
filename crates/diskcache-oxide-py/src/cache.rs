@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use std::collections::VecDeque;
@@ -515,7 +515,15 @@ impl KeyIterator {
     }
 
     fn __next__(&self) -> PyResult<Option<String>> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        // Never wait for the state while attached: its holder may be waiting for a pending fork
+        // with the interpreter released, and could then never get it back (the gate's rules).
+        // Another thread inside `next()` is an error instead, as for a generator (upstream's
+        // iterators are generators).
+        let mut state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return Err(PyValueError::new_err("iterator already executing")),
+        };
         if let Some(key) = state.buffer.pop_front() {
             return Ok(Some(key));
         }

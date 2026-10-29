@@ -19,7 +19,16 @@ from tests.conformance.proc_workers import SqlitePeer
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize('scenario', ['d020', 'fork-while-a-write-waits', 'two-forkers', 'parent-closes-after-fork'])
+@pytest.mark.parametrize(
+    'scenario',
+    [
+        'd020',
+        'fork-while-a-write-waits',
+        'two-forkers',
+        'parent-closes-after-fork',
+        'shared-iterator-while-a-fork-waits',
+    ],
+)
 def test_fork_scenario(scenario: str, tmp_path: Path) -> None:
     proc = subprocess.run(
         [sys.executable, '-m', 'tests.unit.fork_scenarios', scenario, str(tmp_path / 'c')],
