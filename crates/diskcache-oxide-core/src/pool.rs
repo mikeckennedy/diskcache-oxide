@@ -6,6 +6,12 @@
 //! SQLite state, and closing them in the child would release POSIX locks the parent relies on. Each
 //! fork therefore leaks the inherited connections' fds in the child, by design.
 //!
+//! The before-fork hook closes every idle connection first ([`close_idle_all`]), so normally the
+//! child inherits none. That matters beyond the leak: SQLite keeps one lock record per database file
+//! per process, and a new connection that finds the record saying the process holds SHARED takes no
+//! kernel lock of its own. A child that inherited such a record would run with no locks at all, and
+//! once the parent closed, another process's last close could delete the WAL under it.
+//!
 //! # Locking
 //!
 //! The pool's mutex is only ever taken by a thread that holds the fork [gate](crate::gate) in shared
@@ -114,6 +120,24 @@ pub(crate) fn quiesce_all() {
     }
     // A pool whose owner dropped meanwhile was already emptied under the gate, so dropping the last
     // reference here makes no SQLite call.
+}
+
+/// Closes every live pool's idle connections. Called by the before-fork hook after
+/// [`quiesce_all`], with the gate held exclusively, so no other thread is using a pool: once every
+/// connection on a database file is closed, SQLite frees its lock record for the file, and the
+/// child doesn't inherit it (see the module docs). Only the forking thread's own leases and held
+/// transactions stay open across the fork.
+pub(crate) fn close_idle_all() {
+    let pools: Vec<Arc<PoolShared>> = registry().iter().filter_map(Weak::upgrade).collect();
+    let current = gate::generation();
+    for pool in &pools {
+        let idle = {
+            let mut state = pool.lock();
+            reset_if_stale(&mut state, current);
+            std::mem::take(&mut state.idle)
+        };
+        drop(idle);
+    }
 }
 
 #[derive(Debug)]

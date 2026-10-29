@@ -10,6 +10,7 @@ No set_title() after a fork: setproctitle hangs in a child forked from a multi-t
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -228,7 +229,55 @@ def two_forkers(directory: Path) -> list[str]:
     return failures
 
 
-SCENARIOS = {'d020': d020, 'fork-while-a-write-waits': fork_while_a_write_waits, 'two-forkers': two_forkers}
+def parent_closes_after_fork(directory: Path) -> list[str]:
+    """The parent forks with idle pooled connections, then closes, and an unrelated process's last
+    close comes next: the child's later write must still reach the database.
+
+    SQLite keeps one per-process lock record per database file. A connection left open across the
+    fork hands the child that record, saying the process already holds SHARED, so the child's new
+    connections take no kernel lock. With the parent closed, the unrelated process's last close then
+    checkpoints and deletes the WAL under the child, and the child's write lands in the unlinked file.
+    """
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    ready_r, ready_w = os.pipe()
+    go_r, go_w = os.pipe()
+
+    def child() -> None:
+        os.close(ready_r)
+        os.close(go_w)
+        assert cache.get('before') == 'parent'
+        os.write(ready_w, b'r')
+        assert os.read(go_r, 1) == b'g'
+        assert cache.set('child', 1) is True
+
+    pid = fork(child)
+    os.close(ready_w)
+    os.close(go_r)
+    failures = []
+    if os.read(ready_r, 1) != b'r':
+        failures.append('the child never got ready')
+    cache.close()
+    third = f'from diskcache_oxide import Cache; c = Cache({str(directory)!r}); c.set("third", 3); c.close()'
+    subprocess.run([sys.executable, '-c', third], check=True, timeout=TIMEOUT * 2)
+    os.write(go_w, b'g')
+    code = wait(pid)
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    with Cache(directory, timeout=TIMEOUT) as fresh:
+        if fresh.get('child') != 1:
+            failures.append("the child's write is lost: a fresh Cache doesn't see it")
+        if fresh.get('third') != 3:
+            failures.append("the unrelated process's write is missing")
+    return failures
+
+
+SCENARIOS = {
+    'd020': d020,
+    'fork-while-a-write-waits': fork_while_a_write_waits,
+    'two-forkers': two_forkers,
+    'parent-closes-after-fork': parent_closes_after_fork,
+}
 
 
 def main() -> int:

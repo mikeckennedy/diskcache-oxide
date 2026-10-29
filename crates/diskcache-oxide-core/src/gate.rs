@@ -462,8 +462,9 @@ thread_local! {
     static HELD_FORK: RefCell<Option<ForkGuard>> = const { RefCell::new(None) };
 }
 
-/// The before-fork hook: takes [`GATE`] exclusively, then checks that no connection pool is
-/// mid-update. Call it with the interpreter released.
+/// The before-fork hook: takes [`GATE`] exclusively, checks that no connection pool is mid-update,
+/// and closes every pool's idle connections, so the child doesn't inherit SQLite's per-file lock
+/// records (see [`crate::pool`]). Call it with the interpreter released.
 pub fn begin_fork() {
     // A guard left here by a fork whose after-hook never ran still holds the claim, so
     // GATE.begin_fork would wait for it forever: end it first. CPython runs the parent's after-hooks
@@ -475,6 +476,7 @@ pub fn begin_fork() {
     let guard = GATE.begin_fork();
     crate::pool::quiesce_all();
     crate::store::quiesce_registry();
+    crate::pool::close_idle_all();
     HELD_FORK.with(|held| *held.borrow_mut() = Some(guard));
 }
 
