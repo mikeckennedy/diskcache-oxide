@@ -5,7 +5,7 @@
 #   docker build -f docker/linux-dev.Dockerfile -t dco-linux-dev docker/
 FROM ubuntu:26.04
 
-ARG RUST_TOOLCHAIN=1.99.0
+ARG RUST_TOOLCHAIN=1.99.1
 ARG CARGO_DENY_VERSION=0.20.2
 ARG PYTHONS="3.14 3.14t 3.15 3.15t"
 
@@ -21,7 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential curl git ca-certificates procps tzdata \
+    && apt-get install -y --no-install-recommends build-essential curl git ca-certificates procps tzdata gdb \
     && rm -rf /var/lib/apt/lists/*
 
 # rustup, pinned to the repo's toolchain so rust-toolchain.toml never triggers a download at run time.
