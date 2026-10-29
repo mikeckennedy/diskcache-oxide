@@ -94,6 +94,14 @@ pub enum Error {
     /// The calling thread tried to end a write transaction it doesn't hold.
     #[error("this thread holds no write transaction on this cache")]
     NoTransaction,
+
+    /// A held write transaction was ended from inside one of its own operations (a pickle hook
+    /// that leaves the `with` block, say). It can't end there; it's rolled back when that
+    /// operation returns.
+    #[error(
+        "a write transaction can't end inside one of its own operations; it is rolled back when that operation returns"
+    )]
+    EndInsideOperation,
 }
 
 impl Error {

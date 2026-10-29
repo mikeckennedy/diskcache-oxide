@@ -66,7 +66,7 @@ class Cache:
   - `ValueError` for bad settings.
   - `OSError` (with errno) for disk-full and I/O errors.
   - `FormatMismatchError(RuntimeError)` for a database in a newer format.
-  - `RuntimeError` for a transaction poisoned by fork.
+  - `RuntimeError` for a transaction poisoned by fork, or ended from inside one of its own operations (a pickle hook leaving the `with` block). The latter is rolled back once that operation returns. A held transaction's connection is lent to each of its owner thread's operations, so a hook that calls the cache from inside one runs inside the transaction too (review 07).
   - Corrupt rows raise `CorruptValueError(ValueError)` and never a raw serde message as the exception type.
   - All of these are created with `create_exception!(diskcache_oxide, ...)` so they pickle.
 - **`NullCache` and `CacheLike`:** as specified in the roadmap (instant expiry, `invalidate=`, the same constructor signature, `enabled` is False, falsy). A test asserts that `Cache`, `NullCache` and `CacheLike` have the same public signatures.

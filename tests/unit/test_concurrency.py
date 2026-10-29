@@ -214,3 +214,44 @@ def test_clear_does_not_re_take_the_gil_between_chunks(tmp_path: Path) -> None:
             t.join()
         cache.close()
     assert took < 0.3, f'clear() took {took:.2f} s: it waits for the GIL between chunks again'
+
+
+# ---------------------------------------------------------------------------
+# Held transactions: Python code running inside one of the transaction's own operations
+# ---------------------------------------------------------------------------
+
+# Run in a fresh process: the hang this guards against held the GIL, so a thread with a timeout
+# couldn't catch it.
+PICKLE_HOOK_INSIDE_A_HOLD = """
+import sys
+from diskcache_oxide import Cache
+
+class Lazy:
+    def __init__(self, n):
+        self.n = n
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.sibling = CACHE.get('plain')  # Touches the cache while it's being rebuilt.
+
+CACHE = Cache(sys.argv[1], pickle=True)
+CACHE.set('plain', 1)
+CACHE.set('lazy', Lazy(7))
+with CACHE._hold_write_transaction():
+    CACHE.set('in-hold', 2)
+    value = CACHE.get('lazy')
+    assert (value.n, value.sibling) == (7, 1), vars(value)
+assert CACHE.get('in-hold') == 2
+"""
+
+
+def test_a_pickle_hook_that_reads_the_cache_works_inside_a_held_transaction(tmp_path: Path) -> None:
+    # The unpickling ran while the transaction's connection was locked, and the hook's get locked
+    # it again on the same thread: a self-deadlock with the write lock held.
+    proc = subprocess.run(
+        [sys.executable, '-c', PICKLE_HOOK_INSIDE_A_HOLD, str(tmp_path / 'c')],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr

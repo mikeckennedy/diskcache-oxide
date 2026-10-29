@@ -26,11 +26,14 @@
 //! `Store` is reset in place: its pool, write lock and slot counter all recognize the new
 //! [process generation](crate::gate::generation).
 
+use std::cell::RefCell;
 use std::fs::File;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
@@ -124,17 +127,117 @@ pub struct Store {
     cull_limit: AtomicI64,
     /// A write transaction held across calls (`_hold_write_transaction()` now, `transact()` in
     /// Phase 6b): its owner thread's operations run on the pinned connection. Locked only under
-    /// the gate. `pinned_active` keeps the common no-hold path to one relaxed load.
-    pinned: Mutex<Option<Pinned>>,
+    /// the gate, and only for a moment: an operation borrows the connection (see
+    /// [`Store::on_pinned`]) rather than keeping the mutex. `pinned_active` keeps the common
+    /// no-hold path to one relaxed load.
+    pinned: Mutex<PinnedSlot>,
     pinned_active: AtomicBool,
 }
 
 /// The connection of a held write transaction, already inside `BEGIN IMMEDIATE`.
 #[derive(Debug)]
 struct Pinned {
-    owner: std::thread::ThreadId,
+    owner: ThreadId,
     generation: u64,
     conn: PooledConn,
+}
+
+/// Where a held transaction's connection is.
+#[derive(Debug)]
+enum PinnedSlot {
+    Empty,
+    /// In the store, between operations.
+    Here(Pinned),
+    /// Lent to an operation running on its owner thread ([`Store::on_pinned`]). `abandoned` is set
+    /// when the transaction was dropped inside one of its own operations (a GC finalizer, say),
+    /// where it can't get the connection back: the operation rolls it back when it returns it.
+    Lent {
+        owner: ThreadId,
+        generation: u64,
+        abandoned: Option<Abandoned>,
+    },
+}
+
+impl PinnedSlot {
+    /// Whether `thread` holds a transaction here that this process can use.
+    fn held_by(&self, thread: ThreadId) -> bool {
+        match self {
+            Self::Empty => false,
+            Self::Here(p) => p.owner == thread && p.generation == gate::generation(),
+            Self::Lent { owner, generation, .. } => *owner == thread && *generation == gate::generation(),
+        }
+    }
+}
+
+/// What a held transaction dropped inside one of its own operations still holds, released once
+/// that operation has rolled it back.
+#[derive(Debug)]
+struct Abandoned {
+    write_word: u64,
+    hold: Option<HoldGuard<'static>>,
+    share: Option<HeldShare<'static>>,
+}
+
+/// How often ending a held transaction re-checks for its connection while an operation on its
+/// owner thread has it.
+const LENT_POLL: Duration = Duration::from_micros(50);
+
+thread_local! {
+    /// Held transactions' connections lent to operations running on this thread, by store
+    /// address. An operation nested inside one (a pickle hook that calls the cache) uses the same
+    /// connection, so it runs inside the transaction and never waits for it.
+    static LENT: RefCell<Vec<(usize, Rc<Pinned>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A held transaction's connection lent to an operation on its owner thread. Dropping it hands the
+/// connection back to the store, or rolls the transaction back if it was abandoned meanwhile.
+struct Lend<'s, 'g> {
+    store: &'s Store,
+    gate: &'g SharedGuard<'g>,
+    pinned: Option<Rc<Pinned>>,
+}
+
+impl<'s, 'g> Lend<'s, 'g> {
+    fn new(store: &'s Store, gate: &'g SharedGuard<'g>, pinned: Pinned) -> Self {
+        let pinned = Rc::new(pinned);
+        LENT.with(|lent| lent.borrow_mut().push((store.key(), Rc::clone(&pinned))));
+        Self { store, gate, pinned: Some(pinned) }
+    }
+
+    fn conn(&self) -> &Connection {
+        // Always Some until drop.
+        self.pinned.as_ref().map_or_else(|| unreachable!("lend used after drop"), |p| p.conn.conn())
+    }
+}
+
+impl Drop for Lend<'_, '_> {
+    fn drop(&mut self) {
+        let key = self.store.key();
+        LENT.with(|lent| {
+            let mut lent = lent.borrow_mut();
+            if let Some(at) = lent.iter().rposition(|(k, _)| *k == key) {
+                lent.remove(at);
+            }
+        });
+        // Nested operations' clones are dropped before they return, so this is the last one.
+        let Some(Ok(pinned)) = self.pinned.take().map(Rc::try_unwrap) else {
+            unreachable!("a nested operation kept a held transaction's connection");
+        };
+        let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
+        match std::mem::replace(&mut *slot, PinnedSlot::Empty) {
+            PinnedSlot::Lent { abandoned: Some(abandoned), .. } => {
+                self.store.pinned_active.store(false, Ordering::Release);
+                drop(slot);
+                let _ = close_pinned(self.store, self.gate, pinned, false, Duration::ZERO);
+                // In `HeldTransaction::end`'s order: the write lock, the D-020 hold, then the gate level.
+                let Abandoned { write_word, hold, share } = abandoned;
+                self.store.write_lock.release_raw(write_word);
+                drop(hold);
+                drop(share);
+            }
+            _ => *slot = PinnedSlot::Here(pinned),
+        }
+    }
 }
 
 impl Store {
@@ -206,7 +309,7 @@ impl Store {
             handles: AtomicIsize::new(1),
             size_limit: AtomicI64::new(limits.size_limit),
             cull_limit: AtomicI64::new(limits.cull_limit),
-            pinned: Mutex::new(None),
+            pinned: Mutex::new(PinnedSlot::Empty),
             pinned_active: AtomicBool::new(false),
         });
         stores.retain(|weak| weak.strong_count() > 0);
@@ -684,20 +787,49 @@ impl Store {
 
     /// Runs `f` on the calling thread's held transaction, if it has one on this store. A hold
     /// inherited across `fork()` is poisoned: it reports [`Error::ForkPoisoned`] and never runs `f`.
+    ///
+    /// The connection is lent to `f` (moved out of `pinned`), not used under the mutex: `f` may run
+    /// Python (a pickle hook) that calls the cache again, and that nested operation must find the
+    /// same connection rather than wait for a mutex its own thread holds.
     fn on_pinned<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Option<Result<T>> {
         if !self.pinned_active.load(Ordering::Relaxed) {
             return None;
         }
         let gate = GATE.enter_shared();
-        let pinned = self.pinned.lock().unwrap_or_else(PoisonError::into_inner);
-        let held = pinned.as_ref().filter(|p| p.owner == std::thread::current().id())?;
-        if held.generation != gate::generation() {
-            return Some(Err(Error::ForkPoisoned));
+        let key = self.key();
+        if let Some(pinned) =
+            LENT.with(|lent| lent.borrow().iter().rev().find(|(k, _)| *k == key).map(|(_, p)| Rc::clone(p)))
+        {
+            // Nested inside an operation already running on it.
+            if pinned.generation != gate::generation() {
+                return Some(Err(Error::ForkPoisoned));
+            }
+            return Some(f(pinned.conn.conn()));
         }
-        let result = f(held.conn.conn());
-        drop(pinned);
+        let me = std::thread::current().id();
+        let pinned = {
+            let mut slot = self.pinned.lock().unwrap_or_else(PoisonError::into_inner);
+            let PinnedSlot::Here(held) = &*slot else { return None };
+            if held.owner != me {
+                return None;
+            }
+            if held.generation != gate::generation() {
+                return Some(Err(Error::ForkPoisoned));
+            }
+            let lent = PinnedSlot::Lent { owner: me, generation: held.generation, abandoned: None };
+            let PinnedSlot::Here(held) = std::mem::replace(&mut *slot, lent) else { unreachable!() };
+            held
+        };
+        let lend = Lend::new(self, &gate, pinned);
+        let result = f(lend.conn());
+        drop(lend);
         drop(gate);
         Some(result)
+    }
+
+    /// This store's identity within the process, for [`LENT`].
+    fn key(&self) -> usize {
+        std::ptr::from_ref(self).addr()
     }
 
     /// Starts a write transaction that stays open across calls until [`HeldTransaction::finish`]
@@ -709,10 +841,7 @@ impl Store {
         {
             let gate = GATE.enter_shared();
             let pinned = self.pinned.lock().unwrap_or_else(PoisonError::into_inner);
-            if pinned
-                .as_ref()
-                .is_some_and(|p| p.owner == std::thread::current().id() && p.generation == gate::generation())
-            {
+            if pinned.held_by(std::thread::current().id()) {
                 return Err(Error::NestedTransaction);
             }
             drop(pinned);
@@ -742,7 +871,8 @@ impl Store {
         {
             let gate = GATE.enter_shared();
             let mut pinned = self.pinned.lock().unwrap_or_else(PoisonError::into_inner);
-            *pinned = Some(Pinned { owner: std::thread::current().id(), generation: gate::generation(), conn });
+            *pinned =
+                PinnedSlot::Here(Pinned { owner: std::thread::current().id(), generation: gate::generation(), conn });
             self.pinned_active.store(true, Ordering::Release);
             drop(pinned);
             drop(gate);
@@ -888,43 +1018,76 @@ impl HeldTransaction {
         self.end(commit)
     }
 
+    /// Ends the transaction. Inside one of its own operations (the connection is lent to this
+    /// thread) it can't, and reports [`Error::EndInsideOperation`] with nothing released.
     fn end(&mut self, commit: bool) -> Result<()> {
-        let Some(write_word) = self.write_word.take() else { return Ok(()) };
-        let gate = GATE.enter_shared();
-        let pinned = {
+        let Some(write_word) = self.write_word else { return Ok(()) };
+        let me = std::thread::current().id();
+        let (gate, pinned) = loop {
+            let gate = GATE.enter_shared();
             let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
-            self.store.pinned_active.store(false, Ordering::Release);
-            slot.take()
-        };
-        let result = match pinned {
-            Some(p) if p.generation == gate::generation() => {
-                let sql = if commit { "COMMIT" } else { "ROLLBACK" };
-                let outcome = p.conn.conn().execute_batch(sql).map_err(|e| Error::from_sqlite(e, self.timeout));
-                if outcome.is_err() {
-                    // Leave no half-open transaction on a pooled connection.
-                    let _ = p.conn.conn().execute_batch("ROLLBACK");
+            match &*slot {
+                PinnedSlot::Lent { owner, .. } if *owner == me => return Err(Error::EndInsideOperation),
+                PinnedSlot::Lent { .. } => {
+                    // The owner thread is inside an operation on it: wait for it to hand it back.
+                    drop(slot);
+                    drop(gate);
+                    std::thread::sleep(LENT_POLL);
                 }
-                self.store.give_back(&gate, p.conn);
-                outcome
+                _ => {
+                    self.store.pinned_active.store(false, Ordering::Release);
+                    let pinned = match std::mem::replace(&mut *slot, PinnedSlot::Empty) {
+                        PinnedSlot::Here(p) => Some(p),
+                        _ => None,
+                    };
+                    drop(slot);
+                    break (gate, pinned);
+                }
             }
-            Some(inherited) => {
-                inherited.conn.forget();
-                Err(Error::ForkPoisoned)
-            }
-            None => Ok(()),
         };
+        self.write_word = None;
+        let result = pinned.map_or(Ok(()), |p| close_pinned(&self.store, &gate, p, commit, self.timeout));
         drop(gate);
         self.store.write_lock.release_raw(write_word);
         self.hold.take();
         self.share.take();
         result
     }
+
+    /// Leaves the rollback to the operation the connection is lent to (see [`PinnedSlot::Lent`]).
+    fn abandon(&mut self) {
+        let Some(write_word) = self.write_word.take() else { return };
+        let _gate = GATE.enter_shared();
+        let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
+        if let PinnedSlot::Lent { abandoned, .. } = &mut *slot {
+            *abandoned = Some(Abandoned { write_word, hold: self.hold.take(), share: self.share.take() });
+        }
+    }
 }
 
 impl Drop for HeldTransaction {
     fn drop(&mut self) {
-        let _ = self.end(false);
+        if let Err(Error::EndInsideOperation) = self.end(false) {
+            self.abandon();
+        }
     }
+}
+
+/// Commits or rolls back a held transaction's connection and returns it to the pool. One
+/// inherited across `fork()` is forgotten instead: the parent still owns that transaction.
+fn close_pinned(store: &Store, gate: &SharedGuard<'_>, pinned: Pinned, commit: bool, timeout: Duration) -> Result<()> {
+    if pinned.generation != gate::generation() {
+        pinned.conn.forget();
+        return Err(Error::ForkPoisoned);
+    }
+    let sql = if commit { "COMMIT" } else { "ROLLBACK" };
+    let outcome = pinned.conn.conn().execute_batch(sql).map_err(|e| Error::from_sqlite(e, timeout));
+    if outcome.is_err() {
+        // Leave no half-open transaction on a pooled connection.
+        let _ = pinned.conn.conn().execute_batch("ROLLBACK");
+    }
+    store.give_back(gate, pinned.conn);
+    outcome
 }
 
 fn file_id(file: &File, path: &Path) -> Result<FileId> {
@@ -1250,6 +1413,59 @@ mod tests {
         });
         put(&store, "k2", b"v"); // Not stuck behind a leaked write lock or gate level.
         assert_eq!(count(&store), 2);
+    }
+
+    /// Runs `body` on its own thread and fails the test if it hasn't finished within 5 s, so a
+    /// deadlock fails instead of hanging the suite.
+    fn within_5s(body: impl FnOnce() + Send + 'static) {
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            body();
+            let _ = done.send(());
+        });
+        assert!(finished.recv_timeout(Duration::from_secs(5)).is_ok(), "deadlocked (or panicked)");
+    }
+
+    #[test]
+    fn an_operation_nested_inside_a_held_transactions_own_operation_runs_inside_it() {
+        // As a pickle hook that calls the cache does, from inside a get on the transaction's thread.
+        within_5s(|| {
+            let tmp = TempDir::new("store-hold-nested");
+            let store = Store::open(&options(tmp.path())).unwrap();
+            let held = store.begin_hold(T).unwrap();
+            let seen = store
+                .read(T, |_| {
+                    put(&store, "k", b"v");
+                    Ok(count(&store))
+                })
+                .unwrap();
+            assert_eq!(seen, 1, "the nested write and read ran inside the transaction");
+            held.finish(true).unwrap();
+            assert_eq!(count(&store), 1);
+        });
+    }
+
+    #[test]
+    fn ending_a_held_transaction_inside_its_own_operation_rolls_it_back_after() {
+        within_5s(|| {
+            let tmp = TempDir::new("store-hold-end-inside");
+            let store = Store::open(&options(tmp.path())).unwrap();
+            put(&store, "before", b"v");
+            let held = Mutex::new(Some(store.begin_hold(T).unwrap()));
+            put(&store, "in-hold", b"v");
+            let ended = store
+                .read(T, |_| {
+                    let held = held.lock().unwrap().take().expect("read runs once on the held connection");
+                    Ok(held.finish(true))
+                })
+                .unwrap();
+            assert!(matches!(ended, Err(Error::EndInsideOperation)));
+            assert_eq!(GATE.own_depth(), 0, "the transaction's gate level was released");
+            assert_eq!(count(&store), 1, "rolled back once the read returned");
+            put(&store, "after", b"v"); // Not stuck behind a leaked write lock.
+            store.begin_hold(T).unwrap().finish(true).unwrap();
+            assert_eq!(count(&store), 2);
+        });
     }
 
     #[test]
