@@ -8,6 +8,12 @@ its next operations, which reopen connections. This opens `--caches` caches, war
 `--idle` idle connections with that many threads, then times `--forks` forks (`os.fork()` until it
 returns in the parent; the child exits at once) and, after each, the parent's first `get` and first
 `set` per cache. With `--caches 0` it times a fork with nothing open, for reference.
+
+Warming holds `--idle` leases at once: each thread reads a pickled value whose unpickling sleeps
+5 ms, which keeps its connection while the interpreter is free. Plain reads overlap only on a
+free-threaded build; on a GIL build the pool would stay at one connection. The idle count is checked
+from the process's open files (2 per connection). The WAL's size at the fork is reported too: with
+no other process on the file, the cost of a fork used to depend on it (953b7f5).
 """
 
 from __future__ import annotations
@@ -22,14 +28,28 @@ import time
 from pathlib import Path
 
 
+class Slow:
+    """Unpickling it holds the reader's connection for 5 ms, with the interpreter free."""
+
+    def __init__(self) -> None:
+        self.n = 1  # Some state, or pickle never calls __setstate__.
+
+    def __setstate__(self, state: dict[str, int]) -> None:
+        self.__dict__.update(state)
+        time.sleep(0.005)
+
+
+def open_fds() -> int:
+    return len(os.listdir('/dev/fd'))
+
+
 def warm(cache: object, idle: int) -> None:
-    """Leaves `idle` connections in the pool: `idle` threads each read at the same time."""
+    """Leaves `idle` connections in the pool: `idle` threads hold a lease at the same time."""
     barrier = threading.Barrier(idle)
 
     def read() -> None:
         barrier.wait()
-        for _ in range(50):
-            cache.get('k')  # type: ignore[attr-defined]
+        cache.get('slow')  # type: ignore[attr-defined]
 
     threads = [threading.Thread(target=read) for _ in range(idle)]
     for t in threads:
@@ -58,9 +78,17 @@ def main() -> None:
     from diskcache_oxide import Cache
 
     with tempfile.TemporaryDirectory() as tmp:
-        caches = [Cache(Path(tmp) / f'c{i}', max_connections=max(args.idle, 1)) for i in range(args.caches)]
+        caches = [Cache(Path(tmp) / f'c{i}', max_connections=max(args.idle, 1), pickle=True) for i in range(args.caches)]
         for cache in caches:
             cache.set('k', 'v')
+            cache.set('slow', Slow())
+            for i in range(2_000):  # A WAL like a working cache's.
+                cache.set(f'fill{i}', 'x' * 500)
+        base = open_fds()
+        for cache in caches:
+            warm(cache, args.idle)
+        extra = (open_fds() - base) // 2 if caches else 0
+        wal = sum((Path(tmp) / f'c{i}' / 'diskcache-oxide.sqlite-wal').stat().st_size for i in range(args.caches))
         fork_us: list[float] = []
         get_us: list[float] = []
         set_us: list[float] = []
@@ -91,6 +119,7 @@ def main() -> None:
 
     build = 'free-threaded' if not sys._is_gil_enabled() else 'GIL'
     print(f'Python {sys.version.split()[0]} ({build}), {args.caches} cache(s), {args.idle} idle connection(s) each, {args.forks} forks')
+    print(f'warming added {extra} connection(s) in all (expected {args.caches * max(args.idle - 1, 0)}); WAL before the first fork: {wal / 2**20:.1f} MiB')
     print(row('fork (parent side)', fork_us))
     print(row('first get after the fork', get_us))
     print(row('first set after the fork', set_us))
