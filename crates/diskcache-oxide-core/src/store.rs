@@ -1223,18 +1223,42 @@ impl HeldTransaction {
     fn end(&mut self, commit: bool) -> Result<()> {
         let Some(write_word) = self.write_word else { return Ok(()) };
         let me = std::thread::current().id();
+        // The levels this thread holds outside this transaction (it may be inside an operation of
+        // its own when the GC finalizes the transaction here).
+        let outer = GATE.own_depth();
+        let mut inherited = false;
         let (gate, pinned) = loop {
             // On the transaction's own level: from another thread, a plain entry would wait for a
             // pending fork, which waits for this transaction.
             let gate = self.share.as_ref().map_or_else(|| GATE.enter_shared(), HeldShare::enter);
             let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
-            match &*slot {
+            match &mut *slot {
+                PinnedSlot::Lent { generation, .. } if *generation != gate::generation() => {
+                    // Lent in the parent to an operation on a thread the child doesn't have: never
+                    // handed back. Left as it is, like any connection inherited across fork.
+                    inherited = true;
+                    drop(slot);
+                    break (gate, None);
+                }
                 PinnedSlot::Lent { owner, .. } if *owner == me => return Err(Error::EndInsideOperation),
+                PinnedSlot::Lent { abandoned, .. } if !commit || outer > 0 => {
+                    // The owner thread is inside an operation on it. A rollback needn't wait for
+                    // that operation: it's left to it, as a drop inside it is. A commit from a thread
+                    // holding levels of its own can't wait either: a fork from inside that operation
+                    // would wait for those levels while this thread waits for the operation. Then
+                    // it's rolled back the same way, and the commit reports why.
+                    *abandoned = Some(Abandoned { write_word, hold: self.hold.take(), share: self.share.take() });
+                    self.write_word = None;
+                    drop(slot);
+                    drop(gate);
+                    return if commit { Err(Error::EndInsideOperation) } else { Ok(()) };
+                }
                 PinnedSlot::Lent { .. } => {
-                    // The owner thread is inside an operation on it: wait for it to hand it back,
-                    // with the interpreter released, since that operation may be running Python
-                    // (a pickle hook) and need it. The operation itself never waits for this
-                    // thread: it's at gate depth > 0, where every wait is bounded.
+                    // A commit from a thread with no other levels: wait for the operation to hand the
+                    // connection back, with the interpreter released, since that operation may be
+                    // running Python (a pickle hook) and need it. Neither waits for the other: the
+                    // operation is at gate depth > 0, where every wait is bounded, and a fork from it
+                    // doesn't wait for this thread, which holds no level while it sleeps.
                     drop(slot);
                     drop(gate);
                     gate::run_blocking(&|| std::thread::sleep(LENT_POLL));
@@ -1251,8 +1275,11 @@ impl HeldTransaction {
             }
         };
         self.write_word = None;
-        let (result, garbage) =
-            pinned.map_or((Ok(()), Vec::new()), |p| close_pinned(&self.store, &gate, p, commit, self.timeout));
+        let (result, garbage) = match pinned {
+            Some(p) => close_pinned(&self.store, &gate, p, commit, self.timeout),
+            None if inherited => (Err(Error::ForkPoisoned), Vec::new()),
+            None => (Ok(()), Vec::new()),
+        };
         drop(gate);
         self.store.write_lock.release_raw(write_word);
         self.hold.take();
@@ -1261,14 +1288,24 @@ impl HeldTransaction {
         result
     }
 
-    /// Leaves the rollback to the operation the connection is lent to (see [`PinnedSlot::Lent`]).
+    /// Leaves the rollback to the operation the connection is lent to (see [`PinnedSlot::Lent`]),
+    /// from inside that operation. Operations still running in it keep writing into a transaction
+    /// that will roll back.
     fn abandon(&mut self) {
         let Some(write_word) = self.write_word.take() else { return };
-        let _gate = self.share.as_ref().map_or_else(|| GATE.enter_shared(), HeldShare::enter);
+        let gate = self.share.as_ref().map_or_else(|| GATE.enter_shared(), HeldShare::enter);
         let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
         if let PinnedSlot::Lent { abandoned, .. } = &mut *slot {
             *abandoned = Some(Abandoned { write_word, hold: self.hold.take(), share: self.share.take() });
+            return;
         }
+        // Only called inside one of its operations, so the slot is lent; never leak the lock if not.
+        debug_assert!(false, "abandoned a held transaction that isn't lent");
+        drop(slot);
+        drop(gate);
+        self.store.write_lock.release_raw(write_word);
+        self.hold.take();
+        self.share.take();
     }
 }
 
@@ -1746,6 +1783,64 @@ mod tests {
         fork_thread.join().unwrap();
         assert!(forked.load(Ordering::Acquire));
         assert_eq!(count(&store), 1, "committed");
+    }
+
+    /// Ends `held` on another thread while its owner (this thread) is inside an operation on it,
+    /// and returns how long ending took and what it returned. `level`: the ender holds a gate level
+    /// of its own (it's inside an operation when the GC finalizes the transaction).
+    fn end_mid_operation(
+        store: &Arc<Store>,
+        held: HeldTransaction,
+        commit: bool,
+        level: bool,
+    ) -> (Duration, Result<()>) {
+        let (inside, go) = std::sync::mpsc::channel();
+        let (done, ended) = std::sync::mpsc::channel();
+        let end_thread = std::thread::spawn(move || {
+            go.recv().unwrap();
+            let _level = level.then(|| GATE.enter_shared());
+            let started = Instant::now();
+            let result = held.finish(commit);
+            done.send((started.elapsed(), result)).unwrap();
+        });
+        let outcome = store
+            .read(T, |_| {
+                inside.send(()).unwrap();
+                // The ender must not wait for this operation: it reports while the operation runs.
+                Ok(ended.recv_timeout(Duration::from_secs(5)).expect("ending waited for the operation"))
+            })
+            .unwrap();
+        end_thread.join().unwrap();
+        outcome
+    }
+
+    #[test]
+    fn a_rollback_from_another_thread_mid_operation_is_left_to_the_operation() {
+        let tmp = TempDir::new("store-hold-abandon-elsewhere");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let held = store.begin_hold(T).unwrap();
+        put(&store, "k", b"v");
+        let (took, result) = end_mid_operation(&store, held, false, false);
+        result.unwrap();
+        assert!(took < Duration::from_secs(1), "the rollback waited {took:?}");
+        assert_eq!(count(&store), 0, "rolled back when the operation returned");
+        put(&store, "after", b"v"); // The write lock was released.
+        assert_eq!(count(&store), 1);
+    }
+
+    #[test]
+    fn a_commit_from_another_thread_holding_a_level_mid_operation_is_refused() {
+        // Waiting there could deadlock with a fork from inside the operation.
+        let tmp = TempDir::new("store-hold-commit-elsewhere");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let held = store.begin_hold(T).unwrap();
+        put(&store, "k", b"v");
+        let (took, result) = end_mid_operation(&store, held, true, true);
+        assert!(matches!(result, Err(Error::EndInsideOperation)), "{result:?}");
+        assert!(took < Duration::from_secs(1), "the commit waited {took:?}");
+        assert_eq!(count(&store), 0, "rolled back when the operation returned");
+        put(&store, "after", b"v");
+        assert_eq!(count(&store), 1);
     }
 
     #[test]

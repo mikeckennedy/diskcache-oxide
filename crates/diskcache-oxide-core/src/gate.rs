@@ -23,6 +23,12 @@
 //!   transaction, writing another cache whose lock another thread holds) backs off between
 //!   attempts without giving up the caller's levels, so a pending fork waits until it succeeds or
 //!   times out.
+//!   Waiting for another thread's operation happens only with no level held: committing a held
+//!   transaction from a thread that isn't its owner, while the owner is inside an operation on it,
+//!   waits (detached, between entries) for that operation to hand the connection back. A rollback
+//!   from there, or a commit from a thread that holds levels of its own, never waits: it's left to
+//!   the operation (a fork from inside it would otherwise wait for this thread's levels while this
+//!   thread waits for the operation).
 //! - Both rely on a second rule: **no thread waits on a gate holder while attached** to the
 //!   interpreter. Every wait for the write lock, a slot or a pending fork goes through the blocker.
 //!   Otherwise a holder that released the interpreter could deadlock re-taking it on a GIL build.
