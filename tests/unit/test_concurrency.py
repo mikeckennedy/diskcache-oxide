@@ -414,3 +414,37 @@ def test_clear_inside_a_held_transaction_doesnt_pause_for_a_writer_that_cant_get
     assert took < 0.06, f'clear() of 50 chunks took {took * 1000:.0f} ms inside the transaction'
     assert cache.get('w') == 1
     cache.close()
+
+
+class _ExitsTheHold:
+    """Unpickling it ends the hold from inside the get() that decodes it, and swallows the error."""
+
+    hold: object = None
+    refused: list[str] = []
+
+    def __init__(self) -> None:
+        self.n = 1  # Some state, or pickle never calls __setstate__.
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        self.__dict__.update(state)
+        try:
+            type(self).hold.__exit__(None, None, None)  # type: ignore[attr-defined]
+        except RuntimeError as e:
+            type(self).refused.append(str(e))
+
+
+def test_a_hold_exited_inside_its_own_operation_fails_its_with_statement(tmp_path: Path) -> None:
+    # The early __exit__ is refused and the transaction rolls back when the get() returns. The with
+    # statement's own __exit__ must then report that, not succeed with the writes gone.
+    cache = Cache(tmp_path / 'c', pickle=True)
+    cache.set('obj', _ExitsTheHold())
+    hold = cache._hold_write_transaction()
+    _ExitsTheHold.hold = hold
+    with pytest.raises(RuntimeError, match='rolled back'):
+        with hold:
+            cache.set('inside', 1)
+            cache.get('obj')
+    assert len(_ExitsTheHold.refused) == 1, _ExitsTheHold.refused
+    assert cache.get('inside') is None, 'nothing in the transaction may commit'
+    assert cache.set('after', 1) is True  # The write lock was released.
+    cache.close()

@@ -431,7 +431,7 @@ impl Cache {
     /// Test hook until `transact()` lands (Phase 6b): a context manager holding a write
     /// transaction. Operations by the same thread inside it run in the transaction.
     fn _hold_write_transaction(slf: Py<Self>) -> WriteHold {
-        WriteHold { cache: slf, held: Mutex::new(None) }
+        WriteHold { cache: slf, held: Mutex::new(None), abandoned: AtomicBool::new(false) }
     }
 }
 
@@ -574,6 +574,10 @@ impl KeyIterator {
 pub(crate) struct WriteHold {
     cache: Py<Cache>,
     held: Mutex<Option<HeldTransaction>>,
+    /// Set when an `__exit__` from inside one of the transaction's own operations was refused (it
+    /// rolls back when that operation returns), so the `with` statement's own `__exit__` reports
+    /// that rather than success.
+    abandoned: AtomicBool,
 }
 
 #[pymethods]
@@ -582,7 +586,11 @@ impl WriteHold {
         let cache = self.cache.get();
         cache.ensure_open();
         let held = crate::detach(py, || cache.store.begin_hold(cache.timeout)).map_err(to_py_err)?;
-        *self.held.lock().unwrap_or_else(PoisonError::into_inner) = Some(held);
+        self.abandoned.store(false, Ordering::Release);
+        let mut slot = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let old = slot.replace(held);
+        drop(slot);
+        drop(old); // Ending one (unreachable: the write lock serializes holds) never runs under the mutex.
         Ok(())
     }
 
@@ -594,8 +602,18 @@ impl WriteHold {
         _traceback: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         let held = self.held.lock().unwrap_or_else(PoisonError::into_inner).take();
-        if let Some(held) = held {
-            held.finish(exc_type.is_none()).map_err(to_py_err)?;
+        match held {
+            Some(held) => {
+                let result = held.finish(exc_type.is_none());
+                if matches!(result, Err(Error::EndInsideOperation)) {
+                    self.abandoned.store(true, Ordering::Release);
+                }
+                result.map_err(to_py_err)?;
+            }
+            None if exc_type.is_none() && self.abandoned.swap(false, Ordering::AcqRel) => {
+                return Err(to_py_err(Error::TransactionAborted));
+            }
+            None => {}
         }
         Ok(false)
     }
