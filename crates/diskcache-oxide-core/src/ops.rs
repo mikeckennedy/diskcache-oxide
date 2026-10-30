@@ -106,8 +106,10 @@ fn expire_time(now: f64, expire: Option<f64>) -> Option<f64> {
 impl Store {
     /// Calls `decode(mode, value)` on the live value of `key` and returns its result with the entry's
     /// expire time, or `None` on a miss. For an inline value `decode` runs while the connection is
-    /// held, straight from SQLite's row buffer, so it must not call back into the cache; it may run
-    /// more than once. A value file is read with no connection held (see `spill`).
+    /// held, straight from SQLite's row buffer; it may run more than once. It may call back into the
+    /// cache (a pickle hook): that nested operation runs at gate depth > 0, where nothing waits on
+    /// this thread, and inside a held transaction it reuses the transaction's connection. A value
+    /// file is read with no connection held (see `spill`).
     pub fn get_with<T>(
         &self,
         timeout: Duration,
