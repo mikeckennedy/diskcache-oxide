@@ -57,8 +57,9 @@ pub struct NewRow<'a> {
 
 /// The previous version of a row that a write replaced or deleted.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "its value file is unlinked only if it's returned through `Store::write_files`"]
 pub struct Removed {
-    /// Its value file, which the caller unlinks after the transaction commits.
+    /// Its value file, which `Store::write_files` unlinks once the transaction commits.
     pub filename: Option<String>,
 }
 

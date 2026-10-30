@@ -43,7 +43,7 @@ use crate::genlock::{Slots, WriteLock};
 use crate::open::{self, Limits, Requested};
 use crate::poison::HoldGuard;
 use crate::pool::{Pool, PooledConn};
-use crate::rows::RowWriter;
+use crate::rows::{Removed, RowWriter};
 use crate::{Error, Result, lockwait};
 
 /// Default `max_connections` (04-design.md section 2).
@@ -141,6 +141,51 @@ struct Pinned {
     owner: ThreadId,
     generation: u64,
     conn: PooledConn,
+    /// Value files its writes replaced or created, settled when it ends (see [`Store::write_files`]).
+    files: RefCell<HeldFiles>,
+}
+
+/// A held transaction's value files, relative to the cache directory. The ones it replaced or
+/// deleted are unlinked once it commits; the ones it created, once it rolls back.
+#[derive(Debug, Default)]
+struct HeldFiles {
+    removed: Vec<String>,
+    created: Vec<String>,
+}
+
+/// What a write returns through [`Store::write_files`]: its result, and the value files (relative
+/// to the cache directory) it replaced or deleted, and pointed a row at.
+#[derive(Debug)]
+pub(crate) struct Changed<T> {
+    value: T,
+    removed: Vec<String>,
+    created: Option<String>,
+}
+
+impl<T> Changed<T> {
+    /// A write that touched no value file.
+    pub fn unchanged(value: T) -> Self {
+        Self { value, removed: Vec::new(), created: None }
+    }
+
+    /// A write that replaced or deleted the rows in `removed`.
+    pub fn removing(value: T, removed: impl IntoIterator<Item = Removed>) -> Self {
+        Self { value, removed: removed.into_iter().filter_map(|r| r.filename).collect(), created: None }
+    }
+
+    /// And pointed a row at the value file `created`.
+    pub fn creating(self, created: Option<String>) -> Self {
+        Self { created, ..self }
+    }
+}
+
+/// How a write takes the write lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LockPriority {
+    Normal,
+    /// A maintenance loop that just stepped aside for waiting writers between chunks takes it back
+    /// with priority (see [`WriteLock::lock_until_with_priority`]).
+    AfterYield,
 }
 
 /// Where a held transaction's connection is.
@@ -205,9 +250,9 @@ impl<'s, 'g> Lend<'s, 'g> {
         Self { store, gate, pinned: Some(pinned) }
     }
 
-    fn conn(&self) -> &Connection {
+    fn pinned(&self) -> &Pinned {
         // Always Some until drop.
-        self.pinned.as_ref().map_or_else(|| unreachable!("lend used after drop"), |p| p.conn.conn())
+        self.pinned.as_deref().unwrap_or_else(|| unreachable!("lend used after drop"))
     }
 }
 
@@ -229,12 +274,14 @@ impl Drop for Lend<'_, '_> {
             PinnedSlot::Lent { abandoned: Some(abandoned), .. } => {
                 self.store.pinned_active.store(false, Ordering::Release);
                 drop(slot);
-                let _ = close_pinned(self.store, self.gate, pinned, false, Duration::ZERO);
+                let (_, garbage) = close_pinned(self.store, self.gate, pinned, false, Duration::ZERO);
                 // In `HeldTransaction::end`'s order: the write lock, the D-020 hold, then the gate level.
                 let Abandoned { write_word, hold, share } = abandoned;
                 self.store.write_lock.release_raw(write_word);
                 drop(hold);
                 drop(share);
+                // This operation's own gate level is still held, but not the write lock.
+                self.store.unlink(garbage);
             }
             _ => *slot = PinnedSlot::Here(pinned),
         }
@@ -512,7 +559,7 @@ impl Store {
     /// Runs a read. `read` may run several times (each attempt starts from scratch), so it must
     /// have no side effects outside the database.
     pub fn read<T>(&self, timeout: Duration, mut read: impl FnMut(&Connection) -> Result<T>) -> Result<T> {
-        if let Some(result) = self.on_pinned(|conn| read(conn)) {
+        if let Some(result) = self.on_pinned(|pinned| read(pinned.conn.conn())) {
             return result;
         }
         // Fast path: one attempt with no busy wait, no deadline and no clock read. WAL readers almost
@@ -537,44 +584,64 @@ impl Store {
 
     /// Runs `write` inside one `BEGIN IMMEDIATE` transaction and commits it. Like [`Store::read`],
     /// `write` may run several times and must have no side effects outside the transaction; work
-    /// such as writing a value file happens before calling this.
+    /// such as writing a value file happens before calling this. A write that replaces, deletes or
+    /// creates value files goes through `Store::write_files` instead.
     pub fn write<T>(
         &self,
         timeout: Duration,
-        write: impl FnMut(&RowWriter<'_>, &Connection) -> Result<T>,
-    ) -> Result<T> {
-        self.write_as(timeout, false, write)
-    }
-
-    /// [`Store::write`] for a maintenance loop that just stepped aside for waiting writers between
-    /// chunks: it takes the write lock with priority (see [`WriteLock::lock_until_with_priority`]).
-    pub(crate) fn write_after_yield<T>(
-        &self,
-        timeout: Duration,
-        write: impl FnMut(&RowWriter<'_>, &Connection) -> Result<T>,
-    ) -> Result<T> {
-        self.write_as(timeout, true, write)
-    }
-
-    fn write_as<T>(
-        &self,
-        timeout: Duration,
-        priority: bool,
         mut write: impl FnMut(&RowWriter<'_>, &Connection) -> Result<T>,
     ) -> Result<T> {
-        let start = Instant::now();
-        let deadline = lockwait::deadline_after(start, timeout);
+        self.write_files(timeout, LockPriority::Normal, |writer, conn| write(writer, conn).map(Changed::unchanged))
+    }
+
+    /// [`Store::write`] for a write that replaces, deletes or creates value files: `write`
+    /// returns them in a [`Changed`]. Committed on its own, the replaced files are unlinked at once.
+    /// Inside a held transaction, nothing is final until it ends: they are recorded on it, while
+    /// the operation still has its connection, and settled when it commits or rolls back.
+    pub(crate) fn write_files<T>(
+        &self,
+        timeout: Duration,
+        priority: LockPriority,
+        mut write: impl FnMut(&RowWriter<'_>, &Connection) -> Result<Changed<T>>,
+    ) -> Result<T> {
         // 0. In a child forked inside a transaction on this file, writes can never succeed (D-020):
         // fail before waiting on anything.
         crate::poison::check_writable(self.file_id)?;
         // A thread holding a write transaction writes inside it, on its pinned connection.
-        if let Some(result) = self.on_pinned(|conn| write(&RowWriter::new(conn, timeout), conn)) {
+        if let Some(result) = self.on_pinned(|pinned| {
+            let changed = write(&RowWriter::new(pinned.conn.conn(), timeout), pinned.conn.conn())?;
+            let mut files = pinned.files.borrow_mut();
+            files.removed.extend(changed.removed);
+            files.created.extend(changed.created);
+            Ok(changed.value)
+        }) {
             return result;
         }
+        let changed = self.write_unpinned(timeout, priority, write)?;
+        self.unlink(changed.removed);
+        Ok(changed.value)
+    }
+
+    /// Unlinks value files, by their path relative to the cache directory. One already gone is fine.
+    pub(crate) fn unlink(&self, files: impl IntoIterator<Item = String>) {
+        for relative in files {
+            let _ = std::fs::remove_file(self.directory.join(relative));
+        }
+    }
+
+    /// The write path outside a held transaction, after step 0 of `Store::write_files`.
+    fn write_unpinned<T>(
+        &self,
+        timeout: Duration,
+        priority: LockPriority,
+        mut write: impl FnMut(&RowWriter<'_>, &Connection) -> Result<T>,
+    ) -> Result<T> {
+        let start = Instant::now();
+        let deadline = lockwait::deadline_after(start, timeout);
         // 1. The write lock, before the gate. At depth > 0 never wait for it (see the module docs).
         let top_level = GATE.own_depth() == 0;
         let token = if top_level {
-            let token = if priority {
+            let token = if priority == LockPriority::AfterYield {
                 self.write_lock.lock_until_with_priority(deadline)
             } else {
                 self.write_lock.lock_until(deadline)
@@ -792,7 +859,7 @@ impl Store {
     /// The connection is lent to `f` (moved out of `pinned`), not used under the mutex: `f` may run
     /// Python (a pickle hook) that calls the cache again, and that nested operation must find the
     /// same connection rather than wait for a mutex its own thread holds.
-    fn on_pinned<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Option<Result<T>> {
+    fn on_pinned<T>(&self, f: impl FnOnce(&Pinned) -> Result<T>) -> Option<Result<T>> {
         if !self.pinned_active.load(Ordering::Relaxed) {
             return None;
         }
@@ -805,7 +872,7 @@ impl Store {
             if pinned.generation != gate::generation() {
                 return Some(Err(Error::ForkPoisoned));
             }
-            return Some(f(pinned.conn.conn()));
+            return Some(f(&pinned));
         }
         let me = std::thread::current().id();
         let pinned = {
@@ -822,7 +889,7 @@ impl Store {
             held
         };
         let lend = Lend::new(self, &gate, pinned);
-        let result = f(lend.conn());
+        let result = f(lend.pinned());
         drop(lend);
         drop(gate);
         Some(result)
@@ -872,8 +939,12 @@ impl Store {
         {
             let gate = GATE.enter_shared();
             let mut pinned = self.pinned.lock().unwrap_or_else(PoisonError::into_inner);
-            *pinned =
-                PinnedSlot::Here(Pinned { owner: std::thread::current().id(), generation: gate::generation(), conn });
+            *pinned = PinnedSlot::Here(Pinned {
+                owner: std::thread::current().id(),
+                generation: gate::generation(),
+                conn,
+                files: RefCell::default(),
+            });
             self.pinned_active.store(true, Ordering::Release);
             drop(pinned);
             drop(gate);
@@ -1052,11 +1123,13 @@ impl HeldTransaction {
             }
         };
         self.write_word = None;
-        let result = pinned.map_or(Ok(()), |p| close_pinned(&self.store, &gate, p, commit, self.timeout));
+        let (result, garbage) =
+            pinned.map_or((Ok(()), Vec::new()), |p| close_pinned(&self.store, &gate, p, commit, self.timeout));
         drop(gate);
         self.store.write_lock.release_raw(write_word);
         self.hold.take();
         self.share.take();
+        self.store.unlink(garbage);
         result
     }
 
@@ -1079,12 +1152,21 @@ impl Drop for HeldTransaction {
     }
 }
 
-/// Commits or rolls back a held transaction's connection and returns it to the pool. One
-/// inherited across `fork()` is forgotten instead: the parent still owns that transaction.
-fn close_pinned(store: &Store, gate: &SharedGuard<'_>, pinned: Pinned, commit: bool, timeout: Duration) -> Result<()> {
+/// Commits or rolls back a held transaction's connection and returns it to the pool, with the value
+/// files that are now garbage, for the caller to unlink once it has released the write lock and the
+/// gate (a held `clear()` can leave many; no row refers to them any more, and names are never
+/// reused). One inherited across `fork()` is forgotten instead, files and all: the parent still owns
+/// that transaction.
+fn close_pinned(
+    store: &Store,
+    gate: &SharedGuard<'_>,
+    pinned: Pinned,
+    commit: bool,
+    timeout: Duration,
+) -> (Result<()>, Vec<String>) {
     if pinned.generation != gate::generation() {
         pinned.conn.forget();
-        return Err(Error::ForkPoisoned);
+        return (Err(Error::ForkPoisoned), Vec::new());
     }
     let sql = if commit { "COMMIT" } else { "ROLLBACK" };
     let outcome = pinned.conn.conn().execute_batch(sql).map_err(|e| Error::from_sqlite(e, timeout));
@@ -1093,7 +1175,11 @@ fn close_pinned(store: &Store, gate: &SharedGuard<'_>, pinned: Pinned, commit: b
         let _ = pinned.conn.conn().execute_batch("ROLLBACK");
     }
     store.give_back(gate, pinned.conn);
-    outcome
+    // Only now is it final which version of each row stands. A failed COMMIT didn't commit (SQLite
+    // reports an error only then), and the ROLLBACK above ended it.
+    let files = pinned.files.into_inner();
+    let garbage = if commit && outcome.is_ok() { files.removed } else { files.created };
+    (outcome, garbage)
 }
 
 /// Opens a store's pin on its database file, and the file's id. The pin is a SQLite connection that

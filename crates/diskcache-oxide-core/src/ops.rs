@@ -15,7 +15,7 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::rows::{NewRow, Removed, RowWriter, Stored};
 use crate::schema::{KEY_TYPE_STR, MODE_INT, MODE_REAL};
 use crate::spill::{self, PendingFile};
-use crate::store::Store;
+use crate::store::{Changed, LockPriority, Store};
 use crate::{Error, Result};
 
 /// A value to store.
@@ -138,7 +138,9 @@ impl Store {
                 if let Some(Ok(Some(removed))) =
                     self.write_nowait(|writer| writer.delete_version(file.id, file.store_seq))
                 {
-                    unlink(self, [removed]);
+                    // Never inside a held transaction: its holder keeps a `HeldShare`, so it's at
+                    // gate depth > 0, where `write_nowait` refuses. This commit is final.
+                    self.unlink(removed.filename);
                 }
                 return Ok(None);
             }
@@ -194,34 +196,31 @@ impl Store {
     /// Stores `value` under `key`, then culls. Always returns `Ok(true)` on success, like diskcache.
     pub fn set(&self, timeout: Duration, key: &str, value: Value<'_>, expire: Option<f64>, now: f64) -> Result<bool> {
         let pending = self.spill_if_large(value)?;
-        let result = self.write(timeout, |writer, tx| {
+        let result = self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             let before = prelude(tx, key, now, timeout)?;
             let (delta, mut removed) =
                 put_value(writer, key, value, pending.as_ref(), now, expire_time(now, expire), before.old())?;
             removed.extend(cull(writer, tx, &before, delta, now, timeout)?);
-            Ok(removed)
+            Ok(Changed::removing((), removed).creating(pending.as_ref().map(|p| p.relative.clone())))
         });
-        let removed = settle_with(pending.as_ref(), result, |_| true)?;
-        unlink(self, removed);
+        settle_with(pending.as_ref(), result, |()| true)?;
         Ok(true)
     }
 
     /// Stores `value` only if `key` is missing or expired. Returns whether it stored.
     pub fn add(&self, timeout: Duration, key: &str, value: Value<'_>, expire: Option<f64>, now: f64) -> Result<bool> {
         let pending = self.spill_if_large(value)?;
-        let result = self.write(timeout, |writer, tx| {
+        let result = self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             let before = prelude(tx, key, now, timeout)?;
             if before.live.is_some() {
-                return Ok((false, Vec::new()));
+                return Ok(Changed::removing(false, []));
             }
             let (delta, mut removed) =
                 put_value(writer, key, value, pending.as_ref(), now, expire_time(now, expire), before.old())?;
             removed.extend(cull(writer, tx, &before, delta, now, timeout)?);
-            Ok((true, removed))
+            Ok(Changed::removing(true, removed).creating(pending.as_ref().map(|p| p.relative.clone())))
         });
-        let (added, removed) = settle_with(pending.as_ref(), result, |(added, _)| *added)?;
-        unlink(self, removed);
-        Ok(added)
+        settle_with(pending.as_ref(), result, |added| *added)
     }
 
     /// Writes a value file for a large inline value, before any lock or connection is taken.
@@ -236,15 +235,13 @@ impl Store {
 
     /// Deletes `key`. Returns whether a live entry was deleted; an expired entry acts missing.
     pub fn delete(&self, timeout: Duration, key: &str, now: f64) -> Result<bool> {
-        let removed = self.write(timeout, |writer, tx| {
+        self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             if live_row(tx, key, now, timeout)?.is_none() {
-                return Ok(None);
+                return Ok(Changed::removing(false, []));
             }
-            writer.delete_key(key)
-        })?;
-        let deleted = removed.is_some();
-        unlink(self, removed);
-        Ok(deleted)
+            let removed = writer.delete_key(key)?;
+            Ok(Changed::removing(removed.is_some(), removed))
+        })
     }
 
     /// Removes the live value of `key` and returns it, still encoded, or `None` if it was missing or
@@ -252,7 +249,7 @@ impl Store {
     /// Python (`__setstate__`) that uses this cache, and inside the transaction a write from it
     /// would wait out the whole timeout behind its own thread (roadmap Phase 2.5, item 7).
     pub fn pop(&self, timeout: Duration, key: &str, now: f64) -> Result<Option<Popped>> {
-        let (value, removed) = self.write(timeout, |writer, tx| {
+        self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             let found = {
                 let mut stmt = tx
                     .prepare_cached(
@@ -287,14 +284,14 @@ impl Store {
                 }
             };
             match found {
-                Some(value) => Ok((Some(value), writer.delete_key(key)?)),
+                Some(value) => Ok(Changed::removing(Some(value), writer.delete_key(key)?)),
                 // A spilled row whose file is gone: remove it, and report a miss.
-                None if live_row(tx, key, now, timeout)?.is_some() => Ok((None, writer.delete_key(key)?)),
-                None => Ok((None, None)),
+                None if live_row(tx, key, now, timeout)?.is_some() => {
+                    Ok(Changed::removing(None, writer.delete_key(key)?))
+                }
+                None => Ok(Changed::removing(None, [])),
             }
-        })?;
-        unlink(self, removed);
-        Ok(value)
+        })
     }
 
     /// Sets a live entry's expiry (`None` = never) without counting as a store. Returns whether `key`
@@ -318,7 +315,7 @@ impl Store {
         default: Option<Number>,
         now: f64,
     ) -> Result<Number> {
-        let (result, removed) = self.write(timeout, |writer, tx| {
+        self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             let before = prelude(tx, key, now, timeout)?;
             let (current, expire) = match &before.live {
                 Some(row) => (number_of(row)?, row.expire_time),
@@ -327,10 +324,8 @@ impl Store {
             let next = current.add(delta)?;
             let (delta_size, mut removed) = put_value(writer, key, next.value(), None, now, expire, before.old())?;
             removed.extend(cull(writer, tx, &before, delta_size, now, timeout)?);
-            Ok((next, removed))
-        })?;
-        unlink(self, removed);
-        Ok(result)
+            Ok(Changed::removing(next, removed))
+        })
     }
 }
 
@@ -572,14 +567,6 @@ fn number_of(row: &LiveRow) -> Result<Number> {
     }
 }
 
-/// Unlinks the value files of removed rows, after their transaction committed. A file that's
-/// already gone is fine. Nothing spills until step 5, so this is usually empty.
-fn unlink(store: &Store, removed: impl IntoIterator<Item = Removed>) {
-    for filename in removed.into_iter().filter_map(|r| r.filename) {
-        let _ = std::fs::remove_file(store.directory().join(filename));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -753,6 +740,49 @@ mod tests {
             keys.iter().map(|k| k[1..].parse::<usize>().unwrap()).eq(first..30),
             "evicted out of store order: {keys:?}"
         );
+    }
+
+    /// Every value file under `dir`.
+    fn value_files(dir: &Path) -> std::collections::BTreeSet<std::path::PathBuf> {
+        let mut found = std::collections::BTreeSet::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(at) = stack.pop() {
+            for entry in std::fs::read_dir(&at).unwrap().map(Result::unwrap) {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "val") {
+                    found.insert(path);
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn value_files_written_by_an_operation_nested_in_a_held_transaction_settle_when_it_ends() {
+        // A write nested inside another operation (a pickle hook decoding a value) runs on the lent
+        // connection. Its value files must wait for the transaction's end like any other's.
+        let big = |byte: u8| vec![byte; spill::THRESHOLD];
+        for commit in [false, true] {
+            let tmp = TempDir::new("ops-held-files");
+            let s = store(tmp.path(), Requested::default());
+            s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big(b'x') }, None, NOW).unwrap();
+            s.set(T, "trigger", text("t"), None, NOW).unwrap();
+            let before = value_files(tmp.path());
+            let held = s.begin_hold(T).unwrap();
+            s.get_with(T, "trigger", NOW, |_, _| {
+                s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big(b'y') }, None, NOW)
+            })
+            .unwrap();
+            assert!(before.is_subset(&value_files(tmp.path())), "a value file went before the transaction ended");
+            held.finish(commit).unwrap();
+            let after = value_files(tmp.path());
+            let expected = if commit { big(b'y') } else { big(b'x') };
+            assert_eq!(get(&s, "k", NOW).map(|(v, _)| v), Some(expected), "commit = {commit}");
+            assert_eq!(after.len(), 1, "commit = {commit}: a replaced or rolled-back file was left");
+            assert_eq!(after == before, !commit, "commit = {commit}");
+        }
     }
 }
 

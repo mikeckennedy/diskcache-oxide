@@ -121,3 +121,97 @@ def test_pop_inside_a_held_transaction_decodes_with_the_same_transaction_still_u
     finally:
         _REENTRANT.clear()
         cache.close()
+
+
+_BIG = 70_000  # over the 64 KiB spill threshold
+
+
+def _value_files(directory: Path) -> set[Path]:
+    return set(directory.rglob('*.val'))
+
+
+def _change_spilled_key(cache: Cache, op: str) -> None:
+    if op == 'set':
+        cache.set('k', b'y' * _BIG)
+    elif op == 'set twice':
+        # The second replaces a file this transaction created.
+        cache.set('k', b'z' * _BIG)
+        cache.set('k', b'y' * _BIG)
+    elif op == 'add':
+        cache.delete('k')
+        assert cache.add('k', b'y' * _BIG)
+    elif op == 'delete':
+        assert cache.delete('k')
+    elif op == 'pop':
+        assert cache.pop('k') == b'x' * _BIG
+    elif op == 'clear':
+        cache.clear()
+
+
+@pytest.mark.parametrize('op', ['set', 'set twice', 'add', 'delete', 'pop', 'clear'])
+def test_a_rolled_back_held_transaction_keeps_spilled_values_and_leaves_no_new_files(tmp_path: Path, op: str) -> None:
+    # Value files the transaction replaced or deleted are unlinked only once it commits, and the
+    # ones it created are removed when it rolls back (review 07).
+    cache = Cache(tmp_path / 'c')
+    try:
+        cache.set('k', b'x' * _BIG)
+        before = _value_files(tmp_path / 'c')
+        with pytest.raises(RuntimeError, match='abort'):
+            with cache._hold_write_transaction():
+                _change_spilled_key(cache, op)
+                raise RuntimeError('abort')
+        assert cache.get('k') == b'x' * _BIG
+        assert _value_files(tmp_path / 'c') == before
+    finally:
+        cache.close()
+
+
+@pytest.mark.parametrize('op', ['set', 'set twice', 'add', 'delete', 'pop', 'clear'])
+def test_a_committed_held_transaction_unlinks_the_spilled_values_it_replaced(tmp_path: Path, op: str) -> None:
+    cache = Cache(tmp_path / 'c')
+    try:
+        cache.set('k', b'x' * _BIG)
+        before = _value_files(tmp_path / 'c')
+        with cache._hold_write_transaction():
+            _change_spilled_key(cache, op)
+            assert before <= _value_files(tmp_path / 'c'), 'a value file went before the commit'
+        after = _value_files(tmp_path / 'c')
+        assert not (before & after), 'the replaced value file outlived the commit'
+        expected = b'y' * _BIG if op in ('set', 'set twice', 'add') else None
+        assert cache.get('k') == expected
+        assert len(after) == (1 if expected else 0)
+    finally:
+        cache.close()
+
+
+@pytest.mark.parametrize('commit', [False, True])
+@pytest.mark.parametrize('op', ['expire', 'cull'])
+def test_held_maintenance_unlinks_value_files_only_once_it_commits(tmp_path: Path, op: str, commit: bool) -> None:
+    # cull_limit=0: no inline cull on set. For cull, 20 spilled values (1.4 MB) are over the 1 MiB
+    # size_limit; for expire, one value has expired.
+    cache = Cache(tmp_path / 'c', size_limit=1 << 20, cull_limit=0)
+    try:
+        if op == 'expire':
+            cache.set('k', b'x' * _BIG, expire=0.05)
+            time.sleep(0.1)
+        else:
+            for i in range(20):
+                cache.set(f'k{i}', b'x' * _BIG)
+        before = _value_files(tmp_path / 'c')
+        try:
+            with cache._hold_write_transaction():
+                removed = cache.expire() if op == 'expire' else cache.cull()
+                assert removed >= 1
+                assert _value_files(tmp_path / 'c') == before, 'a value file went before the commit'
+                if not commit:
+                    raise RuntimeError('abort')
+        except RuntimeError:
+            assert not commit
+        after = _value_files(tmp_path / 'c')
+        if commit:
+            assert after < before and len(before) - len(after) == removed
+        else:
+            assert after == before
+            assert len(cache) == len(before)
+    finally:
+        cache.close()

@@ -18,7 +18,7 @@ use rusqlite::Connection;
 use crate::gate;
 use crate::rows::{Removed, RowWriter};
 use crate::schema::KEY_TYPE_STR;
-use crate::store::Store;
+use crate::store::{Changed, LockPriority, Store};
 use crate::{Error, Result};
 
 /// Rows per maintenance transaction.
@@ -108,18 +108,19 @@ impl Store {
     pub fn cull(&self, timeout: Duration, now: f64) -> Result<u64> {
         let mut removed = self.expire(timeout, now)?;
         loop {
-            let (over, batch) = self.write(timeout, |writer, conn| {
+            let (over, batch) = self.write_files(timeout, LockPriority::Normal, |writer, conn| {
                 let (size_limit, size): (i64, i64) = conn
                     .prepare_cached("SELECT size_limit, size FROM totals WHERE only = 1")
                     .and_then(|mut stmt| stmt.query_row([], |r| Ok((r.get(0)?, r.get(1)?))))
                     .map_err(|e| Error::from_sqlite(e, timeout))?;
                 if crate::ops::volume_in(conn, size, timeout)? < size_limit {
-                    return Ok((false, Vec::new()));
+                    return Ok(Changed::removing((false, 0), []));
                 }
-                Ok((true, writer.delete_oldest(CHUNK)?))
+                let batch = writer.delete_oldest(CHUNK)?;
+                Ok(Changed::removing((true, count(batch.len())), batch))
             })?;
-            let done = !over || batch.is_empty();
-            removed += self.finish_chunk(batch);
+            let done = !over || batch == 0;
+            removed += batch;
             if done {
                 return Ok(removed);
             }
@@ -161,30 +162,23 @@ impl Store {
         let mut total = 0;
         let mut yielded = false;
         loop {
-            let chunk = |writer: &RowWriter<'_>, conn: &Connection| -> Result<Vec<Removed>> {
+            let chunk = |writer: &RowWriter<'_>, conn: &Connection| -> Result<Changed<u64>> {
                 writer.raise_seq_floor()?;
                 let rows = delete_chunk(conn)?;
                 let size: i64 = rows.iter().map(|(size, _)| size).sum();
                 writer.adjust_totals_after_delete(i64::try_from(rows.len()).unwrap_or(i64::MAX), size)?;
-                Ok(rows.into_iter().map(|(_, filename)| Removed { filename }).collect::<Vec<_>>())
+                let removed = count(rows.len());
+                Ok(Changed::removing(removed, rows.into_iter().map(|(_, filename)| Removed { filename })))
             };
             // After stepping aside between chunks, take the lock back with priority.
-            let batch = if yielded { self.write_after_yield(timeout, chunk)? } else { self.write(timeout, chunk)? };
-            if batch.is_empty() {
+            let priority = if yielded { LockPriority::AfterYield } else { LockPriority::Normal };
+            let batch = self.write_files(timeout, priority, chunk)?;
+            if batch == 0 {
                 return Ok(total);
             }
-            total += self.finish_chunk(batch);
+            total += batch;
             yielded = self.pause_between_chunks();
         }
-    }
-
-    /// Unlinks a committed chunk's value files and returns how many rows it removed.
-    fn finish_chunk(&self, batch: Vec<Removed>) -> u64 {
-        let count = u64::try_from(batch.len()).unwrap_or(u64::MAX);
-        for filename in batch.into_iter().filter_map(|r| r.filename) {
-            let _ = std::fs::remove_file(self.directory().join(filename));
-        }
-        count
     }
 
     /// The breather between maintenance chunks, only while a same-process writer waits on the write
@@ -211,6 +205,11 @@ impl Store {
         });
         true
     }
+}
+
+/// A row count as the `u64` the maintenance calls return.
+fn count(rows: usize) -> u64 {
+    u64::try_from(rows).unwrap_or(u64::MAX)
 }
 
 fn row_removed(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Option<String>)> {
