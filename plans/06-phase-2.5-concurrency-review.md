@@ -239,6 +239,6 @@ As in the roadmap: every review finding resolved or explicitly accepted, a clean
   - **What a fork costs and why.**
     - Closing idle connections before every fork (`e817ba2`, so the child inherits no lock records) made the closes the process's last lock-holding connections on the file. The store's pin holds no lock, so it doesn't count: the first version of this entry got that wrong.
     - In a process that is the file's only user, SQLite checkpointed and deleted the WAL inside the before-fork hook, with every other thread waiting. Measured with plain `sqlite3` on a 3.9 MiB WAL, that close takes 4.8 ms, and a close without the checkpoint takes 0.07 ms.
-    - `953b7f5` turns that checkpoint off for those closes. The WAL stays, and the next connection rebuilds its index instead: about 0.7 ms more on the first operation per cache, on one thread rather than with the whole process stopped.
+    - `953b7f5` turns that checkpoint off for those closes. The WAL stays, and the next connection rebuilds its index instead: about 1 ms more on the first operation per cache in the bench (0.7 ms with plain `sqlite3`). Only threads and processes opening that cache wait for the rebuild, not the whole process.
     - With other processes on the file (a pre-fork server's workers), their locks rule the checkpoint out anyway.
     - Accepted: pre-fork servers fork to start or respawn workers, not per request.
