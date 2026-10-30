@@ -251,15 +251,50 @@ def test_maintenance_takes_its_own_timeout(held_write_lock, method: str) -> None
     # A longer per-call timeout outlasts the peer.
     import threading
 
-    threading.Timer(0.3, peer.rollback).start()
-    assert getattr(cache, method)(timeout=10) == 10
+    release = threading.Timer(0.3, peer.rollback)
+    release.start()
+    try:
+        assert getattr(cache, method)(timeout=10) == 10
+    finally:
+        release.cancel()
+        release.join()
+
+
+@pytest.mark.parametrize('method', ['clear', 'expire', 'cull'])
+def test_maintenance_timeout_also_bounds_another_threads_write(tmp_path: Path, method: str) -> None:
+    import threading
+
+    cache = Cache(tmp_path / 'c', timeout=60)
+    cache.set('k', 'v')
+    other = Cache(tmp_path / 'c', timeout=60)
+    holding, done = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        with other._hold_write_transaction():
+            holding.set()
+            done.wait(10)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert holding.wait(10)
+        started = time.monotonic()
+        with pytest.raises(TimeoutError):
+            getattr(cache, method)(timeout=0.2)
+        assert time.monotonic() - started < 5
+    finally:
+        done.set()
+        holder.join()
+    other.close()
+    cache.close()
 
 
 @pytest.mark.parametrize('method', ['clear', 'expire', 'cull', 'checkpoint'])
 @pytest.mark.parametrize('make', [lambda p: Cache(p), lambda p: NullCache(p)], ids=['Cache', 'NullCache'])
 def test_maintenance_timeout_is_validated(tmp_path: Path, make, method: str) -> None:  # type: ignore[no-untyped-def]
     cache = make(tmp_path / 'c')
-    for bad, error in [(True, TypeError), ('1', TypeError), (-1, ValueError), (float('inf'), ValueError)]:
+    bad_values = [(True, TypeError), ('1', TypeError), (-1, ValueError), (float('inf'), ValueError), (float('nan'), ValueError), (10**400, OverflowError)]
+    for bad, error in bad_values:
         with pytest.raises(error):
             getattr(cache, method)(timeout=bad)
     getattr(cache, method)(timeout=None)
@@ -267,10 +302,21 @@ def test_maintenance_timeout_is_validated(tmp_path: Path, make, method: str) -> 
     cache.close()
 
 
-def test_null_cache_rejects_a_negative_timeout_like_cache(tmp_path: Path) -> None:
+def test_null_cache_validates_its_timeout_like_cache(tmp_path: Path) -> None:
     for make in (Cache, NullCache):
         with pytest.raises(ValueError):
             make(tmp_path / 'c', timeout=-1)
+        cache = make(tmp_path / 'c', timeout=None)
+        assert cache.timeout == 60
+        cache.close()
+
+
+def test_checkpoint_timeout_is_keyword_only(tmp_path: Path) -> None:
+    for make in (Cache, NullCache):
+        cache = make(tmp_path / 'c')
+        with pytest.raises(TypeError):
+            cache.checkpoint(0.5)  # type: ignore[misc]
+        cache.close()
 
 
 def test_null_cache_clear_passes_the_timeout_to_its_invalidate_cache(held_write_lock) -> None:  # type: ignore[no-untyped-def]

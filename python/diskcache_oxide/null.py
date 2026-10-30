@@ -50,7 +50,8 @@ def _check_seconds(name: str, value: object) -> None:
 def _check_timeout(value: object) -> None:
     """As `Cache` validates a timeout: a number of seconds (not `bool`), finite and not negative."""
     _check_seconds('timeout', value)
-    if isinstance(value, int | float) and not 0 <= value < float('inf'):
+    # float() first, as `Cache` converts: an int too large for a float raises OverflowError.
+    if isinstance(value, int | float) and not 0 <= float(value) < float('inf'):
         raise ValueError(f'timeout must be a non-negative number of seconds, got {value}')
 
 
@@ -74,7 +75,7 @@ class NullCache:
     def __init__(
         self,
         directory: str | os.PathLike[str] | None = None,
-        timeout: float = 60.0,
+        timeout: float | None = None,
         *,
         size_limit: int | None = None,
         cull_limit: int | None = None,
@@ -89,7 +90,7 @@ class NullCache:
     ) -> None:
         _check_timeout(timeout)
         self._directory = None if directory is None else os.fspath(directory)
-        self._timeout = float(timeout)
+        self._timeout = 60.0 if timeout is None else float(timeout)
         self._size_limit = DEFAULT_SIZE_LIMIT if size_limit is None else size_limit
         self._cull_limit = DEFAULT_CULL_LIMIT if cull_limit is None else cull_limit
         self._invalidate = invalidate
@@ -162,7 +163,7 @@ class NullCache:
         """Always 0: a `NullCache` uses no disk."""
         return 0
 
-    def checkpoint(self, timeout: float | None = None) -> bool:
+    def checkpoint(self, *, timeout: float | None = None) -> bool:
         """Always True: there is no write-ahead log to reset."""
         _check_timeout(timeout)
         return True

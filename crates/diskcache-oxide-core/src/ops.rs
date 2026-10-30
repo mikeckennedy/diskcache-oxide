@@ -62,6 +62,25 @@ pub struct Popped {
     pub value: SqlValue,
 }
 
+/// One stored version of a key: its row and its store sequence number (D-011, D-013). An overwrite
+/// keeps the row but gets a new number, so a version names exactly one value. Only the core makes
+/// them, from a row it read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Version {
+    id: i64,
+    store_seq: i64,
+}
+
+/// A live value found by [`Store::get_with`].
+#[derive(Debug, PartialEq)]
+pub struct Hit<T> {
+    /// What `decode` returned.
+    pub value: T,
+    pub expire_time: Option<f64>,
+    /// The version that was decoded, for [`Store::delete_version_nowait`].
+    pub version: Version,
+}
+
 /// What [`Store::pop`] did.
 #[derive(Debug, PartialEq)]
 pub enum Pop {
@@ -117,7 +136,7 @@ fn expire_time(now: f64, expire: Option<f64>) -> Option<f64> {
 
 impl Store {
     /// Calls `decode(mode, value)` on the live value of `key` and returns its result with the entry's
-    /// expire time, or `None` on a miss. For an inline value `decode` runs while the connection is
+    /// expire time and version, or `None` on a miss. For an inline value `decode` runs while the connection is
     /// held, straight from SQLite's row buffer; it may run more than once. It may call back into the
     /// cache (a pickle hook): that nested operation runs at gate depth > 0, where nothing waits on
     /// this thread, and inside a held transaction it reuses the transaction's connection. A value
@@ -128,32 +147,25 @@ impl Store {
         key: &str,
         now: f64,
         mut decode: impl FnMut(i64, ValueRef<'_>) -> Result<T>,
-    ) -> Result<Option<(T, Option<f64>)>> {
+    ) -> Result<Option<Hit<T>>> {
         let mut row = self.read(timeout, |conn| look_up(conn, key, now, timeout, &mut decode))?;
         for _ in 0..spill::OPTIMISTIC_ATTEMPTS {
             let file = match row {
                 Found::Miss => return Ok(None),
-                Found::Inline(value, expire) => return Ok(Some((value, expire))),
+                Found::Inline(hit) => return Ok(Some(hit)),
                 Found::File(file) => file,
             };
             if let Some(bytes) = spill::read(self.directory(), &file.relative, file.size)? {
-                return Ok(Some((decode(file.mode, ValueRef::Blob(&bytes))?, file.expire_time)));
+                return Ok(Some(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?)));
             }
             // Missing or short: overwritten since the row was read, or truly gone.
             row = self.read(timeout, |conn| look_up(conn, key, now, timeout, &mut decode))?;
             if let Found::File(again) = &row
-                && again.id == file.id
-                && again.store_seq == file.store_seq
+                && again.version == file.version
             {
                 // Same version, no readable file: a true miss (D-013). Remove exactly that version,
                 // only if it needs no waiting; a later write's cleanup gets it otherwise.
-                if let Some(Ok(Some(removed))) =
-                    self.write_nowait(|writer| writer.delete_version(file.id, file.store_seq))
-                {
-                    // Never inside a held transaction: its holder keeps a `HeldShare`, so it's at
-                    // gate depth > 0, where `write_nowait` refuses. This commit is final.
-                    self.unlink(removed.filename);
-                }
+                self.delete_version_nowait(file.version);
                 return Ok(None);
             }
         }
@@ -169,8 +181,24 @@ impl Store {
         })?;
         let Some((handle, path, file)) = opened else { return Ok(None) };
         match spill::read_open(handle, &path, file.size)? {
-            Some(bytes) => Ok(Some((decode(file.mode, ValueRef::Blob(&bytes))?, file.expire_time))),
+            Some(bytes) => Ok(Some(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?))),
             None => Ok(None),
+        }
+    }
+
+    /// Deletes exactly `version` (nothing newer, D-013) and its value file, if that needs no waiting
+    /// for the write lock. Best effort: returns whether it removed the row. Skipped, returning
+    /// false, inside a held transaction, at gate depth > 0 and in a child that can't write (see
+    /// `write_nowait`); like any operation, it waits while a fork is pending.
+    pub fn delete_version_nowait(&self, version: Version) -> bool {
+        match self.write_nowait(|writer| writer.delete_version(version.id, version.store_seq)) {
+            Some(Ok(Some(removed))) => {
+                // Never inside a held transaction: its holder keeps a `HeldShare`, so it's at gate
+                // depth > 0, where `write_nowait` refuses. This commit is final.
+                self.unlink(removed.filename);
+                true
+            }
+            _ => false,
         }
     }
 
@@ -263,7 +291,8 @@ impl Store {
     ///
     /// A live row whose mode `refuse` rejects is left in place and reported as [`Pop::Refused`].
     /// The check runs inside the transaction, before the delete, so a value the caller can't decode
-    /// is never destroyed on its way to an error.
+    /// is never destroyed on its way to an error. `refuse` runs with the write lock and a connection
+    /// held, and perhaps more than once: it must be cheap, and must not run Python or use the cache.
     pub fn pop(&self, timeout: Duration, key: &str, now: f64, refuse: impl Fn(i64) -> bool) -> Result<Pop> {
         self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             let found = {
@@ -389,18 +418,23 @@ fn settle_with<T>(pending: Option<&PendingFile>, result: Result<T>, used: impl F
 /// What a lookup found: a decoded inline value, a value file still to read, or nothing.
 enum Found<T> {
     Miss,
-    Inline(T, Option<f64>),
+    Inline(Hit<T>),
     File(FileRow),
 }
 
 /// A live row whose value is in a value file.
 struct FileRow {
-    id: i64,
-    store_seq: i64,
+    version: Version,
     mode: i64,
     relative: String,
     size: i64,
     expire_time: Option<f64>,
+}
+
+impl FileRow {
+    fn hit<T>(&self, value: T) -> Hit<T> {
+        Hit { value, expire_time: self.expire_time, version: self.version }
+    }
 }
 
 const LOOKUP_SQL: &str = "SELECT mode, value, expire_time, filename, size, id, store_seq FROM cache
@@ -419,16 +453,12 @@ fn look_up<T>(
     let Some(row) = rows.next().map_err(sqlite)? else { return Ok(Found::Miss) };
     let mode: i64 = row.get(0).map_err(sqlite)?;
     let expire_time: Option<f64> = row.get(2).map_err(sqlite)?;
-    match row.get::<_, Option<String>>(3).map_err(sqlite)? {
-        Some(relative) => Ok(Found::File(FileRow {
-            id: row.get(5).map_err(sqlite)?,
-            store_seq: row.get(6).map_err(sqlite)?,
-            mode,
-            relative,
-            size: row.get(4).map_err(sqlite)?,
-            expire_time,
-        })),
-        None => Ok(Found::Inline(decode(mode, row.get_ref(1).map_err(sqlite)?)?, expire_time)),
+    let version = Version { id: row.get(5).map_err(sqlite)?, store_seq: row.get(6).map_err(sqlite)? };
+    if let Some(relative) = row.get::<_, Option<String>>(3).map_err(sqlite)? {
+        Ok(Found::File(FileRow { version, mode, relative, size: row.get(4).map_err(sqlite)?, expire_time }))
+    } else {
+        let value = decode(mode, row.get_ref(1).map_err(sqlite)?)?;
+        Ok(Found::Inline(Hit { value, expire_time, version }))
     }
 }
 
@@ -626,6 +656,7 @@ mod tests {
                 ValueRef::Null => Ok(Vec::new()),
             })
             .unwrap()
+            .map(|hit| (hit.value, hit.expire_time))
     }
 
     fn len(store: &Store) -> i64 {
@@ -686,6 +717,74 @@ mod tests {
         assert_eq!(s.pop(T, "k", NOW, |mode| mode == MODE_STR).unwrap(), Pop::Refused { mode: MODE_STR });
         assert_eq!(get(&s, "k", NOW).unwrap(), (b"v".to_vec(), None), "the refused row is still there");
         assert!(matches!(s.pop(T, "k", NOW, |_| false).unwrap(), Pop::Removed(_)));
+    }
+
+    fn version(store: &Store, key: &str) -> Option<Version> {
+        store.get_with(T, key, NOW, |_, _| Ok(())).unwrap().map(|hit| hit.version)
+    }
+
+    #[test]
+    fn a_version_names_exactly_one_stored_value() {
+        let tmp = TempDir::new("ops-version");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "k", text("a"), None, NOW).unwrap();
+        let first = version(&s, "k").unwrap();
+        assert_eq!(version(&s, "k"), Some(first), "reading again names the same version");
+        s.set(T, "k", text("b"), None, NOW).unwrap();
+        let second = version(&s, "k").unwrap();
+        assert_ne!(first, second, "an overwrite is a new version");
+
+        assert!(!s.delete_version_nowait(first), "an older version deletes nothing");
+        assert_eq!(get(&s, "k", NOW).unwrap().0, b"b");
+        assert!(s.delete_version_nowait(second));
+        assert!(get(&s, "k", NOW).is_none());
+        assert!(!s.delete_version_nowait(second), "already gone");
+        assert_eq!(len(&s), 0);
+    }
+
+    #[test]
+    fn deleting_a_spilled_version_removes_its_file() {
+        let tmp = TempDir::new("ops-version-file");
+        let s = store(tmp.path(), Requested::default());
+        let big = vec![b'x'; spill::THRESHOLD];
+        s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
+        assert_eq!(value_files(tmp.path()).len(), 1);
+        assert!(s.delete_version_nowait(version(&s, "k").unwrap()));
+        assert!(value_files(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn deleting_a_version_never_waits_for_the_write_lock() {
+        let tmp = TempDir::new("ops-version-busy");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "k", text("v"), None, NOW).unwrap();
+        let v = version(&s, "k").unwrap();
+
+        // Another thread holds the write lock.
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let holder = {
+            let s = Arc::clone(&s);
+            std::thread::spawn(move || {
+                let held = s.begin_hold(T).unwrap();
+                held_tx.send(()).unwrap();
+                done_rx.recv().unwrap();
+                held.finish(false).unwrap();
+            })
+        };
+        held_rx.recv().unwrap();
+        let started = std::time::Instant::now();
+        assert!(!s.delete_version_nowait(v), "skipped while another thread writes");
+        assert!(started.elapsed() < Duration::from_secs(1));
+        done_tx.send(()).unwrap();
+        holder.join().unwrap();
+        assert!(get(&s, "k", NOW).is_some());
+
+        // This thread's own held transaction: skipped too (gate depth > 0).
+        let held = s.begin_hold(T).unwrap();
+        assert!(!s.delete_version_nowait(v));
+        held.finish(false).unwrap();
+        assert!(s.delete_version_nowait(v), "and works once nothing is held");
     }
 
     #[test]

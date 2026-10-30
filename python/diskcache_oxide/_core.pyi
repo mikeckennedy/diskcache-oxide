@@ -267,8 +267,9 @@ class Cache:
         Works in chunks and lets other writers in between them.
 
         Args:
-            timeout: Seconds each chunk may wait for another process's write lock, for this call
-                only (default: the cache's `timeout`). It bounds each wait, not the whole call.
+            timeout: Seconds each chunk may wait for the write lock (another thread's or another
+                process's), for this call only (default: the cache's `timeout`). It bounds each
+                wait, not the whole call.
 
         Returns:
             How many entries were removed.
@@ -280,8 +281,9 @@ class Cache:
         including overwrites of existing keys, are kept.
 
         Args:
-            timeout: Seconds each chunk may wait for another process's write lock, for this call
-                only (default: the cache's `timeout`). It bounds each wait, not the whole call.
+            timeout: Seconds each chunk may wait for the write lock (another thread's or another
+                process's), for this call only (default: the cache's `timeout`). It bounds each
+                wait, not the whole call.
 
         Returns:
             How many entries were removed.
@@ -290,15 +292,16 @@ class Cache:
         """Remove expired entries, then evict the least recently stored until under `size_limit`.
 
         Args:
-            timeout: Seconds each chunk may wait for another process's write lock, for this call
-                only (default: the cache's `timeout`). It bounds each wait, not the whole call.
+            timeout: Seconds each chunk may wait for the write lock (another thread's or another
+                process's), for this call only (default: the cache's `timeout`). It bounds each
+                wait, not the whole call.
 
         Returns:
             How many entries were removed.
         """
     def volume(self) -> int:
         """The cache's size on disk in bytes: the database plus value files."""
-    def checkpoint(self, timeout: float | None = None) -> bool:
+    def checkpoint(self, *, timeout: float | None = None) -> bool:
         """Copy the write-ahead log into the database and truncate it to zero.
 
         With readers in other processes, a burst of writes can leave the log much larger than the

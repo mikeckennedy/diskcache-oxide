@@ -199,3 +199,19 @@ caches.close_all()                 # also on `with Caches(...) as caches:` exit
 - `CacheLike`, the stubs and the getting-started guide's Timeouts section are updated.
 - **Test finding:** a stdlib `sqlite3` connection in the test process can't stand in for another process. It links a different SQLite library, and POSIX locks are per process, so its `BEGIN IMMEDIATE` didn't block the cache at all. The tests use the `SqlitePeer` subprocess.
 - Tests: the per-call timeout (`clear`, `expire`, `cull`) beats the handle's 60 s against a peer holding the lock and leaves the handle's timeout unchanged; a longer one outlasts the peer; validation on both classes, including `checkpoint`; and `NullCache(invalidate=).clear(timeout=)` passes the timeout on. The suite passes on 3.14 (745 passed) and 3.14t (744 passed); stubtest, strict mypy and clippy are clean.
+
+### Architect's review of steps 0 and 1 (2026-10-30): no bugs; follow-ups applied
+
+- `Store::pop`'s docs say `refuse` runs with the write lock and a connection held, maybe more than once, so it must be cheap and must not run Python or use the cache.
+- The `timeout=` docstrings say "the write lock (another thread's or another process's)": the same deadline bounds the in-process write lock. A new test has another thread hold `_hold_write_transaction()`.
+- `NullCache(timeout=None)` means 60 s, as on `Cache` (it raised `TypeError` before; a pre-existing bug). `NullCache` converts with `float()` first, so a timeout too big for a float raises `OverflowError` on both classes. NaN is now in the validation test.
+- `checkpoint(*, timeout=None)` is keyword-only like the other three. It has no diskcache counterpart, so this costs no conformance before release.
+- The test's release timer is cancelled and joined in a `finally`.
+- **Moved to step 2b:** `get` still reads a spilled pickle row's whole value file before refusing it on a `pickle=False` handle. Nothing is lost, but it wastes I/O. Step 2b's policy check skips the file read for a refused mode.
+
+### Step 2a: done (2026-10-30)
+
+- `Version { id, store_seq }` (private fields, `Copy`) and `Hit<T> { value, expire_time, version }`. `get_with` returns `Option<Hit<T>>`, and `look_up` reads the two version columns for inline rows too; they were already in `LOOKUP_SQL`.
+- `Store::delete_version_nowait(version) -> bool`: a D-013 compare-and-delete through `write_nowait`, which also unlinks the value file. The spill path's missing-file cleanup now uses it.
+- Rust tests: `a_version_names_exactly_one_stored_value` (an overwrite is a new version, and deleting an older one removes nothing), `deleting_a_spilled_version_removes_its_file`, and `deleting_a_version_never_waits_for_the_write_lock` (another thread's held transaction and this thread's own: skipped, in well under a second).
+- 123 core tests pass. The Python suite passes on 3.14 (749 passed) and 3.14t (748 passed), with stubtest, strict mypy, clippy and rustdoc clean. The `get_hit_small` A/B run waits for step 2b and the end of the soak.

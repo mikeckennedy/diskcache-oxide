@@ -242,7 +242,7 @@ impl Cache {
     /// Checkpoints the write-ahead log and truncates it to zero (D-024), retrying until `timeout`.
     /// True if the WAL was reset; False if readers or writers in other processes kept it busy.
     /// `timeout`: how long to keep trying, in seconds (default: the cache's timeout).
-    #[pyo3(signature = (timeout = None))]
+    #[pyo3(signature = (*, timeout = None))]
     fn checkpoint(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
         let timeout = self.call_timeout(timeout)?;
         self.ensure_open();
@@ -459,7 +459,7 @@ impl Cache {
             .get_with(self.timeout, key, now, |mode, value| Ok(decode_value(py, mode, value, allow_pickle)))
             .map_err(to_py_err)?;
         match found {
-            Some((value, expires)) => Ok(Some((value?, expires))),
+            Some(hit) => Ok(Some((hit.value?, hit.expire_time))),
             None => Ok(None),
         }
     }

@@ -79,7 +79,7 @@ class CacheLike(Protocol):
     def volume(self) -> int:
         """The size on disk in bytes."""
 
-    def checkpoint(self, timeout: float | None = None) -> bool:
+    def checkpoint(self, *, timeout: float | None = None) -> bool:
         """Empty the write-ahead log. True if it was reset, False if other processes kept it busy."""
 
     def close(self, *, checkpoint: bool = True) -> None:
