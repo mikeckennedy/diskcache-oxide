@@ -215,3 +215,69 @@ def test_held_maintenance_unlinks_value_files_only_once_it_commits(tmp_path: Pat
             assert len(cache) == len(before)
     finally:
         cache.close()
+
+
+# -- per-call timeout on clear/expire/cull (plan 08, step 1) -------------------------------------
+
+
+@pytest.fixture
+def held_write_lock(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """A cache with expired rows, and a peer process that can hold its write lock.
+
+    The peer has to be another process: POSIX locks are per process, so a second SQLite library in
+    this one (the stdlib's) wouldn't block the cache at all.
+    """
+    from tests.conformance.proc_workers import SqlitePeer
+
+    cache = Cache(tmp_path / 'c', timeout=60)
+    for i in range(10):
+        cache.set(f'k{i}', 'v', expire=0.001)
+    time.sleep(0.01)
+    with SqlitePeer(tmp_path / 'c' / 'diskcache-oxide.sqlite') as peer:
+        yield cache, peer
+    cache.close()
+
+
+@pytest.mark.parametrize('method', ['clear', 'expire', 'cull'])
+def test_maintenance_takes_its_own_timeout(held_write_lock, method: str) -> None:  # type: ignore[no-untyped-def]
+    cache, peer = held_write_lock
+    peer.begin('IMMEDIATE')
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        getattr(cache, method)(timeout=0.2)
+    assert time.monotonic() - started < 5, 'the per-call timeout was ignored for the handle’s 60 s'
+    assert cache.timeout == 60, 'the override is for that call only'
+
+    # A longer per-call timeout outlasts the peer.
+    import threading
+
+    threading.Timer(0.3, peer.rollback).start()
+    assert getattr(cache, method)(timeout=10) == 10
+
+
+@pytest.mark.parametrize('method', ['clear', 'expire', 'cull', 'checkpoint'])
+@pytest.mark.parametrize('make', [lambda p: Cache(p), lambda p: NullCache(p)], ids=['Cache', 'NullCache'])
+def test_maintenance_timeout_is_validated(tmp_path: Path, make, method: str) -> None:  # type: ignore[no-untyped-def]
+    cache = make(tmp_path / 'c')
+    for bad, error in [(True, TypeError), ('1', TypeError), (-1, ValueError), (float('inf'), ValueError)]:
+        with pytest.raises(error):
+            getattr(cache, method)(timeout=bad)
+    getattr(cache, method)(timeout=None)
+    getattr(cache, method)(timeout=0)
+    cache.close()
+
+
+def test_null_cache_rejects_a_negative_timeout_like_cache(tmp_path: Path) -> None:
+    for make in (Cache, NullCache):
+        with pytest.raises(ValueError):
+            make(tmp_path / 'c', timeout=-1)
+
+
+def test_null_cache_clear_passes_the_timeout_to_its_invalidate_cache(held_write_lock) -> None:  # type: ignore[no-untyped-def]
+    cache, peer = held_write_lock
+    peer.begin('IMMEDIATE')
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        NullCache(invalidate=cache).clear(timeout=0.2)
+    assert time.monotonic() - started < 5
+    peer.rollback()

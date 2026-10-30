@@ -47,6 +47,13 @@ def _check_seconds(name: str, value: object) -> None:
         raise TypeError(f'{name} must be a number of seconds or None, not {type(value).__name__}')
 
 
+def _check_timeout(value: object) -> None:
+    """As `Cache` validates a timeout: a number of seconds (not `bool`), finite and not negative."""
+    _check_seconds('timeout', value)
+    if isinstance(value, int | float) and not 0 <= value < float('inf'):
+        raise ValueError(f'timeout must be a non-negative number of seconds, got {value}')
+
+
 class NullCache:
     """A switched-off cache, so app code needs no `if cache is None` checks.
 
@@ -80,7 +87,7 @@ class NullCache:
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
         invalidate: CacheLike | None = None,
     ) -> None:
-        _check_seconds('timeout', timeout)
+        _check_timeout(timeout)
         self._directory = None if directory is None else os.fspath(directory)
         self._timeout = float(timeout)
         self._size_limit = DEFAULT_SIZE_LIMIT if size_limit is None else size_limit
@@ -157,7 +164,7 @@ class NullCache:
 
     def checkpoint(self, timeout: float | None = None) -> bool:
         """Always True: there is no write-ahead log to reset."""
-        # No write-ahead log to reset.
+        _check_timeout(timeout)
         return True
 
     # -- writes: succeed, then expire instantly ---------------------------------------------------
@@ -223,9 +230,13 @@ class NullCache:
             self._invalidate.delete(key)
         return default
 
-    def clear(self) -> int:
-        """0, or with `invalidate=`, clear that cache and return its count."""
-        return self._invalidate.clear() if self._invalidate is not None else 0
+    def clear(self, *, timeout: float | None = None) -> int:
+        """0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count."""
+        _check_timeout(timeout)
+        if self._invalidate is None:
+            return 0
+        # Passed on only when given, so an `invalidate=` cache without the keyword still works.
+        return self._invalidate.clear() if timeout is None else self._invalidate.clear(timeout=timeout)
 
     def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
         """Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works."""
@@ -235,12 +246,14 @@ class NullCache:
 
     # -- maintenance and lifecycle -------------------------------------------------------------
 
-    def expire(self) -> int:
+    def expire(self, *, timeout: float | None = None) -> int:
         """Always 0."""
+        _check_timeout(timeout)
         return 0
 
-    def cull(self) -> int:
+    def cull(self, *, timeout: float | None = None) -> int:
         """Always 0."""
+        _check_timeout(timeout)
         return 0
 
     def close(self, *, checkpoint: bool = True) -> None:

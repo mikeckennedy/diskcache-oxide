@@ -67,13 +67,13 @@ class CacheLike(Protocol):
     def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
         """Iterate over keys in sorted order, optionally only those starting with `prefix`."""
 
-    def expire(self) -> int:
+    def expire(self, *, timeout: float | None = None) -> int:
         """Remove every expired entry. Returns how many were removed."""
 
-    def clear(self) -> int:
+    def clear(self, *, timeout: float | None = None) -> int:
         """Remove every entry that existed when the call started. Returns how many."""
 
-    def cull(self) -> int:
+    def cull(self, *, timeout: float | None = None) -> int:
         """Remove expired entries, then evict until under `size_limit`. Returns how many."""
 
     def volume(self) -> int:

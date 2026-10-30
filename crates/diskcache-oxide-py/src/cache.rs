@@ -70,17 +70,10 @@ impl Cache {
         wal_size_limit: Option<&Bound<'_, PyAny>>,
         wal_checkpoint: &str,
     ) -> PyResult<Self> {
-        let timeout = match timeout {
+        let timeout = timeout_duration(match timeout {
             Some(t) => seconds("timeout", t)?,
             None => 60.0,
-        };
-        if !timeout.is_finite() || timeout < 0.0 {
-            return Err(PyValueError::new_err(format!(
-                "timeout must be a non-negative number of seconds, got {timeout}"
-            )));
-        }
-        // Clamped before converting: `Duration::from_secs_f64` panics above about 1.8e19 seconds.
-        let timeout = Duration::from_secs_f64(timeout.min(lockwait::MAX_TIMEOUT.as_secs_f64()));
+        })?;
         let requested =
             Requested { size_limit: whole("size_limit", size_limit)?, cull_limit: whole("cull_limit", cull_limit)? };
         let max_connections = match whole("max_connections", max_connections)? {
@@ -251,18 +244,7 @@ impl Cache {
     /// `timeout`: how long to keep trying, in seconds (default: the cache's timeout).
     #[pyo3(signature = (timeout = None))]
     fn checkpoint(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        let timeout = match timeout {
-            Some(t) if !t.is_none() => {
-                let t = seconds("timeout", t)?;
-                if !t.is_finite() || t < 0.0 {
-                    return Err(PyValueError::new_err(format!(
-                        "timeout must be a non-negative number of seconds, got {t}"
-                    )));
-                }
-                Duration::from_secs_f64(t.min(lockwait::MAX_TIMEOUT.as_secs_f64()))
-            }
-            _ => self.timeout,
-        };
+        let timeout = self.call_timeout(timeout)?;
         self.ensure_open();
         // Each round waits on the write lock and backs off after a busy one. Detached, none of
         // those waits takes the interpreter back in between (the copy itself always runs detached).
@@ -357,25 +339,33 @@ impl Cache {
 
     // -- maintenance and iteration -------------------------------------------------------------
 
-    /// Removes every expired entry. Returns how many it removed.
-    fn expire(&self, py: Python<'_>) -> PyResult<u64> {
+    /// Removes every expired entry. Returns how many it removed. `timeout` overrides the cache's
+    /// for this call: how long each chunk may wait for the write lock.
+    #[pyo3(signature = (*, timeout = None))]
+    fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+        let timeout = self.call_timeout(timeout)?;
         let now = self.now(py)?;
         self.ensure_open();
-        crate::detach(py, || self.store.expire(self.timeout, now)).map_err(to_py_err)
+        crate::detach(py, || self.store.expire(timeout, now)).map_err(to_py_err)
     }
 
-    /// Removes every entry stored before the call. Returns how many it removed.
-    fn clear(&self, py: Python<'_>) -> PyResult<u64> {
+    /// Removes every entry stored before the call. Returns how many it removed. `timeout` as for
+    /// `expire`.
+    #[pyo3(signature = (*, timeout = None))]
+    fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+        let timeout = self.call_timeout(timeout)?;
         self.ensure_open();
-        crate::detach(py, || self.store.clear(self.timeout)).map_err(to_py_err)
+        crate::detach(py, || self.store.clear(timeout)).map_err(to_py_err)
     }
 
     /// Removes expired entries, then evicts until the cache is under `size_limit`. Returns how many
-    /// it removed.
-    fn cull(&self, py: Python<'_>) -> PyResult<u64> {
+    /// it removed. `timeout` as for `expire`.
+    #[pyo3(signature = (*, timeout = None))]
+    fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+        let timeout = self.call_timeout(timeout)?;
         let now = self.now(py)?;
         self.ensure_open();
-        crate::detach(py, || self.store.cull(self.timeout, now)).map_err(to_py_err)
+        crate::detach(py, || self.store.cull(timeout, now)).map_err(to_py_err)
     }
 
     /// Keys in sorted order (code-point order, like `sorted()`), optionally only those starting
@@ -443,6 +433,14 @@ impl Cache {
         match &self.clock {
             Some(clock) => clock.bind(py).call0()?.extract::<f64>(),
             None => Ok(SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())),
+        }
+    }
+
+    /// A per-call `timeout=` argument, or the cache's own when it's omitted or None.
+    fn call_timeout(&self, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<Duration> {
+        match optional_seconds("timeout", timeout)? {
+            Some(t) => timeout_duration(t),
+            None => Ok(self.timeout),
         }
     }
 
@@ -662,6 +660,15 @@ fn seconds(name: &str, value: &Bound<'_, PyAny>) -> PyResult<f64> {
         )));
     }
     value.extract::<f64>()
+}
+
+/// A validated timeout in seconds as a `Duration`.
+fn timeout_duration(seconds: f64) -> PyResult<Duration> {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return Err(PyValueError::new_err(format!("timeout must be a non-negative number of seconds, got {seconds}")));
+    }
+    // Clamped before converting: `Duration::from_secs_f64` panics above about 1.8e19 seconds.
+    Ok(Duration::from_secs_f64(seconds.min(lockwait::MAX_TIMEOUT.as_secs_f64())))
 }
 
 fn optional_seconds(name: &str, value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<f64>> {

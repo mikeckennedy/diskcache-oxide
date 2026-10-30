@@ -261,25 +261,37 @@ class Cache:
         Returns:
             An iterator of keys.
         """
-    def expire(self) -> int:
+    def expire(self, *, timeout: float | None = None) -> int:
         """Remove every expired entry, and its value file.
 
         Works in chunks and lets other writers in between them.
 
+        Args:
+            timeout: Seconds each chunk may wait for another process's write lock, for this call
+                only (default: the cache's `timeout`). It bounds each wait, not the whole call.
+
         Returns:
             How many entries were removed.
         """
-    def clear(self) -> int:
+    def clear(self, *, timeout: float | None = None) -> int:
         """Remove every entry that existed when the call started.
 
         Works in chunks and lets other writers in between them. Writes that land while it runs,
         including overwrites of existing keys, are kept.
 
+        Args:
+            timeout: Seconds each chunk may wait for another process's write lock, for this call
+                only (default: the cache's `timeout`). It bounds each wait, not the whole call.
+
         Returns:
             How many entries were removed.
         """
-    def cull(self) -> int:
+    def cull(self, *, timeout: float | None = None) -> int:
         """Remove expired entries, then evict the least recently stored until under `size_limit`.
+
+        Args:
+            timeout: Seconds each chunk may wait for another process's write lock, for this call
+                only (default: the cache's `timeout`). It bounds each wait, not the whole call.
 
         Returns:
             How many entries were removed.

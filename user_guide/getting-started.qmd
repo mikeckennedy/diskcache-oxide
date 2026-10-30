@@ -126,6 +126,13 @@ except Timeout:
     ...  # the cache was too busy; carry on without it
 ```
 
+Maintenance calls work in chunks, so they take the write lock many times. A request-sized timeout can cut an admin `clear()` off partway through, so `clear()`, `expire()` and `cull()` each take their own `timeout=` for that call. It bounds each chunk's wait for the lock, not the whole call:
+
+```python
+cache = Cache('/var/cache/my-app', timeout=1.0)  # for requests
+cache.clear(timeout=10.0)                        # for the admin page
+```
+
 ## Shutting down
 
 Call `cache.checkpoint()` at shutdown if you can. It isn't required. With readers in other processes, a burst of writes (a big fill, or a `clear()`) can leave SQLite's write-ahead log much larger than the database, and SQLite only shrinks it when it gets a moment with no readers. `checkpoint()` makes that moment: it waits briefly for in-flight reads, copies the log into the database, and truncates it. It returns `False` instead of raising if other processes keep it busy.

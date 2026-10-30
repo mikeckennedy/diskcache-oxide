@@ -191,3 +191,11 @@ caches.close_all()                 # also on `with Caches(...) as caches:` exit
 - Core `Store::pop` takes `refuse: impl Fn(i64) -> bool` and returns `Pop::{Missing, Removed(Popped), Refused { mode }}`. The check runs on the row's mode inside the transaction, before the value file is read or the row deleted.
 - The py crate passes `codec::refuses(mode, allow_pickle)`. Step 2b widens it to unknown modes. `codec::pickle_refused()` is now the one place the `UnsafeValueError` message lives.
 - Tests: `pop_leaves_a_refused_mode_in_place` (Rust), and `test_oxide_pickle_false_pop_refuses_and_keeps_the_row` (conformance), which failed on the unfixed build (the row was gone) and passes now. The full suite passes on 3.14 (732 passed) and 3.14t (731 passed); clippy is clean.
+
+### Step 1: done (2026-10-30)
+
+- `Cache.clear`, `expire` and `cull` take a keyword-only `timeout=None`. The constructor, `checkpoint()` and these three share one validation path (`timeout_duration` and `call_timeout` in `cache.rs`).
+- `NullCache` validates the same way, rejecting negative and infinite timeouts as `Cache` does, in its constructor too (before, it accepted `timeout=-1`). `clear(timeout=)` passes the timeout on to its `invalidate=` cache only when one is given, so a cache-like object whose `clear()` lacks the keyword still works there.
+- `CacheLike`, the stubs and the getting-started guide's Timeouts section are updated.
+- **Test finding:** a stdlib `sqlite3` connection in the test process can't stand in for another process. It links a different SQLite library, and POSIX locks are per process, so its `BEGIN IMMEDIATE` didn't block the cache at all. The tests use the `SqlitePeer` subprocess.
+- Tests: the per-call timeout (`clear`, `expire`, `cull`) beats the handle's 60 s against a peer holding the lock and leaves the handle's timeout unchanged; a longer one outlasts the peer; validation on both classes, including `checkpoint`; and `NullCache(invalidate=).clear(timeout=)` passes the timeout on. The suite passes on 3.14 (745 passed) and 3.14t (744 passed); stubtest, strict mypy and clippy are clean.
