@@ -215,7 +215,7 @@ As in the roadmap: every review finding resolved or explicitly accepted, a clean
   7. **Nit:** `WriteHold.__enter__` no longer drops an old transaction under its mutex (`a60682c`).
   8. **Nit:** docs on what a fork leaves open and where garbage is unlinked (`34f3e17`, `9804457`).
   - **Also from Linux:** `scripts/linux-check.sh` failed the short-deadline starvation test once on the mini. Under 8 CPU hogs it fails most runs, losing 1 to 5 of 50 waits, which is scheduling, not the lock. A starving waiter that yields before sleeping didn't help there, so the lock is unchanged and the test allows up to 10 lost waits; without `872175f` it still loses 50 of 50 (`c738fad`).
-- **Step 3 checks on the final code (2026-10-30, at `c94ddb1`).**
+- **Step 3 checks on the final code (2026-10-30, at `c94ddb1`; `953b7f5` after them changes only the before-fork hook's closes, which no gate or check workload times).**
   - **`scripts/check.sh --slow`** (macOS, all four Pythons, models at 1M schedules) and **`scripts/linux-check.sh --slow`** (Ubuntu 26.04 in OrbStack on the mini): green.
   - **The gates:** GO on macOS and Linux, 3.14 and 3.14t.
 
@@ -227,13 +227,18 @@ As in the roadmap: every review finding resolved or explicitly accepted, a clean
     | 99:1 throughput at 8 threads | 34.9× | 1.27× | 14.3× | 1.53× |
 
     3.14t's `get_hit_small` is the closest margin, at 0.53× against 0.55×.
-  - **Fork cost (`bench/fork_cost.py`, new),** before (`5ee3543`) and after `e817ba2` closed idle connections before every fork. macOS, 3.14, 4 caches of 8 idle connections, interleaved runs:
+  - **Fork cost (`bench/fork_cost.py`, new; corrected after the architect's review).** macOS, 3.14, caches of 8 idle connections (checked from open files), each with a 3.9 MiB WAL. Interleaved runs, p50:
 
-    | | before | after |
-    |---|---|---|
-    | fork, parent side, p50 | 0.75 ms | 1.70 ms |
-    | first `get` after the fork | 4 µs | 182 µs |
-    | first `set` after the fork | 24 µs | 97 µs |
+    | | before `e817ba2` (`5ee3543`) | `e817ba2`, closing idle connections (`84e3c7d`) | and no checkpoint on those closes (`953b7f5`) |
+    |---|---|---|---|
+    | fork, parent side, 1 cache | 1.1-1.2 ms | 1.6 ms | 1.1-1.2 ms |
+    | fork, parent side, 4 caches | 2.3-2.4 ms | 3.6-4.2 ms | 1.8-1.9 ms |
+    | first `get` after the fork | 24-38 µs | 270-330 µs | 1.2-1.5 ms |
+    | first `set` after the fork | 90-105 µs | 160-180 µs | 400-480 µs |
 
-    With one cache, a fork goes from 0.73 to about 0.85 ms: about 30 µs per idle connection closed, plus one reconnect on the next use. A fork with nothing open costs 0.7 ms. Pre-fork servers fork to start or respawn workers, not per request, so this is accepted.
-  - **Close-time checkpoint at fork (architect's question):** the idle closes in the before-fork hook are never the process's last connection on a live store's file, since its pin stays open, so they never run SQLite's close-time checkpoint.
+  - **What a fork costs and why.**
+    - Closing idle connections before every fork (`e817ba2`, so the child inherits no lock records) made the closes the process's last lock-holding connections on the file. The store's pin holds no lock, so it doesn't count: the first version of this entry got that wrong.
+    - In a process that is the file's only user, SQLite checkpointed and deleted the WAL inside the before-fork hook, with every other thread waiting. Measured with plain `sqlite3` on a 3.9 MiB WAL, that close takes 4.8 ms, and a close without the checkpoint takes 0.07 ms.
+    - `953b7f5` turns that checkpoint off for those closes. The WAL stays, and the next connection rebuilds its index instead: about 0.7 ms more on the first operation per cache, on one thread rather than with the whole process stopped.
+    - With other processes on the file (a pre-fork server's workers), their locks rule the checkpoint out anyway.
+    - Accepted: pre-fork servers fork to start or respawn workers, not per request.
