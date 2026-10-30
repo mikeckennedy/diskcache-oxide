@@ -134,6 +134,30 @@ except Timeout:
     ...  # the cache was too busy; carry on without it
 ```
 
+Maintenance calls work in chunks, so they take the write lock many times. A request-sized timeout can cut an admin [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) off partway through, so [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) and [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) each take their own `timeout=` for that call. It bounds each chunk's wait for the lock, not the whole call:
+
+``` python
+cache = Cache('/var/cache/my-app', timeout=1.0)  # for requests
+cache.clear(timeout=10.0)                        # for the admin page
+```
+
+
+# Values that can't be read
+
+A cached value can stop being readable: a class you pickled was moved or renamed, or the bytes were damaged. By default [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) raises, as diskcache does. A cache is only a copy of data you can rebuild, so most apps would rather treat that as a miss. `on_decode_error` does that:
+
+``` python
+cache = Cache('/var/cache/my-app', pickle=True, on_decode_error='miss')
+cache.get('homepage')  # None if the stored value can't be decoded; the bad row is deleted
+```
+
+- `'miss'` returns the default, deletes the bad row, and logs a warning on the `diskcache_oxide` logger. Only that exact stored version is deleted, so a fresh value another process wrote in the meantime survives, and the read never waits for the write lock to do it. If the lock is busy, the row stays and a later read tries again.
+- A value this version can't read but another might, such as one written by a newer diskcache-oxide or one that needs a time zone this host lacks, is a miss too, but its row is kept. Reading it with the default `'raise'` raises [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError), a subclass of [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError).
+- Pass a function instead to report the failure yourself, for example to Sentry. It's called as `report(key, exc)` in place of the warning, after the row has been dealt with. Anything it raises is logged, and the read is still a miss.
+- Errors that aren't about the stored bytes still raise: [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), `MemoryError`, an I/O error, and [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) (a pickled value read by a cache without `pickle=True`, which is a configuration mistake, not damage).
+
+It covers [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), `cache[key]` (which raises `KeyError`) and [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop). A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read. One limit: [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) removes the row before it decodes the value, so it can only keep a foreign value whose *mode* it doesn't know. One with an unknown tag inside a known mode is removed, as [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) was asked to do.
+
 
 # Shutting down
 

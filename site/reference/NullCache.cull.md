@@ -7,5 +7,8 @@ Always 0.
 Usage
 
 ``` python
-NullCache.cull()
+NullCache.cull(
+    *,
+    timeout=None,
+)
 ```

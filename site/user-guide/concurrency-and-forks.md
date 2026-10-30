@@ -42,13 +42,15 @@ Pre-forking servers (gunicorn, Celery's prefork pool, `multiprocessing` with the
 
 diskcache-oxide prevents it with a **fork barrier**, installed when `diskcache_oxide` is imported:
 
-1.  **Before the fork,** the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish.
+1.  **Before the fork,** the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish. Then it closes the idle pooled connections, so the child doesn't inherit SQLite's lock bookkeeping for those files.
 2.  **In the parent,** it lets the held-off writes continue.
-3.  **In the child,** it drops the inherited connections without closing them (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.
+3.  **In the child,** it drops any connection still inherited without closing it (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.
 
-The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every [Cache](../reference/Cache.md#diskcache_oxide.Cache) in the process, not just the one you're holding.
+The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every [Cache](../reference/Cache.md#diskcache_oxide.Cache) in the process, not just the one you're holding. Your own `os.register_at_fork(after_in_child=...)` hooks can use a cache too, whether they were registered before or after `diskcache_oxide` was imported.
 
-A forked child deliberately leaves its inherited connections' file descriptors open, so each fork can carry up to the pool's descriptor budget into the child. That's by design, and it's bounded.
+Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process's last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.
+
+The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds (see below), or an operation it forked from inside, such as from a callback. The child leaves those file descriptors open by design.
 
 
 ## Forking from inside your own transaction

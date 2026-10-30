@@ -1,7 +1,7 @@
 # API Reference
 
 
-The public API of diskcache-oxide: Cache, NullCache, CacheLike protocol, exceptions, and SQLite utilities.
+The public API of diskcache-oxide: Cache, NullCache, CacheLike protocol, the Caches registry, exceptions, and SQLite utilities.
 
 
 ## Cache
@@ -197,7 +197,7 @@ Raise `KeyError`, or with `invalidate=`, delete the key from that cache.
 Return `default`. With `invalidate=`, also delete the key from that cache.
 
 [NullCache.clear()](NullCache.clear.md#diskcache_oxide.NullCache.clear)  
-0, or with `invalidate=`, clear that cache and return its count.
+0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count.
 
 [NullCache.iterkeys()](NullCache.iterkeys.md#diskcache_oxide.NullCache.iterkeys)  
 Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works.
@@ -312,6 +312,69 @@ Return the cache, for use in a `with` block.
 Close the cache.
 
 
+## Caches
+
+
+A registry of named caches under one base directory.
+
+
+[Caches](Caches.md#diskcache_oxide.Caches)  
+A registry of named caches under one base directory.
+
+[CacheStats](CacheStats.md#diskcache_oxide.CacheStats)  
+One cache's numbers, for an admin page. `error` says why it couldn't be read, if it couldn't.
+
+
+## Caches Methods
+
+
+Methods for the Caches class
+
+
+[Caches.__repr__()](Caches.__repr__.md#diskcache_oxide.Caches.__repr__)  
+
+[Caches.register()](Caches.register.md#diskcache_oxide.Caches.register)  
+Register a cache. Nothing opens until its first lookup.
+
+[Caches.__contains__()](Caches.__contains__.md#diskcache_oxide.Caches.__contains__)  
+
+[Caches.__iter__()](Caches.__iter__.md#diskcache_oxide.Caches.__iter__)  
+The registered names, in registration order.
+
+[Caches.__len__()](Caches.__len__.md#diskcache_oxide.Caches.__len__)  
+
+[Caches.directory()](Caches.directory.md#diskcache_oxide.Caches.directory)  
+Where the named cache lives.
+
+[Caches.__getitem__()](Caches.__getitem__.md#diskcache_oxide.Caches.__getitem__)  
+The named cache: opened on first use, then the same object every time.
+
+[Caches.disable()](Caches.disable.md#diskcache_oxide.Caches.disable)  
+Later lookups of these caches return `NullCache(invalidate=real)`.
+
+[Caches.enable()](Caches.enable.md#diskcache_oxide.Caches.enable)  
+Later lookups of these caches return the real cache again.
+
+[Caches.enabled()](Caches.enabled.md#diskcache_oxide.Caches.enabled)  
+Whether lookups of this cache return the real one (it may still fail to open).
+
+[Caches.stats()](Caches.stats.md#diskcache_oxide.Caches.stats)  
+Count and volume for every registered cache, opening each one. Never raises for a cache
+
+[Caches.clear()](Caches.clear.md#diskcache_oxide.Caches.clear)  
+Clear the real cache, even while it's disabled. Returns how many entries were removed.
+
+[Caches.expire_all()](Caches.expire_all.md#diskcache_oxide.Caches.expire_all)  
+Remove expired entries from every cache. Returns how many each removed, or None for a
+
+[Caches.close_all()](Caches.close_all.md#diskcache_oxide.Caches.close_all)  
+Close every opened cache and forget it; a later lookup opens it again.
+
+[Caches.__enter__()](Caches.__enter__.md#diskcache_oxide.Caches.__enter__)  
+
+[Caches.__exit__()](Caches.__exit__.md#diskcache_oxide.Caches.__exit__)  
+
+
 ## Errors
 
 
@@ -326,6 +389,9 @@ A pickle=False cache read a value that was stored with pickle.
 
 [CorruptValueError](CorruptValueError.md#diskcache_oxide.CorruptValueError)  
 A stored value couldn't be decoded: an unknown mode, or bytes that don't parse.
+
+[ForeignValueError](ForeignValueError.md#diskcache_oxide.ForeignValueError)  
+A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote it), or a time zone missing from this host.
 
 [FormatMismatchError](FormatMismatchError.md#diskcache_oxide.FormatMismatchError)  
 The cache directory holds a database in a format this version doesn't support.

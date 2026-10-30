@@ -7,5 +7,8 @@ Always 0.
 Usage
 
 ``` python
-NullCache.expire()
+NullCache.expire(
+    *,
+    timeout=None,
+)
 ```

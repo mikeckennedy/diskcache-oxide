@@ -63,6 +63,7 @@ user_guide:
     contents:
       - serialization.qmd
       - null-cache.qmd
+      - caches.qmd
       - concurrency-and-forks.qmd
       - storage-and-wal.qmd
   - section: "Background & Reference"
@@ -95,6 +96,8 @@ skill:
     - "Type application functions that accept either cache type with CacheLike from diskcache_oxide.protocol."
     - "Call cache.checkpoint() at shutdown or from a maintenance job to empty the write-ahead log after write bursts; it returns False rather than raising when other processes keep it busy."
     - "Leave wal_size_limit and sqlite_cache_size at their defaults unless tuning for extreme read-heavy or memory-constrained workloads."
+    - "Use Cache(..., on_decode_error='miss') (or a reporting function) so a value that can't be decoded, such as a pickled class that moved, is a miss instead of an exception."
+    - "Register an app's caches once in a Caches registry and look them up by name (caches['general']); a cache that can't open becomes a NullCache and is retried after 10 seconds."
 
 include_in_header:
   - text: |
@@ -113,7 +116,7 @@ reference:
   title: "API Reference"
   desc: >-
     The public API of diskcache-oxide: Cache, NullCache, CacheLike protocol,
-    exceptions, and SQLite utilities.
+    the Caches registry, exceptions, and SQLite utilities.
   sections:
     - title: Cache
       desc: "Disk-backed cache backed by SQLite, shared safely across threads and processes."
@@ -124,12 +127,18 @@ reference:
       contents:
         - NullCache
         - CacheLike
+    - title: Caches
+      desc: "A registry of named caches under one base directory."
+      contents:
+        - Caches
+        - CacheStats
     - title: Errors
       desc: "Exceptions raised by cache operations."
       contents:
         - Timeout
         - UnsafeValueError
         - CorruptValueError
+        - ForeignValueError
         - FormatMismatchError
     - title: SQLite and System
       desc: "Information about the bundled SQLite and environment."

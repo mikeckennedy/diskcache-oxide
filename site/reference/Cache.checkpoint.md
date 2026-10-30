@@ -7,7 +7,10 @@ Copy the write-ahead log into the database and truncate it to zero.
 Usage
 
 ``` python
-Cache.checkpoint(timeout=None)
+Cache.checkpoint(
+    *,
+    timeout=None,
+)
 ```
 
 

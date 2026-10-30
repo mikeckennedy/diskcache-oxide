@@ -271,3 +271,35 @@ caches.close_all()                 # also on `with Caches(...) as caches:` exit
   - corrupt and foreign errors from a nested read in `__setstate__`, which pins the decided outcomes;
   - the GC cycle.
 - Suites: 3.14 (808 passed) and 3.14t (807 passed), including step 3's tests.
+
+### Step 3: done (2026-10-30)
+
+- `diskcache_oxide.Caches` and `CacheStats` (`python/diskcache_oxide/caches.py`, pure Python), built as planned with the architect's simplifications:
+  - lookups take no lock: a `_resolved` dict, with `setdefault` on a race, and the losing handle is closed;
+  - so no fork machinery either;
+  - only operational errors (`OSError`, which includes `Timeout`, and `RuntimeError`, which includes `FormatMismatchError`) become a `NullCache`, and a bad setting value raises;
+  - a failed open is remembered for 10 s (Michael), in its own dict, so the fast path never reads a clock;
+  - a registry-level `on_decode_error` callable is called as `(name, key, exc)`;
+  - names are validated, two names can't share a directory, and `base_dir` is made absolute.
+- `Caches` is generic through a classic `TypeVar('N', bound=str, default=str)`, not PEP 695 syntax, because mypy's stubtest doesn't handle `__type_params__` on a pure-Python class yet.
+- Docs:
+  - the new guide page `user_guide/caches.qmd`, with lookups, open failures, switches and a purposes example, admin, and "Coming from `DurableCache`" (the mapping table, and why the library's self-healing read is safer);
+  - API reference sections for `Caches`, `CacheStats` and `ForeignValueError`;
+  - two best-practice lines;
+  - `site/` regenerated, so the stale `checkpoint` pages the architect flagged are fixed.
+- vision.md marks the section built, and the roadmap's Phase 3 says what it adopts.
+- **Tests:** `tests/unit/test_caches.py`, 24 tests:
+  - lazy open and identity, settings layering, a relative `base_dir`, unknown settings, name validation, unique names and directories, `KeyError` everywhere;
+  - 16 racing threads get one object;
+  - open failures: a file in the way, retried after 10 s with a fake clock, then recovering; a future format reported by the default logger; a bad setting value raising; a failing reporter logged;
+  - the registry's decode reporter learns the cache's name;
+  - switches, with deletes and `clear` reaching the real cache;
+  - `stats()` on good, broken, never-opened and disabled caches;
+  - `clear` raising on a cache that can't open; `expire_all` returning `None` for it;
+  - timeouts against a peer process;
+  - `close_all`, reopening, and the context manager;
+  - a child forked during 4 threads' lookup and `close_all` churn.
+
+  The fork and race tests passed 30 out of 30 runs on each build.
+- **A flaky test from step 1, fixed:** the maintenance-timeout tests assumed all 10 expired rows would still be there. Each `set` sweeps rows that expired before it, so on 3.14t `cull()` once found 6. The tests now compare against `len(cache)` taken just before the call, and so does the registry's `expire_all` test.
+- `scripts/check.sh` passes: 3.14 (808 passed), 3.14t (807), 3.15 (808), 3.15t (807).

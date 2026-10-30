@@ -7,5 +7,8 @@ Empty the write-ahead log. True if it was reset, False if other processes kept i
 Usage
 
 ``` python
-CacheLike.checkpoint(timeout=None)
+CacheLike.checkpoint(
+    *,
+    timeout=None,
+)
 ```

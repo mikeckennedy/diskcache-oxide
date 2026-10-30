@@ -1,11 +1,14 @@
 ## NullCache.clear()
 
 
-0, or with `invalidate=`, clear that cache and return its count.
+0, or with `invalidate=`, clear that cache (passing [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) on) and return its count.
 
 
 Usage
 
 ``` python
-NullCache.clear()
+NullCache.clear(
+    *,
+    timeout=None,
+)
 ```

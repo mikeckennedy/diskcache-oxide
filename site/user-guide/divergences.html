@@ -209,6 +209,12 @@ ul.task-list li input[type="checkbox"] {
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/caches.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caches: named caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Concurrency and forks</span></a>
   </div>
@@ -546,6 +552,7 @@ ul.task-list li input[type="checkbox"] {
 <li><strong>D-007:</strong> <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> subclasses <code>TimeoutError</code>, so <code>except TimeoutError</code> catches it too.</li>
 <li><strong>D-009:</strong> <code>bool(Cache)</code> is always True and <code>bool(NullCache)</code> is False, so <code>if cache:</code> means “caching is on”.</li>
 <li><strong>D-022:</strong> there’s no <code>disk=</code> (a Python <code>Disk</code> class would put Python code on every read and write) and no <code>eviction_policy=</code> until Phase 6a adds the other policies.</li>
+<li><strong>D-025:</strong> <code>iter(cache)</code> and <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> return a native iterator, not a generator. Two threads calling <code>next()</code> on the same one at once get <code>ValueError</code> at once, as with a shared generator.</li>
 </ul>
 </section>
 <section id="diskcache-community" class="level1">

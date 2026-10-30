@@ -19,7 +19,8 @@ Cache(
     max_connections=None,
     sqlite_cache_size=None,
     wal_size_limit=None,
-    wal_checkpoint="manual"
+    wal_checkpoint="manual",
+    on_decode_error=...
 )
 ```
 
@@ -62,6 +63,9 @@ The write-ahead log is trimmed back to half this many bytes whenever it resets (
 
 `wal_checkpoint: Literal[``"manual", `<span class="st">`"auto"``]`</span>` = ``"manual"`  
 `'manual'` (the default) leaves checkpoints to [checkpoint()](Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) and [close()](Cache.close.md#diskcache_oxide.Cache.close). `'auto'` also checkpoints after writes once the log is over `wal_size_limit`.
+
+`on_decode_error: Literal[``"raise", `<span class="st">`"miss"``] | Callable[[str, Exception], object]`</span>` = …`  
+What a read does with a stored value it can't decode. `'raise'` (the default) raises. `'miss'` treats it as a miss, logs a warning on the `diskcache_oxide` logger, and deletes the row if no build could ever read it (a class removed since it was pickled, malformed bytes). A row another version or host might read ([ForeignValueError](ForeignValueError.md#diskcache_oxide.ForeignValueError)) is left in place. A callable does the same as `'miss'`, but is called with `(key, exc)` instead of the warning, after the row is dealt with; whatever it raises is logged. [UnsafeValueError](UnsafeValueError.md#diskcache_oxide.UnsafeValueError), [Timeout](Timeout.md#diskcache_oxide.Timeout), `MemoryError` and other errors that aren't about the stored bytes always raise. Covers [get](Cache.get.md#diskcache_oxide.Cache.get), `cache[key]` and [pop](Cache.pop.md#diskcache_oxide.Cache.pop).
 
 
 ## Raises

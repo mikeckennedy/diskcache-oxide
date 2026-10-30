@@ -251,10 +251,13 @@ def test_maintenance_takes_its_own_timeout(held_write_lock, method: str) -> None
     # A longer per-call timeout outlasts the peer.
     import threading
 
+    # Each set may sweep rows that expired before it, so count what's left rather than assuming 10.
+    left = len(cache)
+    assert left > 0
     release = threading.Timer(0.3, peer.rollback)
     release.start()
     try:
-        assert getattr(cache, method)(timeout=10) == 10
+        assert getattr(cache, method)(timeout=10) == left
     finally:
         release.cancel()
         release.join()

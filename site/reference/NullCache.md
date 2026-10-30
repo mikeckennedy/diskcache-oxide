@@ -9,7 +9,7 @@ Usage
 ``` python
 NullCache(
     directory=None,
-    timeout=60.0,
+    timeout=None,
     *,
     size_limit=None,
     cull_limit=None,
@@ -20,6 +20,7 @@ NullCache(
     sqlite_cache_size=None,
     wal_size_limit=None,
     wal_checkpoint="manual",
+    on_decode_error="raise",
     invalidate=None
 )
 ```

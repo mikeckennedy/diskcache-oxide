@@ -7,5 +7,8 @@ Remove expired entries, then evict until under [size_limit](Cache.size_limit.md#
 Usage
 
 ``` python
-CacheLike.cull()
+CacheLike.cull(
+    *,
+    timeout=None,
+)
 ```

@@ -8,7 +8,7 @@ This is the API documentation for the diskcache_oxide library.
 Disk-backed cache backed by SQLite, shared safely across threads and processes.
 
 
-Cache(directory, timeout=None, *, size_limit=None, cull_limit=None, serializer='msgpack', pickle=False, clock=None, max_connections=None, sqlite_cache_size=None, wal_size_limit=None, wal_checkpoint='manual')
+Cache(directory, timeout=None, *, size_limit=None, cull_limit=None, serializer='msgpack', pickle=False, clock=None, max_connections=None, sqlite_cache_size=None, wal_size_limit=None, wal_checkpoint='manual', on_decode_error=Ellipsis)
 
 A disk cache backed by SQLite, shared safely across threads and processes.
 
@@ -49,22 +49,24 @@ iterkeys(self, /, *, prefix=None, reverse=False)
 Keys in sorted order (code-point order, like `sorted()`), optionally only those starting
 with `prefix`. Pages are fetched lazily, so deleting keys while iterating is safe.
 
-expire(self, /)
+expire(self, /, *, timeout=None)
 
-Removes every expired entry. Returns how many it removed.
+Removes every expired entry. Returns how many it removed. `timeout` overrides the cache's
+for this call: how long each chunk may wait for the write lock.
 
-clear(self, /)
+clear(self, /, *, timeout=None)
 
-Removes every entry stored before the call. Returns how many it removed.
+Removes every entry stored before the call. Returns how many it removed. `timeout` as for
+`expire`.
 
-cull(self, /)
+cull(self, /, *, timeout=None)
 
 Removes expired entries, then evicts until the cache is under `size_limit`. Returns how many
-it removed.
+it removed. `timeout` as for `expire`.
 
 volume(self, /)
 
-checkpoint(self, /, timeout=None)
+checkpoint(self, /, *, timeout=None)
 
 Checkpoints the write-ahead log and truncates it to zero (D-024), retrying until `timeout`.
 True if the WAL was reset; False if readers or writers in other processes kept it busy.
@@ -73,10 +75,13 @@ True if the WAL was reset; False if readers or writers in other processes kept i
 close(self, /, *, checkpoint=True)
 
 Releases this handle. When the last handle on a directory closes, every connection closes
-(D-018). Using the cache again afterwards reopens it, as diskcache does.
-Closes this handle. With `checkpoint` (the default), a WAL left larger than its trim size
-(half of `wal_size_limit`) is checkpointed first, waiting at most 1 s (D-024). A small WAL,
-the usual case, costs nothing extra.
+(D-018). Using the cache again afterwards reopens it, as diskcache does. Closing twice is
+harmless.
+
+With `checkpoint` (the default), the process's last handle first checkpoints a WAL left
+larger than its trim size (half of `wal_size_limit`), waiting at most 1 s (or `timeout`, if
+shorter) for other processes; a copy already under way can run past that (D-024). A small
+WAL, the usual case, costs one `stat`. Close never fails because of the checkpoint.
 
 __getitem__(self, key, /)
 
@@ -118,7 +123,7 @@ get(self, /, key, default=None, *, expire_time=False)
 Switched-off cache behaving as if every entry expires instantly.
 
 
-NullCache(directory: 'str | os.PathLike[str] | None' = None, timeout: 'float' = 60.0, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, serializer: "Literal['msgpack', 'json']" = 'msgpack', pickle: 'bool' = False, clock: 'Callable[[], float] | None' = None, max_connections: 'int' = 8, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', invalidate: 'CacheLike | None' = None) -> 'None'
+NullCache(directory: 'str | os.PathLike[str] | None' = None, timeout: 'float | None' = None, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, serializer: "Literal['msgpack', 'json']" = 'msgpack', pickle: 'bool' = False, clock: 'Callable[[], float] | None' = None, max_connections: 'int' = 8, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object]" = 'raise', invalidate: 'CacheLike | None' = None) -> 'None'
 
 A switched-off cache, so app code needs no `if cache is None` checks.
 
@@ -198,7 +203,7 @@ volume(self) -> 'int'
 
 Always 0: a `NullCache` uses no disk.
 
-checkpoint(self, timeout: 'float | None' = None) -> 'bool'
+checkpoint(self, *, timeout: 'float | None' = None) -> 'bool'
 
 Always True: there is no write-ahead log to reset.
 
@@ -243,19 +248,19 @@ pop(self, key: 'str', default: 'Any' = None) -> 'Any'
 
 Return `default`. With `invalidate=`, also delete the key from that cache.
 
-clear(self) -> 'int'
+clear(self, *, timeout: 'float | None' = None) -> 'int'
 
-0, or with `invalidate=`, clear that cache and return its count.
+0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count.
 
 iterkeys(self, *, prefix: 'str | None' = None, reverse: 'bool' = False) -> 'Iterator[str]'
 
 Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works.
 
-expire(self) -> 'int'
+expire(self, *, timeout: 'float | None' = None) -> 'int'
 
 Always 0.
 
-cull(self) -> 'int'
+cull(self, *, timeout: 'float | None' = None) -> 'int'
 
 Always 0.
 
@@ -333,15 +338,15 @@ iterkeys(self, *, prefix: 'str | None' = None, reverse: 'bool' = False) -> 'Iter
 
 Iterate over keys in sorted order, optionally only those starting with `prefix`.
 
-expire(self) -> 'int'
+expire(self, *, timeout: 'float | None' = None) -> 'int'
 
 Remove every expired entry. Returns how many were removed.
 
-clear(self) -> 'int'
+clear(self, *, timeout: 'float | None' = None) -> 'int'
 
 Remove every entry that existed when the call started. Returns how many.
 
-cull(self) -> 'int'
+cull(self, *, timeout: 'float | None' = None) -> 'int'
 
 Remove expired entries, then evict until under `size_limit`. Returns how many.
 
@@ -349,7 +354,7 @@ volume(self) -> 'int'
 
 The size on disk in bytes.
 
-checkpoint(self, timeout: 'float | None' = None) -> 'bool'
+checkpoint(self, *, timeout: 'float | None' = None) -> 'bool'
 
 Empty the write-ahead log. True if it was reset, False if other processes kept it busy.
 
@@ -394,6 +399,122 @@ __exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | Non
 Close the cache.
 
 
+## Caches
+
+A registry of named caches under one base directory.
+
+
+Caches(base_dir: 'str | os.PathLike[str]', *, on_open_error: 'Callable[[str, Exception], object] | None' = None, retry_open_after: 'float' = 10.0, _monotonic: 'Callable[[], float]' = <built-in function monotonic>, **defaults: 'Any') -> 'None'
+
+A registry of named caches under one base directory.
+
+`Caches[Literal['general', 'show_pages']]` makes a misspelled name a type error.
+
+Args:
+    base_dir: Where the caches live: each one in `base_dir/<name>` unless `register` says
+        otherwise. Created when the first cache opens.
+    on_open_error: Called as `on_open_error(name, exc)` when a cache can't open (default: log at
+        ERROR on the `diskcache_oxide` logger). Whatever it raises is logged.
+    retry_open_after: Seconds before a cache that failed to open is tried again (default 10).
+        Lookups in between get a `NullCache` without trying.
+    **defaults: `Cache` settings for every cache, such as `timeout=1.0` or
+        `on_decode_error='miss'`. `register` can override them. A callable `on_decode_error`
+        here is called as `(name, key, exc)`, so one reporter can tell the caches apart.
+
+CacheStats(name: 'str', directory: 'str', enabled: 'bool', count: 'int', volume: 'int', error: 'str | None' = None) -> None
+
+One cache's numbers, for an admin page. `error` says why it couldn't be read, if it couldn't.
+
+
+## Caches Methods
+
+Methods for the Caches class
+
+
+__repr__(self) -> 'str'
+
+register(self, name: 'N', *, directory: 'str | os.PathLike[str] | None' = None, **settings: 'Any') -> 'None'
+
+Register a cache. Nothing opens until its first lookup.
+
+Args:
+    name: The cache's name. Without `directory`, it's also the directory's name under
+        `base_dir`, so it must be a plain name: no path separators, not `.` or `..`.
+    directory: Put this cache somewhere else.
+    **settings: `Cache` settings for this cache, over the registry's defaults.
+
+Raises:
+    ValueError: The name is taken or isn't a plain directory name, or another registered
+        cache already uses that directory (two names would share one store, and the last
+        one opened would quietly set its `size_limit`).
+    TypeError: An unknown `Cache` setting.
+
+__contains__(self, name: 'object') -> 'bool'
+
+__iter__(self) -> 'Iterator[N]'
+
+The registered names, in registration order.
+
+__len__(self) -> 'int'
+
+directory(self, name: 'N') -> 'str'
+
+Where the named cache lives.
+
+__getitem__(self, name: 'N') -> 'CacheLike'
+
+The named cache: opened on first use, then the same object every time.
+
+A `NullCache` while it can't be opened (see the class docs), or `NullCache(invalidate=real)`
+while it's disabled.
+
+Raises:
+    KeyError: No cache by that name is registered.
+    TypeError, ValueError: Its settings are invalid.
+
+disable(self, *names: 'N') -> 'None'
+
+Later lookups of these caches return `NullCache(invalidate=real)`.
+
+enable(self, *names: 'N') -> 'None'
+
+Later lookups of these caches return the real cache again.
+
+enabled(self, name: 'N') -> 'bool'
+
+Whether lookups of this cache return the real one (it may still fail to open).
+
+stats(self) -> 'dict[N, CacheStats]'
+
+Count and volume for every registered cache, opening each one. Never raises for a cache
+that can't be read: its `error` says why.
+
+clear(self, name: 'N', *, timeout: 'float | None' = None) -> 'int'
+
+Clear the real cache, even while it's disabled. Returns how many entries were removed.
+
+Raises:
+    KeyError: No cache by that name is registered.
+    OSError, RuntimeError: It can't be opened (an admin action shouldn't report 0 for that),
+        or `Timeout` from the clear itself.
+
+expire_all(self, *, timeout: 'float | None' = None) -> 'dict[N, int | None]'
+
+Remove expired entries from every cache. Returns how many each removed, or None for a
+cache that couldn't be opened or expired (logged; the rest still run).
+
+close_all(self) -> 'None'
+
+Close every opened cache and forget it; a later lookup opens it again.
+
+A lookup that races this can return a handle that's no longer tracked. It still works: a
+closed handle reopens when it's used.
+
+__enter__(self) -> 'Self'
+
+__exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | None', tb: 'TracebackType | None', /) -> 'None'
+
+
 ## Errors
 
 Exceptions raised by cache operations.
@@ -410,6 +531,10 @@ A pickle=False cache read a value that was stored with pickle.
 CorruptValueError
 
 A stored value couldn't be decoded: an unknown mode, or bytes that don't parse.
+
+ForeignValueError
+
+A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote it), or a time zone missing from this host.
 
 FormatMismatchError
 
@@ -575,6 +700,29 @@ try:
 except Timeout:
     ...  # the cache was too busy; carry on without it
 ```
+
+Maintenance calls work in chunks, so they take the write lock many times. A request-sized timeout can cut an admin `clear()` off partway through, so `clear()`, `expire()` and `cull()` each take their own `timeout=` for that call. It bounds each chunk's wait for the lock, not the whole call:
+
+```python
+cache = Cache('/var/cache/my-app', timeout=1.0)  # for requests
+cache.clear(timeout=10.0)                        # for the admin page
+```
+
+## Values that can't be read
+
+A cached value can stop being readable: a class you pickled was moved or renamed, or the bytes were damaged. By default `get` raises, as diskcache does. A cache is only a copy of data you can rebuild, so most apps would rather treat that as a miss. `on_decode_error` does that:
+
+```python
+cache = Cache('/var/cache/my-app', pickle=True, on_decode_error='miss')
+cache.get('homepage')  # None if the stored value can't be decoded; the bad row is deleted
+```
+
+- `'miss'` returns the default, deletes the bad row, and logs a warning on the `diskcache_oxide` logger. Only that exact stored version is deleted, so a fresh value another process wrote in the meantime survives, and the read never waits for the write lock to do it. If the lock is busy, the row stays and a later read tries again.
+- A value this version can't read but another might, such as one written by a newer diskcache-oxide or one that needs a time zone this host lacks, is a miss too, but its row is kept. Reading it with the default `'raise'` raises `ForeignValueError`, a subclass of `CorruptValueError`.
+- Pass a function instead to report the failure yourself, for example to Sentry. It's called as `report(key, exc)` in place of the warning, after the row has been dealt with. Anything it raises is logged, and the read is still a miss.
+- Errors that aren't about the stored bytes still raise: `Timeout`, `MemoryError`, an I/O error, and `UnsafeValueError` (a pickled value read by a cache without `pickle=True`, which is a configuration mistake, not damage).
+
+It covers `get`, `cache[key]` (which raises `KeyError`) and `pop`. A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read. One limit: `pop` removes the row before it decodes the value, so it can only keep a foreign value whose *mode* it doesn't know. One with an unknown tag inside a known mode is removed, as `pop` was asked to do.
 
 ## Shutting down
 
@@ -931,6 +1079,106 @@ def load_user(user_id: str, cache: CacheLike) -> dict:
 A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `CacheLike` keep identical public signatures, so they can't drift apart.
 
 
+### Caches: named caches
+
+An app with more than one cache ends up writing the same code to manage them: map names to directories, open each one once and reuse it, carry on with caching switched off when one can't be opened, turn some off for a load test, and show counts and sizes on an admin page. `Caches` is that code.
+
+```python
+from diskcache_oxide import Caches
+
+caches = Caches('/var/cache/my-app', timeout=1.0, on_decode_error='miss')
+caches.register('general')
+caches.register('pages', size_limit=2 * 2**30)
+
+caches['general'].set('greeting', 'hello')
+caches['pages'].get('/about')
+```
+
+Settings passed to `Caches` apply to every cache, and `register` can override them for one. Each cache lives in a directory named after it under the base directory, unless you pass `directory=`.
+
+## Lookups
+
+A cache opens on its first lookup, and every lookup after that returns the same object. A lookup is a single dict read with no lock, so it's fine to do on every request rather than keeping your own references. Lookups are safe from any thread, on free-threaded Python too, and in a child process after a fork.
+
+`Caches` is generic in its names. Give it a `Literal` and a misspelled name becomes a type error:
+
+```python
+from typing import Literal
+
+CacheName = Literal['general', 'pages']
+caches: Caches[CacheName] = Caches('/var/cache/my-app')
+caches['genral']  # mypy: invalid argument
+```
+
+## When a cache can't open
+
+A cache can fail to open: a permissions problem, a disk that went away, a database written by a newer version, or another process holding the lock for longer than `timeout`. A lookup then returns a [NullCache](null-cache.qmd) instead of raising, so the request carries on without the cache. The error goes to `on_open_error(name, exc)`, which logs it at `ERROR` on the `diskcache_oxide` logger by default. Pass your own function to send it to Sentry or your logging setup.
+
+The failure is remembered for `retry_open_after` seconds (10 by default), so a broken cache costs one failed open every 10 seconds, not one per request, and the lookup after that tries again. A cache that recovers is picked up without a restart.
+
+A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead.
+
+## Switching caches off
+
+```python
+caches.disable('pages')   # later lookups return NullCache(invalidate=real)
+caches.enable('pages')
+caches.enabled('pages')   # False while it's off
+```
+
+While a cache is disabled, its lookups return `NullCache(invalidate=real)`: reads miss and writes are dropped, but `delete` and `clear` still reach the real cache, so nothing stale is served when it comes back on. Switches only change later lookups. Code that already holds the real `Cache` keeps using it, so set them at startup, before you hand caches out.
+
+If your app has its own names for what it caches (Talk Python calls them purposes), map them onto registered caches in your own code. It's a few lines:
+
+```python
+PURPOSES = {'rss_feed': 'general', 'episode_html': 'episodes'}
+off = {'rss_feed'}  # from your settings file
+
+def cache_for(purpose: str) -> CacheLike:
+    real = caches[PURPOSES[purpose]]
+    return NullCache(invalidate=real) if purpose in off else real
+```
+
+## Admin and shutdown
+
+```python
+caches.stats()                      # {name: CacheStats(name, directory, enabled, count, volume, error)}
+caches.clear('pages', timeout=10)   # works on a disabled cache too
+caches.expire_all(timeout=10)       # {name: removed, or None if it failed}
+caches.close_all()                  # at shutdown; `with Caches(...) as caches:` does it too
+```
+
+- `stats()` opens every registered cache and never raises: a cache that can't be read has its `error` set.
+- `clear(name)` raises if the cache can't be opened, so an admin page doesn't report "0 cleared" for a failure.
+- `expire_all()` runs every cache, logging and reporting `None` for one that fails. Run it from a scheduled job rather than inside a request: a large expire takes seconds.
+- Maintenance calls hold the write lock once per chunk, so give them a longer `timeout=` than the request path's.
+
+## Coming from `DurableCache`
+
+Talk Python's apps wrap diskcache in a `DurableCache` class and a `cache_service` module. Each piece now has a home in the library:
+
+| `DurableCache` / `cache_service` | diskcache-oxide |
+|---|---|
+| `bool()` is always True | `Cache` is always truthy (D-009); `NullCache` is falsy |
+| `CacheProtocol` | `CacheLike` |
+| `NullCache`, `PerfTestNullCache` | `NullCache`, and `NullCache(invalidate=real)` |
+| `get` that logs, deletes and misses on any error | `Cache(on_decode_error='miss')` or a reporting function ([details](getting-started.qmd#values-that-cant-be-read)) |
+| `create_cache(name, size_limit)` | `caches.register(name, size_limit=...)`, then `caches[name]` |
+| `timeout=1.0` on every open | `Caches(base_dir, timeout=1.0)` |
+| A `NullCache` when opening fails | the same, reported through `on_open_error` and retried after 10 s |
+| `get_all_caches()`, `clear_*()`, `close_all_caches()` | `caches.stats()`, `caches.clear(name, timeout=...)`, `caches.close_all()` |
+| A separate maintenance handle with a 10 s timeout | `timeout=` on `clear()`, `expire()` and `cull()` |
+| Hourly `expire_all_caches()` inside `create_cache` | `caches.expire_all()` from a scheduled job |
+
+The library's self-healing read is safer than the wrapper's in three ways:
+
+- **It deletes only what failed.** The wrapper's `get`-then-`delete` can remove a fresh value another process wrote in between. The library deletes exactly the stored version it couldn't read.
+- **It never waits to clean up.** If the write lock is busy, the bad row stays and a later read tries again.
+- **It doesn't hide outages.** The wrapper catches every exception, so a lock `Timeout` also became a silent miss. In the library, `Timeout`, I/O errors and `MemoryError` still raise, and so does reading a pickled value from a cache without `pickle=True`, which is a configuration mistake.
+
+What stays in the app: reading its settings file and environment variables (pass the result as `base_dir`), its purposes and their on/off flags, descriptions for the admin page, and wiring the reporting functions to Sentry or logbook.
+
+
 ### Concurrency and forks
 
 A production Python web app is many things at once: several worker processes, often several threads in each, a pre-forking server that creates and recycles those workers, and background jobs and scripts opening the same cache on the side. More and more, it's also free-threaded Python, with threads truly running in parallel. diskcache-oxide is designed for all of that at the same time, and its test suite runs each of these cases on every change.
@@ -971,13 +1219,15 @@ Pre-forking servers (gunicorn, Celery's prefork pool, `multiprocessing` with the
 
 diskcache-oxide prevents it with a **fork barrier**, installed when `diskcache_oxide` is imported:
 
-1. **Before the fork,** the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish.
+1. **Before the fork,** the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish. Then it closes the idle pooled connections, so the child doesn't inherit SQLite's lock bookkeeping for those files.
 2. **In the parent,** it lets the held-off writes continue.
-3. **In the child,** it drops the inherited connections without closing them (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.
+3. **In the child,** it drops any connection still inherited without closing it (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.
 
-The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every `Cache` in the process, not just the one you're holding.
+The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every `Cache` in the process, not just the one you're holding. Your own `os.register_at_fork(after_in_child=...)` hooks can use a cache too, whether they were registered before or after `diskcache_oxide` was imported.
 
-A forked child deliberately leaves its inherited connections' file descriptors open, so each fork can carry up to the pool's descriptor budget into the child. That's by design, and it's bounded.
+Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process's last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.
+
+The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds (see below), or an operation it forked from inside, such as from a callback. The child leaves those file descriptors open by design.
 
 ### Forking from inside your own transaction
 
@@ -1258,6 +1508,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-007:** `Timeout` subclasses `TimeoutError`, so `except TimeoutError` catches it too.
 - **D-009:** `bool(Cache)` is always True and `bool(NullCache)` is False, so `if cache:` means "caching is on".
 - **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
+- **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ## diskcache-community
 

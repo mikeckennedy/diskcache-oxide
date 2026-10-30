@@ -244,6 +244,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/caches.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caches: named caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Concurrency and forks</span></a>
   </div>
@@ -300,6 +306,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#list-keys" id="toc-list-keys" class="nav-link" data-scroll-target="#list-keys">List keys</a></li>
   <li><a href="#size-limits-and-eviction" id="toc-size-limits-and-eviction" class="nav-link" data-scroll-target="#size-limits-and-eviction">Size limits and eviction</a></li>
   <li><a href="#timeouts" id="toc-timeouts" class="nav-link" data-scroll-target="#timeouts">Timeouts</a></li>
+  <li><a href="#values-that-cant-be-read" id="toc-values-that-cant-be-read" class="nav-link" data-scroll-target="#values-that-cant-be-read">Values that can’t be read</a></li>
   <li><a href="#shutting-down" id="toc-shutting-down" class="nav-link" data-scroll-target="#shutting-down">Shutting down</a></li>
   <li><a href="#testing-code-that-uses-a-cache" id="toc-testing-code-that-uses-a-cache" class="nav-link" data-scroll-target="#testing-code-that-uses-a-cache">Testing code that uses a cache</a></li>
   </ul>
@@ -422,6 +429,22 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'key'</span>, <span class="st">'value'</span>)</span>
 <span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="cf">except</span> Timeout:</span>
 <span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>    ...  <span class="co"># the cache was too busy; carry on without it</span></span></code></pre></div>
+<p>Maintenance calls work in chunks, so they take the write lock many times. A request-sized timeout can cut an admin <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> off partway through, so <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> and <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> each take their own <code>timeout=</code> for that call. It bounds each chunk’s wait for the lock, not the whole call:</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)  <span class="co"># for requests</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>cache.clear(timeout<span class="op">=</span><span class="fl">10.0</span>)                        <span class="co"># for the admin page</span></span></code></pre></div>
+</section>
+<section id="values-that-cant-be-read" class="level1">
+<h1>Values that can’t be read</h1>
+<p>A cached value can stop being readable: a class you pickled was moved or renamed, or the bytes were damaged. By default <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> raises, as diskcache does. A cache is only a copy of data you can rebuild, so most apps would rather treat that as a miss. <code>on_decode_error</code> does that:</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, pickle<span class="op">=</span><span class="va">True</span>, on_decode_error<span class="op">=</span><span class="st">'miss'</span>)</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>cache.get(<span class="st">'homepage'</span>)  <span class="co"># None if the stored value can't be decoded; the bad row is deleted</span></span></code></pre></div>
+<ul>
+<li><code>'miss'</code> returns the default, deletes the bad row, and logs a warning on the <code>diskcache_oxide</code> logger. Only that exact stored version is deleted, so a fresh value another process wrote in the meantime survives, and the read never waits for the write lock to do it. If the lock is busy, the row stays and a later read tries again.</li>
+<li>A value this version can’t read but another might, such as one written by a newer diskcache-oxide or one that needs a time zone this host lacks, is a miss too, but its row is kept. Reading it with the default <code>'raise'</code> raises <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>, a subclass of <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a>.</li>
+<li>Pass a function instead to report the failure yourself, for example to Sentry. It’s called as <code>report(key, exc)</code> in place of the warning, after the row has been dealt with. Anything it raises is logged, and the read is still a miss.</li>
+<li>Errors that aren’t about the stored bytes still raise: <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, <code>MemoryError</code>, an I/O error, and <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> (a pickled value read by a cache without <code>pickle=True</code>, which is a configuration mistake, not damage).</li>
+</ul>
+<p>It covers <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <code>cache[key]</code> (which raises <code>KeyError</code>) and <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a>. A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read. One limit: <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> removes the row before it decodes the value, so it can only keep a foreign value whose <em>mode</em> it doesn’t know. One with an unknown tag inside a known mode is removed, as <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> was asked to do.</p>
 </section>
 <section id="shutting-down" class="level1">
 <h1>Shutting down</h1>
@@ -435,7 +458,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <li><strong><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a></strong> is a cache that’s switched off: every write succeeds and every read misses. Swap it in for tests or local development without touching call sites. See <a href="../user-guide/null-cache.html">NullCache</a>.</li>
 <li><strong><code>clock=</code></strong> controls the cache’s clock. diskcache-oxide reads time natively in Rust, so patching <code>time.time</code> doesn’t affect it on its own. Pass <code>clock=lambda: time.time()</code> and the cache follows your patched clock:</li>
 </ul>
-<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tmp_path, clock<span class="op">=</span><span class="kw">lambda</span>: time.time())</span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tmp_path, clock<span class="op">=</span><span class="kw">lambda</span>: time.time())</span></code></pre></div>
 
 
 </section>

@@ -73,7 +73,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
 <link href="../user-guide/storage-and-wal.html" rel="next">
-<link href="../user-guide/null-cache.html" rel="prev">
+<link href="../user-guide/caches.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
@@ -245,6 +245,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/caches.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caches: named caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link active">
  <span class="menu-text">Concurrency and forks</span></a>
   </div>
@@ -355,12 +361,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Pre-forking servers (gunicorn, Celery’s prefork pool, <code>multiprocessing</code> with the fork start method) create workers with <code>fork()</code>. A fork copies the whole process, including any SQLite lock state that one of its threads held at that moment. In diskcache, a child forked while another thread was in a write transaction inherits a lock nobody in the child will ever release: its first write stalls for the full timeout (60 seconds by default). Under a busy read/write load, that hits 20-50% of forks.</p>
 <p>diskcache-oxide prevents it with a <strong>fork barrier</strong>, installed when <code>diskcache_oxide</code> is imported:</p>
 <ol type="1">
-<li><strong>Before the fork,</strong> the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish.</li>
+<li><strong>Before the fork,</strong> the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish. Then it closes the idle pooled connections, so the child doesn’t inherit SQLite’s lock bookkeeping for those files.</li>
 <li><strong>In the parent,</strong> it lets the held-off writes continue.</li>
-<li><strong>In the child,</strong> it drops the inherited connections without closing them (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.</li>
+<li><strong>In the child,</strong> it drops any connection still inherited without closing it (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.</li>
 </ol>
-<p>The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> in the process, not just the one you’re holding.</p>
-<p>A forked child deliberately leaves its inherited connections’ file descriptors open, so each fork can carry up to the pool’s descriptor budget into the child. That’s by design, and it’s bounded.</p>
+<p>The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> in the process, not just the one you’re holding. Your own <code>os.register_at_fork(after_in_child=...)</code> hooks can use a cache too, whether they were registered before or after <code>diskcache_oxide</code> was imported.</p>
+<p>Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process’s last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.</p>
+<p>The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds (see below), or an operation it forked from inside, such as from a callback. The child leaves those file descriptors open by design.</p>
 <section id="forking-from-inside-your-own-transaction" class="level2">
 <h2 class="anchored" data-anchor-id="forking-from-inside-your-own-transaction">Forking from inside your own transaction</h2>
 <p>CPython won’t let a library refuse a fork, so the barrier can’t wait for a transaction held by the very thread that is forking. Once <code>transact()</code> arrives (Phase 6b), the child’s copy of that transaction is poisoned: anything done inside it raises <code>RuntimeError</code> and nothing commits, and the child’s writes to that database raise <code>RuntimeError</code> straight away instead of stalling for a minute. The parent gets a <code>RuntimeWarning</code>. A clear error at the call site beats a mysterious 60-second hang in a fresh worker.</p>
@@ -714,8 +721,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   </script>
 <nav class="page-navigation">
   <div class="nav-page nav-page-previous">
-      <a href="../user-guide/null-cache.html" class="pagination-link" aria-label="NullCache">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">NullCache</span>
+      <a href="../user-guide/caches.html" class="pagination-link" aria-label="Caches: named caches">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Caches: named caches</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">

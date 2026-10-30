@@ -1,280 +1,470 @@
 {
-  "build_time": "2026-10-29T05:43:52Z",
-  "total_seconds": 64.65,
+  "build_time": "2026-10-30T23:35:22Z",
+  "total_seconds": 75.869,
   "pages": [
     {
       "page": "reference/CacheLike.incr.qmd",
-      "seconds": 20.178,
-      "frozen": false
-    },
-    {
-      "page": "recipes/caching-expensive-calls.qmd",
-      "seconds": 1.552,
-      "frozen": false
-    },
-    {
-      "page": "user-guide/storage-and-wal.qmd",
-      "seconds": 1.546,
-      "frozen": false
-    },
-    {
-      "page": "recipes/invalidating-groups.qmd",
-      "seconds": 1.387,
+      "seconds": 22.973,
       "frozen": false
     },
     {
       "page": "recipes/run-once.qmd",
-      "seconds": 1.384,
+      "seconds": 2.631,
+      "frozen": false
+    },
+    {
+      "page": "recipes/caching-expensive-calls.qmd",
+      "seconds": 1.537,
+      "frozen": false
+    },
+    {
+      "page": "user-guide/storage-and-wal.qmd",
+      "seconds": 1.514,
+      "frozen": false
+    },
+    {
+      "page": "recipes/invalidating-groups.qmd",
+      "seconds": 1.308,
       "frozen": false
     },
     {
       "page": "recipes/rate-limiting.qmd",
-      "seconds": 1.313,
+      "seconds": 1.299,
       "frozen": false
     },
     {
       "page": "recipes/testing.qmd",
-      "seconds": 1.312,
+      "seconds": 1.288,
       "frozen": false
     },
     {
       "page": "reference/index.qmd",
-      "seconds": 0.42,
+      "seconds": 0.48,
       "frozen": false
     },
     {
-      "page": "reference/NullCache.__exit__.qmd",
-      "seconds": 0.38,
+      "page": "reference/Caches.__repr__.qmd",
+      "seconds": 0.365,
       "frozen": false
     },
     {
-      "page": "reference/NullCache.iterkeys.qmd",
-      "seconds": 0.376,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.delete.qmd",
-      "seconds": 0.366,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.close.qmd",
+      "page": "reference/NullCache.directory.qmd",
       "seconds": 0.364,
       "frozen": false
     },
     {
-      "page": "reference/Cache.add.qmd",
-      "seconds": 0.361,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.iterkeys.qmd",
-      "seconds": 0.359,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.iterkeys.qmd",
-      "seconds": 0.356,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.__len__.qmd",
-      "seconds": 0.355,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.touch.qmd",
-      "seconds": 0.355,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.decr.qmd",
-      "seconds": 0.355,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.close.qmd",
-      "seconds": 0.354,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.directory.qmd",
-      "seconds": 0.353,
+      "page": "reference/CacheLike.__iter__.qmd",
+      "seconds": 0.364,
       "frozen": false
     },
     {
       "page": "reference/Cache.qmd",
-      "seconds": 0.349,
+      "seconds": 0.36,
       "frozen": false
     },
     {
-      "page": "reference/Cache.delete.qmd",
-      "seconds": 0.349,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.__bool__.qmd",
-      "seconds": 0.348,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.get.qmd",
-      "seconds": 0.348,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.incr.qmd",
-      "seconds": 0.348,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.__setitem__.qmd",
-      "seconds": 0.347,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.get.qmd",
-      "seconds": 0.345,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.__getitem__.qmd",
-      "seconds": 0.345,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.__bool__.qmd",
-      "seconds": 0.345,
-      "frozen": false
-    },
-    {
-      "page": "reference/CorruptValueError.qmd",
-      "seconds": 0.343,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.cull_limit.qmd",
-      "seconds": 0.343,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.size_limit.qmd",
-      "seconds": 0.342,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.touch.qmd",
-      "seconds": 0.342,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.add.qmd",
-      "seconds": 0.342,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.close.qmd",
-      "seconds": 0.341,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.__bool__.qmd",
-      "seconds": 0.34,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.cull.qmd",
-      "seconds": 0.34,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.pop.qmd",
-      "seconds": 0.339,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.enabled.qmd",
-      "seconds": 0.339,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.__enter__.qmd",
-      "seconds": 0.337,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.checkpoint.qmd",
-      "seconds": 0.336,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.__getitem__.qmd",
-      "seconds": 0.335,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.enabled.qmd",
-      "seconds": 0.334,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.touch.qmd",
-      "seconds": 0.334,
-      "frozen": false
-    },
-    {
-      "page": "reference/FormatMismatchError.qmd",
-      "seconds": 0.334,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.__delitem__.qmd",
-      "seconds": 0.334,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.clear.qmd",
-      "seconds": 0.334,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.delete.qmd",
-      "seconds": 0.334,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.__getitem__.qmd",
-      "seconds": 0.333,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.decr.qmd",
-      "seconds": 0.333,
+      "page": "reference/Cache.__exit__.qmd",
+      "seconds": 0.36,
       "frozen": false
     },
     {
       "page": "reference/CacheLike.__contains__.qmd",
-      "seconds": 0.332,
+      "seconds": 0.36,
       "frozen": false
     },
     {
-      "page": "reference/Cache.__contains__.qmd",
-      "seconds": 0.332,
+      "page": "reference/Cache.set.qmd",
+      "seconds": 0.36,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.clear.qmd",
+      "seconds": 0.359,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.__exit__.qmd",
+      "seconds": 0.358,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.delete.qmd",
+      "seconds": 0.358,
+      "frozen": false
+    },
+    {
+      "page": "reference/sqlite_compile_options.qmd",
+      "seconds": 0.357,
       "frozen": false
     },
     {
       "page": "reference/CacheLike.__len__.qmd",
-      "seconds": 0.331,
+      "seconds": 0.356,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.set.qmd",
+      "seconds": 0.356,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.pop.qmd",
+      "seconds": 0.356,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.checkpoint.qmd",
+      "seconds": 0.356,
+      "frozen": false
+    },
+    {
+      "page": "reference/UnsafeValueError.qmd",
+      "seconds": 0.355,
+      "frozen": false
+    },
+    {
+      "page": "reference/CorruptValueError.qmd",
+      "seconds": 0.355,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.__getitem__.qmd",
+      "seconds": 0.355,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.touch.qmd",
+      "seconds": 0.355,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.iterkeys.qmd",
+      "seconds": 0.355,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.__enter__.qmd",
+      "seconds": 0.353,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.cull.qmd",
+      "seconds": 0.352,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.directory.qmd",
+      "seconds": 0.351,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.__bool__.qmd",
+      "seconds": 0.351,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.enabled.qmd",
+      "seconds": 0.35,
+      "frozen": false
+    },
+    {
+      "page": "reference/sqlite_version.qmd",
+      "seconds": 0.35,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.__len__.qmd",
+      "seconds": 0.349,
+      "frozen": false
+    },
+    {
+      "page": "reference/Timeout.qmd",
+      "seconds": 0.349,
+      "frozen": false
+    },
+    {
+      "page": "reference/FormatMismatchError.qmd",
+      "seconds": 0.349,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.pop.qmd",
+      "seconds": 0.348,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.__repr__.qmd",
+      "seconds": 0.348,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.volume.qmd",
+      "seconds": 0.347,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.__delitem__.qmd",
+      "seconds": 0.346,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.close_all.qmd",
+      "seconds": 0.346,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.delete.qmd",
+      "seconds": 0.346,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.register.qmd",
+      "seconds": 0.345,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.qmd",
+      "seconds": 0.344,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.volume.qmd",
+      "seconds": 0.344,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.cull_limit.qmd",
+      "seconds": 0.344,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.volume.qmd",
+      "seconds": 0.343,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.__getitem__.qmd",
+      "seconds": 0.343,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.__iter__.qmd",
+      "seconds": 0.343,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.clear.qmd",
+      "seconds": 0.342,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.expire.qmd",
+      "seconds": 0.342,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.cull.qmd",
+      "seconds": 0.341,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.__delitem__.qmd",
+      "seconds": 0.341,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.__delitem__.qmd",
+      "seconds": 0.341,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.checkpoint.qmd",
+      "seconds": 0.341,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.incr.qmd",
+      "seconds": 0.341,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.__exit__.qmd",
+      "seconds": 0.34,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.close.qmd",
+      "seconds": 0.34,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.cull_limit.qmd",
+      "seconds": 0.339,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.qmd",
+      "seconds": 0.339,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.get.qmd",
+      "seconds": 0.339,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.expire_all.qmd",
+      "seconds": 0.338,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.clear.qmd",
+      "seconds": 0.338,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.__enter__.qmd",
+      "seconds": 0.338,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.decr.qmd",
+      "seconds": 0.337,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.timeout.qmd",
+      "seconds": 0.337,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.enabled.qmd",
+      "seconds": 0.337,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.__bool__.qmd",
+      "seconds": 0.337,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.qmd",
+      "seconds": 0.337,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.iterkeys.qmd",
+      "seconds": 0.336,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.__setitem__.qmd",
+      "seconds": 0.336,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.touch.qmd",
+      "seconds": 0.336,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.cull.qmd",
+      "seconds": 0.336,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.__iter__.qmd",
+      "seconds": 0.336,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.__contains__.qmd",
+      "seconds": 0.336,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.__setitem__.qmd",
+      "seconds": 0.335,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.add.qmd",
+      "seconds": 0.335,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.close.qmd",
+      "seconds": 0.334,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.__contains__.qmd",
+      "seconds": 0.334,
       "frozen": false
     },
     {
       "page": "reference/NullCache.get.qmd",
-      "seconds": 0.331,
+      "seconds": 0.334,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.add.qmd",
+      "seconds": 0.332,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.set.qmd",
+      "seconds": 0.332,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.__bool__.qmd",
+      "seconds": 0.332,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.touch.qmd",
+      "seconds": 0.332,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.__exit__.qmd",
+      "seconds": 0.332,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.stats.qmd",
+      "seconds": 0.332,
       "frozen": false
     },
     {
       "page": "reference/Cache.clear.qmd",
-      "seconds": 0.33,
+      "seconds": 0.331,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.get.qmd",
+      "seconds": 0.331,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.__setitem__.qmd",
+      "seconds": 0.331,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.__enter__.qmd",
+      "seconds": 0.331,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.pop.qmd",
+      "seconds": 0.331,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.enable.qmd",
+      "seconds": 0.331,
       "frozen": false
     },
     {
@@ -283,318 +473,228 @@
       "frozen": false
     },
     {
-      "page": "reference/CacheLike.qmd",
+      "page": "reference/Cache.enabled.qmd",
       "seconds": 0.33,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.__enter__.qmd",
-      "seconds": 0.33,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.clear.qmd",
-      "seconds": 0.329,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.__enter__.qmd",
-      "seconds": 0.329,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.__contains__.qmd",
-      "seconds": 0.329,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.qmd",
-      "seconds": 0.328,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.set.qmd",
-      "seconds": 0.328,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.__iter__.qmd",
-      "seconds": 0.328,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.cull.qmd",
-      "seconds": 0.328,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.__setitem__.qmd",
-      "seconds": 0.328,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.pop.qmd",
-      "seconds": 0.327,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.__delitem__.qmd",
-      "seconds": 0.326,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.set.qmd",
-      "seconds": 0.326,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.timeout.qmd",
-      "seconds": 0.326,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.__delitem__.qmd",
-      "seconds": 0.325,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.expire.qmd",
-      "seconds": 0.325,
-      "frozen": false
-    },
-    {
-      "page": "reference/sqlite_version.qmd",
-      "seconds": 0.324,
       "frozen": false
     },
     {
       "page": "reference/Cache.expire.qmd",
-      "seconds": 0.322,
+      "seconds": 0.329,
       "frozen": false
     },
     {
-      "page": "reference/NullCache.__repr__.qmd",
-      "seconds": 0.322,
+      "page": "reference/NullCache.cull_limit.qmd",
+      "seconds": 0.329,
       "frozen": false
     },
     {
-      "page": "reference/NullCache.directory.qmd",
-      "seconds": 0.321,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.cull_limit.qmd",
-      "seconds": 0.321,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.__exit__.qmd",
-      "seconds": 0.321,
+      "page": "reference/NullCache.expire.qmd",
+      "seconds": 0.328,
       "frozen": false
     },
     {
       "page": "reference/NullCache.incr.qmd",
-      "seconds": 0.32,
+      "seconds": 0.328,
       "frozen": false
     },
     {
-      "page": "reference/NullCache.checkpoint.qmd",
-      "seconds": 0.32,
+      "page": "reference/Cache.directory.qmd",
+      "seconds": 0.328,
       "frozen": false
     },
     {
-      "page": "reference/Cache.__setitem__.qmd",
-      "seconds": 0.319,
+      "page": "reference/Cache.__len__.qmd",
+      "seconds": 0.328,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.__enter__.qmd",
+      "seconds": 0.328,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.close.qmd",
+      "seconds": 0.327,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.__contains__.qmd",
+      "seconds": 0.327,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.__len__.qmd",
+      "seconds": 0.327,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.timeout.qmd",
+      "seconds": 0.327,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.delete.qmd",
+      "seconds": 0.327,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheStats.qmd",
+      "seconds": 0.326,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.__getitem__.qmd",
+      "seconds": 0.326,
+      "frozen": false
+    },
+    {
+      "page": "reference/Caches.disable.qmd",
+      "seconds": 0.326,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.add.qmd",
+      "seconds": 0.325,
+      "frozen": false
+    },
+    {
+      "page": "reference/ForeignValueError.qmd",
+      "seconds": 0.325,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.iterkeys.qmd",
+      "seconds": 0.325,
       "frozen": false
     },
     {
       "page": "reference/NullCache.__iter__.qmd",
-      "seconds": 0.319,
+      "seconds": 0.324,
       "frozen": false
     },
     {
-      "page": "reference/sqlite_compile_options.qmd",
-      "seconds": 0.319,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.decr.qmd",
-      "seconds": 0.319,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.volume.qmd",
-      "seconds": 0.319,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.checkpoint.qmd",
-      "seconds": 0.319,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.set.qmd",
-      "seconds": 0.318,
-      "frozen": false
-    },
-    {
-      "page": "reference/UnsafeValueError.qmd",
-      "seconds": 0.317,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.cull_limit.qmd",
-      "seconds": 0.317,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.timeout.qmd",
-      "seconds": 0.316,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.__iter__.qmd",
-      "seconds": 0.316,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.__len__.qmd",
-      "seconds": 0.315,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.cull.qmd",
-      "seconds": 0.315,
+      "page": "reference/CacheLike.decr.qmd",
+      "seconds": 0.324,
       "frozen": false
     },
     {
       "page": "reference/CacheLike.directory.qmd",
-      "seconds": 0.313,
+      "seconds": 0.323,
       "frozen": false
     },
     {
-      "page": "reference/Cache.__exit__.qmd",
-      "seconds": 0.313,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.volume.qmd",
-      "seconds": 0.313,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.volume.qmd",
-      "seconds": 0.312,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.expire.qmd",
-      "seconds": 0.311,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.add.qmd",
-      "seconds": 0.31,
-      "frozen": false
-    },
-    {
-      "page": "reference/Timeout.qmd",
-      "seconds": 0.309,
-      "frozen": false
-    },
-    {
-      "page": "reference/Cache.size_limit.qmd",
-      "seconds": 0.308,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.enabled.qmd",
-      "seconds": 0.308,
-      "frozen": false
-    },
-    {
-      "page": "reference/NullCache.pop.qmd",
-      "seconds": 0.307,
-      "frozen": false
-    },
-    {
-      "page": "reference/CacheLike.timeout.qmd",
-      "seconds": 0.305,
+      "page": "reference/NullCache.enabled.qmd",
+      "seconds": 0.323,
       "frozen": false
     },
     {
       "page": "reference/BUNDLED_SQLITE_VERSION.qmd",
-      "seconds": 0.304,
+      "seconds": 0.323,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.checkpoint.qmd",
+      "seconds": 0.323,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.size_limit.qmd",
+      "seconds": 0.322,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.__getitem__.qmd",
+      "seconds": 0.322,
+      "frozen": false
+    },
+    {
+      "page": "reference/NullCache.timeout.qmd",
+      "seconds": 0.321,
+      "frozen": false
+    },
+    {
+      "page": "reference/Cache.decr.qmd",
+      "seconds": 0.321,
+      "frozen": false
+    },
+    {
+      "page": "reference/CacheLike.size_limit.qmd",
+      "seconds": 0.32,
       "frozen": false
     },
     {
       "page": "skill.md",
-      "seconds": 0.288,
+      "seconds": 0.268,
       "frozen": false
     },
     {
       "page": "user-guide/divergences.qmd",
-      "seconds": 0.282,
-      "frozen": false
-    },
-    {
-      "page": "index.qmd",
       "seconds": 0.266,
       "frozen": false
     },
     {
-      "page": "recipes/web-workers.qmd",
-      "seconds": 0.253,
+      "page": "user-guide/getting-started.qmd",
+      "seconds": 0.252,
       "frozen": false
     },
     {
-      "page": "user-guide/getting-started.qmd",
-      "seconds": 0.25,
+      "page": "index.qmd",
+      "seconds": 0.251,
       "frozen": false
     },
     {
       "page": "user-guide/roadmap.qmd",
-      "seconds": 0.243,
+      "seconds": 0.241,
       "frozen": false
     },
     {
-      "page": "user-guide/concurrency-and-forks.qmd",
+      "page": "user-guide/caches.qmd",
       "seconds": 0.24,
       "frozen": false
     },
     {
+      "page": "user-guide/serialization.qmd",
+      "seconds": 0.236,
+      "frozen": false
+    },
+    {
       "page": "user-guide/switching-from-diskcache.qmd",
-      "seconds": 0.239,
+      "seconds": 0.235,
       "frozen": false
     },
     {
       "page": "skills.qmd",
-      "seconds": 0.238,
+      "seconds": 0.231,
       "frozen": false
     },
     {
-      "page": "user-guide/performance.qmd",
-      "seconds": 0.234,
-      "frozen": false
-    },
-    {
-      "page": "user-guide/serialization.qmd",
-      "seconds": 0.228,
+      "page": "user-guide/concurrency-and-forks.qmd",
+      "seconds": 0.23,
       "frozen": false
     },
     {
       "page": "user-guide/null-cache.qmd",
-      "seconds": 0.224,
+      "seconds": 0.227,
+      "frozen": false
+    },
+    {
+      "page": "recipes/web-workers.qmd",
+      "seconds": 0.227,
+      "frozen": false
+    },
+    {
+      "page": "user-guide/performance.qmd",
+      "seconds": 0.218,
       "frozen": false
     },
     {
       "page": "recipes/index.qmd",
-      "seconds": 0.194,
+      "seconds": 0.192,
       "frozen": false
     },
     {
       "page": "license.qmd",
-      "seconds": 0.192,
+      "seconds": 0.177,
       "frozen": false
     }
   ]

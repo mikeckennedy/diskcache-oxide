@@ -134,6 +134,34 @@ Methods for the CacheLike class
 - `CacheLike.__enter__`
 - `CacheLike.__exit__`
 
+### Caches
+
+A registry of named caches under one base directory.
+
+- `Caches`: A registry of named caches under one base directory
+- `CacheStats`: One cache's numbers, for an admin page. `error` says why it couldn't be read, if it couldn't
+
+### Caches Methods
+
+Methods for the Caches class
+
+- `Caches.__repr__`
+- `Caches.register`
+- `Caches.__contains__`
+- `Caches.__iter__`
+- `Caches.__len__`
+- `Caches.directory`
+- `Caches.__getitem__`
+- `Caches.disable`
+- `Caches.enable`
+- `Caches.enabled`
+- `Caches.stats`
+- `Caches.clear`
+- `Caches.expire_all`
+- `Caches.close_all`
+- `Caches.__enter__`
+- `Caches.__exit__`
+
 ### Errors
 
 Exceptions raised by cache operations.
@@ -141,6 +169,7 @@ Exceptions raised by cache operations.
 - `Timeout`: The database stayed locked for longer than the cache's timeout
 - `UnsafeValueError`: A pickle=False cache read a value that was stored with pickle
 - `CorruptValueError`: A stored value couldn't be decoded: an unknown mode, or bytes that don't parse
+- `ForeignValueError`: A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote it), or a time zone missing from this host
 - `FormatMismatchError`: The cache directory holds a database in a format this version doesn't support
 
 ### SQLite and System
@@ -171,6 +200,8 @@ Information about the bundled SQLite and environment.
 - Type application functions that accept either cache type with CacheLike from diskcache_oxide.protocol.
 - Call cache.checkpoint() at shutdown or from a maintenance job to empty the write-ahead log after write bursts; it returns False rather than raising when other processes keep it busy.
 - Leave wal_size_limit and sqlite_cache_size at their defaults unless tuning for extreme read-heavy or memory-constrained workloads.
+- Use Cache(..., on_decode_error='miss') (or a reporting function) so a value that can't be decoded, such as a pickled class that moved, is a miss instead of an exception.
+- Register an app's caches once in a Caches registry and look them up by name (caches['general']); a cache that can't open becomes a NullCache and is retried after 10 seconds.
 
 ## What diskcache-oxide is
 

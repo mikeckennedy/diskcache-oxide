@@ -58,6 +58,8 @@ Michael, 2026-10-29: plug diskcache-oxide straight into Django's cache framework
 
 ## DurableCache and the cache service, in the library
 
+**Built (2026-10-30), see `plans/08-phase-3-prep-caches-and-self-healing.md`:** `Cache(..., on_decode_error='raise' | 'miss' | callable)` and the `Caches` registry, with per-call `timeout=` on `clear()`/`expire()`/`cull()`. The design below is the reasoning; the plan records what changed on the way (classification at the source, `ForeignValueError`, a 10 s open retry).
+
 Michael, 2026-10-30: Talk Python's `DurableCache` wrapper and its `cache_service` factory might belong in diskcache-oxide, the way `NullCache` does. **Decided (Michael, 2026-10-30):** both come into the library. Self-healing reads become a `Cache` constructor option, and the registry is named `caches` (not `cache_service`, which is Talk Python's house naming). The details get settled in Phase 3 planning; nothing is built yet. Evidence that it's generic: `durable_cache.py` is copied into four apps (Talk Python, Training, Python Bytes, InterviewCue), and the copies have drifted apart (136 to 349 lines).
 
 **What `DurableCache` does today, and where each piece lands:**
