@@ -784,6 +784,85 @@ mod tests {
             assert_eq!(after == before, !commit, "commit = {commit}");
         }
     }
+
+    #[test]
+    fn an_operation_that_fails_partway_inside_a_held_transaction_leaves_nothing_behind() {
+        let tmp = TempDir::new("ops-held-savepoint");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "k", text("v"), None, NOW).unwrap();
+        let held = s.begin_hold(T).unwrap();
+        let failed = s.write(T, |_, tx| {
+            tx.execute("DELETE FROM cache WHERE key = 'k'", []).map_err(|e| Error::from_sqlite(e, T))?;
+            Err::<(), _>(Error::NotNumeric)
+        });
+        assert!(matches!(failed, Err(Error::NotNumeric)));
+        s.set(T, "after", text("a"), None, NOW).unwrap();
+        held.finish(true).unwrap();
+        assert_eq!(get(&s, "k", NOW).map(|(v, _)| v), Some(b"v".to_vec()), "the failed write's delete committed");
+        assert_eq!(get(&s, "after", NOW).map(|(v, _)| v), Some(b"a".to_vec()));
+    }
+
+    #[test]
+    fn a_failed_operation_inside_a_hold_undoes_the_files_of_an_operation_nested_in_it() {
+        // The nested set succeeds (its savepoint is released into the outer one), then the outer
+        // write fails: ROLLBACK TO undoes the nested row too, so its new file must go and the file
+        // it replaced must stay, even though the transaction then commits.
+        let big = |byte: u8| vec![byte; spill::THRESHOLD];
+        let tmp = TempDir::new("ops-held-nested-savepoint");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big(b'x') }, None, NOW).unwrap();
+        let before = value_files(tmp.path());
+        let held = s.begin_hold(T).unwrap();
+        let failed = s.write(T, |_, _| {
+            s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big(b'y') }, None, NOW)?;
+            Err::<(), _>(Error::NotNumeric)
+        });
+        assert!(matches!(failed, Err(Error::NotNumeric)));
+        held.finish(true).unwrap();
+        assert_eq!(get(&s, "k", NOW).map(|(v, _)| v), Some(big(b'x')));
+        assert_eq!(value_files(tmp.path()), before);
+    }
+
+    #[test]
+    fn a_held_transaction_that_sqlite_rolled_back_is_doomed_and_settles_as_a_rollback() {
+        // As after a full disk: SQLite ends the whole transaction on its own. Later writes must
+        // not run in autocommit (each would commit by itself), and the end must roll back.
+        let big = |byte: u8| vec![byte; spill::THRESHOLD];
+        let tmp = TempDir::new("ops-held-doomed");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big(b'x') }, None, NOW).unwrap();
+        let before = value_files(tmp.path());
+        let held = s.begin_hold(T).unwrap();
+        s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big(b'y') }, None, NOW).unwrap();
+        let failed = s.write(T, |_, tx| {
+            tx.execute_batch("ROLLBACK").map_err(|e| Error::from_sqlite(e, T))?;
+            Err::<(), _>(Error::NotNumeric)
+        });
+        assert!(matches!(failed, Err(Error::NotNumeric)));
+        let later = s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big(b'z') }, None, NOW);
+        assert!(matches!(later, Err(Error::TransactionAborted)), "{later:?}");
+        assert!(matches!(held.finish(true), Err(Error::TransactionAborted)));
+        assert_eq!(get(&s, "k", NOW).map(|(v, _)| v), Some(big(b'x')));
+        assert_eq!(value_files(tmp.path()), before);
+        s.set(T, "k", text("after"), None, NOW).unwrap();
+    }
+
+    #[test]
+    fn a_write_that_panics_inside_a_held_transaction_is_undone() {
+        let tmp = TempDir::new("ops-held-panic");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "k", text("v"), None, NOW).unwrap();
+        let held = s.begin_hold(T).unwrap();
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            s.write(T, |_, tx| -> Result<()> {
+                tx.execute("DELETE FROM cache WHERE key = 'k'", []).map_err(|e| Error::from_sqlite(e, T))?;
+                panic!("inside a held write");
+            })
+        }));
+        assert!(panicked.is_err());
+        held.finish(true).unwrap();
+        assert_eq!(get(&s, "k", NOW).map(|(v, _)| v), Some(b"v".to_vec()), "the panicked write's delete committed");
+    }
 }
 
 #[cfg(test)]

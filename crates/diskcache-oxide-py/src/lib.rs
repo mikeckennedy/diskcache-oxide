@@ -69,7 +69,8 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
         | Error::ForkPoisoned
         | Error::NestedTransaction
         | Error::NoTransaction
-        | Error::EndInsideOperation => PyRuntimeError::new_err(message),
+        | Error::EndInsideOperation
+        | Error::TransactionAborted => PyRuntimeError::new_err(message),
         Error::FormatMismatch { .. } => FormatMismatchError::new_err(message),
         Error::InvalidSetting(_) => PyValueError::new_err(message),
         Error::KeyMissing => pyo3::exceptions::PyKeyError::new_err(message),

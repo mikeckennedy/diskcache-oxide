@@ -79,6 +79,9 @@ pub fn connect(directory: &Path, timeout: Duration) -> Result<Connection> {
     let mut conn = Connection::open(&path).map_err(|e| Error::from_sqlite(e, timeout))?;
     // Busy waits happen only inside an open `AttachedWindow`; see `lockwait`.
     lockwait::install(&mut conn).map_err(|e| Error::from_sqlite(e, timeout))?;
+    // Room for every statement the core caches (about 30), so a mixed workload never evicts one
+    // and re-parses it. rusqlite's default is 16.
+    conn.set_prepared_statement_cache_capacity(64);
     // A connection setting: it writes nothing.
     conn.execute_batch("PRAGMA synchronous = NORMAL").map_err(|e| Error::from_sqlite(e, timeout))?;
     // Query planner stability guarantee: plans never depend on bound values. Without it, SQLite

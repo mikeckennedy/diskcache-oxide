@@ -27,7 +27,7 @@
 //! inherits it locked. Across `fork()`, the `Store` is reset in place: its pool, write lock and
 //! slot counter all recognize the new [process generation](crate::gate::generation).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -143,6 +143,9 @@ struct Pinned {
     conn: PooledConn,
     /// Value files its writes replaced or created, settled when it ends (see [`Store::write_files`]).
     files: RefCell<HeldFiles>,
+    /// It can't continue (see [`Error::TransactionAborted`]): later writes fail at once, and ending
+    /// it rolls back.
+    doomed: Cell<bool>,
 }
 
 /// A held transaction's value files, relative to the cache directory. The ones it replaced or
@@ -151,6 +154,21 @@ struct Pinned {
 struct HeldFiles {
     removed: Vec<String>,
     created: Vec<String>,
+}
+
+impl HeldFiles {
+    /// How much is recorded, for [`HeldFiles::rewind`].
+    fn mark(&self) -> (usize, usize) {
+        (self.removed.len(), self.created.len())
+    }
+
+    /// Forgets what was recorded since `mark`, after a `ROLLBACK TO` undid those writes (nested
+    /// operations' writes inside a failed one): their replaced rows are back, so those files stay,
+    /// and returns the files they created, which no row refers to any more.
+    fn rewind(&mut self, (removed, created): (usize, usize)) -> Vec<String> {
+        self.removed.truncate(removed);
+        self.created.split_off(created)
+    }
 }
 
 /// What a write returns through [`Store::write_files`]: its result, and the value files (relative
@@ -607,13 +625,39 @@ impl Store {
         // 0. In a child forked inside a transaction on this file, writes can never succeed (D-020):
         // fail before waiting on anything.
         crate::poison::check_writable(self.file_id)?;
-        // A thread holding a write transaction writes inside it, on its pinned connection.
+        // A thread holding a write transaction writes inside it, on its pinned connection, in a
+        // savepoint: an operation that fails partway (a cull error after the row was stored) must
+        // leave nothing behind in a transaction that may still commit.
         if let Some(result) = self.on_pinned(|pinned| {
-            let changed = write(&RowWriter::new(pinned.conn.conn(), timeout), pinned.conn.conn())?;
-            let mut files = pinned.files.borrow_mut();
-            files.removed.extend(changed.removed);
-            files.created.extend(changed.created);
-            Ok(changed.value)
+            let conn = pinned.conn.conn();
+            // No transaction left (SQLite rolled it back after an error): a SAVEPOINT here would
+            // start one of its own and this write would commit by itself.
+            if pinned.doomed.get() || conn.is_autocommit() {
+                pinned.doomed.set(true);
+                return Err(Error::TransactionAborted);
+            }
+            let mark = pinned.files.borrow().mark();
+            let savepoint = OpSavepoint::begin(conn, timeout, &pinned.doomed)?;
+            let written =
+                write(&RowWriter::new(conn, timeout), conn).and_then(|changed| savepoint.release().map(|()| changed));
+            match written {
+                Ok(changed) => {
+                    let mut files = pinned.files.borrow_mut();
+                    files.removed.extend(changed.removed);
+                    files.created.extend(changed.created);
+                    Ok(changed.value)
+                }
+                Err(error) => {
+                    // The savepoint was undone (or the transaction doomed) when it dropped. Undone,
+                    // the files of operations nested in this one are rewound with their rows; doomed,
+                    // the end rolls everything back and settles every file the transaction created.
+                    if !pinned.doomed.get() {
+                        let orphans = pinned.files.borrow_mut().rewind(mark);
+                        self.unlink(orphans);
+                    }
+                    Err(error)
+                }
+            }
         }) {
             return result;
         }
@@ -950,6 +994,7 @@ impl Store {
                 generation: gate::generation(),
                 conn,
                 files: RefCell::default(),
+                doomed: Cell::new(false),
             });
             self.pinned_active.store(true, Ordering::Release);
             drop(pinned);
@@ -1033,6 +1078,46 @@ impl Drop for WriteTx<'_> {
     fn drop(&mut self) {
         if self.open {
             let _ = run_cached(self.conn, "ROLLBACK", self.timeout);
+        }
+    }
+}
+
+/// One operation's savepoint inside a held transaction (`SAVEPOINT op`), so an operation that fails
+/// partway, or panics, leaves nothing behind in a transaction that may still commit. Released on
+/// success; otherwise undone on drop with `ROLLBACK TO` and `RELEASE`. If that fails, or SQLite
+/// already rolled the whole transaction back (a full disk, an I/O error), the transaction is marked
+/// doomed. Savepoints of nested operations share the name: SQLite matches the innermost one.
+struct OpSavepoint<'c> {
+    conn: &'c Connection,
+    timeout: Duration,
+    doomed: &'c Cell<bool>,
+    open: bool,
+}
+
+impl<'c> OpSavepoint<'c> {
+    fn begin(conn: &'c Connection, timeout: Duration, doomed: &'c Cell<bool>) -> Result<Self> {
+        run_cached(conn, "SAVEPOINT op", timeout)?;
+        Ok(Self { conn, timeout, doomed, open: true })
+    }
+
+    /// Keeps the operation's writes in the transaction. On an error the savepoint is still open,
+    /// and dropping it undoes them.
+    fn release(mut self) -> Result<()> {
+        run_cached(self.conn, "RELEASE op", self.timeout)?;
+        self.open = false;
+        Ok(())
+    }
+}
+
+impl Drop for OpSavepoint<'_> {
+    fn drop(&mut self) {
+        if self.open {
+            let undone = !self.conn.is_autocommit()
+                && run_cached(self.conn, "ROLLBACK TO op", self.timeout).is_ok()
+                && run_cached(self.conn, "RELEASE op", self.timeout).is_ok();
+            if !undone {
+                self.doomed.set(true);
+            }
         }
     }
 }
@@ -1174,17 +1259,28 @@ fn close_pinned(
         pinned.conn.forget();
         return (Err(Error::ForkPoisoned), Vec::new());
     }
-    let sql = if commit { "COMMIT" } else { "ROLLBACK" };
-    let outcome = pinned.conn.conn().execute_batch(sql).map_err(|e| Error::from_sqlite(e, timeout));
-    if outcome.is_err() {
-        // Leave no half-open transaction on a pooled connection.
-        let _ = pinned.conn.conn().execute_batch("ROLLBACK");
-    }
+    let conn = pinned.conn.conn();
+    let outcome = if pinned.doomed.get() {
+        // Rolled back whatever was asked; a commit that can't happen is an error.
+        if !conn.is_autocommit() {
+            let _ = conn.execute_batch("ROLLBACK");
+        }
+        if commit { Err(Error::TransactionAborted) } else { Ok(()) }
+    } else {
+        let sql = if commit { "COMMIT" } else { "ROLLBACK" };
+        let outcome = conn.execute_batch(sql).map_err(|e| Error::from_sqlite(e, timeout));
+        if outcome.is_err() && !conn.is_autocommit() {
+            // Leave no half-open transaction on a pooled connection.
+            let _ = conn.execute_batch("ROLLBACK");
+        }
+        outcome
+    };
+    let committed = commit && outcome.is_ok();
     store.give_back(gate, pinned.conn);
     // Only now is it final which version of each row stands. A failed COMMIT didn't commit (SQLite
     // reports an error only then), and the ROLLBACK above ended it.
     let files = pinned.files.into_inner();
-    let garbage = if commit && outcome.is_ok() { files.removed } else { files.created };
+    let garbage = if committed { files.removed } else { files.created };
     (outcome, garbage)
 }
 

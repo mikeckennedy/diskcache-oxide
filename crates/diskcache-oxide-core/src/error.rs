@@ -102,6 +102,12 @@ pub enum Error {
         "a write transaction can't end inside one of its own operations; it is rolled back when that operation returns"
     )]
     EndInsideOperation,
+
+    /// A held write transaction can't continue: SQLite rolled it back after an error (a full disk,
+    /// an I/O error), or an operation that failed inside it couldn't be undone. Nothing in it
+    /// commits; it can only be ended, which rolls back.
+    #[error("the write transaction was rolled back after an error; nothing in it can commit")]
+    TransactionAborted,
 }
 
 impl Error {
