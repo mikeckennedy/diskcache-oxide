@@ -193,8 +193,9 @@ impl Store {
     /// (127-140 ms). plans/06 has the table. Returns whether it stepped aside, so the next chunk
     /// takes the lock back with priority only then.
     fn pause_between_chunks(&self) -> bool {
-        // Inside a held transaction (or any outer operation) this thread keeps the write lock, so a
-        // waiter can't get in however long it pauses; it would only hold up a pending fork.
+        // Inside a held transaction this thread keeps the write lock, so a waiter can't get in
+        // however long it pauses, and inside any other outer operation the next chunk doesn't wait
+        // for the lock anyway. Either way a pause would only hold up a pending fork.
         if self.write_waiters() == 0 || gate::GATE.own_depth() > 0 {
             return false;
         }

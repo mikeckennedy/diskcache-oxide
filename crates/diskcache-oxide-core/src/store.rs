@@ -1320,8 +1320,9 @@ impl Drop for HeldTransaction {
 /// Commits or rolls back a held transaction's connection and returns it to the pool, with the value
 /// files that are now garbage, for the caller to unlink once it has released the write lock (a held
 /// `clear()` can leave many; no row refers to them any more, and names are never reused). `end`
-/// unlinks them with no gate level held; an abandoned transaction's operation, with its own level
-/// still held, which the gate allows for unlinks. One inherited across `fork()` is forgotten instead, files and all: the parent still owns
+/// unlinks them with none of the transaction's own gate levels held (the caller may hold levels of
+/// its own); an abandoned transaction's operation, with its level still held. The gate allows both
+/// for unlinks. One inherited across `fork()` is forgotten instead, files and all: the parent still owns
 /// that transaction.
 fn close_pinned(
     store: &Store,
