@@ -330,7 +330,7 @@ def test_a_cache_collected_as_garbage_on_a_large_wal_while_other_threads_run(tmp
             holder: list[object] = [cache]
             holder.append(holder)  # Only the collector can free it now.
             del cache, holder
-            deadline = time.monotonic() + 30
+            deadline = time.monotonic() + 20  # Four rounds stay inside the test's timeout.
             while _wal_bytes(directory) and time.monotonic() < deadline:
                 gc.collect()
             assert _wal_bytes(directory) == 0, 'the collected cache never released its handle'
@@ -341,7 +341,7 @@ def test_a_cache_collected_as_garbage_on_a_large_wal_while_other_threads_run(tmp
     finally:
         stop.set()
         for t in threads:
-            t.join(30)
+            t.join(10)
     assert not errors, errors
     assert not any(t.is_alive() for t in threads)
     other.close()
