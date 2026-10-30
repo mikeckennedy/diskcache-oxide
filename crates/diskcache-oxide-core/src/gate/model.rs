@@ -241,6 +241,90 @@ fn model_a_share_ended_on_another_thread_while_a_fork_waits() {
     WAITED.assert_reached("a fork that waited for a running level");
 }
 
+/// Model 9: as model 8, but the share's owner is the forker, whose fork counts the share as its own
+/// and so doesn't wait for it. The ender must then wait for the fork, never work beside it.
+#[test]
+fn model_a_share_ended_elsewhere_while_its_owner_forks() {
+    static ENTERED_PENDING: Reach = Reach::new();
+    static NEVER_WAITED: Reach = Reach::new();
+    check(|| {
+        let gate = fresh_gate();
+        let w = Witness::new(&NEVER_WAITED);
+        let (tx, rx) = mpsc::channel::<HeldShare<'static>>();
+        let owner = {
+            let w = Arc::clone(&w);
+            thread::spawn(move || {
+                tx.send(gate.enter_shared().into_held()).unwrap();
+                w.fork(gate, 0);
+            })
+        };
+        let ender = {
+            let w = Arc::clone(&w);
+            thread::spawn(move || {
+                let share = rx.recv().unwrap();
+                if gate.pending.load(Ordering::SeqCst) {
+                    ENTERED_PENDING.hit();
+                }
+                let g = share.enter();
+                w.start_work();
+                thread::yield_now();
+                w.end_work();
+                drop(g);
+                drop(share);
+            })
+        };
+        for t in [owner, ender] {
+            t.join().unwrap();
+        }
+        assert_idle(gate);
+    });
+    ENTERED_PENDING.assert_reached("a share entered while its owner's fork was pending");
+}
+
+/// Model 10: the share's owner forks too, and parks behind another forker, whose fork doesn't wait
+/// for parked levels. The ender must not work beside either fork.
+#[test]
+fn model_a_share_ended_elsewhere_while_its_owner_parks() {
+    static ENTERED_PARKED: Reach = Reach::new();
+    static WAITED: Reach = Reach::new();
+    check(|| {
+        let gate = fresh_gate();
+        let w = Witness::new(&WAITED);
+        let (tx, rx) = mpsc::channel::<HeldShare<'static>>();
+        let owner = {
+            let w = Arc::clone(&w);
+            thread::spawn(move || {
+                tx.send(gate.enter_shared().into_held()).unwrap();
+                w.fork(gate, 0);
+            })
+        };
+        let ender = {
+            let w = Arc::clone(&w);
+            thread::spawn(move || {
+                let share = rx.recv().unwrap();
+                if gate.parked() != 0 {
+                    ENTERED_PARKED.hit();
+                }
+                let g = share.enter();
+                w.start_work();
+                thread::yield_now();
+                w.end_work();
+                drop(g);
+                drop(share);
+            })
+        };
+        let other = {
+            let w = Arc::clone(&w);
+            thread::spawn(move || w.fork(gate, 0))
+        };
+        for t in [owner, ender, other] {
+            t.join().unwrap();
+        }
+        assert_idle(gate);
+    });
+    ENTERED_PARKED.assert_reached("a share entered while its owner was parked");
+}
+
 /// Model 7: the composition, as a store write runs it. Write lock (never waited for inside the
 /// gate) then gate, a nested write at depth 1 via `try_lock_nested`, a slot taken before the gate,
 /// and a forker. Checks the lock-order rules hold up together: no deadlock, write exclusion,

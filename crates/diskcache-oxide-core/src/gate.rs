@@ -115,7 +115,7 @@ impl ThreadState {
     }
 
     fn held_levels(&self) -> usize {
-        self.held.get().map_or(0, |owner| owner.levels.load(Ordering::SeqCst) & !PARKED)
+        self.held.get().map_or(0, |owner| owner.levels.load(Ordering::SeqCst) & !FLAGS)
     }
 }
 
@@ -124,7 +124,7 @@ impl ThreadState {
 struct Owner {
     /// How many held levels the thread has, with [`PARKED`] set while it is parked in
     /// [`Gate::begin_fork`] (a share dropped then also takes its level off the parked half of
-    /// [`Gate::counts`]).
+    /// [`Gate::counts`]), and [`FORKING`] while it holds the fork claim.
     levels: AtomicUsize,
     /// The [`Gate::epoch`] this thread exists in. A share whose owner is from an older epoch was
     /// inherited across fork from a thread that doesn't exist here, and its level was never counted.
@@ -133,6 +133,11 @@ struct Owner {
 
 /// Set in [`Owner::levels`] while the thread is parked in [`Gate::begin_fork`].
 const PARKED: usize = 1 << (usize::BITS - 1);
+/// Set in [`Owner::levels`] from the thread's claim in [`Gate::begin_fork`] to the end of its fork:
+/// that fork counts the thread's shares as its own, so it doesn't wait for them, and
+/// [`HeldShare::enter`] mustn't skip it.
+const FORKING: usize = 1 << (usize::BITS - 2);
+const FLAGS: usize = PARKED | FORKING;
 
 impl Default for ThreadState {
     fn default() -> Self {
@@ -285,6 +290,13 @@ impl Gate {
             }
             self.unpark();
         }
+        // Before the first quiescence check: an ender entering on one of this thread's shares
+        // either sees the flag, or has its level counted by that check.
+        self.local.with(|t| {
+            if let Some(owner) = t.held.get() {
+                owner.levels.fetch_or(FORKING, Ordering::SeqCst);
+            }
+        });
         while !self.quiescent() {
             thread::sleep(FORK_POLL);
         }
@@ -314,7 +326,7 @@ impl Gate {
             // Flag first: a share dropped from here on takes its level off `parked` too, and every
             // one dropped before is already missing from `held`. One dropped before the add below
             // makes the count briefly too low, which is the safe direction.
-            let held = t.held.get().map_or(0, |owner| owner.levels.fetch_or(PARKED, Ordering::SeqCst) & !PARKED);
+            let held = t.held.get().map_or(0, |owner| owner.levels.fetch_or(PARKED, Ordering::SeqCst) & !FLAGS);
             self.counts.fetch_add(parked_units(t.depth.get() + held), Ordering::SeqCst);
         });
     }
@@ -323,7 +335,7 @@ impl Gate {
     /// thread reads `parked`, and it is this one, so the brief overcount in between is harmless.
     fn unpark(&self) {
         self.local.with(|t| {
-            let held = t.held.get().map_or(0, |owner| owner.levels.fetch_and(!PARKED, Ordering::SeqCst) & !PARKED);
+            let held = t.held.get().map_or(0, |owner| owner.levels.fetch_and(!PARKED, Ordering::SeqCst) & !FLAGS);
             self.counts.fetch_sub(parked_units(t.depth.get() + held), Ordering::SeqCst);
         });
     }
@@ -414,6 +426,10 @@ impl<'g> SharedGuard<'g> {
             }));
             // Move the level from the depth to the held count; only this thread reads either.
             owner.levels.fetch_add(1, Ordering::SeqCst);
+            if t.forking.get() {
+                // Created by code running inside this thread's own fork (another before-fork hook).
+                owner.levels.fetch_or(FORKING, Ordering::SeqCst);
+            }
             t.depth.set(t.depth.get().saturating_sub(1));
             owner
         });
@@ -443,22 +459,76 @@ pub struct HeldShare<'g> {
 }
 
 impl<'g> HeldShare<'g> {
-    /// Enters the gate on this share's authority, on any thread, without waiting, even while a
-    /// fork is pending: that fork already waits for this share's level, and the level entered here
-    /// is dropped before the share is, so it adds nothing new to wait for. For ending a held
-    /// transaction on a thread that isn't its owner (a GC finalizer), which would otherwise wait for
-    /// a fork that waits for it. A share inherited across `fork()` counts for nothing in the child,
-    /// so there it enters as usual.
+    /// Enters the gate on this share's authority, on any thread, without waiting for a pending fork
+    /// that waits for this share's level. For ending a held transaction on a thread that isn't its
+    /// owner (a GC finalizer), which would otherwise wait for a fork that waits for it. The level
+    /// entered here only adds to what that fork already waits for.
+    ///
+    /// Not every fork waits for the share: not one claimed by the share's owner (its levels are its
+    /// own), nor one claimed by another thread while the owner is parked behind it (parked levels
+    /// don't count). While the owner is forking or parked, this waits, through the blocker, which
+    /// can't deadlock: that fork doesn't wait for the share. It keeps the share's authority
+    /// meanwhile, since the next fork may be one that does. A share inherited across `fork()` counts
+    /// for nothing in the child, so there it enters as usual, after the child's early reset, as
+    /// every gate entry does.
     pub fn enter(&self) -> SharedGuard<'g> {
-        if self.owner.epoch.load(Ordering::SeqCst) != self.gate.epoch.load(Ordering::SeqCst) {
-            return self.gate.enter_shared();
+        let gate = self.gate;
+        loop {
+            match self.try_enter() {
+                ShareEntry::Entered(guard) => return guard,
+                ShareEntry::OwnersFork => {}
+                ShareEntry::Inherited => return gate.enter_shared(),
+            }
+            // Reentrant (this thread holds levels of its own), or no fork is pending any more.
+            if let Some(guard) = gate.try_enter_shared() {
+                return guard;
+            }
+            let wait = || {
+                while gate.pending.load(Ordering::SeqCst) && self.owner.levels.load(Ordering::SeqCst) & FLAGS != 0 {
+                    thread::sleep(WAITER_POLL);
+                }
+            };
+            match BLOCKER.get() {
+                Some(blocker) => blocker(&wait),
+                None => wait(),
+            }
         }
-        self.gate.local.with(|t| {
-            self.gate.counts.fetch_add(HOLDER, Ordering::SeqCst);
-            t.depth.set(t.depth.get() + 1);
-        });
-        SharedGuard { gate: self.gate, _not_send: PhantomData }
     }
+
+    /// One attempt of [`HeldShare::enter`].
+    fn try_enter(&self) -> ShareEntry<'g> {
+        let gate = self.gate;
+        gate.local.with(|t| {
+            let depth = t.depth.get();
+            if depth == 0
+                && t.forking.get()
+                && let Some(early) = gate.early_child_entry
+            {
+                early();
+            }
+            if self.owner.epoch.load(Ordering::SeqCst) != gate.epoch.load(Ordering::SeqCst) {
+                return ShareEntry::Inherited;
+            }
+            // Increment, then check, as in `try_enter_shared`: either the forker's quiescence check
+            // counts this level, or this sees the owner's flag.
+            gate.counts.fetch_add(HOLDER, Ordering::SeqCst);
+            if gate.pending.load(Ordering::SeqCst) && self.owner.levels.load(Ordering::SeqCst) & FLAGS != 0 {
+                gate.counts.fetch_sub(HOLDER, Ordering::SeqCst);
+                return ShareEntry::OwnersFork;
+            }
+            t.depth.set(depth + 1);
+            ShareEntry::Entered(SharedGuard { gate, _not_send: PhantomData })
+        })
+    }
+}
+
+/// What one attempt of [`HeldShare::enter`] found.
+enum ShareEntry<'g> {
+    Entered(SharedGuard<'g>),
+    /// The owner is forking, or parked behind a pending fork: that fork doesn't wait for the share.
+    OwnersFork,
+    /// Inherited across `fork()`: the share counts for nothing here.
+    Inherited,
 }
 
 impl Drop for HeldShare<'_> {
@@ -508,7 +578,12 @@ impl ForkGuard {
         if child {
             gate.reset_in_child();
         }
-        gate.local.with(|t| t.forking.set(false));
+        gate.local.with(|t| {
+            t.forking.set(false);
+            if let Some(owner) = t.held.get() {
+                owner.levels.fetch_and(!FORKING, Ordering::SeqCst);
+            }
+        });
         gate.pending.store(false, Ordering::SeqCst);
     }
 }

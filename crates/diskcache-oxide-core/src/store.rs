@@ -1788,6 +1788,26 @@ mod tests {
         assert_eq!(count(&store), 1, "committed");
     }
 
+    #[test]
+    fn a_held_transaction_finished_elsewhere_waits_out_its_owners_fork() {
+        // That fork counts the transaction's level as the owner's own, so it doesn't wait for it,
+        // and the finish must not run its COMMIT while the fork is exclusive.
+        let tmp = TempDir::new("store-hold-owner-forks");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let held = store.begin_hold(T).unwrap();
+        put(&store, "k", b"v");
+        gate::begin_fork(); // Returns at once: the only level is this thread's own.
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || done.send(held.finish(true)).unwrap());
+        assert!(
+            finished.recv_timeout(Duration::from_millis(200)).is_err(),
+            "the finish ran while its owner's fork was exclusive"
+        );
+        gate::end_fork_parent();
+        finished.recv_timeout(Duration::from_secs(5)).expect("the finish never ran after the fork").unwrap();
+        assert_eq!(count(&store), 1);
+    }
+
     /// Ends `held` on another thread while its owner (this thread) is inside an operation on it,
     /// and returns how long ending took and what it returned. `level`: the ender holds a gate level
     /// of its own (it's inside an operation when the GC finalizes the transaction).

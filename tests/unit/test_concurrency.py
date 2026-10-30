@@ -358,6 +358,54 @@ def test_an_earlier_after_fork_hook_sees_the_child_side_reset(tmp_path: Path) ->
     assert proc.returncode == 0, proc.stderr
 
 
+EARLY_CHILD_HOOK_ENDS_THE_HOLD = """
+import os
+import sys
+import warnings
+
+outcome = []
+
+def early_hook():
+    try:
+        HOLD.__exit__(None, None, None)
+        outcome.append('ended')
+    except RuntimeError:
+        outcome.append('refused')
+
+os.register_at_fork(after_in_child=early_hook)
+
+from diskcache_oxide import Cache
+
+CACHE = Cache(sys.argv[1])
+CACHE.set('k', 'before')
+HOLD = CACHE._hold_write_transaction()
+HOLD.__enter__()
+CACHE.set('k', 'inside')
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore', RuntimeWarning)
+    pid = os.fork()
+if pid == 0:
+    os._exit(0 if outcome == ['refused'] else 1)
+_, status = os.waitpid(pid, 0)
+assert os.waitstatus_to_exitcode(status) == 0, 'the child ended (committed) the parent transaction'
+HOLD.__exit__(None, None, None)
+assert CACHE.get('k') == 'inside'
+"""
+
+
+def test_an_earlier_after_fork_hook_cant_end_the_inherited_transaction(tmp_path: Path) -> None:
+    # Ending a transaction enters the gate on its own level. That entry skipped the child's early
+    # reset, so in the child the parent's connection looked like the child's own, and an earlier
+    # hook's __exit__ ran COMMIT on it (architect review of the review-07 fixes).
+    proc = subprocess.run(
+        [sys.executable, '-c', EARLY_CHILD_HOOK_ENDS_THE_HOLD, str(tmp_path / 'c')],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
 # ---------------------------------------------------------------------------
 # The store's own descriptor on the database never drops SQLite's locks
 # ---------------------------------------------------------------------------
