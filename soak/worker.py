@@ -476,13 +476,16 @@ def held_parse(key: str, value: Any) -> tuple[int, int] | str:
     if value is None:
         return (0, 0)
     if isinstance(value, dict):
-        return (value['v'], value['tx']) if value.get('key') == key else f'belongs to {value.get("key")!r}'
-    n = int.from_bytes(value[:4], 'big')
-    header = json.loads(value[4 : 4 + n])
+        header = value
+    else:
+        n = int.from_bytes(value[:4], 'big')
+        header = json.loads(value[4 : 4 + n])
+        if zlib.crc32(value[4 + n :]) != header.get('crc'):
+            return f'version {header.get("v")} fails its CRC'
     if header.get('key') != key:
         return f'belongs to {header.get("key")!r}'
-    if zlib.crc32(value[4 + n :]) != header.get('crc'):
-        return f'version {header.get("v")} fails its CRC'
+    if 'tx' not in header:
+        return f'version {header.get("v")} has no transaction stamp'
     return (int(header['v']), int(header['tx']))
 
 
