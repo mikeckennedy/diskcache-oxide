@@ -175,6 +175,17 @@ pub fn encode<'py>(
     }
 }
 
+/// Whether a handle with this `allow_pickle` must refuse a row of `mode` without reading it.
+#[must_use]
+pub fn refuses(mode: i64, allow_pickle: bool) -> bool {
+    !allow_pickle && Mode::from_column(mode) == Some(Mode::Pickle)
+}
+
+/// The error for a pickled row read by a `pickle=False` handle (D-001).
+pub fn pickle_refused() -> PyErr {
+    UnsafeValueError::new_err("this value was stored with pickle; open the cache with pickle=True to read it")
+}
+
 /// Decodes a row's value. A mode-5 row raises `UnsafeValueError` unless `allow_pickle`; a row that
 /// can't be decoded (unknown mode, wrong storage class, malformed bytes) raises `CorruptValueError`.
 pub fn decode(py: Python<'_>, mode: i64, stored: Stored<'_>, allow_pickle: bool) -> PyResult<Py<PyAny>> {
@@ -182,9 +193,7 @@ pub fn decode(py: Python<'_>, mode: i64, stored: Stored<'_>, allow_pickle: bool)
         return Err(CorruptValueError::new_err(format!("unknown value mode {mode}")));
     };
     if mode == Mode::Pickle && !allow_pickle {
-        return Err(UnsafeValueError::new_err(
-            "this value was stored with pickle; open the cache with pickle=True to read it",
-        ));
+        return Err(pickle_refused());
     }
     let value = match (mode, stored) {
         (Mode::RawStr, Stored::Blob(b)) => match std::str::from_utf8(b) {

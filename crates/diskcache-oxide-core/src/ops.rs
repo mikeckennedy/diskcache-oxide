@@ -62,6 +62,18 @@ pub struct Popped {
     pub value: SqlValue,
 }
 
+/// What [`Store::pop`] did.
+#[derive(Debug, PartialEq)]
+pub enum Pop {
+    /// The key was missing or expired (or its value file was gone, D-013).
+    Missing,
+    /// The row is gone; here is its value.
+    Removed(Popped),
+    /// The row's mode was refused, so it was left in place (D-001: a `pickle=False` handle never
+    /// destroys a pickled value it can't read).
+    Refused { mode: i64 },
+}
+
 impl Popped {
     /// The value, borrowed in the shape a read hands out.
     #[must_use]
@@ -248,7 +260,11 @@ impl Store {
     /// expired. The caller decodes it after the write has committed: decoding a pickle can run
     /// Python (`__setstate__`) that uses this cache, and inside the transaction a write from it
     /// would wait out the whole timeout behind its own thread (roadmap Phase 2.5, item 7).
-    pub fn pop(&self, timeout: Duration, key: &str, now: f64) -> Result<Option<Popped>> {
+    ///
+    /// A live row whose mode `refuse` rejects is left in place and reported as [`Pop::Refused`].
+    /// The check runs inside the transaction, before the delete, so a value the caller can't decode
+    /// is never destroyed on its way to an error.
+    pub fn pop(&self, timeout: Duration, key: &str, now: f64, refuse: impl Fn(i64) -> bool) -> Result<Pop> {
         self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             let found = {
                 let mut stmt = tx
@@ -261,6 +277,9 @@ impl Store {
                 match rows.next().map_err(|e| Error::from_sqlite(e, timeout))? {
                     Some(row) => {
                         let mode: i64 = row.get(0).map_err(|e| Error::from_sqlite(e, timeout))?;
+                        if refuse(mode) {
+                            return Ok(Changed::removing(Pop::Refused { mode }, []));
+                        }
                         let filename: Option<String> = row.get(2).map_err(|e| Error::from_sqlite(e, timeout))?;
                         if let Some(relative) = filename {
                             // Under the write lock nothing can replace the file, so read it here. A
@@ -284,12 +303,12 @@ impl Store {
                 }
             };
             match found {
-                Some(value) => Ok(Changed::removing(Some(value), writer.delete_key(key)?)),
+                Some(value) => Ok(Changed::removing(Pop::Removed(value), writer.delete_key(key)?)),
                 // A spilled row whose file is gone: remove it, and report a miss.
                 None if live_row(tx, key, now, timeout)?.is_some() => {
-                    Ok(Changed::removing(None, writer.delete_key(key)?))
+                    Ok(Changed::removing(Pop::Missing, writer.delete_key(key)?))
                 }
-                None => Ok(Changed::removing(None, [])),
+                None => Ok(Changed::removing(Pop::Missing, [])),
             }
         })
     }
@@ -649,15 +668,24 @@ mod tests {
         assert!(!s.delete(T, "k", NOW + 2.0).unwrap());
         assert!(!s.touch(T, "k", Some(100.0), NOW + 2.0).unwrap(), "touch doesn't revive");
         assert!(get(&s, "k", NOW + 2.0).is_none());
-        let popped = s.pop(T, "k", NOW + 2.0).unwrap();
-        assert!(popped.is_none());
+        assert_eq!(s.pop(T, "k", NOW + 2.0, |_| false).unwrap(), Pop::Missing);
 
         s.set(T, "j", text("v"), Some(10.0), NOW).unwrap();
         assert!(s.touch(T, "j", None, NOW).unwrap());
         assert_eq!(get(&s, "j", NOW + 1e9).unwrap().1, None, "touch(None) removes the expiry");
-        let popped = s.pop(T, "j", NOW).unwrap().expect("a live value pops");
+        let Pop::Removed(popped) = s.pop(T, "j", NOW, |_| false).unwrap() else { panic!("a live value pops") };
         assert_eq!((popped.mode, popped.value_ref()), (MODE_STR, ValueRef::Blob(b"v")));
         assert!(!s.delete(T, "j", NOW).unwrap());
+    }
+
+    #[test]
+    fn pop_leaves_a_refused_mode_in_place() {
+        let tmp = TempDir::new("ops-pop-refused");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "k", text("v"), None, NOW).unwrap();
+        assert_eq!(s.pop(T, "k", NOW, |mode| mode == MODE_STR).unwrap(), Pop::Refused { mode: MODE_STR });
+        assert_eq!(get(&s, "k", NOW).unwrap(), (b"v".to_vec(), None), "the refused row is still there");
+        assert!(matches!(s.pop(T, "k", NOW, |_| false).unwrap(), Pop::Removed(_)));
     }
 
     #[test]

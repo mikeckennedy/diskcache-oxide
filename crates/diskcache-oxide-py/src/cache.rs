@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::collections::VecDeque;
 
 use diskcache_oxide_core::maintenance::{Cursor, Order};
-use diskcache_oxide_core::ops::{Number, Value};
+use diskcache_oxide_core::ops::{Number, Pop, Value};
 use diskcache_oxide_core::store::{
     DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, HeldTransaction, OpenOptions, Store,
 };
@@ -326,10 +326,13 @@ impl Cache {
         let now = self.now(py)?;
         self.ensure_open();
         // Decoded only after the delete has committed: unpickling can run Python that uses this
-        // cache (see `Store::pop`). A value that fails to decode is still removed.
-        match self.store.pop(self.timeout, key, now).map_err(to_py_err)? {
-            Some(popped) => decode_value(py, popped.mode, popped.value_ref(), self.pickle),
-            None => Ok(default.unwrap_or_else(|| py.None())),
+        // cache (see `Store::pop`). A value that fails to decode is still removed, but a pickled
+        // value this handle may not read is refused before the delete and stays (D-001).
+        let allow_pickle = self.pickle;
+        match self.store.pop(self.timeout, key, now, |mode| codec::refuses(mode, allow_pickle)).map_err(to_py_err)? {
+            Pop::Removed(popped) => decode_value(py, popped.mode, popped.value_ref(), allow_pickle),
+            Pop::Refused { .. } => Err(codec::pickle_refused()),
+            Pop::Missing => Ok(default.unwrap_or_else(|| py.None())),
         }
     }
 

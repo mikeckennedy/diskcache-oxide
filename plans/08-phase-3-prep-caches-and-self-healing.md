@@ -29,7 +29,7 @@ Found by the architect (A1), reproduced: with a `pickle=True` writer and a `pick
 
 - **Fix:** core `pop` takes the mode to refuse, checked inside the transaction before the delete, for example `pop(timeout, key, now, refuse_mode: Option<i64>)` returning a `Refused` outcome. The py crate passes the pickle mode when `!self.pickle` and raises `UnsafeValueError` with the row kept.
 - **Tests:** the reproduction, in both orders. After the refused `pop`, the `pickle=True` handle still reads the value, and a `pickle=True` `pop` still works.
-- CHANGELOG entry.
+- Recorded in Progress below (the repo has no CHANGELOG yet; one starts with the first release).
 
 ## Step 1: per-call `timeout=` on `clear()`, `expire()` and `cull()`
 
@@ -86,7 +86,7 @@ A constructor option, not a wrapper, so `get` doesn't pay for an extra Python fr
 - A missing spill file isn't in the table: it's already a silent miss, with that exact version deleted (D-013), and it isn't reported, since it's the normal race outcome (A7). Other spill I/O errors are `OSError` and raise.
 - **Design rule, recorded in `04-design.md`:** adding a codec mode, tag or extension is backward compatible for readers only because of the "Foreign" row above. A change that older builds must not read bumps the format version instead.
 
-**Which calls it covers:** `get` (including `expire_time=True`, which returns `(default, None)`), `cache[key]` (a miss raises `KeyError`), and `pop`. `pop` decodes after its delete has committed, so an Unreadable value is already gone: `'miss'` returns the default and reports. A Foreign value in `pop` gets step 0's treatment: refused inside the transaction, so the row stays, and `'miss'` returns the default. `in`, `iterkeys`, `touch` and `incr` never decode a value and are unaffected.
+**Which calls it covers:** `get` (including `expire_time=True`, which returns `(default, None)`), `cache[key]` (a miss raises `KeyError`), and `pop`. `pop` decodes after its delete has committed, so an Unreadable value is already gone: `'miss'` returns the default and reports. An unknown *mode* in `pop` gets step 0's treatment (refused inside the transaction, so the row stays, and `'miss'` returns the default). An unknown *tag* is only found by decoding, which `pop` does after the commit, so that row is already gone; `pop` was asked to remove the key anyway, so `'miss'` returns the default and reports. `in`, `iterkeys`, `touch` and `incr` never decode a value and are unaffected.
 
 **Order on a decode failure:** classify, then `delete_version_nowait` (Unreadable only), then log or call the callback.
 
@@ -100,7 +100,7 @@ A constructor option, not a wrapper, so `get` doesn't pay for an extra Python fr
 - The delete is skipped, and the read is still a fast miss, when the write lock is held by a peer process, by another thread of this process (`_hold_write_transaction`), inside this thread's held transaction, and nested in a pickle hook.
 - The callable gets `(key, exc)` with the original exception, runs after the delete (it can `get` the key and sees a clean miss), replaces the warning, and an exception it raises is logged and swallowed.
 - No recursion: a callback that reads the same bad key while another thread holds the write lock returns, and the callback ran once.
-- `pop` under `'miss'`: Unreadable returns the default; Foreign returns the default and keeps the row.
+- `pop` under `'miss'`: Unreadable returns the default; an unknown mode returns the default and keeps the row; an unknown tag returns the default.
 - `NullCache(on_decode_error=...)` accepts it; a wrong type raises `TypeError` and an unknown string `ValueError` on both classes.
 - The gate: `get_hit_small` must not regress (one interleaved A/B run, on this machine, not the mini, after the soak finishes).
 
@@ -179,11 +179,15 @@ caches.close_all()                 # also on `with Caches(...) as caches:` exit
 ## Docs and bookkeeping
 
 - User guide: a page for `Caches`, the `on_decode_error` section on the `Cache` page, and a "Coming from `DurableCache`" migration note (the mapping table from vision.md).
-- Neither feature changes diskcache behavior by default, so no divergence entries. Step 0 is a bug fix in oxide's own `pop`. CHANGELOG entries for all of them.
+- Neither feature changes diskcache behavior by default, so no divergence entries. Step 0 is a bug fix in oxide's own `pop`. The repo has no CHANGELOG yet; each step is recorded in Progress, and the first release's CHANGELOG starts from that.
 - `04-design.md`: the codec-compatibility rule from step 2b.
 - vision.md: mark the section as built, pointing here.
 - Roadmap Phase 3: adopt `Caches` and `on_decode_error`; the purposes layer and the scheduled `expire_all` stay in the app.
 
 ## Progress
 
-(Filled in as the steps land.)
+### Step 0: done (2026-10-30)
+
+- Core `Store::pop` takes `refuse: impl Fn(i64) -> bool` and returns `Pop::{Missing, Removed(Popped), Refused { mode }}`. The check runs on the row's mode inside the transaction, before the value file is read or the row deleted.
+- The py crate passes `codec::refuses(mode, allow_pickle)`. Step 2b widens it to unknown modes. `codec::pickle_refused()` is now the one place the `UnsafeValueError` message lives.
+- Tests: `pop_leaves_a_refused_mode_in_place` (Rust), and `test_oxide_pickle_false_pop_refuses_and_keeps_the_row` (conformance), which failed on the unfixed build (the row was gone) and passes now. The full suite passes on 3.14 (732 passed) and 3.14t (731 passed); clippy is clean.
