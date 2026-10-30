@@ -242,6 +242,9 @@ struct Abandoned {
     share: Option<HeldShare<'static>>,
 }
 
+/// How many value files [`Store::unlink`] deletes before it releases the interpreter to do it.
+const UNLINK_DETACH_AT: usize = 8;
+
 /// How often ending a held transaction re-checks for its connection while an operation on its
 /// owner thread has it.
 const LENT_POLL: Duration = Duration::from_micros(50);
@@ -678,18 +681,22 @@ impl Store {
     }
 
     /// Unlinks value files, by their path relative to the cache directory. One already gone is fine.
-    /// The unlinks run with the interpreter released, since a `clear()` chunk or the end of a held
-    /// transaction can have hundreds; with none to do, it never detaches.
+    /// Many (the end of a held transaction, a `set` that culls) run with the interpreter released. A
+    /// few stay attached: each unlink takes microseconds, while on a GIL build getting the
+    /// interpreter back can wait out the switch interval behind busy threads (a one-file `delete`
+    /// measured 27 ms detached against 4 spinning threads).
     pub(crate) fn unlink(&self, files: impl IntoIterator<Item = String>) {
         let paths: Vec<PathBuf> = files.into_iter().map(|relative| self.directory.join(relative)).collect();
-        if paths.is_empty() {
-            return;
-        }
-        gate::run_blocking(&|| {
+        let work = || {
             for path in &paths {
                 let _ = std::fs::remove_file(path);
             }
-        });
+        };
+        if paths.len() < UNLINK_DETACH_AT {
+            work();
+        } else {
+            gate::run_blocking(&work);
+        }
     }
 
     /// The write path outside a held transaction, after step 0 of `Store::write_files`.

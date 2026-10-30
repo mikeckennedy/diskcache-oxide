@@ -17,7 +17,7 @@
 //!   runs out of connections releases the gate before it waits for one. Two waits are allowed:
 //!   SQLite's own busy wait inside an [`crate::lockwait::AttachedWindow`], and bounded local work run
 //!   through [`run_blocking`] (file I/O, or a SQLite call whose only wait is that window: the
-//!   spill-file read in `pop`, value-file unlinks, the forced WAL checkpoint), which keeps a pending
+//!   spill-file read in `pop`, unlinking many value files, the forced WAL checkpoint), which keeps a pending
 //!   fork waiting no longer than the work takes. One more is bounded only by the operation's
 //!   `timeout`: a write at depth > 0 that couldn't take its store's write lock (inside a held
 //!   transaction, writing another cache whose lock another thread holds) backs off between
@@ -79,8 +79,8 @@ pub fn set_blocker(blocker: Blocker) -> bool {
 
 /// Runs `work` once, on the calling thread, through the installed [`Blocker`], so the interpreter is
 /// released while it runs. Usually called with no gate level held. A caller holding one may use it
-/// only for the bounded work the rules above allow (the spill-file read in `pop`, value-file unlinks,
-/// the forced WAL checkpoint).
+/// only for the bounded work the rules above allow (the spill-file read in `pop`, unlinking many value
+/// files, the forced WAL checkpoint).
 pub fn run_blocking(wait: &(dyn Fn() + Sync)) {
     match BLOCKER.get() {
         Some(blocker) => blocker(wait),
