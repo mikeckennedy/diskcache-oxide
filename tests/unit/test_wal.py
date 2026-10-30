@@ -81,8 +81,10 @@ def test_auto_mode_shrinks_the_wal_back_after_a_burst_with_readers_in_other_proc
 
 
 def _wal_bytes(directory: Path) -> int:
-    path = directory / WAL
-    return path.stat().st_size if path.exists() else 0
+    try:
+        return (directory / WAL).stat().st_size
+    except FileNotFoundError:  # Never there, or deleted by a close on another thread meanwhile.
+        return 0
 
 
 def test_auto_mode_never_forces_a_checkpoint_on_a_healthy_workload(tmp_path: Path) -> None:
@@ -289,6 +291,60 @@ def test_the_last_close_on_a_large_wal_lets_sqlite_checkpoint_it(tmp_path: Path,
     assert reopened.get('k') == 'v'
     assert reopened.get('b199') == 'x' * 20_000
     reopened.close()
+
+
+@pytest.mark.timeout(120)
+def test_a_cache_collected_as_garbage_on_a_large_wal_while_other_threads_run(tmp_path: Path) -> None:
+    # Dropped by the garbage collector, a cache on a large WAL releases its handle with the
+    # interpreter released, from inside deallocation. On the free-threaded build that's only safe if
+    # the collector frees garbage with the world running again, not stopped: so free caches held in
+    # reference cycles, from collections run on several threads, while other threads run Python and
+    # use another cache. Any problem shows up as a hang, a crash or a fatal error.
+    import gc
+
+    other = Cache(tmp_path / 'other')
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def busy(n: int) -> None:
+        try:
+            i = 0
+            while not stop.is_set():
+                other.set(f'{n}:{i % 50}', [i] * 10)
+                other.get(f'{n}:{(i + 7) % 50}')
+                cycle: list[object] = []
+                cycle.append(cycle)  # Garbage for the collector to find, on this thread too.
+                if i % 200 == 0:
+                    gc.collect()
+                i += 1
+        except BaseException as e:  # noqa: BLE001 - reported below
+            errors.append(e)
+
+    threads = [threading.Thread(target=busy, args=(n,)) for n in range(4)]
+    for t in threads:
+        t.start()
+    try:
+        for round_ in range(4):
+            directory = tmp_path / f'c{round_}'
+            cache = _swollen(directory)
+            holder: list[object] = [cache]
+            holder.append(holder)  # Only the collector can free it now.
+            del cache, holder
+            deadline = time.monotonic() + 30
+            while _wal_bytes(directory) and time.monotonic() < deadline:
+                gc.collect()
+            assert _wal_bytes(directory) == 0, 'the collected cache never released its handle'
+            reopened = Cache(directory)
+            assert reopened.get('k') == 'v'
+            assert reopened.get('b199') == 'x' * 20_000
+            reopened.close()
+    finally:
+        stop.set()
+        for t in threads:
+            t.join(30)
+    assert not errors, errors
+    assert not any(t.is_alive() for t in threads)
+    other.close()
 
 
 def test_closing_twice_is_harmless_and_the_cache_reopens_after(tmp_path: Path) -> None:
