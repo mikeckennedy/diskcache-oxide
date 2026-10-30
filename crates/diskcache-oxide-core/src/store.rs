@@ -795,12 +795,20 @@ impl Store {
         }
     }
 
-    /// Whether [`Store::checkpoint_on_close`] would checkpoint: one `stat` at most. Lets a caller
-    /// release the interpreter only when there's a checkpoint to wait for.
+    /// Whether [`Store::checkpoint_on_close`] would checkpoint: one `stat` at most.
+    fn checkpoint_due_on_close(&self) -> bool {
+        !self.wal.in_backoff() && self.closing_on_a_large_wal()
+    }
+
+    /// Whether closing this handle (with or without [`Store::checkpoint_on_close`]) may have a WAL
+    /// to copy: it's the last handle, and the WAL is over its trim size. Then the checkpoint, or
+    /// SQLite's own one when [`Store::release_handle`] closes the last connection on the file in
+    /// this process, can take a while. One `stat` at most. Lets a caller release the interpreter
+    /// only when there's something to wait for.
     #[must_use]
-    pub fn checkpoint_due_on_close(&self) -> bool {
+    pub fn closing_on_a_large_wal(&self) -> bool {
         let trim = crate::wal::journal_size_limit(self.wal_size_limit.load(Ordering::Relaxed));
-        self.handles.load(Ordering::Acquire) == 1 && !self.wal.in_backoff() && self.wal_bytes() > trim
+        self.handles.load(Ordering::Acquire) == 1 && self.wal_bytes() > trim
     }
 
     /// One round of a forced checkpoint: PASSIVE, then TRUNCATE in a fresh 2 ms window. Records how

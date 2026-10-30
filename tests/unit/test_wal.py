@@ -271,6 +271,26 @@ def test_close_without_checkpoint_leaves_the_wal_alone(tmp_path: Path) -> None:
         assert _wal_bytes(tmp_path / 'c') == before
 
 
+@pytest.mark.parametrize('how', ['close(checkpoint=False)', 'garbage collected'])
+def test_the_last_close_on_a_large_wal_lets_sqlite_checkpoint_it(tmp_path: Path, how: str) -> None:
+    # With no other connection on the file, closing the last one makes SQLite checkpoint and delete
+    # the WAL itself. That copy runs with the interpreter released (the handle is released
+    # detached when the WAL is large), and the data is all there afterwards.
+    import gc
+
+    cache = _swollen(tmp_path / 'c')
+    if how == 'garbage collected':
+        del cache  # CPython frees it here; collect() for other runtimes.
+        gc.collect()
+    else:
+        cache.close(checkpoint=False)
+    assert _wal_bytes(tmp_path / 'c') == 0
+    reopened = Cache(tmp_path / 'c')
+    assert reopened.get('k') == 'v'
+    assert reopened.get('b199') == 'x' * 20_000
+    reopened.close()
+
+
 def test_closing_twice_is_harmless_and_the_cache_reopens_after(tmp_path: Path) -> None:
     from tests.conformance.proc_workers import SqlitePeer
 

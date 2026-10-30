@@ -400,13 +400,16 @@ impl Cache {
     #[pyo3(signature = (*, checkpoint = true))]
     fn close(&self, py: Python<'_>, checkpoint: bool) {
         if !self.closed.swap(true, Ordering::AcqRel) {
-            // Released only when there's a checkpoint to run, so the usual close (a small WAL)
-            // doesn't wait to get the interpreter back. The release goes inside too: if the
-            // checkpoint was busy, the last connection's close may run SQLite's own checkpoint.
-            if checkpoint && self.store.checkpoint_due_on_close() {
+            // The interpreter is released only when the last handle closes on a large WAL, so the
+            // usual close doesn't wait to get it back. Then both steps run detached: the
+            // checkpoint, and the release, since closing the last connection may run SQLite's own
+            // checkpoint (with `checkpoint=False`, or after a busy one).
+            if self.store.closing_on_a_large_wal() {
                 let budget = self.timeout.min(Duration::from_secs(1));
                 crate::detach(py, || {
-                    self.store.checkpoint_on_close(budget);
+                    if checkpoint {
+                        self.store.checkpoint_on_close(budget);
+                    }
                     self.store.release_handle();
                 });
             } else {
@@ -489,9 +492,19 @@ impl Cache {
 }
 
 impl Drop for Cache {
+    /// A cache dropped without `close()`: releases its handle, detached on a large WAL as in
+    /// `close()`. Drop runs from the object's deallocation, attached, so `try_attach` always
+    /// succeeds, during interpreter shutdown too, where detaching is safe (the release is done
+    /// before the thread asks for the interpreter back). Releasing attached when it declines is
+    /// only a fallback.
     fn drop(&mut self) {
         if !self.closed.swap(true, Ordering::AcqRel) {
-            self.store.release_handle();
+            let store = &self.store;
+            let detached = store.closing_on_a_large_wal()
+                && Python::try_attach(|py| crate::detach(py, || store.release_handle())).is_some();
+            if !detached {
+                store.release_handle();
+            }
         }
     }
 }
