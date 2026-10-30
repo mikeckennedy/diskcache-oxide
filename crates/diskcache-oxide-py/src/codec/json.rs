@@ -385,7 +385,10 @@ impl<'py> Visitor<'_> for KeySeed<'_, 'py> {
     }
     fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
         if self.first && v.starts_with('$') {
-            return Tag::parse(v).map(Key::Tag).ok_or_else(|| E::custom(format!("unknown tag {v:?}")));
+            // A newer version may have written it: kept as `ForeignValueError` (see `DeCtx::fail`).
+            return Tag::parse(v)
+                .map(Key::Tag)
+                .ok_or_else(|| self.cx.fail(crate::ForeignValueError::new_err(format!("unknown tag {v:?}"))));
         }
         Ok(Key::Str(common::key_str(self.cx.py, v)))
     }

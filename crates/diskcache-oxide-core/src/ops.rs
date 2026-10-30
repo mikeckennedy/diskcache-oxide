@@ -81,6 +81,18 @@ pub struct Hit<T> {
     pub version: Version,
 }
 
+/// What [`Store::delete_version_nowait`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionDelete {
+    /// The version and its value file are gone.
+    Removed,
+    /// Already replaced or removed by someone else: nothing to do.
+    Gone,
+    /// Not tried (it would have had to wait, or isn't allowed here) or it failed: the row is still
+    /// there.
+    Skipped,
+}
+
 /// What [`Store::pop`] did.
 #[derive(Debug, PartialEq)]
 pub enum Pop {
@@ -140,12 +152,15 @@ impl Store {
     /// held, straight from SQLite's row buffer; it may run more than once. It may call back into the
     /// cache (a pickle hook): that nested operation runs at gate depth > 0, where nothing waits on
     /// this thread, and inside a held transaction it reuses the transaction's connection. A value
-    /// file is read with no connection held (see `spill`).
+    /// file is read with no connection held (see `spill`). For a value file whose mode `refuse`
+    /// rejects, `decode` gets `ValueRef::Null` instead of the file, which is never read: the caller
+    /// would only turn it away (a pickle on a `pickle=False` handle, an unknown mode).
     pub fn get_with<T>(
         &self,
         timeout: Duration,
         key: &str,
         now: f64,
+        refuse: impl Fn(i64) -> bool,
         mut decode: impl FnMut(i64, ValueRef<'_>) -> Result<T>,
     ) -> Result<Option<Hit<T>>> {
         let mut row = self.read(timeout, |conn| look_up(conn, key, now, timeout, &mut decode))?;
@@ -153,6 +168,9 @@ impl Store {
             let file = match row {
                 Found::Miss => return Ok(None),
                 Found::Inline(hit) => return Ok(Some(hit)),
+                Found::File(file) if refuse(file.mode) => {
+                    return Ok(Some(file.hit(decode(file.mode, ValueRef::Null)?)));
+                }
                 Found::File(file) => file,
             };
             if let Some(bytes) = spill::read(self.directory(), &file.relative, file.size)? {
@@ -165,7 +183,7 @@ impl Store {
             {
                 // Same version, no readable file: a true miss (D-013). Remove exactly that version,
                 // only if it needs no waiting; a later write's cleanup gets it otherwise.
-                self.delete_version_nowait(file.version);
+                let _ = self.delete_version_nowait(file.version);
                 return Ok(None);
             }
         }
@@ -187,18 +205,20 @@ impl Store {
     }
 
     /// Deletes exactly `version` (nothing newer, D-013) and its value file, if that needs no waiting
-    /// for the write lock. Best effort: returns whether it removed the row. Skipped, returning
-    /// false, inside a held transaction, at gate depth > 0 and in a child that can't write (see
-    /// `write_nowait`); like any operation, it waits while a fork is pending.
-    pub fn delete_version_nowait(&self, version: Version) -> bool {
+    /// at all: not for the write lock, a connection slot, or another process's lock. Skipped while
+    /// this thread holds a write transaction on any cache or is inside any cache operation (gate
+    /// depth > 0: the gate is process-wide), and in a child that can't write this file. Like any
+    /// operation, it waits while a fork is pending. An error is reported as a skip.
+    pub fn delete_version_nowait(&self, version: Version) -> VersionDelete {
         match self.write_nowait(|writer| writer.delete_version(version.id, version.store_seq)) {
             Some(Ok(Some(removed))) => {
                 // Never inside a held transaction: its holder keeps a `HeldShare`, so it's at gate
                 // depth > 0, where `write_nowait` refuses. This commit is final.
                 self.unlink(removed.filename);
-                true
+                VersionDelete::Removed
             }
-            _ => false,
+            Some(Ok(None)) => VersionDelete::Gone,
+            None | Some(Err(_)) => VersionDelete::Skipped,
         }
     }
 
@@ -649,12 +669,18 @@ mod tests {
 
     fn get(store: &Store, key: &str, now: f64) -> Option<(Vec<u8>, Option<f64>)> {
         store
-            .get_with(T, key, now, |_, v| match v {
-                ValueRef::Blob(b) | ValueRef::Text(b) => Ok(b.to_vec()),
-                ValueRef::Integer(n) => Ok(n.to_string().into_bytes()),
-                ValueRef::Real(x) => Ok(x.to_string().into_bytes()),
-                ValueRef::Null => Ok(Vec::new()),
-            })
+            .get_with(
+                T,
+                key,
+                now,
+                |_| false,
+                |_, v| match v {
+                    ValueRef::Blob(b) | ValueRef::Text(b) => Ok(b.to_vec()),
+                    ValueRef::Integer(n) => Ok(n.to_string().into_bytes()),
+                    ValueRef::Real(x) => Ok(x.to_string().into_bytes()),
+                    ValueRef::Null => Ok(Vec::new()),
+                },
+            )
             .unwrap()
             .map(|hit| (hit.value, hit.expire_time))
     }
@@ -720,7 +746,7 @@ mod tests {
     }
 
     fn version(store: &Store, key: &str) -> Option<Version> {
-        store.get_with(T, key, NOW, |_, _| Ok(())).unwrap().map(|hit| hit.version)
+        store.get_with(T, key, NOW, |_| false, |_, _| Ok(())).unwrap().map(|hit| hit.version)
     }
 
     #[test]
@@ -734,12 +760,36 @@ mod tests {
         let second = version(&s, "k").unwrap();
         assert_ne!(first, second, "an overwrite is a new version");
 
-        assert!(!s.delete_version_nowait(first), "an older version deletes nothing");
+        assert_eq!(s.delete_version_nowait(first), VersionDelete::Gone, "an older version deletes nothing");
         assert_eq!(get(&s, "k", NOW).unwrap().0, b"b");
-        assert!(s.delete_version_nowait(second));
+        assert_eq!(s.delete_version_nowait(second), VersionDelete::Removed);
         assert!(get(&s, "k", NOW).is_none());
-        assert!(!s.delete_version_nowait(second), "already gone");
+        assert_eq!(s.delete_version_nowait(second), VersionDelete::Gone, "already gone");
         assert_eq!(len(&s), 0);
+    }
+
+    #[test]
+    fn a_refused_spilled_value_is_never_read() {
+        let tmp = TempDir::new("ops-refused-file");
+        let s = store(tmp.path(), Requested::default());
+        let big = vec![b'x'; spill::THRESHOLD];
+        s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
+        let mut seen = Vec::new();
+        let hit = s
+            .get_with(
+                T,
+                "k",
+                NOW,
+                |mode| mode == MODE_BYTES,
+                |mode, v| {
+                    seen.push((mode, matches!(v, ValueRef::Null)));
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert!(hit.is_some());
+        assert_eq!(seen, [(MODE_BYTES, true)], "decode saw Null, not the file");
+        assert_eq!(value_files(tmp.path()).len(), 1, "and the file is untouched");
     }
 
     #[test]
@@ -749,8 +799,21 @@ mod tests {
         let big = vec![b'x'; spill::THRESHOLD];
         s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
         assert_eq!(value_files(tmp.path()).len(), 1);
-        assert!(s.delete_version_nowait(version(&s, "k").unwrap()));
+        assert_eq!(s.delete_version_nowait(version(&s, "k").unwrap()), VersionDelete::Removed);
         assert!(value_files(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn a_spilled_value_whose_file_is_gone_is_a_miss_and_its_row_goes() {
+        let tmp = TempDir::new("ops-version-lost-file");
+        let s = store(tmp.path(), Requested::default());
+        let big = vec![b'x'; spill::THRESHOLD];
+        s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
+        for file in value_files(tmp.path()) {
+            std::fs::remove_file(file).unwrap();
+        }
+        assert!(get(&s, "k", NOW).is_none());
+        assert_eq!(len(&s), 0, "the row of the lost file was removed (D-013)");
     }
 
     #[test]
@@ -774,7 +837,7 @@ mod tests {
         };
         held_rx.recv().unwrap();
         let started = std::time::Instant::now();
-        assert!(!s.delete_version_nowait(v), "skipped while another thread writes");
+        assert_eq!(s.delete_version_nowait(v), VersionDelete::Skipped, "skipped while another thread writes");
         assert!(started.elapsed() < Duration::from_secs(1));
         done_tx.send(()).unwrap();
         holder.join().unwrap();
@@ -782,9 +845,9 @@ mod tests {
 
         // This thread's own held transaction: skipped too (gate depth > 0).
         let held = s.begin_hold(T).unwrap();
-        assert!(!s.delete_version_nowait(v));
+        assert_eq!(s.delete_version_nowait(v), VersionDelete::Skipped);
         held.finish(false).unwrap();
-        assert!(s.delete_version_nowait(v), "and works once nothing is held");
+        assert_eq!(s.delete_version_nowait(v), VersionDelete::Removed, "and works once nothing is held");
     }
 
     #[test]
@@ -898,9 +961,13 @@ mod tests {
             s.set(T, "trigger", text("t"), None, NOW).unwrap();
             let before = value_files(tmp.path());
             let held = s.begin_hold(T).unwrap();
-            s.get_with(T, "trigger", NOW, |_, _| {
-                s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big(b'y') }, None, NOW)
-            })
+            s.get_with(
+                T,
+                "trigger",
+                NOW,
+                |_| false,
+                |_, _| s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big(b'y') }, None, NOW),
+            )
             .unwrap();
             assert!(before.is_subset(&value_files(tmp.path())), "a value file went before the transaction ended");
             held.finish(commit).unwrap();
@@ -1022,7 +1089,7 @@ mod reprepare_guard {
             let key = format!("s{}", i % 100);
             let now = 1.0 + f64::from(i);
             store.set(timeout, &key, Value::Bytes { mode: 1, data: b"v" }, Some(1_000.0), now).unwrap();
-            store.get_with(timeout, &key, now, |_, _| Ok(())).unwrap();
+            store.get_with(timeout, &key, now, |_| false, |_, _| Ok(())).unwrap();
         }
         let reprepares = store
             .read(timeout, |conn| {

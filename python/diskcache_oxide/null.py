@@ -55,6 +55,15 @@ def _check_timeout(value: object) -> None:
         raise ValueError(f'timeout must be a non-negative number of seconds, got {value}')
 
 
+def _check_decode_policy(value: Any) -> None:
+    """As `Cache` validates `on_decode_error`."""
+    if isinstance(value, str):
+        if value not in ('raise', 'miss'):
+            raise ValueError(f"on_decode_error must be 'raise', 'miss' or a callable, got {value!r}")
+    elif not callable(value):
+        raise TypeError(f"on_decode_error must be 'raise', 'miss' or a callable, not {type(value).__name__}")
+
+
 class NullCache:
     """A switched-off cache, so app code needs no `if cache is None` checks.
 
@@ -86,9 +95,11 @@ class NullCache:
         sqlite_cache_size: int | None = None,
         wal_size_limit: int | None = None,
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
+        on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] = 'raise',
         invalidate: CacheLike | None = None,
     ) -> None:
         _check_timeout(timeout)
+        _check_decode_policy(on_decode_error)
         self._directory = None if directory is None else os.fspath(directory)
         self._timeout = 60.0 if timeout is None else float(timeout)
         self._size_limit = DEFAULT_SIZE_LIMIT if size_limit is None else size_limit

@@ -189,6 +189,8 @@ CREATE TABLE totals (only INTEGER PRIMARY KEY CHECK (only = 1), count INTEGER NO
 - Spilled values are decoded after the file read, with no connection held.
 - A per-thread dict-key string cache speeds up decoding (10-18%). When promoting it, use `try_borrow_mut` on the cache (`KEYS`, spikes/codec/src/common.rs:122), as the scratch buffer already does, so a re-entrant decode falls back instead of panicking.
 
+**Compatibility rule for codec changes (plan 08, 2026-10-30).** A new mode, tag or msgpack extension can be added without a format change only because an older build reading it raises `ForeignValueError` (a `CorruptValueError` subclass). Under `on_decode_error='miss'`, that's a miss that leaves the row in place, so an old worker overlapping a deploy never deletes a newer worker's data. The same goes for a zone key missing from a host's tzdata. A change that older builds must not read at all (new bytes for an existing mode or tag) needs a new database filename instead, as in section 3.
+
 **Fidelity contract:** the value table in `tests/conformance/value_cases.py`, where every case is now `roundtrip` or `TypeError`, plus the Hypothesis round-trip tests promoted from `spikes/codec/tests`.
 
 ## 6. Expiry, eviction, culling, maintenance

@@ -295,9 +295,25 @@ pub fn datetime_from_text<'py>(py: Python<'py>, s: &str) -> PyResult<Bound<'py, 
     if let Some(key) = zone {
         // The wall time, zone and fold are authoritative. If tzdata changed since the write, the
         // offset differs from the stored one; the zone's current rules win.
-        kwargs.set_item("tzinfo", t.zoneinfo.bind(py).call1((key,))?)?;
+        let zone = t.zoneinfo.bind(py).call1((key,)).map_err(|e| foreign_zone(py, e))?;
+        kwargs.set_item("tzinfo", zone)?;
     }
     parsed.call_method("replace", (), Some(&kwargs))
+}
+
+/// A zone key this host's tzdata lacks is another host's data, not corruption: `ForeignValueError`,
+/// with the original error as its cause. Any other error (a malformed key) is returned as itself.
+fn foreign_zone(py: Python<'_>, e: PyErr) -> PyErr {
+    let missing = py
+        .import("zoneinfo")
+        .and_then(|m| m.getattr("ZoneInfoNotFoundError"))
+        .is_ok_and(|missing| e.matches(py, missing).unwrap_or(false));
+    if !missing {
+        return e;
+    }
+    let foreign = crate::ForeignValueError::new_err(format!("time zone not available on this host: {e}"));
+    foreign.set_cause(py, Some(e));
+    foreign
 }
 
 pub fn date_from_text<'py>(py: Python<'py>, s: &str) -> PyResult<Bound<'py, PyAny>> {

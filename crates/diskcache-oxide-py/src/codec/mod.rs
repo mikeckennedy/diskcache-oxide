@@ -23,7 +23,7 @@ use pyo3::prelude::*;
 use pyo3::sync::critical_section::with_critical_section;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
-use crate::{CorruptValueError, UnsafeValueError};
+use crate::{CorruptValueError, ForeignValueError, UnsafeValueError};
 
 /// The per-row `mode` column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,10 +175,30 @@ pub fn encode<'py>(
     }
 }
 
-/// Whether a handle with this `allow_pickle` must refuse a row of `mode` without reading it.
+/// Whether a handle with this `allow_pickle` must refuse a row of `mode` without reading its value:
+/// a pickle it may not run (D-001), or a mode this build doesn't know (a newer peer's data, which
+/// it must not destroy either).
 #[must_use]
 pub fn refuses(mode: i64, allow_pickle: bool) -> bool {
-    !allow_pickle && Mode::from_column(mode) == Some(Mode::Pickle)
+    match Mode::from_column(mode) {
+        Some(Mode::Pickle) => !allow_pickle,
+        Some(_) => false,
+        None => true,
+    }
+}
+
+/// Whether `mode` is the pickle mode (errors from unpickling are the user's own code's).
+#[must_use]
+pub fn is_pickle(mode: i64) -> bool {
+    Mode::from_column(mode) == Some(Mode::Pickle)
+}
+
+/// The error for a row [`refuses`] turned away, without its value.
+pub fn refusal(mode: i64) -> PyErr {
+    match Mode::from_column(mode) {
+        Some(_) => pickle_refused(),
+        None => ForeignValueError::new_err(format!("unknown value mode {mode}")),
+    }
 }
 
 /// The error for a pickled row read by a `pickle=False` handle (D-001).
@@ -190,7 +210,7 @@ pub fn pickle_refused() -> PyErr {
 /// can't be decoded (unknown mode, wrong storage class, malformed bytes) raises `CorruptValueError`.
 pub fn decode(py: Python<'_>, mode: i64, stored: Stored<'_>, allow_pickle: bool) -> PyResult<Py<PyAny>> {
     let Some(mode) = Mode::from_column(mode) else {
-        return Err(CorruptValueError::new_err(format!("unknown value mode {mode}")));
+        return Err(ForeignValueError::new_err(format!("unknown value mode {mode}")));
     };
     if mode == Mode::Pickle && !allow_pickle {
         return Err(pickle_refused());

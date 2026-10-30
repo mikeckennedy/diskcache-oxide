@@ -13,7 +13,7 @@ use pyo3::types::{
 use rmp::encode as w;
 
 use super::common::{self, Tag, Types};
-use crate::CorruptValueError;
+use crate::{CorruptValueError, ForeignValueError};
 
 fn io(e: impl std::fmt::Display) -> PyErr {
     PyValueError::new_err(e.to_string())
@@ -206,6 +206,11 @@ fn corrupt(msg: impl Into<String>) -> PyErr {
     CorruptValueError::new_err(msg.into())
 }
 
+/// Well-formed, but this build doesn't know it: a newer version may have written it.
+fn foreign(msg: impl Into<String>) -> PyErr {
+    ForeignValueError::new_err(msg.into())
+}
+
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> PyResult<&'a [u8]> {
         let end = self.pos.checked_add(n).filter(|&e| e <= self.data.len()).ok_or_else(bad)?;
@@ -278,7 +283,7 @@ impl<'a> Reader<'a> {
         }
         let first = match self.peek_str()? {
             Some(s) if s.starts_with('$') => {
-                let tag = Tag::parse(s).ok_or_else(|| corrupt(format!("unknown tag {s:?}")))?;
+                let tag = Tag::parse(s).ok_or_else(|| foreign(format!("unknown tag {s:?}")))?;
                 if n != 1 {
                     return Err(corrupt("a tag map must have exactly one entry"));
                 }
@@ -339,7 +344,8 @@ impl<'a> Reader<'a> {
                     _ => common::decimal_from_text(py, s),
                 }
             }
-            Tag::Bytes | Tag::Dict | Tag::Float => Err(corrupt("tag not used in msgpack")),
+            // Not written by this version; a later one might use it.
+            Tag::Bytes | Tag::Dict | Tag::Float => Err(foreign("tag not used in msgpack")),
         }
     }
 
@@ -348,7 +354,7 @@ impl<'a> Reader<'a> {
         let kind = self.u8()? as i8;
         let body = self.take(n)?;
         if kind != -1 {
-            return Err(corrupt(format!("unknown msgpack extension {kind}")));
+            return Err(foreign(format!("unknown msgpack extension {kind}")));
         }
         let (secs, nanos): (i64, u32) = match n {
             4 => (i64::from(u32::from_be_bytes(body.try_into().map_err(|_| bad())?)), 0),

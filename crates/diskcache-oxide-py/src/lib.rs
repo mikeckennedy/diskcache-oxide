@@ -41,6 +41,13 @@ create_exception!(
     PyValueError,
     "A stored value couldn't be decoded: an unknown mode, or bytes that don't parse."
 );
+create_exception!(
+    diskcache_oxide,
+    ForeignValueError,
+    CorruptValueError,
+    "A stored value this build can't read but another might: an unknown mode, tag or extension (a \
+     newer version wrote it), or a time zone missing from this host."
+);
 
 /// The SQLite version reported at runtime by `sqlite3_libversion()`.
 #[pyfunction]
@@ -204,6 +211,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("Timeout", py.get_type::<Timeout>())?;
     m.add("UnsafeValueError", py.get_type::<UnsafeValueError>())?;
     m.add("CorruptValueError", py.get_type::<CorruptValueError>())?;
+    m.add("ForeignValueError", py.get_type::<ForeignValueError>())?;
     m.add_function(wrap_pyfunction!(sqlite_version, m)?)?;
     m.add_function(wrap_pyfunction!(sqlite_compile_options, m)?)?;
     // Test hooks for the value codec; not part of the public API.

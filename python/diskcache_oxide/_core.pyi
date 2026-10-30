@@ -14,6 +14,7 @@ __all__ = [
     'Timeout',
     'UnsafeValueError',
     'CorruptValueError',
+    'ForeignValueError',
     'sqlite_version',
     'sqlite_compile_options',
     '_encode',
@@ -37,6 +38,9 @@ class UnsafeValueError(TypeError):
 
 class CorruptValueError(ValueError):
     """A stored value couldn't be decoded: an unknown mode, or bytes that don't parse."""
+
+class ForeignValueError(CorruptValueError):
+    """A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote it), or a time zone missing from this host."""
 
 class FormatMismatchError(RuntimeError):
     """The cache directory holds a database in a format this version doesn't support."""
@@ -86,6 +90,14 @@ class Cache:
         wal_checkpoint: `'manual'` (the default) leaves checkpoints to `checkpoint()` and
             `close()`. `'auto'` also checkpoints after writes once the log is over
             `wal_size_limit`.
+        on_decode_error: What a read does with a stored value it can't decode. `'raise'` (the
+            default) raises. `'miss'` treats it as a miss, logs a warning on the `diskcache_oxide`
+            logger, and deletes the row if no build could ever read it (a class removed since it
+            was pickled, malformed bytes). A row another version or host might read
+            (`ForeignValueError`) is left in place. A callable does the same as `'miss'`, but is
+            called with `(key, exc)` instead of the warning, after the row is dealt with; whatever
+            it raises is logged. `UnsafeValueError`, `Timeout`, `MemoryError` and other errors that
+            aren't about the stored bytes always raise. Covers `get`, `cache[key]` and `pop`.
 
     Raises:
         ValueError: A setting is out of range, such as a `size_limit` under 1 MiB.
@@ -108,6 +120,7 @@ class Cache:
         sqlite_cache_size: int | None = None,
         wal_size_limit: int | None = None,
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
+        on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] = ...,
     ) -> Cache: ...
     @property
     def directory(self) -> str:

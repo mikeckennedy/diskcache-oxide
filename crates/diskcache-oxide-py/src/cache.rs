@@ -14,13 +14,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::collections::VecDeque;
 
 use diskcache_oxide_core::maintenance::{Cursor, Order};
-use diskcache_oxide_core::ops::{Number, Pop, Value};
+use diskcache_oxide_core::ops::{Number, Pop, Value, Version, VersionDelete};
 use diskcache_oxide_core::store::{
     DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, HeldTransaction, OpenOptions, Store,
 };
 use diskcache_oxide_core::{Error, ValueRef, lockwait, open::Requested};
-use pyo3::exceptions::{PyKeyError, PyOverflowError, PyTypeError, PyValueError};
+use pyo3::exceptions::{
+    PyException, PyKeyError, PyMemoryError, PyOSError, PyOverflowError, PyRecursionError, PyTypeError, PyValueError,
+};
 use pyo3::prelude::*;
+use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyString, PyTuple};
 
 use crate::codec::{self, Payload, Serializer};
@@ -35,6 +38,7 @@ pub(crate) struct Cache {
     serializer: Serializer,
     pickle: bool,
     clock: Option<Py<PyAny>>,
+    on_decode_error: DecodePolicy,
     closed: AtomicBool,
 }
 
@@ -54,6 +58,7 @@ impl Cache {
         sqlite_cache_size = None,
         wal_size_limit = None,
         wal_checkpoint = "manual",
+        on_decode_error = DecodePolicy::Raise,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -69,6 +74,7 @@ impl Cache {
         sqlite_cache_size: Option<&Bound<'_, PyAny>>,
         wal_size_limit: Option<&Bound<'_, PyAny>>,
         wal_checkpoint: &str,
+        on_decode_error: DecodePolicy,
     ) -> PyResult<Self> {
         let timeout = timeout_duration(match timeout {
             Some(t) => seconds("timeout", t)?,
@@ -123,6 +129,7 @@ impl Cache {
             serializer,
             pickle,
             clock,
+            on_decode_error,
             closed: AtomicBool::new(false),
         })
     }
@@ -311,10 +318,16 @@ impl Cache {
         // cache (see `Store::pop`). A value that fails to decode is still removed, but a pickled
         // value this handle may not read is refused before the delete and stays (D-001).
         let allow_pickle = self.pickle;
+        let default = || default.unwrap_or_else(|| py.None());
         match self.store.pop(self.timeout, key, now, |mode| codec::refuses(mode, allow_pickle)).map_err(to_py_err)? {
-            Pop::Removed(popped) => decode_value(py, popped.mode, popped.value_ref(), allow_pickle),
-            Pop::Refused { .. } => Err(codec::pickle_refused()),
-            Pop::Missing => Ok(default.unwrap_or_else(|| py.None())),
+            Pop::Removed(popped) => match decode_value(py, popped.mode, popped.value_ref(), allow_pickle) {
+                Ok(value) => Ok(value),
+                Err(e) => self.decode_failed(py, key, popped.mode, e, Row::Removed).map(|()| default()),
+            },
+            Pop::Refused { mode } => {
+                self.decode_failed(py, key, mode, codec::refusal(mode), Row::Kept).map(|()| default())
+            }
+            Pop::Missing => Ok(default()),
         }
     }
 
@@ -456,11 +469,91 @@ impl Cache {
         let allow_pickle = self.pickle;
         let found = self
             .store
-            .get_with(self.timeout, key, now, |mode, value| Ok(decode_value(py, mode, value, allow_pickle)))
+            .get_with(
+                self.timeout,
+                key,
+                now,
+                |mode| codec::refuses(mode, allow_pickle),
+                |mode, value| Ok(decode_value(py, mode, value, allow_pickle).map_err(|e| (mode, e))),
+            )
             .map_err(to_py_err)?;
-        match found {
-            Some(hit) => Ok(Some((hit.value?, hit.expire_time))),
-            None => Ok(None),
+        let Some(hit) = found else { return Ok(None) };
+        match hit.value {
+            Ok(value) => Ok(Some((value, hit.expire_time))),
+            Err((mode, e)) => self.decode_failed(py, key, mode, e, Row::Stored(hit.version)).map(|()| None),
+        }
+    }
+
+    /// A value of `key` failed to decode with `e`. Under `on_decode_error='raise'`, or for an error
+    /// that isn't about the stored bytes, returns `e`. Otherwise the read is a miss: an unreadable
+    /// row is deleted (exactly that version, without waiting), a foreign one is left for whoever can
+    /// read it, and the failure is reported. Runs with no connection held.
+    fn decode_failed(&self, py: Python<'_>, key: &str, mode: i64, e: PyErr, row: Row) -> PyResult<()> {
+        if matches!(self.on_decode_error, DecodePolicy::Raise) {
+            return Err(e);
+        }
+        let outcome = match classify(py, mode, &e) {
+            Failure::Passthrough => return Err(e),
+            Failure::Foreign => "left in place for a version or host that can read it",
+            Failure::Unreadable => match row {
+                Row::Stored(version) => match self.store.delete_version_nowait(version) {
+                    VersionDelete::Removed => "deleted",
+                    VersionDelete::Gone => "already replaced",
+                    VersionDelete::Skipped => "not deleted yet (busy); a later read retries",
+                },
+                Row::Removed => "deleted",
+                Row::Kept => "left in place",
+            },
+        };
+        self.report_decode_error(py, key, e, outcome);
+        Ok(())
+    }
+
+    /// Logs a decode failure, or hands it to the `on_decode_error` callable. Never raises: a report
+    /// that fails is logged, and a decode failure inside a report (the callable reading the same
+    /// bad key) is logged instead of calling the callable again.
+    fn report_decode_error(&self, py: Python<'_>, key: &str, e: PyErr, outcome: &str) {
+        let DecodePolicy::Report(callback) = &self.on_decode_error else {
+            self.log_decode_error(py, key, &e, outcome);
+            return;
+        };
+        let Some(_reporting) = Reporting::enter() else {
+            self.log_decode_error(py, key, &e, outcome);
+            return;
+        };
+        if let Err(failed) = callback.bind(py).call1((key, e.into_value(py))) {
+            let logged = logger(py).and_then(|log| {
+                let kwargs = pyo3::types::PyDict::new(py);
+                kwargs.set_item("exc_info", failed.into_value(py))?;
+                log.call_method(
+                    "error",
+                    ("on_decode_error callback failed for %r in %s", key, &self.directory),
+                    Some(&kwargs),
+                )
+                .map(drop)
+            });
+            if let Err(lost) = logged {
+                lost.write_unraisable(py, None);
+            }
+        }
+    }
+
+    fn log_decode_error(&self, py: Python<'_>, key: &str, e: &PyErr, outcome: &str) {
+        let logged = logger(py).and_then(|log| {
+            log.call_method1(
+                "warning",
+                (
+                    "could not decode the value of %r in %s, so it was a miss (%s): %r",
+                    key,
+                    &self.directory,
+                    outcome,
+                    e.value(py),
+                ),
+            )
+            .map(drop)
+        });
+        if let Err(lost) = logged {
+            lost.write_unraisable(py, None);
         }
     }
 
@@ -627,9 +720,117 @@ fn decode_value(py: Python<'_>, mode: i64, value: ValueRef<'_>, allow_pickle: bo
         ValueRef::Blob(bytes) | ValueRef::Text(bytes) => codec::Stored::Blob(bytes),
         ValueRef::Integer(n) => codec::Stored::Int(n),
         ValueRef::Real(x) => codec::Stored::Float(x),
+        // A value file the store didn't read because this handle refuses its mode.
+        ValueRef::Null if codec::refuses(mode, allow_pickle) => return Err(codec::refusal(mode)),
         ValueRef::Null => return Err(crate::CorruptValueError::new_err(format!("mode {mode} row has no value"))),
     };
     codec::decode(py, mode, stored, allow_pickle)
+}
+
+/// What a read does with a value it can't decode: the `on_decode_error=` argument.
+pub(crate) enum DecodePolicy {
+    /// `'raise'`: raise the error (the default).
+    Raise,
+    /// `'miss'`: a miss, logged as a warning on the `diskcache_oxide` logger.
+    Miss,
+    /// A callable: a miss, reported by calling it with `(key, exc)` instead of the warning.
+    Report(Py<PyAny>),
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for DecodePolicy {
+    type Error = PyErr;
+
+    fn extract(obj: pyo3::Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if let Ok(name) = obj.cast::<PyString>() {
+            return match name.to_str()? {
+                "raise" => Ok(DecodePolicy::Raise),
+                "miss" => Ok(DecodePolicy::Miss),
+                other => Err(PyValueError::new_err(format!(
+                    "on_decode_error must be 'raise', 'miss' or a callable, got {other:?}"
+                ))),
+            };
+        }
+        if obj.is_callable() {
+            return Ok(DecodePolicy::Report(obj.to_owned().unbind()));
+        }
+        Err(PyTypeError::new_err(format!(
+            "on_decode_error must be 'raise', 'miss' or a callable, not {}",
+            obj.get_type().name()?
+        )))
+    }
+}
+
+/// Which row a failed decode came from, for what `on_decode_error='miss'` can do about it.
+enum Row {
+    /// Still stored, as this version.
+    Stored(Version),
+    /// Already deleted (by `pop`).
+    Removed,
+    /// Deliberately not deleted (a refused `pop`).
+    Kept,
+}
+
+/// What kind of decode failure an error is (plan 08, step 2b).
+enum Failure {
+    /// The bytes can never be read, by this or any build: a miss, and the row is deleted.
+    Unreadable,
+    /// This build can't read it, but another might: a miss, and the row stays (D-001).
+    Foreign,
+    /// Not about the stored bytes, or a configuration error: raised as is.
+    Passthrough,
+}
+
+fn classify(py: Python<'_>, mode: i64, e: &PyErr) -> Failure {
+    if !e.is_instance_of::<PyException>(py) || e.is_instance_of::<crate::UnsafeValueError>(py) {
+        // KeyboardInterrupt and friends; and a pickle on a pickle=False handle, a configuration
+        // bug that a miss would hide on every read.
+        Failure::Passthrough
+    } else if e.is_instance_of::<crate::ForeignValueError>(py) {
+        Failure::Foreign
+    } else if e.is_instance_of::<crate::CorruptValueError>(py) {
+        Failure::Unreadable
+    } else if codec::is_pickle(mode)
+        && !(e.is_instance_of::<PyMemoryError>(py)
+            || e.is_instance_of::<PyRecursionError>(py)
+            || e.is_instance_of::<PyOSError>(py))
+    {
+        // Unpickling raised: a class moved or renamed, or a failing `__setstate__`. Transient
+        // errors, and `Timeout` or I/O errors from a cache call inside a pickle hook, are raised.
+        Failure::Unreadable
+    } else {
+        Failure::Passthrough
+    }
+}
+
+/// The `diskcache_oxide` logger, looked up once.
+fn logger(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
+    static LOGGER: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+    LOGGER
+        .get_or_try_init(py, || {
+            Ok::<_, PyErr>(py.import("logging")?.call_method1("getLogger", ("diskcache_oxide",))?.unbind())
+        })
+        .map(|log| log.bind(py))
+}
+
+thread_local! {
+    /// Set while this thread is inside an `on_decode_error` callable.
+    static REPORTING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks this thread as reporting a decode failure until dropped.
+struct Reporting;
+
+impl Reporting {
+    /// None if this thread is already reporting one.
+    fn enter() -> Option<Reporting> {
+        if REPORTING.replace(true) { None } else { Some(Reporting) }
+    }
+}
+
+impl Drop for Reporting {
+    fn drop(&mut self) {
+        REPORTING.set(false);
+    }
 }
 
 /// The core value for an encoded payload, borrowing its bytes (no copy before SQLite's own).

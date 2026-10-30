@@ -133,6 +133,22 @@ cache = Cache('/var/cache/my-app', timeout=1.0)  # for requests
 cache.clear(timeout=10.0)                        # for the admin page
 ```
 
+## Values that can't be read
+
+A cached value can stop being readable: a class you pickled was moved or renamed, or the bytes were damaged. By default `get` raises, as diskcache does. A cache is only a copy of data you can rebuild, so most apps would rather treat that as a miss. `on_decode_error` does that:
+
+```python
+cache = Cache('/var/cache/my-app', pickle=True, on_decode_error='miss')
+cache.get('homepage')  # None if the stored value can't be decoded; the bad row is deleted
+```
+
+- `'miss'` returns the default, deletes the bad row, and logs a warning on the `diskcache_oxide` logger. Only that exact stored version is deleted, so a fresh value another process wrote in the meantime survives, and the read never waits for the write lock to do it. If the lock is busy, the row stays and a later read tries again.
+- A value this version can't read but another might, such as one written by a newer diskcache-oxide or one that needs a time zone this host lacks, is a miss too, but its row is kept. Reading it with the default `'raise'` raises `ForeignValueError`, a subclass of `CorruptValueError`.
+- Pass a function instead to report the failure yourself, for example to Sentry. It's called as `report(key, exc)` in place of the warning, after the row has been dealt with. Anything it raises is logged, and the read is still a miss.
+- Errors that aren't about the stored bytes still raise: `Timeout`, `MemoryError`, an I/O error, and `UnsafeValueError` (a pickled value read by a cache without `pickle=True`, which is a configuration mistake, not damage).
+
+It covers `get`, `cache[key]` (which raises `KeyError`) and `pop`.
+
 ## Shutting down
 
 Call `cache.checkpoint()` at shutdown if you can. It isn't required. With readers in other processes, a burst of writes (a big fill, or a `clear()`) can leave SQLite's write-ahead log much larger than the database, and SQLite only shrinks it when it gets a moment with no readers. `checkpoint()` makes that moment: it waits briefly for in-flight reads, copies the log into the database, and truncates it. It returns `False` instead of raising if other processes keep it busy.

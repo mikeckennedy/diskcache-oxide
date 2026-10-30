@@ -215,3 +215,37 @@ caches.close_all()                 # also on `with Caches(...) as caches:` exit
 - `Store::delete_version_nowait(version) -> bool`: a D-013 compare-and-delete through `write_nowait`, which also unlinks the value file. The spill path's missing-file cleanup now uses it.
 - Rust tests: `a_version_names_exactly_one_stored_value` (an overwrite is a new version, and deleting an older one removes nothing), `deleting_a_spilled_version_removes_its_file`, and `deleting_a_version_never_waits_for_the_write_lock` (another thread's held transaction and this thread's own: skipped, in well under a second).
 - 123 core tests pass. The Python suite passes on 3.14 (749 passed) and 3.14t (748 passed), with stubtest, strict mypy, clippy and rustdoc clean. The `get_hit_small` A/B run waits for step 2b and the end of the soak.
+
+### Architect's review of step 2a (2026-10-30): no bugs; follow-ups applied
+
+- `delete_version_nowait`'s docs say exactly when it skips: no waiting at all, whether for the write lock, a connection slot or another process's lock. It also skips while this thread is in a write transaction on *any* cache or inside any cache operation (the gate is process-wide), and in a child that can't write. Like any operation, it waits while a fork is pending.
+- It returns `VersionDelete::{Removed, Gone, Skipped}` instead of a `bool`, so step 2b's report can say "deleted", "already replaced" or "not deleted yet".
+- A Rust test pins the D-013 missing-file branch that moved onto it.
+- Still open: regenerate the stale `site/reference` pages before the next docs commit (step 3).
+
+### Step 2b: done (2026-10-30)
+
+- `Cache(..., on_decode_error='raise' | 'miss' | callable)`, parsed once into `DecodePolicy` (`cache.rs`). A successful `get` is unchanged; the policy runs only on the error path.
+- **Classified at the source.** New public `ForeignValueError(CorruptValueError)` for an unknown mode, an unknown msgpack or JSON tag, a tag msgpack doesn't use, an unknown msgpack extension, and a zone key missing from this host's tzdata (`ZoneInfoNotFoundError`, kept as the cause). `classify` in `cache.rs`:
+  - anything not an `Exception`, and `UnsafeValueError`, raise;
+  - `ForeignValueError` is a miss that keeps the row;
+  - other `CorruptValueError`s are a miss that deletes the row;
+  - in pickle mode, any other `Exception` is a miss that deletes the row, except `MemoryError`, `RecursionError` and `OSError`, which covers `Timeout`;
+  - everything else raises.
+- **Refused before reading.** `get_with` takes `refuse`, so a spilled pickle on a `pickle=False` handle, or a spilled unknown mode, is turned away without reading its value file; the architect's step 0 follow-up. `codec::refuses` now also refuses unknown modes, so `pop` keeps those rows, and `codec::refusal` builds the right error for each.
+- **Reporting.** `'miss'` logs a warning on the `diskcache_oxide` logger, with the key, the directory, what happened to the row and the exception. A callable replaces the warning and is called as `(key, exc)` after the delete. If it raises, that's logged at `ERROR` with `exc_info`. A thread-local guard stops a decode failure inside the callable from calling it again; that failure is logged instead. The logger is looked up once (`PyOnceLock`).
+- `NullCache` validates `on_decode_error` the same way. `ForeignValueError` is exported and pickles under `diskcache_oxide`. Docs: a "Values that can't be read" section in getting-started, and the codec compatibility rule in `04-design.md` section 5.
+- **Tests:** `tests/unit/test_decode_errors.py`, 24 tests:
+  - `'raise'` is the default;
+  - a moved class and malformed bytes: miss, row deleted, warning;
+  - `get(expire_time=True)`, `cache[key]` and `pop`;
+  - an unknown mode, an unknown msgpack tag and an unknown JSON tag: miss, row kept;
+  - `UnsafeValueError`, `Timeout`, `MemoryError`, `RecursionError`, `OSError` and `KeyboardInterrupt` raise;
+  - a refused spilled pickle isn't read;
+  - a peer's newer value survives;
+  - no waiting when a peer process holds the write lock, when another thread holds a write transaction, or inside this thread's own transaction;
+  - the callable's arguments and timing, a failing callable, and the recursion guard;
+  - validation on both classes;
+  - `ForeignValueError` pickles.
+- `scripts/check.sh` passes: 3.14 (773 passed), 3.14t (772), 3.15 (773), 3.15t (772); clippy, rustdoc, deny, stubtest, strict mypy and the shuttle models are clean.
+- **Gate:** `bench.gate` on 3.14 is GO. `get_hit_small` over 4 interleaved rounds is 0.89-0.90 µs against diskcache's 1.84-1.91 µs, so 0.48×, the same as before this work (0.47×). Reading the version on every hit costs nothing measurable.
