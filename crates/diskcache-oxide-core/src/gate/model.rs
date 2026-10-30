@@ -201,6 +201,46 @@ fn model_a_share_dropped_elsewhere_while_its_owner_parks() {
     WAITED.assert_reached("a fork that waited for a running level");
 }
 
+/// Model 8: a share ended on a thread other than its owner while a fork waits for it (a held
+/// transaction finished by a GC finalizer). The ender enters on the share's level, so it never waits
+/// for the fork, and the fork still never runs alongside the ender's work.
+#[test]
+fn model_a_share_ended_on_another_thread_while_a_fork_waits() {
+    static ENTERED_PENDING: Reach = Reach::new();
+    static WAITED: Reach = Reach::new();
+    check(|| {
+        let gate = fresh_gate();
+        let w = Witness::new(&WAITED);
+        let (tx, rx) = mpsc::channel::<HeldShare<'static>>();
+        let owner = thread::spawn(move || tx.send(gate.enter_shared().into_held()).unwrap());
+        let ender = {
+            let w = Arc::clone(&w);
+            thread::spawn(move || {
+                let share = rx.recv().unwrap();
+                if gate.pending.load(Ordering::SeqCst) {
+                    ENTERED_PENDING.hit();
+                }
+                let g = share.enter();
+                w.start_work();
+                thread::yield_now();
+                w.end_work();
+                drop(g);
+                drop(share);
+            })
+        };
+        let forker = {
+            let w = Arc::clone(&w);
+            thread::spawn(move || w.fork(gate, 0))
+        };
+        for t in [owner, ender, forker] {
+            t.join().unwrap();
+        }
+        assert_idle(gate);
+    });
+    ENTERED_PENDING.assert_reached("a share entered while a fork was pending");
+    WAITED.assert_reached("a fork that waited for a running level");
+}
+
 /// Model 7: the composition, as a store write runs it. Write lock (never waited for inside the
 /// gate) then gate, a nested write at depth 1 via `try_lock_nested`, a slot taken before the gate,
 /// and a forker. Checks the lock-order rules hold up together: no deadlock, write exclusion,

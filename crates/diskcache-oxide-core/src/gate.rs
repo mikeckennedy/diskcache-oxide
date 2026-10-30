@@ -436,6 +436,25 @@ pub struct HeldShare<'g> {
     owner: Arc<Owner>,
 }
 
+impl<'g> HeldShare<'g> {
+    /// Enters the gate on this share's authority, on any thread, without waiting, even while a
+    /// fork is pending: that fork already waits for this share's level, and the level entered here
+    /// is dropped before the share is, so it adds nothing new to wait for. For ending a held
+    /// transaction on a thread that isn't its owner (a GC finalizer), which would otherwise wait for
+    /// a fork that waits for it. A share inherited across `fork()` counts for nothing in the child,
+    /// so there it enters as usual.
+    pub fn enter(&self) -> SharedGuard<'g> {
+        if self.owner.epoch.load(Ordering::SeqCst) != self.gate.epoch.load(Ordering::SeqCst) {
+            return self.gate.enter_shared();
+        }
+        self.gate.local.with(|t| {
+            self.gate.counts.fetch_add(HOLDER, Ordering::SeqCst);
+            t.depth.set(t.depth.get() + 1);
+        });
+        SharedGuard { gate: self.gate, _not_send: PhantomData }
+    }
+}
+
 impl Drop for HeldShare<'_> {
     fn drop(&mut self) {
         if self.owner.epoch.load(Ordering::SeqCst) != self.gate.epoch.load(Ordering::SeqCst) {

@@ -1224,7 +1224,9 @@ impl HeldTransaction {
         let Some(write_word) = self.write_word else { return Ok(()) };
         let me = std::thread::current().id();
         let (gate, pinned) = loop {
-            let gate = GATE.enter_shared();
+            // On the transaction's own level: from another thread, a plain entry would wait for a
+            // pending fork, which waits for this transaction.
+            let gate = self.share.as_ref().map_or_else(|| GATE.enter_shared(), HeldShare::enter);
             let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
             match &*slot {
                 PinnedSlot::Lent { owner, .. } if *owner == me => return Err(Error::EndInsideOperation),
@@ -1262,7 +1264,7 @@ impl HeldTransaction {
     /// Leaves the rollback to the operation the connection is lent to (see [`PinnedSlot::Lent`]).
     fn abandon(&mut self) {
         let Some(write_word) = self.write_word.take() else { return };
-        let _gate = GATE.enter_shared();
+        let _gate = self.share.as_ref().map_or_else(|| GATE.enter_shared(), HeldShare::enter);
         let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
         if let PinnedSlot::Lent { abandoned, .. } = &mut *slot {
             *abandoned = Some(Abandoned { write_word, hold: self.hold.take(), share: self.share.take() });
@@ -1714,6 +1716,36 @@ mod tests {
         assert_eq!(count(&store), 0);
         put(&store, "after", b"1"); // The write lock and connection were released.
         assert_eq!(count(&store), 1);
+    }
+
+    #[test]
+    fn a_held_transaction_finishes_on_another_thread_while_a_fork_waits_for_it() {
+        // The fork waits for the transaction's level; the thread ending it must not wait for the
+        // fork. It enters on the transaction's own level instead (review 07, architect).
+        let tmp = TempDir::new("store-hold-fork-finish");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let held = store.begin_hold(T).unwrap();
+        put(&store, "k", b"v");
+        let forked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let fork_thread = {
+            let forked = Arc::clone(&forked);
+            std::thread::spawn(move || {
+                gate::begin_fork(); // Waits until the transaction ends.
+                forked.store(true, Ordering::Release);
+                gate::end_fork_parent();
+            })
+        };
+        std::thread::sleep(Duration::from_millis(100)); // The fork is now pending.
+        assert!(!forked.load(Ordering::Acquire), "the fork must wait for the held transaction");
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || done.send(held.finish(true)).unwrap());
+        // On failure the threads stay stuck with the gate claimed, and later tests hang behind it.
+        let result =
+            finished.recv_timeout(Duration::from_secs(5)).expect("finish waited for the fork that waits for it");
+        result.unwrap();
+        fork_thread.join().unwrap();
+        assert!(forked.load(Ordering::Acquire));
+        assert_eq!(count(&store), 1, "committed");
     }
 
     #[test]
