@@ -1334,7 +1334,9 @@ fn close_pinned(
         return (Err(Error::ForkPoisoned), Vec::new());
     }
     let conn = pinned.conn.conn();
-    let outcome = if pinned.doomed.get() {
+    // Doomed by a write, or ended by SQLite itself during a read (an I/O error, out of memory),
+    // which no write saw.
+    let outcome = if pinned.doomed.get() || conn.is_autocommit() {
         // Rolled back whatever was asked; a commit that can't happen is an error.
         if !conn.is_autocommit() {
             let _ = conn.execute_batch("ROLLBACK");
@@ -1841,6 +1843,26 @@ mod tests {
         assert_eq!(count(&store), 0, "rolled back when the operation returned");
         put(&store, "after", b"v");
         assert_eq!(count(&store), 1);
+    }
+
+    #[test]
+    fn a_held_transaction_sqlite_ended_during_a_read_ends_cleanly() {
+        // SQLite can end a transaction on its own during a read (an I/O error), which no write
+        // marks as doomed. Ending it must still report that, not a raw "no transaction" error.
+        let tmp = TempDir::new("store-hold-ended-in-read");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        for commit in [false, true] {
+            let held = store.begin_hold(T).unwrap();
+            put(&store, "k", b"v");
+            store.read(T, |conn| conn.execute_batch("ROLLBACK").map_err(|e| Error::from_sqlite(e, T))).unwrap();
+            let result = held.finish(commit);
+            if commit {
+                assert!(matches!(result, Err(Error::TransactionAborted)), "{result:?}");
+            } else {
+                result.unwrap();
+            }
+            assert_eq!(count(&store), 0);
+        }
     }
 
     #[test]
