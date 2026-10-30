@@ -138,6 +138,13 @@ pub(crate) fn close_idle_all() {
             reset_if_stale(&mut state, current);
             std::mem::take(&mut state.idle)
         };
+        for pooled in &idle {
+            // These may be the process's last connections holding a lock on the file. If no other
+            // process has it open, closing the last one would make SQLite checkpoint and delete
+            // the WAL here, with every other thread waiting behind the gate: the WAL just stays,
+            // for a later close or the next autocheckpoint.
+            let _ = pooled.conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true);
+        }
         drop(idle);
     }
 }

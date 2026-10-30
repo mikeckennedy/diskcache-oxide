@@ -432,3 +432,27 @@ def test_checkpoint_takes_its_own_timeout(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         cache.checkpoint(timeout=-1)
     cache.close()
+
+
+def test_a_fork_never_checkpoints_the_wal(tmp_path: Path) -> None:
+    # The before-fork hook closes every idle connection. With no other process on the file, the
+    # last close used to make SQLite checkpoint and delete the WAL right there, with every other
+    # thread of the process waiting behind the fork. Now the WAL stays as it was.
+    import os
+    import warnings
+
+    directory = tmp_path / 'c'
+    cache = Cache(directory)
+    for i in range(3_000):
+        cache.set(f'k{i}', 'x' * 500)
+    before = _wal_bytes(directory)
+    assert before > 0
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', DeprecationWarning)  # The child only exits.
+        pid = os.fork()
+    if pid == 0:
+        os._exit(0)
+    os.waitpid(pid, 0)
+    assert _wal_bytes(directory) == before, 'the fork checkpointed the WAL'
+    assert cache.get('k0') == 'x' * 500
+    cache.close()
