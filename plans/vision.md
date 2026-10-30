@@ -58,7 +58,7 @@ Michael, 2026-10-29: plug diskcache-oxide straight into Django's cache framework
 
 ## DurableCache and the cache service, in the library
 
-Michael, 2026-10-30: Talk Python's `DurableCache` wrapper and its `cache_service` factory might belong in diskcache-oxide, the way `NullCache` does. Decide during Phase 3 planning; nothing is built yet. Evidence that it's generic: `durable_cache.py` is copied into four apps (Talk Python, Training, Python Bytes, InterviewCue), and the copies have drifted apart (136 to 349 lines).
+Michael, 2026-10-30: Talk Python's `DurableCache` wrapper and its `cache_service` factory might belong in diskcache-oxide, the way `NullCache` does. **Decided (Michael, 2026-10-30):** both come into the library. Self-healing reads become a `Cache` constructor option, and the registry is named `caches` (not `cache_service`, which is Talk Python's house naming). The details get settled in Phase 3 planning; nothing is built yet. Evidence that it's generic: `durable_cache.py` is copied into four apps (Talk Python, Training, Python Bytes, InterviewCue), and the copies have drifted apart (136 to 349 lines).
 
 **What `DurableCache` does today, and where each piece lands:**
 - `bool()` always True, fixing diskcache's empty-cache-is-falsy: already in the library (D-009).
@@ -86,10 +86,10 @@ The parts of `cache_service.py` that any app needs:
 
 The app-specific parts stay in the app: the purpose names and their `Literal`, the mapping from purposes onto physical caches, reading the settings file, Sentry and logbook, cache descriptions, and the MP3 and HTTP helpers.
 
-A sketch, not decided (the name is open: `CacheRegistry`, `Caches`, `CacheSet`):
+A sketch of the API (the name `caches` is decided; whether it's a module, `diskcache_oxide.caches`, or a class is not):
 
 ```python
-caches = CacheRegistry('/var/cache/app', timeout=1.0, on_open_error=report)
+caches = Caches('/var/cache/app', timeout=1.0, on_open_error=report)
 caches.register('general')
 caches.register('show_pages', size_limit=2 * GiB)
 general = caches['general']            # opened on first use, then reused
