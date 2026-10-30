@@ -479,6 +479,10 @@ class Soak:
             'stalls': self.counts['stalls'],
             **{f'{n}_{k}': db.get(n, {}).get(k) for n in ('chaos', 'ledger') for k in ('rows', 'db_bytes', 'wal_bytes', 'value_files')},
             'chaos_orphans': self.last_orphans.get('chaos'),
+            'ledger_orphans': self.last_orphans.get('ledger'),
+            # Held write transactions on the ledger, over every worker of the run.
+            'held_commits': self.total('held_commits'),
+            'held_rollbacks': self.total('held_rollbacks'),
             # Forced WAL checkpoints (D-024), over every worker of the run (killed ones included).
             'wal_ckpt_attempts': self.wal_total('attempts'),
             'wal_ckpt_busy': self.wal_total('busy'),
@@ -511,7 +515,8 @@ class Soak:
             f'rss total {t["rss_total_mib"]} MiB  fds total {t["fds_total"]}  timeouts {t["timeouts_total"]}  stalls {t["stalls"]}',
             f'kills {t["kills"]}  restarts {t["restarts"]}  respawns {self.counts["respawns"]}  forks ok/failed {t["forks_ok"]}/{t["forks_failed"]}  maintenance calls {t["maint_calls"]}',
             f'chaos: {t["chaos_rows"]} rows, db {mib(t["chaos_db_bytes"])} MiB, wal {mib(t["chaos_wal_bytes"])} MiB, {t["chaos_value_files"]} value files, orphans {t["chaos_orphans"]}',
-            f'ledger: {t["ledger_rows"]} rows, db {mib(t["ledger_db_bytes"])} MiB, wal {mib(t["ledger_wal_bytes"])} MiB',
+            f'ledger: {t["ledger_rows"]} rows, db {mib(t["ledger_db_bytes"])} MiB, wal {mib(t["ledger_wal_bytes"])} MiB, {t["ledger_value_files"]} value files, orphans {t["ledger_orphans"]}',
+            f'held transactions: {t["held_commits"]} committed, {t["held_rollbacks"]} rolled back',
             '',
             f'{"id":>4} {"python":>9} {"long":>4} {"rss MiB":>8} {"fds":>5} {"ops":>12} {"tmo":>5} {"probs":>5}',
         ]
@@ -592,7 +597,7 @@ class Soak:
         self.event('final-ledger', workers_checked=len(self.final_acked), slots_checked=len(self.once_winners))
         for name in ('chaos', 'ledger'):
             self.check_db(name, deep=True, orphans=True)
-        totals = {k: self.total(k) for k in ('ops', 'timeouts', 'forks_ok', 'forks_failed', 'reopens', 'once_tried')}
+        totals = {k: self.total(k) for k in ('ops', 'timeouts', 'forks_ok', 'forks_failed', 'reopens', 'once_tried', 'held_commits', 'held_rollbacks')}
         self.event('finish', problems=self.problems, counts=self.counts, totals=totals)
         from soak.report import build
 
@@ -611,7 +616,8 @@ TIMELINE_FIELDS = [
     'rss_total_mib', 'fds_total', 'timeouts_total', 'problems', 'kills', 'forks_ok', 'forks_failed', 'maint_calls',
     'stalls', 'chaos_rows', 'chaos_db_bytes', 'chaos_wal_bytes', 'chaos_value_files', 'ledger_rows', 'ledger_db_bytes',
     'ledger_wal_bytes', 'ledger_value_files', 'chaos_orphans', 'wal_ckpt_attempts', 'wal_ckpt_busy',
-    'wal_ckpt_max_pause_us', 'wal_ckpt_slow', 'get_max_us', 'set_max_us', 'restarts',
+    'wal_ckpt_max_pause_us', 'wal_ckpt_slow', 'get_max_us', 'set_max_us', 'restarts', 'ledger_orphans',
+    'held_commits', 'held_rollbacks',
 ]  # fmt: skip
 WORKER_FIELDS = [
     'time', 'elapsed_h', 'id', 'python', 'long_lived', 'rss_mib', 'fds', 'ops', 'timeouts', 'problems', 'forks_ok',

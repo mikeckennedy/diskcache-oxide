@@ -11,7 +11,12 @@ Two caches share the run directory:
 - ledger/: nothing expires, is cleared or is culled, so every acknowledged write must survive:
   - `ctr:<worker>` counters, against the count of incr() calls that returned;
   - `own:<worker>:<n>` keys with a single writer, which must read back exactly what was last written;
-  - `once:<slot>` add() races, which must have exactly one winner.
+  - `once:<slot>` add() races, which must have exactly one winner;
+  - `held:<worker>:<n>` keys and a `hctr:<worker>` counter, written only inside held write
+    transactions that commit or roll back at random: after each one, every key it touched must show
+    all of its changes or none of them, and exactly the committed ones. Some values spill to files,
+    so a rollback that loses a committed file, or a commit that leaves a replaced one, shows up here
+    or in the orchestrator's file scan.
 
 Every value carries its key and a CRC of its payload, so corruption or a value landing under the
 wrong key is caught on every read.
@@ -50,6 +55,10 @@ ONCE_SLOTS_PER_MINUTE = 20
 LATENCY_SAMPLE_EVERY = 50
 MAX_PROBLEMS_KEPT = 50
 FORK_DEADLINE = 20.0
+HELD_KEYS = 50
+# The share of ledger operations that run a held transaction instead (a few a second across a run).
+HELD_SHARE = 0.01
+HELD_COMMIT = 0.6
 # A get that started this long after a value's expire time must not return it (the writer's and
 # reader's clock reads aren't simultaneous).
 EXPIRY_SLACK = 1.0
@@ -145,6 +154,14 @@ class Worker:
         self.problem_count = 0
         self.latency: dict[str, list[int]] = {'get': [], 'set': []}
         self.fork_requested = threading.Event()
+        # Held transactions: one at a time per worker, so `held` (key -> last committed version, 0
+        # for deleted) stays exact. Taken without waiting; a thread that finds it busy does a normal
+        # ledger op instead.
+        self.held_lock = threading.Lock()
+        self.held: dict[str, int] = {}
+        self.held_acked = 0  # hctr:<id> increments in committed transactions
+        self.held_commits = 0
+        self.held_rollbacks = 0
 
     def problem(self, text: str) -> None:
         with self.lock:
@@ -210,6 +227,8 @@ class Worker:
             self.ops += 1
 
     def ledger_op(self, rng: random.Random) -> None:
+        if rng.random() < HELD_SHARE and self.held_op(rng):
+            return
         roll = rng.random()
         if roll < 0.5:
             self.ledger.incr(f'ctr:{self.id}')
@@ -234,6 +253,58 @@ class Worker:
                 self.once_tried += 1
                 if won:
                     self.once_won.append(slot)
+
+    def held_op(self, rng: random.Random) -> bool:
+        """One held write transaction on the ledger, then a check that it committed or rolled back
+        as a whole. Returns False, doing nothing, if another thread of this worker is in one."""
+        if not self.held_lock.acquire(blocking=False):
+            return False
+        try:
+            commit = rng.random() < HELD_COMMIT
+            planned: dict[str, int] = {}  # key -> its version if this commits (0: deleted)
+            for n in rng.sample(range(HELD_KEYS), rng.randint(1, 4)):
+                key = f'held:{self.id}:{n}'
+                delete = self.held.get(key, 0) > 0 and rng.random() < 0.2
+                planned[key] = 0 if delete else self.held.get(key, 0) + 1
+            outcome = 'committed' if commit else 'rolled back'
+            try:
+                with self.ledger._hold_write_transaction():
+                    for key, version in planned.items():
+                        if version:
+                            assert self.ledger.set(key, held_value(key, version, rng)) is True
+                        else:
+                            self.ledger.delete(key)
+                        # Nested operations see the transaction's own writes.
+                        if (got := held_version(key, self.ledger.get(key))) != version:
+                            self.problem(f'{key} read {got} inside its transaction, just after writing {version}')
+                    self.ledger.incr(f'hctr:{self.id}')
+                    self.chaos.get(f'c:{rng.randrange(CHAOS_KEYS)}')  # A read of another cache, too.
+                    if not commit:
+                        raise _Rollback
+            except _Rollback:
+                pass
+            except Timeout:
+                outcome = 'uncertain'  # Raised before or at COMMIT: all or nothing, but which isn't known.
+            except Exception:
+                self.problem(f'held transaction: {traceback.format_exc(limit=6)}')
+                outcome = 'uncertain'
+            seen = {key: held_version(key, self.ledger.get(key)) for key in planned}
+            before = {key: self.held.get(key, 0) for key in planned}
+            if outcome == 'uncertain':
+                outcome = 'committed' if seen == planned else 'rolled back'
+            expected = planned if outcome == 'committed' else before
+            if seen != expected:
+                self.problem(f'held transaction {outcome}, but its keys read {seen}: expected {expected} (before {before})')
+            with self.lock:
+                if outcome == 'committed':
+                    self.held.update(planned)
+                    self.held_acked += 1
+                    self.held_commits += 1
+                else:
+                    self.held_rollbacks += 1
+            return True
+        finally:
+            self.held_lock.release()
 
     def record(self, op: str, ns: int) -> None:
         with self.lock:
@@ -317,6 +388,8 @@ class Worker:
                 'once_won': list(self.once_won),
                 'forks_ok': self.forks_ok,
                 'forks_failed': self.forks_failed,
+                'held_commits': self.held_commits,
+                'held_rollbacks': self.held_rollbacks,
                 'problem_count': self.problem_count,
                 'problems': list(self.problems),
                 'latency': latency,
@@ -337,6 +410,11 @@ class Worker:
             got = self.ledger.get(key)
             if not isinstance(got, dict) or got.get('v') != version:
                 self.problem(f'final check: {key} is {got!r}, last acknowledged version {version}')
+        for key, version in sorted(self.held.items()):
+            if (got := held_version(key, self.ledger.get(key))) != version:
+                self.problem(f'final check: {key} is version {got}, last committed {version}')
+        if (count := self.ledger.get(f'hctr:{self.id}', 0)) != self.held_acked:
+            self.problem(f'final check: hctr:{self.id} is {count}, committed transactions {self.held_acked}')
 
     def run(self) -> int:
         # Forking with threads running is the point of the fork test.
@@ -364,6 +442,34 @@ class Worker:
         self.chaos.close()
         self.ledger.close()
         return 0
+
+
+class _Rollback(Exception):
+    """Raised inside a held transaction to roll it back."""
+
+
+def held_value(key: str, version: int, rng: random.Random) -> Any:
+    """A held-transaction value: a small dict, or (30%) bytes large enough to spill to a file."""
+    if rng.random() < 0.7:
+        return {'key': key, 'v': version}
+    payload = rng.randbytes(rng.randrange(70 * 1024, 200 * 1024))
+    header = json.dumps({'key': key, 'v': version, 'crc': zlib.crc32(payload)}).encode()
+    return len(header).to_bytes(4, 'big') + header + payload
+
+
+def held_version(key: str, value: Any) -> int | str:
+    """The version a held-transaction value carries (0 if missing), or what's wrong with it."""
+    if value is None:
+        return 0
+    if isinstance(value, dict):
+        return value['v'] if value.get('key') == key else f'belongs to {value.get("key")!r}'
+    n = int.from_bytes(value[:4], 'big')
+    header = json.loads(value[4 : 4 + n])
+    if header.get('key') != key:
+        return f'belongs to {header.get("key")!r}'
+    if zlib.crc32(value[4 + n :]) != header.get('crc'):
+        return f'version {header.get("v")} fails its CRC'
+    return int(header['v'])
 
 
 def wal_stats(cache: Cache) -> dict[str, int]:
