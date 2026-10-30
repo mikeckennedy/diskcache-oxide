@@ -17,11 +17,12 @@
 //!   runs out of connections releases the gate before it waits for one. Two waits are allowed:
 //!   SQLite's own busy wait inside an [`crate::lockwait::AttachedWindow`], and bounded local work run
 //!   through [`run_blocking`] (file I/O, or a SQLite call whose only wait is that window: the
-//!   spill-file read in `pop`, the forced WAL checkpoint), which keeps a pending fork waiting no
-//!   longer than the work takes. One more is bounded only by the operation's `timeout`: a write at
-//!   depth > 0 that couldn't take its store's write lock (inside a held transaction, writing another
-//!   cache whose lock another thread holds) backs off between attempts without giving up the
-//!   caller's levels, so a pending fork waits until it succeeds or times out.
+//!   spill-file read in `pop`, value-file unlinks, the forced WAL checkpoint), which keeps a pending
+//!   fork waiting no longer than the work takes. One more is bounded only by the operation's
+//!   `timeout`: a write at depth > 0 that couldn't take its store's write lock (inside a held
+//!   transaction, writing another cache whose lock another thread holds) backs off between
+//!   attempts without giving up the caller's levels, so a pending fork waits until it succeeds or
+//!   times out.
 //! - Both rely on a second rule: **no thread waits on a gate holder while attached** to the
 //!   interpreter. Every wait for the write lock, a slot or a pending fork goes through the blocker.
 //!   Otherwise a holder that released the interpreter could deadlock re-taking it on a GIL build.
@@ -78,8 +79,8 @@ pub fn set_blocker(blocker: Blocker) -> bool {
 
 /// Runs `work` once, on the calling thread, through the installed [`Blocker`], so the interpreter is
 /// released while it runs. Usually called with no gate level held. A caller holding one may use it
-/// only for the bounded work the rules above allow (the spill-file read in `pop`, the forced WAL
-/// checkpoint).
+/// only for the bounded work the rules above allow (the spill-file read in `pop`, value-file unlinks,
+/// the forced WAL checkpoint).
 pub fn run_blocking(wait: &(dyn Fn() + Sync)) {
     match BLOCKER.get() {
         Some(blocker) => blocker(wait),

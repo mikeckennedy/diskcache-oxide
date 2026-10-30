@@ -667,10 +667,18 @@ impl Store {
     }
 
     /// Unlinks value files, by their path relative to the cache directory. One already gone is fine.
+    /// The unlinks run with the interpreter released, since a `clear()` chunk or the end of a held
+    /// transaction can have hundreds; with none to do, it never detaches.
     pub(crate) fn unlink(&self, files: impl IntoIterator<Item = String>) {
-        for relative in files {
-            let _ = std::fs::remove_file(self.directory.join(relative));
+        let paths: Vec<PathBuf> = files.into_iter().map(|relative| self.directory.join(relative)).collect();
+        if paths.is_empty() {
+            return;
         }
+        gate::run_blocking(&|| {
+            for path in &paths {
+                let _ = std::fs::remove_file(path);
+            }
+        });
     }
 
     /// The write path outside a held transaction, after step 0 of `Store::write_files`.
