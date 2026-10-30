@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use diskcache_oxide_core::maintenance::{Cursor, Order};
 use diskcache_oxide_core::ops::{Number, Pop, Value, Version, VersionDelete};
@@ -19,9 +19,11 @@ use diskcache_oxide_core::store::{
     DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, HeldTransaction, OpenOptions, Store,
 };
 use diskcache_oxide_core::{Error, ValueRef, lockwait, open::Requested};
+use pyo3::PyTraverseError;
 use pyo3::exceptions::{
     PyException, PyKeyError, PyMemoryError, PyOSError, PyOverflowError, PyRecursionError, PyTypeError, PyValueError,
 };
+use pyo3::gc::PyVisit;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyString, PyTuple};
@@ -39,8 +41,13 @@ pub(crate) struct Cache {
     pickle: bool,
     clock: Option<Py<PyAny>>,
     on_decode_error: DecodePolicy,
+    /// Stored versions already reported under `on_decode_error` (see `first_report`).
+    reported: Mutex<HashSet<Version>>,
     closed: AtomicBool,
 }
+
+/// How many reported versions a handle remembers before it forgets them all and starts over.
+const REPORTED_VERSIONS: usize = 1024;
 
 #[pymethods]
 impl Cache {
@@ -130,6 +137,7 @@ impl Cache {
             pickle,
             clock,
             on_decode_error,
+            reported: Mutex::new(HashSet::new()),
             closed: AtomicBool::new(false),
         })
     }
@@ -187,6 +195,18 @@ impl Cache {
 
     fn __repr__(&self) -> String {
         format!("Cache({:?})", self.directory)
+    }
+
+    /// Lets the garbage collector see the Python objects this handle holds: a `clock` or an
+    /// `on_decode_error` callable that refers back to the cache would otherwise leak both.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if let Some(clock) = &self.clock {
+            visit.call(clock)?;
+        }
+        if let DecodePolicy::Report(callback) = &self.on_decode_error {
+            visit.call(callback)?;
+        }
+        Ok(())
     }
 
     // -- reads --------------------------------------------------------------------------------
@@ -487,70 +507,73 @@ impl Cache {
     /// A value of `key` failed to decode with `e`. Under `on_decode_error='raise'`, or for an error
     /// that isn't about the stored bytes, returns `e`. Otherwise the read is a miss: an unreadable
     /// row is deleted (exactly that version, without waiting), a foreign one is left for whoever can
-    /// read it, and the failure is reported. Runs with no connection held.
+    /// read it, and the failure is reported, once per stored version for a row that stays. Runs
+    /// with no connection of its own held; inside a pickle hook of an outer read, that read's
+    /// connection is still held, so a slow report delays forks and checkpoints for as long.
     fn decode_failed(&self, py: Python<'_>, key: &str, mode: i64, e: PyErr, row: Row) -> PyResult<()> {
         if matches!(self.on_decode_error, DecodePolicy::Raise) {
             return Err(e);
         }
-        let outcome = match classify(py, mode, &e) {
-            Failure::Passthrough => return Err(e),
-            Failure::Foreign => "left in place for a version or host that can read it",
-            Failure::Unreadable => match row {
-                Row::Stored(version) => match self.store.delete_version_nowait(version) {
-                    VersionDelete::Removed => "deleted",
-                    VersionDelete::Gone => "already replaced",
-                    VersionDelete::Skipped => "not deleted yet (busy); a later read retries",
-                },
-                Row::Removed => "deleted",
-                Row::Kept => "left in place",
+        let (outcome, stays) = match (classify(py, mode, &e), row) {
+            (Failure::Passthrough, _) => return Err(e),
+            (Failure::Foreign | Failure::Unreadable, Row::Removed) => ("deleted (pop removes before decoding)", None),
+            (Failure::Foreign | Failure::Unreadable, Row::Kept) => ("left in place", None),
+            (Failure::Foreign, Row::Stored(version)) => {
+                ("left in place for a version or host that can read it", Some(version))
+            }
+            (Failure::Unreadable, Row::Stored(version)) => match self.store.delete_version_nowait(version) {
+                VersionDelete::Removed => ("deleted", None),
+                VersionDelete::Gone => ("already replaced", None),
+                VersionDelete::Skipped => (
+                    "not deleted now (it would have had to wait, or a transaction is open); a later read retries",
+                    Some(version),
+                ),
             },
         };
+        // A row that stays fails again on every read: a newer peer's values during a deploy can
+        // be read thousands of times a second. Report each stored version once.
+        if let Some(version) = stays
+            && !self.first_report(version)
+        {
+            return Ok(());
+        }
         self.report_decode_error(py, key, e, outcome);
         Ok(())
     }
 
-    /// Logs a decode failure, or hands it to the `on_decode_error` callable. Never raises: a report
-    /// that fails is logged, and a decode failure inside a report (the callable reading the same
-    /// bad key) is logged instead of calling the callable again.
-    fn report_decode_error(&self, py: Python<'_>, key: &str, e: PyErr, outcome: &str) {
-        let DecodePolicy::Report(callback) = &self.on_decode_error else {
-            self.log_decode_error(py, key, &e, outcome);
-            return;
-        };
-        let Some(_reporting) = Reporting::enter() else {
-            self.log_decode_error(py, key, &e, outcome);
-            return;
-        };
-        if let Err(failed) = callback.bind(py).call1((key, e.into_value(py))) {
-            let logged = logger(py).and_then(|log| {
-                let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("exc_info", failed.into_value(py))?;
-                log.call_method(
-                    "error",
-                    ("on_decode_error callback failed for %r in %s", key, &self.directory),
-                    Some(&kwargs),
-                )
-                .map(drop)
-            });
-            if let Err(lost) = logged {
-                lost.write_unraisable(py, None);
-            }
+    /// True the first time `version` is reported by this handle (remembering at most
+    /// `REPORTED_VERSIONS`, then starting over).
+    fn first_report(&self, version: Version) -> bool {
+        let mut reported = self.reported.lock().unwrap_or_else(PoisonError::into_inner);
+        if reported.len() >= REPORTED_VERSIONS {
+            reported.clear();
         }
+        reported.insert(version)
     }
 
-    fn log_decode_error(&self, py: Python<'_>, key: &str, e: &PyErr, outcome: &str) {
+    /// Logs a decode failure, or hands it to the `on_decode_error` callable. Never raises: a report
+    /// that fails is logged. A decode failure inside a report (the callable, or a logging handler,
+    /// reading the same bad key) isn't reported again, so a report can never recurse.
+    fn report_decode_error(&self, py: Python<'_>, key: &str, e: PyErr, outcome: &str) {
+        let Some(_reporting) = Reporting::enter() else { return };
         let logged = logger(py).and_then(|log| {
-            log.call_method1(
-                "warning",
-                (
+            let kwargs = pyo3::types::PyDict::new(py);
+            if let DecodePolicy::Report(callback) = &self.on_decode_error {
+                let Err(failed) = callback.bind(py).call1((key, e.into_value(py))) else { return Ok(()) };
+                kwargs.set_item("exc_info", failed.into_value(py))?;
+                let message = ("on_decode_error callback failed for %r in %s", key, &self.directory);
+                log.call_method("error", message, Some(&kwargs)).map(drop)
+            } else {
+                kwargs.set_item("exc_info", e.value(py))?;
+                let message = (
                     "could not decode the value of %r in %s, so it was a miss (%s): %r",
                     key,
                     &self.directory,
                     outcome,
                     e.value(py),
-                ),
-            )
-            .map(drop)
+                );
+                log.call_method("warning", message, Some(&kwargs)).map(drop)
+            }
         });
         if let Err(lost) = logged {
             lost.write_unraisable(py, None);

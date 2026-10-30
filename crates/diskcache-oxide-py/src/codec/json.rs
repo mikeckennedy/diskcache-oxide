@@ -270,7 +270,8 @@ struct DeCtx<'py> {
 impl DeCtx<'_> {
     fn fail<E: de::Error>(&self, e: PyErr) -> E {
         let msg = e.to_string();
-        self.err.replace(Some(e));
+        // Keeps the first: it's the one that says why decoding stopped.
+        self.err.borrow_mut().get_or_insert(e);
         E::custom(msg)
     }
 }

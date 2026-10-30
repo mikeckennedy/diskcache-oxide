@@ -65,7 +65,7 @@ pub struct Popped {
 /// One stored version of a key: its row and its store sequence number (D-011, D-013). An overwrite
 /// keeps the row but gets a new number, so a version names exactly one value. Only the core makes
 /// them, from a row it read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Version {
     id: i64,
     store_seq: i64,
@@ -195,9 +195,17 @@ impl Store {
         }
         let opened = self.write(timeout, |_, conn| {
             let Some(file) = file_row(conn, key, now, timeout)? else { return Ok(None) };
-            Ok(spill::open(self.directory(), &file.relative)?.map(|(handle, path)| (handle, path, file)))
+            if refuse(file.mode) {
+                return Ok(Some(Err(file)));
+            }
+            Ok(spill::open(self.directory(), &file.relative)?.map(|(handle, path)| Ok((handle, path, file))))
         })?;
-        let Some((handle, path, file)) = opened else { return Ok(None) };
+        let (handle, path, file) = match opened {
+            None => return Ok(None),
+            // Replaced by a value of a refused mode while this reader retried: never read it.
+            Some(Err(file)) => return Ok(Some(file.hit(decode(file.mode, ValueRef::Null)?))),
+            Some(Ok(opened)) => opened,
+        };
         match spill::read_open(handle, &path, file.size)? {
             Some(bytes) => Ok(Some(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?))),
             None => Ok(None),

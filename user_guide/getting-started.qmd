@@ -147,7 +147,7 @@ cache.get('homepage')  # None if the stored value can't be decoded; the bad row 
 - Pass a function instead to report the failure yourself, for example to Sentry. It's called as `report(key, exc)` in place of the warning, after the row has been dealt with. Anything it raises is logged, and the read is still a miss.
 - Errors that aren't about the stored bytes still raise: `Timeout`, `MemoryError`, an I/O error, and `UnsafeValueError` (a pickled value read by a cache without `pickle=True`, which is a configuration mistake, not damage).
 
-It covers `get`, `cache[key]` (which raises `KeyError`) and `pop`.
+It covers `get`, `cache[key]` (which raises `KeyError`) and `pop`. A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read. One limit: `pop` removes the row before it decodes the value, so it can only keep a foreign value whose *mode* it doesn't know. One with an unknown tag inside a known mode is removed, as `pop` was asked to do.
 
 ## Shutting down
 

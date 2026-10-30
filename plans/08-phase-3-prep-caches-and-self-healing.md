@@ -249,3 +249,25 @@ caches.close_all()                 # also on `with Caches(...) as caches:` exit
   - `ForeignValueError` pickles.
 - `scripts/check.sh` passes: 3.14 (773 passed), 3.14t (772), 3.15 (773), 3.15t (772); clippy, rustdoc, deny, stubtest, strict mypy and the shuttle models are clean.
 - **Gate:** `bench.gate` on 3.14 is GO. `get_hit_small` over 4 interleaved rounds is 0.89-0.90 µs against diskcache's 1.84-1.91 µs, so 0.48×, the same as before this work (0.47×). Reading the version on every hit costs nothing measurable.
+
+### Architect's review of step 2b (2026-10-30): the delete logic is sound; one leak and reporting gaps fixed
+
+- **High, fixed: a GC leak.** `Cache` had no `__traverse__`, so an `on_decode_error` callable (or a `clock`) that refers back to its cache formed a cycle the collector couldn't see, and the handle, with its connections, leaked forever. `Cache.__traverse__` now visits both. Test: `test_a_callable_that_refers_back_to_its_cache_is_collected`.
+- **`pop` of a foreign tag in a known mode:** `pop` deletes before decoding, so the row is gone. The message now says "deleted (pop removes before decoding)", and the guide documents the limit. A later fix could make `pop` optimistic: read, decode, then delete exactly that version.
+- **Repeated reports:** a row that stays (foreign, or a delete that was skipped) is reported once per stored version per handle (`first_report`, up to 1,024 versions, then it starts over), not on every read.
+- **No recursion on any path:** the thread-local guard now covers the plain warning too, so a logging handler that reads the bad key can't loop. A failure inside a report isn't reported again.
+- **The warning carries `exc_info`**, so a moved class's traceback is logged. The skip message no longer claims the cause was "busy".
+- **Locked fallback:** `get_with`'s write-locked fallback also checks `refuse` before opening a value file.
+- **More foreign cases:** an integer over this host's `sys.set_int_max_str_digits` limit is `ForeignValueError` (another host can read it). `PICKLE_PROTOCOL` carries a note that raising it needs the same treatment. `DeCtx::fail` keeps the first error, as its doc says.
+- **New tests (11):**
+  - a logging handler that reads the bad key;
+  - the traceback;
+  - one report per version, and a new version reported again;
+  - a callable on `pop`;
+  - `pop`'s message;
+  - a time zone missing from this host, end to end;
+  - the digit limit;
+  - an unknown JSON tag under `'raise'`;
+  - corrupt and foreign errors from a nested read in `__setstate__`, which pins the decided outcomes;
+  - the GC cycle.
+- Suites: 3.14 (808 passed) and 3.14t (807 passed), including step 3's tests.

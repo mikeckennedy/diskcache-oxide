@@ -351,7 +351,16 @@ pub fn int_from_text<'py>(py: Python<'py>, s: &str) -> PyResult<Bound<'py, PyAny
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return Err(PyValueError::new_err(format!("bad $int payload {s:?}")));
     }
-    py.get_type::<PyInt>().call1((s,))
+    // The digits are valid, so a ValueError here is this host's `sys.set_int_max_str_digits`
+    // limit: another host may read it, so it's foreign, not corrupt.
+    py.get_type::<PyInt>().call1((s,)).map_err(|e| {
+        if !e.is_instance_of::<PyValueError>(py) {
+            return e;
+        }
+        let foreign = crate::ForeignValueError::new_err(format!("integer too long for this host: {e}"));
+        foreign.set_cause(py, Some(e));
+        foreign
+    })
 }
 
 pub fn unsupported(o: &Bound<'_, PyAny>) -> PyErr {

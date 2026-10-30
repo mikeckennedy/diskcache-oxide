@@ -135,6 +135,8 @@ impl fmt::Display for Stored<'_> {
 }
 
 /// The pickle protocol for mode-5 rows (diskcache's default, `pickle.HIGHEST_PROTOCOL` on 3.14).
+/// If this is ever raised, an older build's "unsupported pickle protocol" error must become
+/// `ForeignValueError` (a newer peer's data), not a corrupt row that `on_decode_error` deletes.
 const PICKLE_PROTOCOL: u8 = 5;
 
 /// Encodes `value` for storage. Raises `TypeError` for a value the serializer can't represent,

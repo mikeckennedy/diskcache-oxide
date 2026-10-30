@@ -341,8 +341,167 @@ def test_a_callable_that_reads_the_bad_key_again_is_not_called_again(
     with caplog.at_level(logging.WARNING, logger=LOGGER), cache._hold_write_transaction():
         assert cache.get('k') is None
     assert calls == ['k']
-    assert len([r for r in caplog.records if r.name == LOGGER]) == 1, 'the nested failure was logged instead'
+    assert not [r for r in caplog.records if r.name == LOGGER], 'a failure inside a report is not reported again'
     cache.close()
+
+
+def test_a_logging_handler_that_reads_the_bad_key_cant_recurse(directory: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _moved_away(directory, monkeypatch)
+    cache = Cache(directory, pickle=True, on_decode_error='miss')
+    seen: list[str] = []
+
+    class ReadsTheCache(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            seen.append(record.getMessage())
+            cache.get('k')
+
+    handler = ReadsTheCache()
+    logger = logging.getLogger(LOGGER)
+    logger.addHandler(handler)
+    try:
+        with cache._hold_write_transaction():  # So the bad row stays and fails each time.
+            assert cache.get('k') is None
+    finally:
+        logger.removeHandler(handler)
+    assert len(seen) == 1
+    cache.close()
+
+
+def test_the_warning_carries_the_traceback(directory: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    _moved_away(directory, monkeypatch)
+    cache = Cache(directory, pickle=True, on_decode_error='miss')
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        cache.get('k')
+    [record] = [r for r in caplog.records if r.name == LOGGER]
+    assert record.exc_info is not None and isinstance(record.exc_info[1], AttributeError)
+    cache.close()
+
+
+def test_a_row_that_stays_is_reported_once(directory: Path, caplog: pytest.LogCaptureFixture) -> None:
+    cache = Cache(directory, on_decode_error='miss')
+    cache.set('k', {'a': 1})
+    _sql(directory, "UPDATE cache SET mode = 99 WHERE key = 'k'")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        for _ in range(5):
+            assert cache.get('k') is None
+    assert len([r for r in caplog.records if r.name == LOGGER]) == 1
+    cache.set('k', {'a': 2})
+    _sql(directory, "UPDATE cache SET mode = 99 WHERE key = 'k'")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        assert cache.get('k') is None
+    assert len([r for r in caplog.records if r.name == LOGGER]) == 2, 'a new version is reported again'
+    cache.close()
+
+
+def test_a_callable_covers_pop_too(directory: Path) -> None:
+    calls: list[str] = []
+    cache = Cache(directory, on_decode_error=lambda key, exc: calls.append(key))
+    cache.set('k', {'a': 1})
+    _sql(directory, "UPDATE cache SET value = X'c1' WHERE key = 'k'")
+    assert cache.pop('k', 'default') == 'default'
+    assert calls == ['k']
+    cache.close()
+
+
+def test_pop_of_a_foreign_tag_says_it_was_deleted(directory: Path, caplog: pytest.LogCaptureFixture) -> None:
+    cache = Cache(directory, on_decode_error='miss')
+    cache.set('k', {'a': 1})
+    _sql(directory, f"UPDATE cache SET value = X'81a5{b'$nope'.hex()}01' WHERE key = 'k'")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        assert cache.pop('k') is None
+    [record] = [r for r in caplog.records if r.name == LOGGER]
+    assert 'pop removes before decoding' in record.getMessage()
+    cache.close()
+
+
+# -- foreign values from this host's limits -------------------------------------------------------
+
+
+def test_a_time_zone_this_host_lacks_is_foreign(directory: Path) -> None:
+    import datetime as dt
+    import zoneinfo
+
+    cache = Cache(directory, serializer='json', on_decode_error='miss')
+    cache.set('k', dt.datetime(2026, 10, 30, 12, tzinfo=zoneinfo.ZoneInfo('America/Los_Angeles')))
+    _sql(directory, "UPDATE cache SET value = CAST(replace(CAST(value AS TEXT), 'America/Los_Angeles', 'Mars/Olympus') AS BLOB) WHERE key = 'k'")
+    assert cache.get('k') is None
+    assert _stored(directory, 'k')
+    with pytest.raises(ForeignValueError) as info:
+        Cache(directory).get('k')
+    assert isinstance(info.value.__cause__, zoneinfo.ZoneInfoNotFoundError)
+    cache.close()
+
+
+def test_an_integer_over_this_hosts_digit_limit_is_foreign(directory: Path) -> None:
+    before = sys.get_int_max_str_digits()
+    cache = Cache(directory, on_decode_error='miss')
+    try:
+        sys.set_int_max_str_digits(0)
+        cache.set('k', 10**5000)
+        assert cache.get('k') == 10**5000
+        sys.set_int_max_str_digits(4300)
+        assert cache.get('k') is None
+        assert _stored(directory, 'k'), 'another host (or this one, with a higher limit) can read it'
+    finally:
+        sys.set_int_max_str_digits(before)
+    cache.close()
+
+
+def test_an_unknown_json_tag_raises_foreign_under_raise(directory: Path) -> None:
+    cache = Cache(directory, serializer='json')
+    cache.set('k', [1, {'a': 1}])
+    _sql(directory, """UPDATE cache SET value = CAST('[1, {"$nope": 1}]' AS BLOB) WHERE key = 'k'""")
+    with pytest.raises(ForeignValueError):
+        cache.get('k')
+    cache.close()
+
+
+# -- errors from a cache call inside a pickle hook ------------------------------------------------
+
+
+@pytest.mark.parametrize(('nested', 'kept'), [('corrupt', False), ('foreign', True)])
+def test_a_decode_error_from_a_nested_read_classifies_the_outer_value(directory: Path, nested: str, kept: bool) -> None:
+    # A hook that fails because of another key's bad value: a corrupt one counts as "the hook
+    # failed" (the outer row goes, as DurableCache would do), a foreign one keeps the outer row.
+    with Cache(directory, pickle=True) as writer:
+        writer.set('outer', Raises())
+        writer.set('inner', {'a': 1})
+    mode = "value = X'c1'" if nested == 'corrupt' else 'mode = 99'
+    _sql(directory, f"UPDATE cache SET {mode} WHERE key = 'inner'")
+    strict = Cache(directory)
+
+    def read_inner() -> None:
+        strict.get('inner')
+
+    Raises.hook = read_inner
+    cache = Cache(directory, pickle=True, on_decode_error='miss')
+    assert cache.get('outer') is None
+    Raises.hook = None
+    assert _stored(directory, 'outer') is kept
+    cache.close()
+    strict.close()
+
+
+# -- garbage collection ---------------------------------------------------------------------------
+
+
+def test_a_callable_that_refers_back_to_its_cache_is_collected(directory: Path) -> None:
+    import gc
+    import weakref
+
+    class Reporter:
+        cache: Any = None
+
+        def __call__(self, key: str, exc: Exception) -> None:
+            pass
+
+    reporter = Reporter()
+    cache = Cache(directory, on_decode_error=reporter)
+    reporter.cache = cache
+    gone = weakref.ref(reporter)
+    del reporter, cache
+    gc.collect()
+    assert gone() is None, 'the cache and its callable formed a cycle the collector could not see'
 
 
 # -- validation -----------------------------------------------------------------------------------
