@@ -440,8 +440,11 @@ mod tests {
             }
             stop.store(true, Ordering::Relaxed);
         });
+        // Without the early start, every wait timed out (50 of 50). A few may still on a loaded
+        // machine, since 10 ms is only a few scheduler time slices: under 8 CPU hogs on 8 CPUs in the
+        // soak's Linux VM, 1 to 5 of 50 did (1 of 50 once in a full test run there).
         let lost = got.iter().filter(|g| !**g).count();
-        assert_eq!(lost, 0, "{lost} of 50 waits with a 10 ms deadline timed out");
+        assert!(lost <= 10, "{lost} of 50 waits with a 10 ms deadline timed out");
     }
 
     #[test]
