@@ -348,10 +348,12 @@ impl Store {
         // A live store for this file, or a retired one that a closed handle still holds: join it
         // (reviving a retired one), so a file never has two stores, and two write locks, at once.
         if let Some(existing) = Self::find(&stores, file_id, &canonical) {
-            if existing.claim(&stores, Some(pin)) {
+            let (revived, unused) = existing.claim(&stores, Some(pin));
+            if revived {
                 existing.cache_limits(limits);
             }
             drop(stores);
+            drop(unused);
             drop(conn);
             drop(gate);
             existing.join(options)?;
@@ -395,7 +397,9 @@ impl Store {
         let gate = GATE.enter_shared();
         let stores = registry(&gate);
         let store = stores.iter().filter_map(Weak::upgrade).find(|s| s.file_id == id && !s.is_retired())?;
-        store.claim(&stores, None);
+        let (_, unused) = store.claim(&stores, None);
+        drop(stores);
+        drop(unused);
         Some(store)
     }
 
@@ -430,8 +434,9 @@ impl Store {
     /// file (the same directory reached by another path while this one was retired): then it stays
     /// retired and keeps working by path (without pooling: each operation reconnects). With other
     /// handles live, a release that lands first can retire the store for a moment (pin released,
-    /// pool cleared) until the matching add revives it. Returns whether it was revived, and the pin
-    /// it gave up if it retired (closed by the caller once the registry is released).
+    /// pool cleared) until the matching add revives it. Returns whether it was revived, and a pin for
+    /// the caller to close once the registry is released (it's never closed under the registry, which
+    /// never waits on I/O): the store's own if it retired, or `pin` if it wasn't needed.
     fn count_handle(
         &self,
         stores: &MutexGuard<'_, Vec<Weak<Self>>>,
@@ -445,13 +450,16 @@ impl Store {
             return (false, slot.take());
         }
         if !self.is_retired() {
-            return (false, None);
+            return (false, pin);
         }
         let other_live = stores
             .iter()
             .filter_map(Weak::upgrade)
             .any(|s| !std::ptr::eq(Arc::as_ptr(&s), self) && s.file_id == self.file_id && !s.is_retired());
-        let Some(pin) = pin.filter(|_| !other_live) else {
+        if other_live {
+            return (false, pin);
+        }
+        let Some(pin) = pin else {
             return (false, None);
         };
         *slot = Some(pin);
@@ -459,9 +467,10 @@ impl Store {
         (true, None)
     }
 
-    /// Registers one more handle; see [`Store::count_handle`]. Returns whether it revived the store.
-    fn claim(&self, stores: &MutexGuard<'_, Vec<Weak<Self>>>, pin: Option<FilePin>) -> bool {
-        self.count_handle(stores, 1, pin).0
+    /// Registers one more handle; see [`Store::count_handle`], whose result it returns.
+    #[must_use = "the pin it returns must be closed after the registry is released"]
+    fn claim(&self, stores: &MutexGuard<'_, Vec<Weak<Self>>>, pin: Option<FilePin>) -> (bool, Option<FilePin>) {
+        self.count_handle(stores, 1, pin)
     }
 
     /// Applies a joining handle's settings (its handle is already registered by [`Store::claim`]):
@@ -514,7 +523,9 @@ impl Store {
         let gate = GATE.enter_shared();
         let pin = open_pin(&gate, &db_path).ok().filter(|(_, id)| *id == self.file_id).map(|(pin, _)| pin);
         let stores = registry(&gate);
-        self.claim(&stores, pin);
+        let (_, unused) = self.claim(&stores, pin);
+        drop(stores);
+        drop(unused);
     }
 
     /// Unregisters a handle. When the last one closes, every pooled connection is closed (D-018),
@@ -1503,6 +1514,33 @@ mod tests {
         assert_eq!(first.handles.load(Ordering::Acquire), 2);
         third.release_handle();
         first.release_handle();
+    }
+
+    #[test]
+    fn a_pin_claim_doesnt_keep_is_handed_back_to_close_outside_the_registry() {
+        let tmp = TempDir::new("store-pin-back");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let db_path = open::db_path(tmp.path());
+        let gate = GATE.enter_shared();
+        // Live: the store keeps its own pin and hands the new one back.
+        let (pin, _) = open_pin(&gate, &db_path).unwrap();
+        let stores = registry(&gate);
+        let (revived, unused) = store.claim(&stores, Some(pin));
+        drop(stores);
+        assert!(!revived && unused.is_some());
+        // A release that lands first (the count dips to 0) retires the store and hands back its pin.
+        let stores = registry(&gate);
+        let (_, own) = store.count_handle(&stores, -2, None);
+        drop(stores);
+        assert!(store.is_retired() && own.is_some());
+        // Retired, a claim with a pin keeps it: nothing comes back.
+        let (pin, _) = open_pin(&gate, &db_path).unwrap();
+        let stores = registry(&gate);
+        let (revived, unused) = store.claim(&stores, Some(pin));
+        drop(stores);
+        assert!(revived && unused.is_none());
+        drop(gate);
+        store.release_handle();
     }
 
     #[test]
