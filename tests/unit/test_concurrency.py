@@ -394,3 +394,23 @@ def test_reusing_a_closed_handle_keeps_this_processs_sqlite_locks(tmp_path: Path
     assert _another_process_sees_shared_held(db), "this process's SQLite locks were dropped"
     first.close()
     second.close()
+
+
+def test_clear_inside_a_held_transaction_doesnt_pause_for_a_writer_that_cant_get_in(tmp_path: Path) -> None:
+    # Between chunks, clear() steps aside for a waiting writer. Inside a held transaction this
+    # thread keeps the write lock, so the waiter can't get in: each pause (about 2 ms) was wasted,
+    # 50 chunks here took over 100 ms, and every pause held up any pending fork.
+    cache = Cache(tmp_path / 'c', timeout=10)
+    for i in range(5_000):
+        cache.set(f'k{i}', i)
+    with cache._hold_write_transaction():
+        writer = threading.Thread(target=lambda: cache.set('w', 1))
+        writer.start()
+        time.sleep(0.05)  # The writer now waits for the write lock.
+        started = time.perf_counter()
+        assert cache.clear() == 5_000
+        took = time.perf_counter() - started
+    writer.join(10)
+    assert took < 0.06, f'clear() of 50 chunks took {took * 1000:.0f} ms inside the transaction'
+    assert cache.get('w') == 1
+    cache.close()
