@@ -250,7 +250,7 @@ impl Cache {
     /// True if the WAL was reset; False if readers or writers in other processes kept it busy.
     /// `timeout`: how long to keep trying, in seconds (default: the cache's timeout).
     #[pyo3(signature = (timeout = None))]
-    fn checkpoint(&self, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
+    fn checkpoint(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
         let timeout = match timeout {
             Some(t) if !t.is_none() => {
                 let t = seconds("timeout", t)?;
@@ -264,7 +264,9 @@ impl Cache {
             _ => self.timeout,
         };
         self.ensure_open();
-        self.store.checkpoint(timeout).map_err(to_py_err)
+        // Each round waits on the write lock and backs off after a busy one. Detached, none of
+        // those waits takes the interpreter back in between (the copy itself always runs detached).
+        crate::detach(py, || self.store.checkpoint(timeout)).map_err(to_py_err)
     }
 
     // -- writes -------------------------------------------------------------------------------
@@ -396,12 +398,20 @@ impl Cache {
     /// shorter) for other processes; a copy already under way can run past that (D-024). A small
     /// WAL, the usual case, costs one `stat`. Close never fails because of the checkpoint.
     #[pyo3(signature = (*, checkpoint = true))]
-    fn close(&self, checkpoint: bool) {
+    fn close(&self, py: Python<'_>, checkpoint: bool) {
         if !self.closed.swap(true, Ordering::AcqRel) {
-            if checkpoint {
-                self.store.checkpoint_on_close(self.timeout.min(Duration::from_secs(1)));
+            // Released only when there's a checkpoint to run, so the usual close (a small WAL)
+            // doesn't wait to get the interpreter back. The release goes inside too: if the
+            // checkpoint was busy, the last connection's close may run SQLite's own checkpoint.
+            if checkpoint && self.store.checkpoint_due_on_close() {
+                let budget = self.timeout.min(Duration::from_secs(1));
+                crate::detach(py, || {
+                    self.store.checkpoint_on_close(budget);
+                    self.store.release_handle();
+                });
+            } else {
+                self.store.release_handle();
             }
-            self.store.release_handle();
         }
     }
 
@@ -410,9 +420,9 @@ impl Cache {
     }
 
     #[pyo3(signature = (exc_type, exc, tb, /))]
-    fn __exit__(&self, exc_type: &Bound<'_, PyAny>, exc: &Bound<'_, PyAny>, tb: &Bound<'_, PyAny>) {
+    fn __exit__(&self, py: Python<'_>, exc_type: &Bound<'_, PyAny>, exc: &Bound<'_, PyAny>, tb: &Bound<'_, PyAny>) {
         let _ = (exc_type, exc, tb);
-        self.close(true);
+        self.close(py, true);
     }
 
     /// Test hook until `transact()` lands (Phase 6b): a context manager holding a write

@@ -746,11 +746,17 @@ impl Store {
     /// `with Cache(...)` per request doesn't pay the budget on every exit while readers in other
     /// processes keep the WAL busy.
     pub fn checkpoint_on_close(&self, budget: Duration) {
-        let trim = crate::wal::journal_size_limit(self.wal_size_limit.load(Ordering::Relaxed));
-        if self.handles.load(Ordering::Acquire) != 1 || self.wal.in_backoff() || self.wal_bytes() <= trim {
-            return;
+        if self.checkpoint_due_on_close() {
+            let _ = self.checkpoint(budget);
         }
-        let _ = self.checkpoint(budget);
+    }
+
+    /// Whether [`Store::checkpoint_on_close`] would checkpoint: one `stat` at most. Lets a caller
+    /// release the interpreter only when there's a checkpoint to wait for.
+    #[must_use]
+    pub fn checkpoint_due_on_close(&self) -> bool {
+        let trim = crate::wal::journal_size_limit(self.wal_size_limit.load(Ordering::Relaxed));
+        self.handles.load(Ordering::Acquire) == 1 && !self.wal.in_backoff() && self.wal_bytes() > trim
     }
 
     /// One round of a forced checkpoint: PASSIVE, then TRUNCATE in a fresh 2 ms window. Records how
