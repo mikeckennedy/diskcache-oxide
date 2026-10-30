@@ -440,6 +440,7 @@ impl Store {
     /// pool cleared) until the matching add revives it. Returns whether it was revived, and a pin for
     /// the caller to close once the registry is released (it's never closed under the registry, which
     /// never waits on I/O): the store's own if it retired, or `pin` if it wasn't needed.
+    #[must_use = "the pin it returns must be closed after the registry is released"]
     fn count_handle(
         &self,
         stores: &MutexGuard<'_, Vec<Weak<Self>>>,
@@ -1548,6 +1549,30 @@ mod tests {
         assert!(revived && unused.is_none());
         drop(gate);
         store.release_handle();
+    }
+
+    #[test]
+    fn a_pin_for_a_file_another_live_store_serves_is_handed_back_too() {
+        // The third case: retired, but another store (the same file through a hard link) is live,
+        // so the claim can't revive it and must hand the fresh pin back rather than close it.
+        let tmp = TempDir::new("store-pin-other-live");
+        let (d1, d2) = (tmp.path().join("one"), tmp.path().join("two"));
+        let first = Store::open(&options(&d1)).unwrap();
+        first.release_handle();
+        std::fs::create_dir(&d2).unwrap();
+        std::fs::hard_link(open::db_path(&d1), open::db_path(&d2)).unwrap();
+        let second = Store::open(&options(&d2)).unwrap();
+        let gate = GATE.enter_shared();
+        let (pin, _) = open_pin(&gate, &open::db_path(&d1)).unwrap();
+        let stores = registry(&gate);
+        let (revived, unused) = first.claim(&stores, Some(pin));
+        drop(stores);
+        assert!(!revived && unused.is_some());
+        assert!(first.is_retired());
+        drop(unused);
+        drop(gate);
+        first.release_handle();
+        second.release_handle();
     }
 
     #[test]
