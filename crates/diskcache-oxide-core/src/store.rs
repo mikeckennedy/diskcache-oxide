@@ -103,7 +103,7 @@ pub struct Store {
     /// when the last handle closes (D-018: nothing left open); the store is then `retired`, and the
     /// registry only revives it for the same directory, since the inode number may since have been
     /// reused.
-    pin: Mutex<Option<Connection>>,
+    pin: Mutex<Option<FilePin>>,
     retired: AtomicBool,
     pool: Pool,
     write_lock: WriteLock,
@@ -268,13 +268,14 @@ impl Store {
 
         // Open outside the registry lock (the open sequence may wait on other processes), then
         // insert if absent; if another thread won the race, use its store and drop this connection.
-        let (conn, limits) = lockwait::retry(options.timeout, |_| {
-            let _gate = GATE.enter_shared();
+        // The pin is opened in the same gate level, so a failure closes `conn` under the gate too.
+        let (conn, limits, pin, file_id) = lockwait::retry(options.timeout, |_| {
+            let gate = GATE.enter_shared();
             let mut conn = open::connect(&options.directory, options.timeout)?;
             let limits = open::prepare(&mut conn, options.requested, options.timeout)?;
-            Ok((conn, limits))
+            let (pin, file_id) = open_pin(&gate, &db_path)?;
+            Ok((conn, limits, pin, file_id))
         })?;
-        let (pin, file_id) = open_pin(&db_path)?;
         let canonical = std::fs::canonicalize(&options.directory).unwrap_or_else(|_| options.directory.clone());
 
         let gate = GATE.enter_shared();
@@ -365,13 +366,13 @@ impl Store {
     /// retired and keeps working by path (without pooling: each operation reconnects). With other
     /// handles live, a release that lands first can retire the store for a moment (pin released,
     /// pool cleared) until the matching add revives it. Returns whether it was revived, and the pin
-    /// it gave up if it retired (to be closed outside the registry).
+    /// it gave up if it retired (closed by the caller once the registry is released).
     fn count_handle(
         &self,
         stores: &MutexGuard<'_, Vec<Weak<Self>>>,
         delta: isize,
-        pin: Option<Connection>,
-    ) -> (bool, Option<Connection>) {
+        pin: Option<FilePin>,
+    ) -> (bool, Option<FilePin>) {
         let after = self.handles.fetch_add(delta, Ordering::AcqRel) + delta;
         let mut slot = self.pin.lock().unwrap_or_else(PoisonError::into_inner);
         if after <= 0 {
@@ -394,7 +395,7 @@ impl Store {
     }
 
     /// Registers one more handle; see [`Store::count_handle`]. Returns whether it revived the store.
-    fn claim(&self, stores: &MutexGuard<'_, Vec<Weak<Self>>>, pin: Option<Connection>) -> bool {
+    fn claim(&self, stores: &MutexGuard<'_, Vec<Weak<Self>>>, pin: Option<FilePin>) -> bool {
         self.count_handle(stores, 1, pin).0
     }
 
@@ -445,8 +446,8 @@ impl Store {
     pub fn add_handle(&self) {
         // Opened before taking the registry, which never waits on I/O.
         let db_path = open::db_path(&self.directory);
-        let pin = open_pin(&db_path).ok().filter(|(_, id)| *id == self.file_id).map(|(pin, _)| pin);
         let gate = GATE.enter_shared();
+        let pin = open_pin(&gate, &db_path).ok().filter(|(_, id)| *id == self.file_id).map(|(pin, _)| pin);
         let stores = registry(&gate);
         self.claim(&stores, pin);
     }
@@ -1100,8 +1101,9 @@ fn close_pinned(store: &Store, gate: &SharedGuard<'_>, pinned: Pinned, commit: b
 /// lock the process holds on it, SQLite's included. SQLite's own descriptors share its per-file
 /// lock record, so it defers closing one while another connection holds a lock; a `File` it doesn't
 /// know about would drop them. The id is read before and after the open, so it's the file the pin
-/// holds.
-fn open_pin(db_path: &Path) -> Result<(Connection, FileId)> {
+/// holds. Opened under the gate (`_gate` is the proof), like every connection; a read-only open
+/// that runs no statement takes no lock and never waits.
+fn open_pin(_gate: &SharedGuard<'_>, db_path: &Path) -> Result<(FilePin, FileId)> {
     let id = || {
         std::fs::metadata(db_path)
             .map(|m| (m.dev(), m.ino()))
@@ -1115,7 +1117,30 @@ fn open_pin(db_path: &Path) -> Result<(Connection, FileId)> {
         let replaced = std::io::Error::other("the database file was replaced while it was being opened");
         return Err(Error::Io { path: db_path.to_path_buf(), source: replaced });
     }
-    Ok((pin, after))
+    Ok((FilePin { conn: Some(pin), generation: gate::generation() }, after))
+}
+
+/// A store's pin (see [`open_pin`]). Closed under the gate wherever it's dropped (a store dropped by
+/// the GC without a close, a pin that turned out to be for another file), since closing a
+/// connection takes SQLite's process-wide locks, which a child forked meanwhile could inherit held.
+/// One inherited across `fork()` keeps pinning the file in the child but is forgotten, never
+/// closed, like every inherited connection.
+#[derive(Debug)]
+struct FilePin {
+    conn: Option<Connection>,
+    generation: u64,
+}
+
+impl Drop for FilePin {
+    fn drop(&mut self) {
+        let Some(conn) = self.conn.take() else { return };
+        if self.generation != gate::generation() {
+            std::mem::forget(conn);
+            return;
+        }
+        let _gate = GATE.enter_shared();
+        drop(conn);
+    }
 }
 
 #[cfg(test)]
