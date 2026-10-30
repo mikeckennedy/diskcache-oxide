@@ -109,3 +109,15 @@ Why the library is the better home:
 - If it starts to grow features, it stays in the app.
 
 **Timing:** design both in Phase 3 planning and build them in the library first, so Talk Python adopts the library versions directly instead of porting `DurableCache` and then replacing it. The other three apps can then drop their copies too.
+
+## A diagnostic trace for production hangs
+
+Michael, 2026-10-30, after the architect found a hang that needed a fork, a held transaction and a GC finalizer on another thread at once: such hangs are very hard to debug from outside. Give users a switch that records everything the concurrency core does, safe to send to us.
+
+- **Turning it on:** an environment variable, e.g. `DISKCACHE_OXIDE_TRACE=/tmp/dco-trace`, so it works without code changes (gunicorn, granian, a cron job), plus `diskcache_oxide.trace(path)` for code. Off by default and costing one relaxed atomic load per event site when off.
+- **What it records:** timestamped events per thread and process: gate entries and exits with depth, fork phases (claim, waits for levels, the before-fork closes, parent and child resets), write-lock acquire, wait, starve and release, connection-pool checkout and checkin, slot waits, held-transaction begin, lend, savepoint, commit, rollback and abandon, value-file creates and unlinks, checkpoints, and every wait longer than a threshold, with what it waited for and who held it.
+- **Private by design:** no keys, values or file contents. Directories and keys appear only as short salted hashes (so events on one cache still correlate), with thread ids, pids, generations and timings. A user can read it before sending it.
+- **Catching a hang in the act:** a bounded in-memory ring buffer per process, always written to disk when a wait passes a deadline (say 10 s), or on a signal (`SIGUSR2`, as the soak's stall dumps do), together with a snapshot of the state: gate counts and pending flag, parked levels, each store's write-lock word, waiters and starving counts, pinned slot state, pool counts. That snapshot alone would have shown this hang: a pending fork, one held level, and its ender waiting at depth 0.
+- **Fork-safe output:** one file per pid (a child starts its own after its reset), written with plain `write` calls, never a lock the child could inherit held.
+- **A reader:** `python -m diskcache_oxide.trace report <file>` merges per-process files and prints the wait-for graph at the moment of the hang.
+- **Open questions:** the `tracing` crate against a hand-rolled ring buffer (it must not allocate or lock on the hot path), the overhead budget when on (aim for usable in production for an hour), and whether the snapshot is also worth exposing on its own as `Cache._debug_state()` for the soak.
