@@ -111,6 +111,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-007:** `Timeout` subclasses `TimeoutError`, so `except TimeoutError` catches it too.
 - **D-009:** `bool(Cache)` is always True and `bool(NullCache)` is False, so `if cache:` means "caching is on".
 - **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
+- **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ## diskcache-community
 

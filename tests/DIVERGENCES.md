@@ -186,6 +186,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
   - Found by the Phase 2.5 soak; `tests/unit/test_wal.py` holds it, and `python -m bench.wal_burst` measures it.
 - Why: a cache's disk use should be predictable, and no write should pay for housekeeping unless the app asked for it. Between checkpoints, the WAL is at most as large as the largest burst since the last one; a later burst reuses the file instead of adding to it.
 
+## D-025 A key iterator used by two threads at once raises ValueError at once
+
+- Kind: note (pinned by a unit test, not a conformance test)
+- diskcache: `iter(cache)` and `iterkeys()` return generators. A thread that calls `next()` while another thread is inside the same generator (for example, in SQLite with the GIL released) gets `ValueError: generator already executing`.
+- oxide: they return a native `KeyIterator`. A `next()` while another thread is fetching from the same iterator raises `ValueError("iterator already executing")` at once, never waiting for the other thread. The exception type matches. The differences: the message, and the iterator isn't a generator, so it has no `send()`, `throw()` or `close()`.
+- Why: waiting would block a thread with the interpreter attached behind one that may be waiting, detached, for a pending fork, which hung the whole process (review 07). Raising is what a shared generator already does.
+- Tests: `tests/unit/test_concurrency.py` (fork scenario `shared-iterator-while-a-fork-waits`)
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.
