@@ -1,0 +1,5 @@
+# Keep GitHub's language bar about the product, not its tooling.
+# site/ is the built docs output (scripts/build_docs.py).
+site/** linguist-generated
+tests/** linguist-detectable=false
+bench/** linguist-detectable=false
