@@ -1,6 +1,6 @@
 # Divergences from diskcache 5.6.3
 
-Every intentional behavioral difference between diskcache-oxide and diskcache 5.6.3. Each entry says whether it is **test-visible** (a conformance test carries `@pytest.mark.diverges(ref=...)` for it, or a `backend_only("oxide")` test asserts the new behavior) or a **note** (hidden by the test fixtures, but users should know about it).
+Every intentional behavioral difference between diskcache-oxide and diskcache 5.6.3. Each entry says whether it is **test-visible** (a conformance test carries `@pytest.mark.diverges(ref=...)` for it, or a `backend_only("oxide")` test asserts the new behavior) or a **note** (hidden by the test fixtures, or pinned only by an oxide unit test, but users should know about it).
 
 A divergence is a deliberate decision. It is never a way to skip a failing test.
 
