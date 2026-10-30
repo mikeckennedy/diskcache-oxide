@@ -356,3 +356,41 @@ def test_an_earlier_after_fork_hook_sees_the_child_side_reset(tmp_path: Path) ->
         timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# The store's own descriptor on the database never drops SQLite's locks
+# ---------------------------------------------------------------------------
+
+# Run in another process: POSIX locks are per process, so this one can't see its own. SQLite's
+# SHARED lock is a read lock on 510 bytes from offset 0x40000002 (its default PENDING_BYTE + 2).
+SHARED_LOCK_PROBE = """
+import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_RDWR)
+try:
+    fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB, 510, 0x40000002, 0)
+except OSError:
+    sys.exit(0)  # Someone holds SHARED.
+sys.exit(1)
+"""
+
+
+def _another_process_sees_shared_held(db: Path) -> bool:
+    return subprocess.run([sys.executable, '-c', SHARED_LOCK_PROBE, str(db)], timeout=30).returncode == 0
+
+
+def test_reusing_a_closed_handle_keeps_this_processs_sqlite_locks(tmp_path: Path) -> None:
+    # Rejoining the store opened a plain file descriptor on the database and closed it again, and
+    # closing any descriptor on a file drops every POSIX lock the process holds on it: here the
+    # SHARED lock a WAL connection keeps, which stops another process's last close from
+    # checkpointing and deleting the WAL under this one.
+    first = Cache(tmp_path / 'c')
+    second = Cache(tmp_path / 'c')
+    second.set('k', 1)
+    db = tmp_path / 'c' / 'diskcache-oxide.sqlite'
+    assert _another_process_sees_shared_held(db)
+    first.close()
+    assert first.get('k') == 1  # The closed handle rejoins the live store.
+    assert _another_process_sees_shared_held(db), "this process's SQLite locks were dropped"
+    first.close()
+    second.close()

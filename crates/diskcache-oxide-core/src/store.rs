@@ -17,18 +17,17 @@
 //! # Registry
 //!
 //! Stores are found by the database file's `(st_dev, st_ino)`. Each `Store` keeps one fd open on
-//! its database file while it has handles, so that inode can't be reused by a file recreated in
-//! the same process. When its last handle closes it is *retired*: it releases that fd, and is only
-//! handed out again (revived) to a handle on the same directory and the same file. Handles are
-//! registered and the last release is decided under the registry mutex, so an open never joins a
-//! store that's being retired, and a file never has two live stores. The registry holds `Weak`
-//! references; dead entries are pruned when a store is inserted, never in `Drop`. The registry
-//! mutex is only taken under the gate, so a child never inherits it locked. Across `fork()`, the
-//! `Store` is reset in place: its pool, write lock and slot counter all recognize the new
-//! [process generation](crate::gate::generation).
+//! its database file while it has handles (through an idle SQLite connection, see `open_pin`), so
+//! that inode can't be reused by a file recreated in the same process. When its last handle closes
+//! it is *retired*: it releases that fd, and is only handed out again (revived) to a handle on the
+//! same directory and the same file. Handles are registered and the last release is decided under
+//! the registry mutex, so an open never joins a store that's being retired, and a file never has
+//! two live stores. The registry holds `Weak` references; dead entries are pruned when a store is
+//! inserted, never in `Drop`. The registry mutex is only taken under the gate, so a child never
+//! inherits it locked. Across `fork()`, the `Store` is reset in place: its pool, write lock and
+//! slot counter all recognize the new [process generation](crate::gate::generation).
 
 use std::cell::RefCell;
-use std::fs::File;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -37,7 +36,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
 
 use crate::gate::{self, GATE, HeldShare, SharedGuard};
 use crate::genlock::{Slots, WriteLock};
@@ -100,10 +99,11 @@ pub struct Store {
     /// later open of the same directory however it's spelled. Falls back to `directory`.
     canonical: PathBuf,
     file_id: FileId,
-    /// Held open so the inode stays reserved while any handle is open. Released when the last
-    /// handle closes (D-018: nothing left open); the store is then `retired`, and the registry only
-    /// revives it for the same directory, since the inode number may since have been reused.
-    pin: Mutex<Option<File>>,
+    /// Held open so the inode stays reserved while any handle is open (see [`open_pin`]). Released
+    /// when the last handle closes (D-018: nothing left open); the store is then `retired`, and the
+    /// registry only revives it for the same directory, since the inode number may since have been
+    /// reused.
+    pin: Mutex<Option<Connection>>,
     retired: AtomicBool,
     pool: Pool,
     write_lock: WriteLock,
@@ -274,8 +274,7 @@ impl Store {
             let limits = open::prepare(&mut conn, options.requested, options.timeout)?;
             Ok((conn, limits))
         })?;
-        let pin = File::open(&db_path).map_err(|source| Error::Io { path: db_path.clone(), source })?;
-        let file_id = file_id(&pin, &db_path)?;
+        let (pin, file_id) = open_pin(&db_path)?;
         let canonical = std::fs::canonicalize(&options.directory).unwrap_or_else(|_| options.directory.clone());
 
         let gate = GATE.enter_shared();
@@ -371,8 +370,8 @@ impl Store {
         &self,
         stores: &MutexGuard<'_, Vec<Weak<Self>>>,
         delta: isize,
-        pin: Option<File>,
-    ) -> (bool, Option<File>) {
+        pin: Option<Connection>,
+    ) -> (bool, Option<Connection>) {
         let after = self.handles.fetch_add(delta, Ordering::AcqRel) + delta;
         let mut slot = self.pin.lock().unwrap_or_else(PoisonError::into_inner);
         if after <= 0 {
@@ -395,7 +394,7 @@ impl Store {
     }
 
     /// Registers one more handle; see [`Store::count_handle`]. Returns whether it revived the store.
-    fn claim(&self, stores: &MutexGuard<'_, Vec<Weak<Self>>>, pin: Option<File>) -> bool {
+    fn claim(&self, stores: &MutexGuard<'_, Vec<Weak<Self>>>, pin: Option<Connection>) -> bool {
         self.count_handle(stores, 1, pin).0
     }
 
@@ -446,7 +445,7 @@ impl Store {
     pub fn add_handle(&self) {
         // Opened before taking the registry, which never waits on I/O.
         let db_path = open::db_path(&self.directory);
-        let pin = File::open(&db_path).ok().filter(|f| file_id(f, &db_path).is_ok_and(|id| id == self.file_id));
+        let pin = open_pin(&db_path).ok().filter(|(_, id)| *id == self.file_id).map(|(pin, _)| pin);
         let gate = GATE.enter_shared();
         let stores = registry(&gate);
         self.claim(&stores, pin);
@@ -1096,9 +1095,27 @@ fn close_pinned(store: &Store, gate: &SharedGuard<'_>, pinned: Pinned, commit: b
     outcome
 }
 
-fn file_id(file: &File, path: &Path) -> Result<FileId> {
-    let metadata = file.metadata().map_err(|source| Error::Io { path: path.to_path_buf(), source })?;
-    Ok((metadata.dev(), metadata.ino()))
+/// Opens a store's pin on its database file, and the file's id. The pin is a SQLite connection that
+/// never runs a statement, not a plain `File`: closing any descriptor on a file drops every POSIX
+/// lock the process holds on it, SQLite's included. SQLite's own descriptors share its per-file
+/// lock record, so it defers closing one while another connection holds a lock; a `File` it doesn't
+/// know about would drop them. The id is read before and after the open, so it's the file the pin
+/// holds.
+fn open_pin(db_path: &Path) -> Result<(Connection, FileId)> {
+    let id = || {
+        std::fs::metadata(db_path)
+            .map(|m| (m.dev(), m.ino()))
+            .map_err(|source| Error::Io { path: db_path.to_path_buf(), source })
+    };
+    let before = id()?;
+    let pin = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .map_err(|e| Error::from_sqlite(e, Duration::ZERO))?;
+    let after = id()?;
+    if before != after {
+        let replaced = std::io::Error::other("the database file was replaced while it was being opened");
+        return Err(Error::Io { path: db_path.to_path_buf(), source: replaced });
+    }
+    Ok((pin, after))
 }
 
 #[cfg(test)]
