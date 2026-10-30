@@ -15,6 +15,8 @@ caches['pages'].get('/about')
 
 Settings passed to [Caches](../reference/Caches.md#diskcache_oxide.Caches) apply to every cache, and [register](../reference/Caches.register.md#diskcache_oxide.Caches.register) can override them for one. Each cache lives in a directory named after it under the base directory, unless you pass `directory=`.
 
+One setting works differently here: a function passed as `on_decode_error` is called as `report(name, key, exc)`, with the cache's name first, so one reporter can serve every cache. (On a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) it's `report(key, exc)`.) A function that doesn't take three arguments is rejected when you create the registry or register the cache.
+
 
 # Lookups
 
@@ -35,7 +37,7 @@ caches['genral']  # mypy: invalid argument
 
 A cache can fail to open: a permissions problem, a disk that went away, a database written by a newer version, or another process holding the lock for longer than [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout). A lookup then returns a [NullCache](null-cache.md) instead of raising, so the request carries on without the cache. The error goes to `on_open_error(name, exc)`, which logs it at `ERROR` on the `diskcache_oxide` logger by default. Pass your own function to send it to Sentry or your logging setup.
 
-The failure is remembered for `retry_open_after` seconds (10 by default), so a broken cache costs one failed open every 10 seconds, not one per request, and the lookup after that tries again. A cache that recovers is picked up without a restart.
+The failure is remembered for `retry_open_after` seconds (10 by default), so a broken cache costs one failed open every 10 seconds, not one per request, and the lookup after that tries again. A cache that recovers is picked up without a restart. Under load, several threads may make that retry at the same moment, and each one that fails reports it.
 
 A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead.
 
@@ -60,6 +62,8 @@ def cache_for(purpose: str) -> CacheLike:
     real = caches[PURPOSES[purpose]]
     return NullCache(invalidate=real) if purpose in off else real
 ```
+
+Build the wrapper on each call rather than memoizing it: `caches[...]` is already cheap, and a memoized `NullCache(invalidate=...)` wrapped around a cache that had failed to open would never pick up its recovery.
 
 
 # Admin and shutdown

@@ -333,6 +333,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>caches[<span class="st">'general'</span>].<span class="bu">set</span>(<span class="st">'greeting'</span>, <span class="st">'hello'</span>)</span>
 <span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>caches[<span class="st">'pages'</span>].get(<span class="st">'/about'</span>)</span></code></pre></div>
 <p>Settings passed to <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> apply to every cache, and <a href="../reference/Caches.register.html#diskcache_oxide.Caches.register" class="gdls-link gdls-code">register</a> can override them for one. Each cache lives in a directory named after it under the base directory, unless you pass <code>directory=</code>.</p>
+<p>One setting works differently here: a function passed as <code>on_decode_error</code> is called as <code>report(name, key, exc)</code>, with the cache’s name first, so one reporter can serve every cache. (On a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> it’s <code>report(key, exc)</code>.) A function that doesn’t take three arguments is rejected when you create the registry or register the cache.</p>
 <section id="lookups" class="level1">
 <h1>Lookups</h1>
 <p>A cache opens on its first lookup, and every lookup after that returns the same object. A lookup is a single dict read with no lock, so it’s fine to do on every request rather than keeping your own references. Lookups are safe from any thread, on free-threaded Python too, and in a child process after a fork.</p>
@@ -346,7 +347,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="when-a-cache-cant-open" class="level1">
 <h1>When a cache can’t open</h1>
 <p>A cache can fail to open: a permissions problem, a disk that went away, a database written by a newer version, or another process holding the lock for longer than <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>. A lookup then returns a <a href="../user-guide/null-cache.html">NullCache</a> instead of raising, so the request carries on without the cache. The error goes to <code>on_open_error(name, exc)</code>, which logs it at <code>ERROR</code> on the <code>diskcache_oxide</code> logger by default. Pass your own function to send it to Sentry or your logging setup.</p>
-<p>The failure is remembered for <code>retry_open_after</code> seconds (10 by default), so a broken cache costs one failed open every 10 seconds, not one per request, and the lookup after that tries again. A cache that recovers is picked up without a restart.</p>
+<p>The failure is remembered for <code>retry_open_after</code> seconds (10 by default), so a broken cache costs one failed open every 10 seconds, not one per request, and the lookup after that tries again. A cache that recovers is picked up without a restart. Under load, several threads may make that retry at the same moment, and each one that fails reports it.</p>
 <p>A bad <em>setting</em> (<code>size_limit=True</code>, <code>serializer='yaml'</code>) is a bug, not an outage, so it raises on lookup instead.</p>
 </section>
 <section id="switching-caches-off" class="level1">
@@ -362,6 +363,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache_for(purpose: <span class="bu">str</span>) <span class="op">-&gt;</span> CacheLike:</span>
 <span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    real <span class="op">=</span> caches[PURPOSES[purpose]]</span>
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> NullCache(invalidate<span class="op">=</span>real) <span class="cf">if</span> purpose <span class="kw">in</span> off <span class="cf">else</span> real</span></code></pre></div>
+<p>Build the wrapper on each call rather than memoizing it: <code>caches[...]</code> is already cheap, and a memoized <code>NullCache(invalidate=...)</code> wrapped around a cache that had failed to open would never pick up its recovery.</p>
 </section>
 <section id="admin-and-shutdown" class="level1">
 <h1>Admin and shutdown</h1>

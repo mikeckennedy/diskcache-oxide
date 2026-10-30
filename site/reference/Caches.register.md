@@ -26,7 +26,7 @@ The cache's name. Without [directory](Cache.directory.md#diskcache_oxide.Cache.d
 Put this cache somewhere else.
 
 `**settings: Any`  
-[Cache](Cache.md#diskcache_oxide.Cache) settings for this cache, over the registry's defaults.
+[Cache](Cache.md#diskcache_oxide.Cache) settings for this cache, over the registry's defaults. A callable `on_decode_error` is called as `(name, key, exc)`, as at the registry level.
 
 
 ## Raises

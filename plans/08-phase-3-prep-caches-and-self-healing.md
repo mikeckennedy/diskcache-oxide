@@ -303,3 +303,23 @@ caches.close_all()                 # also on `with Caches(...) as caches:` exit
   The fork and race tests passed 30 out of 30 runs on each build.
 - **A flaky test from step 1, fixed:** the maintenance-timeout tests assumed all 10 expired rows would still be there. Each `set` sweeps rows that expired before it, so on 3.14t `cull()` once found 6. The tests now compare against `len(cache)` taken just before the call, and so does the registry's `expire_all` test.
 - `scripts/check.sh` passes: 3.14 (808 passed), 3.14t (807), 3.15 (808), 3.15t (807).
+
+### Architect's end-of-plan review (2026-10-30): sound, ready to close after three small fixes (applied)
+
+- **The registry's callback signature is documented and checked.** A callable `on_decode_error` given to `Caches` or `register` is called as `(name, key, exc)`. The guide and the `register` docstring say so, and a callable whose signature can't take those three arguments raises `TypeError` at construction or registration, not on every decode failure.
+- **The switch race is closed.** A `disable`/`enable` or `close_all` that lands between a lookup's check and its store used to leave a stale answer stored for good. `_resolve` now checks again after the store and drops the entry if a switch or `close_all` ran in between. Two deterministic tests run the switch from inside the lookup's own check.
+- **Dedupe ordering:** a decode failure inside another report is now neither reported nor marked as reported, so a later top-level read still reports it.
+- **Low items:**
+  - `retry_open_after` raises `TypeError` for a wrong type and `ValueError` for a bad value (D-014 style);
+  - `_OPEN_ERRORS` is `(OSError, RuntimeError)`, with a comment that a D-020 child's open becomes a `NullCache` on purpose;
+  - the directory comparison also uses `normcase`;
+  - `stats()` and `expire_all()` take a snapshot of the names first;
+  - the guide notes the concurrent retry at the end of the 10 s window, and says not to memoize per-purpose `NullCache(invalidate=...)` wrappers.
+- **Deliberate follow-ups, not in this plan:** an optimistic `pop` that keeps a foreign value in a known mode, and misses on `Timeout` (Michael ruled that out for now).
+- **For the Talk Python port (Phase 3):**
+  - move each `size_limit=` from the `create_cache` call sites into `register`;
+  - keep per-purpose switches in the app, using the guide's `cache_for` pattern;
+  - absorb the small API differences: `expire_all` returns `int | None` per cache, `close_all` returns `None`, and there's no `.name`.
+- `scripts/check.sh` passes: 3.14 (811 passed), 3.14t (810), 3.15 (811), 3.15t (810). `site/` is regenerated.
+
+## Plan 08: closed (2026-10-30)

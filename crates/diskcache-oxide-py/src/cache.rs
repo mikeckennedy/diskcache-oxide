@@ -532,6 +532,11 @@ impl Cache {
         };
         // A row that stays fails again on every read: a newer peer's values during a deploy can
         // be read thousands of times a second. Report each stored version once.
+        // Inside another report nothing is reported (see `report_decode_error`), so don't mark the
+        // version as reported either: a later top-level read must still report it.
+        if REPORTING.get() {
+            return Ok(());
+        }
         if let Some(version) = stays
             && !self.first_report(version)
         {

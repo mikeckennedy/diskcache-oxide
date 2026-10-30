@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Generic, Self, TypeVar
 
-from diskcache_oxide._core import Cache, FormatMismatchError
+from diskcache_oxide._core import Cache
 from diskcache_oxide.null import NullCache
 from diskcache_oxide.protocol import CacheLike
 
@@ -52,8 +52,9 @@ log = logging.getLogger('diskcache_oxide')
 _CACHE_SETTINGS = frozenset(inspect.signature(Cache).parameters) - {'directory'}
 
 # Errors that mean "this cache can't open right now", as opposed to a bug in its settings.
-# `Timeout` is an `OSError`; `FormatMismatchError` and the not-WAL error are `RuntimeError`s.
-_OPEN_ERRORS = (OSError, RuntimeError, FormatMismatchError)
+# `Timeout` is an `OSError`. `RuntimeError` covers `FormatMismatchError`, the not-WAL error, and a
+# child forked mid-transaction that can't write the file (D-020): a NullCache is right for all.
+_OPEN_ERRORS = (OSError, RuntimeError)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +73,18 @@ def _check_settings(settings: dict[str, Any]) -> None:
     unknown = sorted(settings.keys() - _CACHE_SETTINGS)
     if unknown:
         raise TypeError(f'unknown Cache setting{"s" if len(unknown) > 1 else ""}: {", ".join(unknown)}')
+    report = settings.get('on_decode_error')
+    if callable(report):
+        # A registry calls it with the cache's name too; catch a `(key, exc)` reporter carried over
+        # from `Cache` here, not as a TypeError logged on every decode failure.
+        try:
+            signature = inspect.signature(report)
+        except (TypeError, ValueError):
+            return  # No signature to check (some builtins).
+        try:
+            signature.bind('name', 'key', Exception())
+        except TypeError:
+            raise TypeError(f'a Caches on_decode_error is called as (name, key, exc); {report!r} does not take those') from None
 
 
 class Caches(Generic[N]):
@@ -101,7 +114,9 @@ class Caches(Generic[N]):
         **defaults: Any,
     ) -> None:
         _check_settings(defaults)
-        if isinstance(retry_open_after, bool) or not isinstance(retry_open_after, int | float) or not retry_open_after >= 0:
+        if isinstance(retry_open_after, bool) or not isinstance(retry_open_after, int | float):
+            raise TypeError(f'retry_open_after must be a number of seconds, not {type(retry_open_after).__name__}')
+        if not 0 <= retry_open_after < float('inf'):
             raise ValueError(f'retry_open_after must be a non-negative number of seconds, got {retry_open_after!r}')
         self._base_dir = os.path.abspath(os.fspath(base_dir))
         self._defaults = defaults
@@ -132,7 +147,8 @@ class Caches(Generic[N]):
             name: The cache's name. Without `directory`, it's also the directory's name under
                 `base_dir`, so it must be a plain name: no path separators, not `.` or `..`.
             directory: Put this cache somewhere else.
-            **settings: `Cache` settings for this cache, over the registry's defaults.
+            **settings: `Cache` settings for this cache, over the registry's defaults. A callable
+                `on_decode_error` is called as `(name, key, exc)`, as at the registry level.
 
         Raises:
             ValueError: The name is taken or isn't a plain directory name, or another registered
@@ -151,8 +167,12 @@ class Caches(Generic[N]):
             path = os.path.join(self._base_dir, name)
         else:
             path = os.path.abspath(os.fspath(directory))
+        def same(a: str, b: str) -> bool:
+            # normcase too: on a case-insensitive filesystem 'General' and 'general' are one store.
+            return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
         for other, (other_path, _) in self._specs.items():
-            if os.path.realpath(other_path) == os.path.realpath(path):
+            if same(other_path, path):
                 raise ValueError(f'caches {other!r} and {name!r} would share the directory {path}')
         self._specs[name] = (path, self._defaults | settings)
 
@@ -200,8 +220,14 @@ class Caches(Generic[N]):
             self._report_open_error(name, exc)
             return null
         self._failed.pop(name, None)
-        result: CacheLike = NullCache(invalidate=real) if name in self._disabled else real
-        return self._resolved.setdefault(name, result)
+        disabled = name in self._disabled
+        result: CacheLike = NullCache(invalidate=real) if disabled else real
+        stored = self._resolved.setdefault(name, result)
+        # A switch or close_all that ran between the checks above and the store would otherwise
+        # leave a stale answer in place for good: drop it, so the next lookup resolves afresh.
+        if (name in self._disabled) != disabled or self._opened.get(name) is not real:
+            self._resolved.pop(name, None)
+        return stored
 
     def _open(self, name: N) -> Cache:
         """The real handle for `name`, opening it if needed. Raises if it can't open."""
@@ -272,7 +298,7 @@ class Caches(Generic[N]):
         """Count and volume for every registered cache, opening each one. Never raises for a cache
         that can't be read: its `error` says why."""
         result: dict[N, CacheStats] = {}
-        for name, (path, _) in self._specs.items():
+        for name, (path, _) in list(self._specs.items()):
             enabled = name not in self._disabled
             try:
                 cache = self._open(name)
@@ -295,7 +321,7 @@ class Caches(Generic[N]):
         """Remove expired entries from every cache. Returns how many each removed, or None for a
         cache that couldn't be opened or expired (logged; the rest still run)."""
         result: dict[N, int | None] = {}
-        for name in self._specs:
+        for name in list(self._specs):
             try:
                 result[name] = self._open(name).expire(timeout=timeout)
             except Exception:

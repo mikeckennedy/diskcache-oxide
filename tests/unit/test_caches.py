@@ -85,6 +85,21 @@ def test_unknown_settings_fail_early(base: Path) -> None:
         caches.register('a', serialiser='json')
     with pytest.raises(ValueError):
         Caches(base, retry_open_after=-1)
+    with pytest.raises(TypeError):
+        Caches(base, retry_open_after=True)
+
+
+def test_a_decode_reporter_must_take_the_cache_name(base: Path) -> None:
+    def old_style(key: str, exc: Exception) -> None:
+        pass
+
+    with pytest.raises(TypeError, match='name, key, exc'):
+        Caches(base, on_decode_error=old_style)
+    caches = Caches(base)
+    with pytest.raises(TypeError, match='name, key, exc'):
+        caches.register('a', on_decode_error=old_style)
+    caches.register('b', on_decode_error=lambda name, key, exc: None)
+    caches.register('c', on_decode_error=print)  # No signature to check: accepted.
 
 
 @pytest.mark.parametrize('name', ['', '.', '..', 'a/b', '../escape', '/abs'])
@@ -135,6 +150,50 @@ def test_racing_lookups_get_one_object(base: Path) -> None:
     for t in threads:
         t.join()
     assert len({id(c) for c in seen}) == 1
+    caches.close_all()
+
+
+def test_a_switch_during_a_lookup_never_sticks(base: Path) -> None:
+    # A disable() landing between the lookup's switch check and its store must not leave the real
+    # cache stored for good. The set below runs disable() from inside that first check.
+    caches = Caches(base)
+    caches.register('a')
+
+    class DisableDuringCheck(set[str]):
+        armed = True
+
+        def __contains__(self, name: object) -> bool:
+            answer = super().__contains__(name)
+            if self.armed:
+                self.armed = False
+                caches.disable('a')  # Adds 'a' and pops _resolved, which is still empty.
+            return answer
+
+    caches._disabled = DisableDuringCheck()
+    caches['a']  # Raced: may return the real cache this once.
+    assert not caches.enabled('a')
+    assert isinstance(caches['a'], NullCache), 'the next lookup follows the switch'
+    caches.close_all()
+
+
+def test_close_all_during_a_lookup_never_leaves_an_untracked_handle(base: Path) -> None:
+    caches = Caches(base)
+    caches.register('a')
+
+    class CloseDuringCheck(set[str]):
+        armed = True
+
+        def __contains__(self, name: object) -> bool:
+            if self.armed:
+                self.armed = False
+                caches.close_all()
+            return super().__contains__(name)
+
+    caches._disabled = CloseDuringCheck()
+    caches['a']
+    assert 'a' not in caches._resolved or caches._resolved['a'] is caches._opened.get('a')
+    second = caches['a']
+    assert second is caches._opened['a'], 'what lookups return is what close_all will close'
     caches.close_all()
 
 
