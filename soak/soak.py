@@ -266,6 +266,21 @@ class Soak:
         self.spawn(w.python, long_lived=False)
         self.counts['respawns'] += 1
 
+    def verify_held(self) -> None:
+        """The end-of-run check of every worker's held transactions (soak/worker.py)."""
+        try:
+            proc = subprocess.run([self.pythons[0], '-m', 'soak.worker', 'maint', str(self.dir), 'verify-held'], cwd=REPO, capture_output=True, text=True, timeout=MAINT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.event('final-held-error', problem=True, detail=f'ran over {MAINT_TIMEOUT:.0f}s')
+            return
+        lines = proc.stdout.splitlines()
+        problems = [line.removeprefix('problem: ') for line in lines if line.startswith('problem: ')]
+        for text in problems[:50]:
+            self.event('held-atomicity', problem=True, detail=text)
+        if proc.returncode != 0:
+            self.event('final-held-error', problem=True, exit=proc.returncode, detail=(proc.stdout + proc.stderr)[-2000:])
+        self.event('final-held', problems=len(problems), summary=lines[-1] if lines else '')
+
     def maint(self, op: str) -> None:
         self.maint_running = True
         python = self.rng.choice(self.pythons)
@@ -595,6 +610,7 @@ class Soak:
             if len(ids) == 1 and slot in winners and winners[slot] not in ids:
                 self.event('add-winner-mismatch', problem=True, slot=slot, stored=winners[slot], reported=sorted(ids))
         self.event('final-ledger', workers_checked=len(self.final_acked), slots_checked=len(self.once_winners))
+        self.verify_held()
         for name in ('chaos', 'ledger'):
             self.check_db(name, deep=True, orphans=True)
         totals = {k: self.total(k) for k in ('ops', 'timeouts', 'forks_ok', 'forks_failed', 'reopens', 'once_tried', 'held_commits', 'held_rollbacks')}

@@ -12,11 +12,14 @@ Two caches share the run directory:
   - `ctr:<worker>` counters, against the count of incr() calls that returned;
   - `own:<worker>:<n>` keys with a single writer, which must read back exactly what was last written;
   - `once:<slot>` add() races, which must have exactly one winner;
-  - `held:<worker>:<n>` keys and a `hctr:<worker>` counter, written only inside held write
-    transactions that commit or roll back at random: after each one, every key it touched must show
-    all of its changes or none of them, and exactly the committed ones. Some values spill to files,
-    so a rollback that loses a committed file, or a commit that leaves a replaced one, shows up here
-    or in the orchestrator's file scan.
+  - `held:<worker>:<n>` keys, a `hctr:<worker>` counter and `htx:<worker>:<t>` manifests, written
+    only inside held write transactions that commit or roll back at random. Transaction t counts
+    itself in the counter first, stamps t into every value it writes, and lists what it wrote in its
+    manifest. After each one, every key it touched must show all of its changes or none, and exactly
+    the committed ones. Some values spill to files, so a rollback that loses a committed file, or a
+    commit that leaves a replaced one, shows up here or in the orchestrator's file scan. At the end
+    of the run, `maint verify-held` checks every worker's keys against the manifests, including
+    workers killed mid-transaction: a torn commit can't hide there.
 
 Every value carries its key and a CRC of its payload, so corruption or a value landing under the
 wrong key is caught on every read.
@@ -162,6 +165,9 @@ class Worker:
         self.held_acked = 0  # hctr:<id> increments in committed transactions
         self.held_commits = 0
         self.held_rollbacks = 0
+        # Set if a check after a transaction failed to read back: `held` may then be stale, so this
+        # worker stops holding and leaves the final check to `maint verify-held`.
+        self.held_desynced = False
 
     def problem(self, text: str) -> None:
         with self.lock:
@@ -257,7 +263,7 @@ class Worker:
     def held_op(self, rng: random.Random) -> bool:
         """One held write transaction on the ledger, then a check that it committed or rolled back
         as a whole. Returns False, doing nothing, if another thread of this worker is in one."""
-        if not self.held_lock.acquire(blocking=False):
+        if self.held_desynced or not self.held_lock.acquire(blocking=False):
             return False
         try:
             commit = rng.random() < HELD_COMMIT
@@ -269,15 +275,16 @@ class Worker:
             outcome = 'committed' if commit else 'rolled back'
             try:
                 with self.ledger._hold_write_transaction():
+                    tx = self.ledger.incr(f'hctr:{self.id}')
                     for key, version in planned.items():
                         if version:
-                            assert self.ledger.set(key, held_value(key, version, rng)) is True
+                            assert self.ledger.set(key, held_value(key, version, tx, rng)) is True
                         else:
                             self.ledger.delete(key)
                         # Nested operations see the transaction's own writes.
                         if (got := held_version(key, self.ledger.get(key))) != version:
                             self.problem(f'{key} read {got} inside its transaction, just after writing {version}')
-                    self.ledger.incr(f'hctr:{self.id}')
+                    self.ledger.set(f'htx:{self.id}:{tx}', planned)
                     self.chaos.get(f'c:{rng.randrange(CHAOS_KEYS)}')  # A read of another cache, too.
                     if not commit:
                         raise _Rollback
@@ -288,7 +295,11 @@ class Worker:
             except Exception:
                 self.problem(f'held transaction: {traceback.format_exc(limit=6)}')
                 outcome = 'uncertain'
-            seen = {key: held_version(key, self.ledger.get(key)) for key in planned}
+            try:
+                seen = {key: held_version(key, self.ledger.get(key)) for key in planned}
+            except Exception:
+                self.held_desynced = True  # Not a problem by itself; the final check covers the keys.
+                return True
             before = {key: self.held.get(key, 0) for key in planned}
             if outcome == 'uncertain':
                 outcome = 'committed' if seen == planned else 'rolled back'
@@ -410,6 +421,8 @@ class Worker:
             got = self.ledger.get(key)
             if not isinstance(got, dict) or got.get('v') != version:
                 self.problem(f'final check: {key} is {got!r}, last acknowledged version {version}')
+        if self.held_desynced:
+            return
         for key, version in sorted(self.held.items()):
             if (got := held_version(key, self.ledger.get(key))) != version:
                 self.problem(f'final check: {key} is version {got}, last committed {version}')
@@ -448,28 +461,69 @@ class _Rollback(Exception):
     """Raised inside a held transaction to roll it back."""
 
 
-def held_value(key: str, version: int, rng: random.Random) -> Any:
-    """A held-transaction value: a small dict, or (30%) bytes large enough to spill to a file."""
+def held_value(key: str, version: int, tx: int, rng: random.Random) -> Any:
+    """A held-transaction value written by transaction `tx`: a small dict, or (30%) bytes large
+    enough to spill to a file."""
     if rng.random() < 0.7:
-        return {'key': key, 'v': version}
+        return {'key': key, 'v': version, 'tx': tx}
     payload = rng.randbytes(rng.randrange(70 * 1024, 200 * 1024))
-    header = json.dumps({'key': key, 'v': version, 'crc': zlib.crc32(payload)}).encode()
+    header = json.dumps({'key': key, 'v': version, 'tx': tx, 'crc': zlib.crc32(payload)}).encode()
     return len(header).to_bytes(4, 'big') + header + payload
 
 
-def held_version(key: str, value: Any) -> int | str:
-    """The version a held-transaction value carries (0 if missing), or what's wrong with it."""
+def held_parse(key: str, value: Any) -> tuple[int, int] | str:
+    """(version, transaction) from a held-transaction value ((0, 0) if missing), or what's wrong."""
     if value is None:
-        return 0
+        return (0, 0)
     if isinstance(value, dict):
-        return value['v'] if value.get('key') == key else f'belongs to {value.get("key")!r}'
+        return (value['v'], value['tx']) if value.get('key') == key else f'belongs to {value.get("key")!r}'
     n = int.from_bytes(value[:4], 'big')
     header = json.loads(value[4 : 4 + n])
     if header.get('key') != key:
         return f'belongs to {header.get("key")!r}'
     if zlib.crc32(value[4 + n :]) != header.get('crc'):
         return f'version {header.get("v")} fails its CRC'
-    return int(header['v'])
+    return (int(header['v']), int(header['tx']))
+
+
+def held_version(key: str, value: Any) -> int | str:
+    """The version a held-transaction value carries (0 if missing), or what's wrong with it."""
+    parsed = held_parse(key, value)
+    return parsed if isinstance(parsed, str) else parsed[0]
+
+
+def verify_held(run_dir: Path) -> list[str]:
+    """Every worker's held keys against its transactions' manifests, after the run (killed workers
+    included): the counter counts exactly the manifests, each key holds what the last manifest that
+    lists it wrote, stamped with that transaction, and no value comes from a transaction with no
+    manifest (a torn or rolled-back commit)."""
+    ledger = open_ledger(run_dir)
+    manifests: dict[int, dict[int, dict[str, int]]] = {}
+    for key in ledger.iterkeys(prefix='htx:'):
+        _, wid, tx = key.split(':')
+        manifests.setdefault(int(wid), {})[int(tx)] = ledger.get(key)
+    values: dict[int, dict[str, tuple[int, int] | str]] = {}
+    for key in ledger.iterkeys(prefix='held:'):
+        values.setdefault(int(key.split(':')[1]), {})[key] = held_parse(key, ledger.get(key))
+    problems = []
+    for wid in sorted(set(manifests) | set(values)):
+        txs = manifests.get(wid, {})
+        count = ledger.get(f'hctr:{wid}', 0)
+        if sorted(txs) != list(range(1, count + 1)):
+            problems.append(f'worker {wid}: hctr is {count}, but it has {len(txs)} manifests (highest {max(txs, default=0)})')
+        last: dict[str, tuple[int, int]] = {}
+        for tx in sorted(txs):
+            for key, version in txs[tx].items():
+                last[key] = (version, tx)
+        got = values.get(wid, {})
+        for key, (version, tx) in sorted(last.items()):
+            found = got.get(key, (0, 0))
+            want = (0, 0) if version == 0 else (version, tx)
+            if found != want:
+                problems.append(f'{key} is {found} (version, transaction); its last commit, {tx}, wrote {want}')
+        problems.extend(f'{key} is {found}, but no committed transaction wrote it' for key, found in sorted(got.items()) if key not in last)
+    ledger.close()
+    return problems
 
 
 def wal_stats(cache: Cache) -> dict[str, int]:
@@ -487,7 +541,15 @@ def summarize(samples: list[int]) -> dict[str, float] | None:
 
 
 def maint(run_dir: Path, op: str) -> int:
-    """One maintenance call on the chaos cache; prints `<op> <removed> <seconds>`."""
+    """One maintenance call on the chaos cache; prints `<op> <removed> <seconds>`. Or, for
+    `verify-held`, the held-transaction check: one `problem: ...` line each, then a summary."""
+    if op == 'verify-held':
+        start = time.perf_counter()
+        problems = verify_held(run_dir)
+        for text in problems:
+            print(f'problem: {text}')
+        print(f'verify-held {len(problems)} {time.perf_counter() - start:.3f}')
+        return 0
     cache = open_chaos(run_dir)
     start = time.perf_counter()
     removed = getattr(cache, op)()
