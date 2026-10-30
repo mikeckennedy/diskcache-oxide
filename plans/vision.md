@@ -55,3 +55,57 @@ Michael, 2026-10-29: plug diskcache-oxide straight into Django's cache framework
 - **Why it fits:** Django apps run under gunicorn or uvicorn workers, many processes on one host, exactly the cross-process, fork-safe workload the soak tests. `add()` and `incr()` are atomic across processes, which Django's file-based cache can't promise, and there's no server to run, unlike Redis or Memcached.
 - **Depends on:** FanoutCache (6c), since Django sites are threaded and write from many workers; `*_many` as single transactions; and Django's test suite for cache backends as the conformance oracle, the way diskcache 5.6.3 is for `Cache`.
 - **Open questions:** a separate optional extra (`diskcache-oxide[django]`) or a module that imports Django lazily; how `pickle` interacts with D-001 (Django caches arbitrary objects, so the backend would enable pickle); and whether to match `diskcache.DjangoCache`'s extra methods (`memoize`, `cache` access) for drop-in switching.
+
+## DurableCache and the cache service, in the library
+
+Michael, 2026-10-30: Talk Python's `DurableCache` wrapper and its `cache_service` factory might belong in diskcache-oxide, the way `NullCache` does. Decide during Phase 3 planning; nothing is built yet. Evidence that it's generic: `durable_cache.py` is copied into four apps (Talk Python, Training, Python Bytes, InterviewCue), and the copies have drifted apart (136 to 349 lines).
+
+**What `DurableCache` does today, and where each piece lands:**
+- `bool()` always True, fixing diskcache's empty-cache-is-falsy: already in the library (D-009).
+- The `CacheProtocol` Protocol: already `CacheLike`.
+- `NullCache` and `PerfTestNullCache`: already `NullCache` and `NullCache(invalidate=)`. The construction-time warning and Sentry report stay in the app.
+- `name`, for logs and the admin page: trivial, and belongs with the registry below.
+- **The one real feature, a self-healing `get`:** any exception while reading (in practice an unpickle that fails after a module move) is logged, the entry is deleted, and the default is returned, so a cache can never crash a request.
+
+**Self-healing reads as a `Cache` option, not a wrapper class.** A wrapper adds a Python frame to every call, which Phase 1 ruled out, so this should be a constructor option, something like `Cache(dir, on_decode_error="miss")` (or `"raise"`, the default). Doing it inside the library is better than the wrapper in ways the wrapper can't match:
+- **Delete only what failed.** The wrapper's `get`-fails-then-`delete` can remove a fresh value a peer wrote in between. The library can compare-and-delete on `store_seq`, as the spill protocol already does.
+- **Classify the error.** `CorruptValueError` and an unpickle failure (`ModuleNotFoundError`, `AttributeError`) are safe to treat as a miss and remove. `UnsafeValueError` (a pickle row read by a `pickle=False` handle) must be a miss that **leaves the row**, since D-001 says a handle never destroys a peer's data.
+- **Don't hide timeouts by accident.** The wrapper catches `Exception`, so today a busy-lock `Timeout` on `get` is also a silent miss, followed by a `delete` that will usually time out too. If misses-on-timeout are wanted (they suit Talk Python, where every caller falls back to its source of truth), that should be a separate, explicit choice.
+- **Reporting:** a stdlib `logging` logger, plus an optional `on_error(key, exc)` callback the app wires to Sentry, called after the connection is released.
+- It matters less with oxide: JSON and msgpack are the default codecs, so module moves only affect the caches that opt into `pickle=True`.
+
+**The cache service: a small registry of named caches.**
+
+The parts of `cache_service.py` that any app needs:
+- name to directory under one base dir, with an env-var override for tests;
+- per-cache settings (`size_limit`, `timeout`);
+- opened lazily, once, and memoized;
+- a `NullCache` when opening fails, with a reporting hook;
+- on/off switches that return `NullCache(invalidate=real)`;
+- `stats()` (len and volume per cache, for an admin page), `clear(name)`, `expire_all()` and `close_all()` at shutdown.
+
+The app-specific parts stay in the app: the purpose names and their `Literal`, the mapping from purposes onto physical caches, reading the settings file, Sentry and logbook, cache descriptions, and the MP3 and HTTP helpers.
+
+A sketch, not decided (the name is open: `CacheRegistry`, `Caches`, `CacheSet`):
+
+```python
+caches = CacheRegistry('/var/cache/app', timeout=1.0, on_open_error=report)
+caches.register('general')
+caches.register('show_pages', size_limit=2 * GiB)
+general = caches['general']            # opened on first use, then reused
+caches.disable({'show_pages'})         # NullCache(invalidate=real)
+caches.stats(); caches.clear('general'); caches.close_all()
+```
+
+Why the library is the better home:
+- **Thread safety:** the app's module-level dicts aren't safe on free-threaded 3.14t, and a library registry would lock the lazy open.
+- **Fork awareness:** the registry can rely on the library's fork handling rather than each app reasoning about it.
+- **Fewer moving parts.** The hourly lazy `expire_all()` becomes unnecessary once the background sweeper (above) lands. The separate maintenance timeout becomes a per-call `timeout=` on `clear()`/`expire()`, so the admin path stops reopening a fresh handle for every stats or clear call.
+
+**Guardrails:**
+- An instance the app owns, not a module-level singleton, so tests make their own and the current test seams go away.
+- Pure Python, small, with no new Rust.
+- No settings-file format and no logging framework of its own.
+- If it starts to grow features, it stays in the app.
+
+**Timing:** design both in Phase 3 planning and build them in the library first, so Talk Python adopts the library versions directly instead of porting `DurableCache` and then replacing it. The other three apps can then drop their copies too.
