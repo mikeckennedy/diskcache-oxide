@@ -230,3 +230,4 @@ What that needs:
 - **Markdown:** never hard-wrap prose.
 - **Commits:** no `Co-Authored-By` or attribution lines.
 - **Type checking in the library:** `ty check` in `scripts/check.sh`, and `tests/unit/test_stubs.py` checks `_core.pyi` against the compiled module (what `mypy.stubtest` did). `ty` also found that `CacheLike`'s `__contains__` and friends allowed a keyword `key` where `Cache` doesn't; they're positional-only now.
+- **Where results come from (Michael, 2026-10-30):** run natively on the Mac by default. Production is Linux in Docker on real Linux. Every "Linux" result so far (the gates, the 6-hour soak, `linux-check.sh`) came from the OrbStack VM, so it shows the code works on Linux, not how it performs. Production performance claims need real Linux hardware.
