@@ -21,13 +21,13 @@ With readers in other processes, a burst of writes can leave the log much larger
 
 
 `timeout: float | None = None`  
-Seconds to keep retrying while other processes are busy (default: the cache's [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout)).
+Seconds to keep retrying while other processes or a pending fork are busy (default: the cache's [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout)).
 
 
 ## Returns
 
 
 `bool`  
-True if the log was reset, False if readers or writers in other processes kept it
+True if the log was reset, False if readers or writers in other processes, or a
 
-busy. It never raises for a busy database.
+pending fork, kept it busy. It never raises for a busy database.

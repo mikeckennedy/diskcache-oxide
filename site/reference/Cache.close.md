@@ -16,6 +16,8 @@ Cache.close(
 
 When the last handle on a directory in the process closes, every connection to it closes, whichever threads used them. Using the cache again afterwards reopens it.
 
+It never raises. Behind a fork that stays stuck it returns after about 2 seconds at most, whatever [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) is, and those connections close when the fork ends.
+
 
 ## Parameters
 

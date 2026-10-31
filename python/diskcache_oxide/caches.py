@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Self
 
-from diskcache_oxide._core import Cache
+from diskcache_oxide._core import Cache, Timeout
 from diskcache_oxide.null import NullCache
 from diskcache_oxide.protocol import CacheLike
 
@@ -52,6 +52,10 @@ _CACHE_SETTINGS = frozenset(inspect.signature(Cache).parameters) - {'directory'}
 # `Timeout` is an `OSError`. `RuntimeError` covers `FormatMismatchError`, the not-WAL error, and a
 # child forked mid-transaction that can't write the file (D-020): a NullCache is right for all.
 _OPEN_ERRORS = (OSError, RuntimeError)
+
+# The longest a `Timeout` at open is remembered: it means busy (a fork, a peer holding the lock), not
+# broken. Still remembered, or each lookup would spend the whole `timeout` behind a stuck fork.
+_RETRY_AFTER_BUSY = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,9 +97,11 @@ class Caches[N: str = str]:
         base_dir: Where the caches live: each one in `base_dir/<name>` unless `register` says
             otherwise. Created when the first cache opens.
         on_open_error: Called as `on_open_error(name, exc)` when a cache can't open (default: log at
-            ERROR on the `diskcache_oxide` logger). Whatever it raises is logged.
+            ERROR on the `diskcache_oxide` logger, or at WARNING with no traceback for a `Timeout`).
+            Whatever it raises is logged.
         retry_open_after: Seconds before a cache that failed to open is tried again (default 10).
-            Lookups in between get a `NullCache` without trying.
+            Lookups in between get a `NullCache` without trying. A `Timeout` means busy rather than
+            broken, so that's tried again after at most 1 s.
         **defaults: `Cache` settings for every cache, such as `timeout=1.0` or
             `on_decode_error='miss'`. `register` can override them. A callable `on_decode_error`
             here is called as `(name, key, exc)`, so one reporter can tell the caches apart.
@@ -213,8 +219,9 @@ class Caches[N: str = str]:
             real = self._open(name)
         except _OPEN_ERRORS as exc:
             null = NullCache()
-            self._failed[name] = (self._monotonic() + self._retry_open_after, null)
-            self._report_open_error(name, exc)
+            retry = min(self._retry_open_after, _RETRY_AFTER_BUSY) if isinstance(exc, Timeout) else self._retry_open_after
+            self._failed[name] = (self._monotonic() + retry, null)
+            self._report_open_error(name, exc, retry)
             return null
         self._failed.pop(name, None)
         disabled = name in self._disabled
@@ -251,15 +258,13 @@ class Caches[N: str = str]:
         except KeyError:
             raise KeyError(name) from None
 
-    def _report_open_error(self, name: N, exc: Exception) -> None:
+    def _report_open_error(self, name: N, exc: Exception, retry: float) -> None:
         if self._on_open_error is None:
-            log.error(
-                'could not open cache %r at %s; using a NullCache, retrying in %g s',
-                name,
-                self._specs[name][0],
-                self._retry_open_after,
-                exc_info=exc,
-            )
+            path = self._specs[name][0]
+            if isinstance(exc, Timeout):
+                log.warning('cache %r at %s is busy; using a NullCache, retrying in %g s: %s', name, path, retry, exc)
+            else:
+                log.error('could not open cache %r at %s; using a NullCache, retrying in %g s', name, path, retry, exc_info=exc)
             return
         try:
             self._on_open_error(name, exc)

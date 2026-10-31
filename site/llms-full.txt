@@ -83,6 +83,9 @@ larger than its trim size (half of `wal_size_limit`), waiting at most 1 s (or `t
 shorter) for other processes; a copy already under way can run past that (D-024). A small
 WAL, the usual case, costs one `stat`. Close never fails because of the checkpoint.
 
+Behind a pending fork it waits at most 1 s for that checkpoint and 1 s for the release, then
+returns and leaves the release for the end of the fork (D-027).
+
 __getitem__(self, key, /)
 
 Return self[key].
@@ -414,9 +417,11 @@ Args:
     base_dir: Where the caches live: each one in `base_dir/<name>` unless `register` says
         otherwise. Created when the first cache opens.
     on_open_error: Called as `on_open_error(name, exc)` when a cache can't open (default: log at
-        ERROR on the `diskcache_oxide` logger). Whatever it raises is logged.
+        ERROR on the `diskcache_oxide` logger, or at WARNING with no traceback for a `Timeout`).
+        Whatever it raises is logged.
     retry_open_after: Seconds before a cache that failed to open is tried again (default 10).
-        Lookups in between get a `NullCache` without trying.
+        Lookups in between get a `NullCache` without trying. A `Timeout` means busy rather than
+        broken, so that's tried again after at most 1 s.
     **defaults: `Cache` settings for every cache, such as `timeout=1.0` or
         `on_decode_error='miss'`. `register` can override them. A callable `on_decode_error`
         here is called as `(name, key, exc)`, so one reporter can tell the caches apart.
@@ -523,7 +528,7 @@ Exceptions raised by cache operations.
 
 Timeout
 
-The database stayed locked for longer than the cache's timeout.
+A lock stayed held, or a fork stayed pending, for longer than the cache's timeout.
 
 UnsafeValueError
 
@@ -1135,6 +1140,8 @@ A cache can fail to open: a permissions problem, a disk that went away, a databa
 
 The failure is remembered for `retry_open_after` seconds (10 by default), so a broken cache costs one failed open every 10 seconds, not one per request, and the lookup after that tries again. A cache that recovers is picked up without a restart. Under load, several threads may make that retry at the same moment, and each one that fails reports it.
 
+A `Timeout` at open means busy, not broken: another process holding the lock, or a first lookup that collided with a fork. It's remembered for at most 1 second, and the default report is a `WARNING` with no traceback. A custom `on_open_error` still gets the exception. Lookups of a cache that's already open never touch any of this.
+
 A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead.
 
 ## Switching caches off
@@ -1249,6 +1256,16 @@ The result: whatever other threads were doing at the moment of the fork, the chi
 Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process's last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.
 
 The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds (see below), or an operation it forked from inside, such as from a callback. The child leaves those file descriptors open by design.
+
+### How long a call waits for a fork
+
+A fork counts against `timeout`. A cache call behind a pending fork waits for it through the call's own `timeout` and then raises `Timeout`, so `timeout` has to exceed the work in flight, plus the fork, plus the interpreter hand-off. A fork takes about a millisecond in a quiet small process, but tens to hundreds of milliseconds beside busy threads on a GIL build (the forking thread has to get the interpreter back), longer in a large process, and it waits for work in flight such as a forced checkpoint. A `timeout` under that sees `Timeout` during ordinary forks, and a loop on `timeout=0` adds to the problem by being one of those busy threads.
+
+Code that holds a transaction or runs inside a pickle hook, and waits for another thread's cache call, can keep a fork from finishing: the fork waits for that code, and the other thread waits for the fork. That other thread's call now raises `Timeout`, and the fork finishes once your code lets go. Until it does, `os.fork()` doesn't return, a second `os.fork()` queues behind it, and every thread with no transaction or hook of its own gets `Timeout` on every `Cache` in the process, after using up its whole `timeout` (60 seconds by default). Other processes aren't affected. If the code never reacts (a hook that retries forever, or one blocked on something that isn't a cache call), the fork stays stuck. A hook stuck in C code that holds the GIL stops everything, as it would without a cache.
+
+Two calls don't raise. `checkpoint()` returns `False` when a fork keeps it from running. `close()` takes at most about 2 seconds behind a stuck fork, 1 for the checkpoint and 1 for the release, and `del` about 1, whatever `timeout` is. An ordinary fork ends well inside that, so `close()` waits it out as usual. If the fork outlasts it, `close()` returns anyway and the connections close when the fork ends.
+
+Before-fork hooks run in reverse registration order, and `logging` and `concurrent.futures` each take a lock in theirs and keep it until the fork is over. `diskcache_oxide` makes sure its own hook runs before those two, so they stay usable while a fork waits for your code: a pickle hook can still log or submit work. Two things it can't fix. Another library's hook that takes a lock and is registered after `diskcache_oxide` stays held while a fork is stuck. And a thread that calls the cache while holding `logging`'s module lock can hold up a fork until that call's `timeout`.
 
 ### Forking from inside your own transaction
 
@@ -1452,6 +1469,9 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-022 | `disk=`, `eviction_policy=` | Supported | Not supported (policies coming) |
 | D-023 | SQLite memory | 32 MiB cache + 64 MiB mmap per thread | 1 MiB per pooled connection |
 | D-024 | WAL file size | Can grow past 1 GiB and stay there | Trimmed; `checkpoint()` on demand |
+| D-025 | A key iterator used by two threads at once | `ValueError` from the generator | `ValueError`, from a native iterator with no `send()` or `close()` |
+| D-026 | `pop` of a value it can't read | Row is deleted, then the decode fails | Decodes first, so the row stays unless no build could read it |
+| D-027 | A call behind a pending fork | Never waits: there's no fork barrier | Waits within its `timeout`, then raises `Timeout` |
 
 ## Safety
 

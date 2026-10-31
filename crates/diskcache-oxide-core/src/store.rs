@@ -9,7 +9,8 @@
 //! Every operation follows one order: the **write lock** (writes only), then the **gate** in shared
 //! mode, then a **pool connection**. No blocking wait happens while the gate is held. A write waits
 //! for the write lock, and any operation waits for a connection slot, *before* entering the gate,
-//! with the interpreter released. At gate depth > 0 (a nested operation inside a held
+//! with the interpreter released. The gate wait itself is bounded by the same deadline, so a stuck
+//! fork costs an operation its `timeout`, not a hang. At gate depth > 0 (a nested operation inside a held
 //! transaction), both are `try_*` only: the write lock falls back to SQLite's busy path, and the
 //! pool opens a connection over the cap. That busy path's backoff keeps the caller's gate levels, so
 //! a pending fork waits for it, up to the write's `timeout` (see the gate's rules).
@@ -31,7 +32,7 @@ use std::cell::{Cell, RefCell};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
@@ -122,6 +123,9 @@ pub struct Store {
     wal_path: PathBuf,
     /// Open handles. The pool drains when the last one closes. Signed: see [`Store::count_handle`].
     handles: AtomicIsize,
+    /// Handles closed behind a stuck fork, still counted in `handles`, for the drain to release (see
+    /// [`Store::release_handle`]).
+    deferred_releases: AtomicUsize,
     /// Cached copies of the persisted limits, for the attribute getters only. Write paths read the
     /// current values inside their transaction.
     size_limit: AtomicI64,
@@ -245,6 +249,18 @@ struct Abandoned {
 /// How many value files [`Store::unlink`] deletes before it releases the interpreter to do it.
 const UNLINK_DETACH_AT: usize = 8;
 
+/// How long releasing a handle (`close()`, `del`) waits behind a pending fork before it defers. A
+/// flat budget of its own: `min(timeout, 1 s)` would defer on ordinary forks with small timeouts, and
+/// sharing the checkpoint's budget could leave the release nothing. An ordinary fork ends well inside
+/// it, so `close()` waits it out and D-018 holds when it returns.
+const RELEASE_BUDGET: Duration = Duration::from_secs(1);
+
+/// Enters the gate until `deadline`. The timeout's number is filled in by whoever knows the budget
+/// (`lockwait::retry`, `write_unpinned`'s mapping, `Store::open`, `Cache.pop`).
+fn enter_until(deadline: Instant) -> Result<SharedGuard<'static>> {
+    GATE.enter_shared_until(deadline).ok_or(Error::Timeout { seconds: 0.0 })
+}
+
 /// How often ending a held transaction re-checks for its connection while an operation on its
 /// owner thread has it.
 const LENT_POLL: Duration = Duration::from_micros(50);
@@ -326,27 +342,40 @@ impl Store {
         }
         options.requested.validate()?;
         open::ensure_directory(&options.directory)?;
+        // One deadline for the lookup, the open sequence and a joining handle's write.
+        let deadline = lockwait::deadline_after(Instant::now(), options.timeout);
+        Self::open_until(options, deadline).map_err(|error| match error {
+            Error::Timeout { .. } => Error::Timeout { seconds: options.timeout.as_secs_f64() },
+            other => other,
+        })
+    }
+
+    fn open_until(options: &OpenOptions, deadline: Instant) -> Result<Arc<Self>> {
         let db_path = open::db_path(&options.directory);
+        let left = || deadline.saturating_duration_since(Instant::now());
 
         // Fast path: another handle in this process already has the store.
-        if let Some(store) = Self::lookup(&db_path) {
-            store.join(options)?;
+        if let Some(store) = Self::lookup(&db_path, deadline)? {
+            store.join(options, left())?;
             return Ok(store);
         }
+
+        // Before the retry, so the gate level below isn't kept across it.
+        let canonical = std::fs::canonicalize(&options.directory).unwrap_or_else(|_| options.directory.clone());
 
         // Open outside the registry lock (the open sequence may wait on other processes), then
         // insert if absent; if another thread won the race, use its store and drop this connection.
         // The pin is opened in the same gate level, so a failure closes `conn` under the gate too.
-        let (conn, limits, pin, file_id) = lockwait::retry(options.timeout, |_| {
-            let gate = GATE.enter_shared();
+        // That level also covers the insert below: it holds `conn` and the pin, which must close
+        // under the gate, so it mustn't have to wait to get back in.
+        let (gate, conn, limits, pin, file_id) = lockwait::retry(left(), |attempt_deadline| {
+            let gate = enter_until(attempt_deadline)?;
             let mut conn = open::connect(&options.directory, options.timeout)?;
             let limits = open::prepare(&mut conn, options.requested, options.timeout)?;
             let (pin, file_id) = open_pin(&gate, &db_path)?;
-            Ok((conn, limits, pin, file_id))
+            Ok((gate, conn, limits, pin, file_id))
         })?;
-        let canonical = std::fs::canonicalize(&options.directory).unwrap_or_else(|_| options.directory.clone());
 
-        let gate = GATE.enter_shared();
         let mut stores = registry(&gate);
         // A live store for this file, or a retired one that a closed handle still holds: join it
         // (reviving a retired one), so a file never has two stores, and two write locks, at once.
@@ -359,7 +388,7 @@ impl Store {
             drop(unused);
             drop(conn);
             drop(gate);
-            existing.join(options)?;
+            existing.join(options, left())?;
             return Ok(existing);
         }
         let store = Arc::new(Self {
@@ -378,6 +407,7 @@ impl Store {
             auto_checkpoint: AtomicBool::new(options.auto_checkpoint),
             wal_path: db_path.with_extension("sqlite-wal"),
             handles: AtomicIsize::new(1),
+            deferred_releases: AtomicUsize::new(0),
             size_limit: AtomicI64::new(limits.size_limit),
             cull_limit: AtomicI64::new(limits.cull_limit),
             pinned: Mutex::new(PinnedSlot::Empty),
@@ -393,17 +423,19 @@ impl Store {
     }
 
     /// A live store for `db_path`, with one more handle registered on it. A retired one is left to
-    /// the slow path, which has the pinned file to revive it with.
-    fn lookup(db_path: &Path) -> Option<Arc<Self>> {
-        let metadata = std::fs::metadata(db_path).ok()?;
+    /// the slow path, which has the pinned file to revive it with. Times out with no handle claimed.
+    fn lookup(db_path: &Path, deadline: Instant) -> Result<Option<Arc<Self>>> {
+        let Ok(metadata) = std::fs::metadata(db_path) else { return Ok(None) };
         let id = (metadata.dev(), metadata.ino());
-        let gate = GATE.enter_shared();
+        let gate = enter_until(deadline)?;
         let stores = registry(&gate);
-        let store = stores.iter().filter_map(Weak::upgrade).find(|s| s.file_id == id && !s.is_retired())?;
+        let Some(store) = stores.iter().filter_map(Weak::upgrade).find(|s| s.file_id == id && !s.is_retired()) else {
+            return Ok(None);
+        };
         let (_, unused) = store.claim(&stores, None);
         drop(stores);
         drop(unused);
-        Some(store)
+        Ok(Some(store))
     }
 
     /// The store for `file_id` in `stores`: a live one, else a retired one for the same directory
@@ -479,8 +511,9 @@ impl Store {
 
     /// Applies a joining handle's settings (its handle is already registered by [`Store::claim`]):
     /// raises the connection cap if asked, and applies explicitly requested settings, writing only
-    /// if they differ from what's stored. On failure the handle is released again.
-    fn join(&self, options: &OpenOptions) -> Result<()> {
+    /// if they differ from what's stored, within `timeout`. On failure the handle is released again,
+    /// with no wait: the open has already used its whole budget.
+    fn join(self: &Arc<Self>, options: &OpenOptions, timeout: Duration) -> Result<()> {
         self.max_connections.fetch_max(options.max_connections, Ordering::AcqRel);
         self.pool.raise_max_idle(usize::try_from(options.max_connections).unwrap_or(usize::MAX));
         self.cache_pages.fetch_max(options.cache_pages, Ordering::AcqRel);
@@ -491,7 +524,7 @@ impl Store {
         if options.requested == Requested::default() {
             return Ok(());
         }
-        let result = self.write(options.timeout, |_writer, tx| {
+        let result = self.write(timeout, |_writer, tx| {
             let stored = open::read_limits(tx, options.timeout)?;
             let wanted = Limits {
                 size_limit: options.requested.size_limit.unwrap_or(stored.size_limit),
@@ -512,42 +545,88 @@ impl Store {
                 Ok(())
             }
             Err(error) => {
-                self.release_handle();
+                match GATE.try_enter_shared() {
+                    Some(gate) => self.release_under(&gate),
+                    None => self.defer_release(),
+                }
                 Err(error)
             }
         }
     }
 
-    /// Registers one more handle (a closed handle that's used again rejoins its store). A retired
-    /// store is revived if its database file is still the one it was opened on; otherwise it stays
-    /// retired and keeps working by path, and a new open of the directory gets a new store.
-    pub fn add_handle(&self) {
+    /// Registers one more handle if `claim` says this caller should (a closed handle that's used
+    /// again rejoins its store: `claim` flips its closed flag). It enters the gate first, so a
+    /// timeout leaves the handle closed and nothing counted. A retired store is revived if its
+    /// database file is still the one it was opened on; otherwise it stays retired and keeps working
+    /// by path, and a new open of the directory gets a new store.
+    pub fn add_handle_until(&self, deadline: Instant, claim: impl FnOnce() -> bool) -> Result<()> {
+        let gate = enter_until(deadline)?;
+        if !claim() {
+            return Ok(());
+        }
         // Opened before taking the registry, which never waits on I/O.
         let db_path = open::db_path(&self.directory);
-        let gate = GATE.enter_shared();
         let pin = open_pin(&gate, &db_path).ok().filter(|(_, id)| *id == self.file_id).map(|(pin, _)| pin);
         let stores = registry(&gate);
         let (_, unused) = self.claim(&stores, pin);
         drop(stores);
         drop(unused);
+        Ok(())
     }
 
     /// Unregisters a handle. When the last one closes, every pooled connection is closed (D-018),
     /// and the store is retired: it stops pinning its file, and the registry only hands it out
     /// again to a handle on the same directory and file. The store itself stays usable: a later
     /// operation reopens connections.
-    pub fn release_handle(&self) {
-        let gate = GATE.enter_shared();
+    ///
+    /// Never fails, and returns within about a second whatever a fork does. A fork that outlasts
+    /// it leaves the release for the drain at its end.
+    pub fn release_handle(self: &Arc<Self>) {
+        self.release_handle_within(RELEASE_BUDGET);
+    }
+
+    fn release_handle_within(self: &Arc<Self>, budget: Duration) {
+        match GATE.enter_shared_until(lockwait::deadline_after(Instant::now(), budget)) {
+            Some(gate) => self.release_under(&gate),
+            None => self.defer_release(),
+        }
+    }
+
+    /// The release itself, on a level the caller holds.
+    fn release_under(&self, gate: &SharedGuard<'_>) {
         // Decided under the registry, like `claim`: an open that finds this store either registers
         // its handle first (and this isn't the last), or finds it retired.
-        let stores = registry(&gate);
+        let stores = registry(gate);
         let (_, unpinned) = self.count_handle(&stores, -1, None);
         let retired = self.is_retired();
         drop(stores);
         drop(unpinned);
         if retired {
-            self.pool.clear(&gate);
+            self.pool.clear(gate);
         }
+    }
+
+    /// Leaves one handle's release for the drain at the end of the pending fork. Until then the
+    /// store just looks like it has one more handle; the count is signed and decided by where it
+    /// lands, so a reopen meanwhile balances. The forgotten `Arc` keeps the store in the registry even
+    /// if this was its last one, so the drain can close its pin and connections under the gate. A
+    /// later open of the directory revives it, as with any retired store.
+    fn defer_release(self: &Arc<Self>) {
+        std::mem::forget(Arc::clone(self));
+        // The drain is process-wide, so it can close another store's last connection on a large WAL:
+        // with the interpreter released, wherever this release was running.
+        GATE.defer(
+            || {
+                self.deferred_releases.fetch_add(1, Ordering::SeqCst);
+            },
+            || gate::run_blocking(&drain_deferred_releases),
+        );
+    }
+
+    /// Open handles, deferred releases included (for tests).
+    #[must_use]
+    pub fn handles(&self) -> isize {
+        self.handles.load(Ordering::Acquire)
     }
 
     /// Returns a leased connection: to the pool, or closed if the store is retired (a lease or a
@@ -591,28 +670,44 @@ impl Store {
 
     /// Runs a read. `read` may run several times (each attempt starts from scratch), so it must
     /// have no side effects outside the database.
-    pub fn read<T>(&self, timeout: Duration, mut read: impl FnMut(&Connection) -> Result<T>) -> Result<T> {
+    #[inline]
+    pub fn read<T>(&self, timeout: Duration, read: impl FnMut(&Connection) -> Result<T>) -> Result<T> {
+        self.read_with_deadline(timeout, read).map(|(value, _)| value)
+    }
+
+    /// [`Store::read`], also returning the deadline its slow path took, or `None` if it took no
+    /// deadline, so a caller with more reads to do can charge them to the same budget. No clock read
+    /// on the fast path.
+    #[inline]
+    pub(crate) fn read_with_deadline<T>(
+        &self,
+        timeout: Duration,
+        mut read: impl FnMut(&Connection) -> Result<T>,
+    ) -> Result<(T, Option<Instant>)> {
         if let Some(result) = self.on_pinned(|pinned| read(pinned.conn.conn())) {
-            return result;
+            return result.map(|value| (value, None));
         }
         // Fast path: one attempt with no busy wait, no deadline and no clock read. WAL readers almost
         // never meet a lock; if this one does (or the pool is full), fall through to the full loop.
         // That includes the lease: a new connection reads the schema when its settings are applied.
         if GATE.own_depth() == 0
             && let Some(_permit) = self.slots.try_acquire(self.max_connections.load(Ordering::Acquire))
+            && let Some(gate) = GATE.try_enter_shared()
         {
-            let gate = GATE.enter_shared();
             match self.lease(&gate, timeout).and_then(|lease| read(lease.conn())) {
                 Err(Error::Timeout { .. }) => {}
-                done => return done,
+                done => return done.map(|value| (value, None)),
             }
         }
-        lockwait::retry(timeout, |deadline| {
+        let mut taken = None;
+        let value = lockwait::retry(timeout, |deadline| {
+            taken = Some(deadline);
             let _permit = self.reserve_slot(deadline)?;
-            let gate = GATE.enter_shared();
+            let gate = enter_until(deadline)?;
             let lease = self.lease(&gate, timeout)?;
             read(lease.conn())
-        })
+        })?;
+        Ok((value, taken))
     }
 
     /// Runs `write` inside one `BEGIN IMMEDIATE` transaction and commits it. Like [`Store::read`],
@@ -725,7 +820,7 @@ impl Store {
         // other processes (and by a nested operation that couldn't take the write lock).
         let result = lockwait::retry(deadline.saturating_duration_since(Instant::now()), |attempt_deadline| {
             let _permit = self.reserve_slot(attempt_deadline)?;
-            let gate = GATE.enter_shared();
+            let gate = enter_until(attempt_deadline)?;
             let lease = self.lease(&gate, timeout)?;
             let tx = WriteTx::begin(lease.conn(), timeout)?;
             let value = write(&RowWriter::new(lease.conn(), timeout), lease.conn())?;
@@ -766,7 +861,8 @@ impl Store {
 
     /// Checkpoints the WAL and truncates it to zero (D-024): retries busy rounds, waiting with the
     /// interpreter released, until one succeeds or `timeout` runs out. Returns `Ok(true)` if the WAL
-    /// was reset, `Ok(false)` if readers or writers in other processes kept it busy the whole time,
+    /// was reset, `Ok(false)` if readers or writers in other processes, or a pending fork, kept it
+    /// busy the whole time,
     /// and a real error (a full disk, an I/O error) at once. `timeout` bounds the waiting, not a
     /// round already running: its PASSIVE copy of a large backlog can take longer, and its TRUNCATE
     /// always gets a fresh 2 ms window. For
@@ -789,9 +885,14 @@ impl Store {
             // Holding the in-process write lock keeps this process's writers queued (detached)
             // instead of meeting SQLite's busy handler while the checkpoint resets the WAL.
             let token = self.write_lock.lock_until(deadline);
-            let outcome = if token.is_some() { self.checkpoint_once() } else { Outcome::Busy };
+            let outcome = match token {
+                Some(_) => self.checkpoint_once(),
+                // Writers queued behind a fork hold the lock: that's the fork, not WAL contention.
+                None if GATE.stats().pending => Outcome::ForkPending,
+                None => Outcome::Busy,
+            };
             drop(token);
-            let retry = matches!(outcome, Outcome::Busy | Outcome::NoSlot);
+            let retry = matches!(outcome, Outcome::Busy | Outcome::NoSlot | Outcome::ForkPending);
             if !retry || Instant::now() >= deadline {
                 break outcome;
             }
@@ -801,7 +902,7 @@ impl Store {
         self.wal.record_outcome(&outcome);
         match outcome {
             Outcome::Done => Ok(true),
-            Outcome::Busy | Outcome::NoSlot => Ok(false),
+            Outcome::Busy | Outcome::NoSlot | Outcome::ForkPending => Ok(false),
             Outcome::Failed(error) => Err(error),
         }
     }
@@ -842,7 +943,8 @@ impl Store {
     /// long it took; the caller records the outcome. The window opens after PASSIVE, never sooner:
     /// a window that PASSIVE's copy had already used up would let TRUNCATE lose to a reader
     /// microseconds into its transaction, after all the copying was done. So a round can end up to
-    /// [`lockwait::ATTACHED_WINDOW`] past its caller's deadline.
+    /// [`lockwait::ATTACHED_WINDOW`] past its caller's deadline. Behind a pending fork it doesn't wait:
+    /// [`Store::maybe_checkpoint`] holds the write lock here, and has no deadline.
     fn checkpoint_once(&self) -> crate::wal::Outcome {
         use crate::wal::Outcome;
         let classify = |error: Error| match error {
@@ -852,7 +954,9 @@ impl Store {
         let Some(_permit) = self.slots.try_acquire(self.max_connections.load(Ordering::Acquire)) else {
             return Outcome::NoSlot;
         };
-        let gate = GATE.enter_shared();
+        let Some(gate) = GATE.try_enter_shared() else {
+            return Outcome::ForkPending;
+        };
         let mut lease = match self.lease(&gate, Duration::ZERO) {
             Ok(lease) => lease,
             Err(error) => return classify(error),
@@ -918,15 +1022,15 @@ impl Store {
     }
 
     /// Runs `write` in a write transaction only if that needs no waiting at all: the write lock is
-    /// free, and SQLite's lock is free too (no busy wait). Returns `None` if it didn't run, or ran
-    /// into a lock. For opportunistic cleanup that must never block a read (D-013).
+    /// free, no fork is pending, and SQLite's lock is free too (no busy wait). Returns `None` if it
+    /// didn't run, or ran into a lock. For opportunistic cleanup that must never block a read (D-013).
     pub fn write_nowait<T>(&self, write: impl FnOnce(&RowWriter<'_>) -> Result<T>) -> Option<Result<T>> {
         if crate::poison::check_writable(self.file_id).is_err() || GATE.own_depth() > 0 {
             return None;
         }
         let _token = self.write_lock.try_lock()?;
         let _permit = self.slots.try_acquire(self.max_connections.load(Ordering::Acquire))?;
-        let gate = GATE.enter_shared();
+        let gate = GATE.try_enter_shared()?;
         let lease = self.lease(&gate, Duration::ZERO).ok()?;
         // No AttachedWindow is open, so the busy handler gives up at once.
         let tx = Transaction::new_unchecked(lease.conn(), TransactionBehavior::Immediate).ok()?;
@@ -948,7 +1052,10 @@ impl Store {
         if !self.pinned_active.load(Ordering::Relaxed) {
             return None;
         }
-        let gate = GATE.enter_shared();
+        // Refused only behind a pending fork, and only to a thread with no level: an owner has a held
+        // level, and a thread inside an operation has depth > 0. So it isn't pinned, and the caller's
+        // normal path applies its deadline.
+        let gate = GATE.try_enter_shared()?;
         let key = self.key();
         if let Some(pinned) =
             LENT.with(|lent| lent.borrow().iter().rev().find(|(k, _)| *k == key).map(|(_, p)| Rc::clone(p)))
@@ -991,8 +1098,8 @@ impl Store {
     /// for D-020 poisoning: a child forked meanwhile can never write it.
     pub fn begin_hold(self: &Arc<Self>, timeout: Duration) -> Result<HeldTransaction> {
         crate::poison::check_writable(self.file_id)?;
-        {
-            let gate = GATE.enter_shared();
+        // Refused only to a thread with no level, which proves it isn't nested: see `on_pinned`.
+        if let Some(gate) = GATE.try_enter_shared() {
             let pinned = self.pinned.lock().unwrap_or_else(PoisonError::into_inner);
             if pinned.held_by(std::thread::current().id()) {
                 return Err(Error::NestedTransaction);
@@ -1009,20 +1116,24 @@ impl Store {
         } else {
             self.write_lock.try_lock_nested().ok_or(Error::WriteLockBusyInTransaction)?
         };
-        let (conn, hold, share) = lockwait::retry(deadline.saturating_duration_since(Instant::now()), |_| {
-            let gate = GATE.enter_shared();
-            let lease = self.lease(&gate, timeout)?;
-            lease.conn().execute_batch("BEGIN IMMEDIATE").map_err(|e| Error::from_sqlite(e, timeout))?;
-            let conn = lease.into_inner();
-            let hold = crate::poison::begin_hold(&gate, self.file_id);
-            Ok((conn, hold, gate.into_held()))
-        })
-        .map_err(|error| match error {
-            Error::Timeout { .. } => Error::Timeout { seconds: timeout.as_secs_f64() },
-            other => other,
-        })?;
+        let (conn, hold, share) =
+            lockwait::retry(deadline.saturating_duration_since(Instant::now()), |attempt_deadline| {
+                let gate = enter_until(attempt_deadline)?;
+                let lease = self.lease(&gate, timeout)?;
+                lease.conn().execute_batch("BEGIN IMMEDIATE").map_err(|e| Error::from_sqlite(e, timeout))?;
+                let conn = lease.into_inner();
+                let hold = crate::poison::begin_hold(&gate, self.file_id);
+                Ok((conn, hold, gate.into_held()))
+            })
+            .map_err(|error| match error {
+                Error::Timeout { .. } => Error::Timeout { seconds: timeout.as_secs_f64() },
+                other => other,
+            })?;
         {
-            let gate = GATE.enter_shared();
+            // Never refused: this thread holds the level from `into_held`.
+            let Some(gate) = GATE.try_enter_shared() else {
+                unreachable!("a thread holding a share was refused the gate");
+            };
             let mut pinned = self.pinned.lock().unwrap_or_else(PoisonError::into_inner);
             *pinned = PinnedSlot::Here(Pinned {
                 owner: std::thread::current().id(),
@@ -1229,8 +1340,8 @@ impl HeldTransaction {
         let mut inherited = false;
         let (gate, pinned) = loop {
             // On the transaction's own level: from another thread, a plain entry would wait for a
-            // pending fork, which waits for this transaction.
-            let gate = self.share.as_ref().map_or_else(|| GATE.enter_shared(), HeldShare::enter);
+            // pending fork, which waits for this transaction. `share` is `Some` while `write_word` is.
+            let gate = self.share.as_ref().unwrap_or_else(|| unreachable!("a live hold has a share")).enter();
             let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
             match &mut *slot {
                 PinnedSlot::Lent { generation, .. } if *generation != gate::generation() => {
@@ -1256,9 +1367,10 @@ impl HeldTransaction {
                 PinnedSlot::Lent { .. } => {
                     // A commit from a thread with no other levels: wait for the operation to hand the
                     // connection back, with the interpreter released, since that operation may be
-                    // running Python (a pickle hook) and need it. Neither waits for the other: the
-                    // operation is at gate depth > 0, where every wait is bounded, and a fork from it
-                    // doesn't wait for this thread, which holds no level while it sleeps.
+                    // running Python (a pickle hook) and need it. The operation is at gate depth > 0,
+                    // where every gate wait is bounded, and a fork from it doesn't wait for this
+                    // thread, which holds no level while it sleeps. This wait has no deadline, though:
+                    // a hook that depends on this thread never hands the connection back.
                     drop(slot);
                     drop(gate);
                     gate::run_blocking(&|| std::thread::sleep(LENT_POLL));
@@ -1293,7 +1405,7 @@ impl HeldTransaction {
     /// that will roll back.
     fn abandon(&mut self) {
         let Some(write_word) = self.write_word.take() else { return };
-        let gate = self.share.as_ref().map_or_else(|| GATE.enter_shared(), HeldShare::enter);
+        let gate = self.share.as_ref().unwrap_or_else(|| unreachable!("a live hold has a share")).enter();
         let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
         if let PinnedSlot::Lent { abandoned, .. } = &mut *slot {
             *abandoned = Some(Abandoned { write_word, hold: self.hold.take(), share: self.share.take() });
@@ -1404,10 +1516,38 @@ impl Drop for FilePin {
             std::mem::forget(conn);
             return;
         }
-        let _gate = GATE.enter_shared();
-        drop(conn);
+        // A pin holds no lock and runs no statement, so never closing it is the safe direction. Only
+        // a backstop: `release_under` takes the pin under a level, and a deferred release keeps the
+        // store alive until its drain does.
+        match GATE.try_enter_shared() {
+            Some(gate) => {
+                drop(conn);
+                drop(gate);
+            }
+            None => std::mem::forget(conn),
+        }
     }
 }
+
+/// Releases the handles deferred behind a fork that has now ended, if the gate can be entered (see
+/// [`Gate::drain_deferred`](crate::gate::Gate::drain_deferred)). Run from the after-fork hooks.
+/// Closing a last connection can run SQLite's own checkpoint, so call it with the interpreter
+/// released. In a child, the connections it inherited are forgotten rather than closed.
+pub fn drain_deferred_releases() {
+    GATE.drain_deferred(|gate| {
+        // Collected first, so an `Arc` dropped here can never close a pin under the registry mutex.
+        let mut deferred: Vec<Arc<Store>> = registry(gate).iter().filter_map(Weak::upgrade).collect();
+        deferred.retain(|store| store.deferred_releases.load(Ordering::SeqCst) > 0);
+        for store in &deferred {
+            for _ in 0..store.deferred_releases.swap(0, Ordering::SeqCst) {
+                store.release_under(gate);
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod fork_timeout;
 
 #[cfg(test)]
 mod tests {
@@ -1442,6 +1582,10 @@ mod tests {
                 })
             })
             .unwrap();
+    }
+
+    fn add_handle(store: &Store) {
+        store.add_handle_until(Instant::now() + T, || true).unwrap();
     }
 
     fn count(store: &Store) -> i64 {
@@ -1528,16 +1672,18 @@ mod tests {
 
     #[test]
     fn closing_the_last_handle_drains_the_pool() {
+        // Another test's fork would close the idle connection this looks for.
+        let _forks = crate::testutil::one_global_fork_at_a_time();
         let tmp = TempDir::new("store-close");
         let a = Store::open(&options(tmp.path())).unwrap();
         let b = Store::open(&options(tmp.path())).unwrap();
         put(&a, "k", b"v");
         a.release_handle();
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         assert!(b.pool.idle(&gate) > 0, "one handle is still open");
         drop(gate);
         b.release_handle();
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         assert_eq!(b.pool.idle(&gate), 0);
         drop(gate);
         // Still usable afterwards: a later operation reopens a connection.
@@ -1558,7 +1704,7 @@ mod tests {
         assert!(!first.is_retired());
         // And the closed handle rejoining finds the same store too, and keeps it live.
         second.release_handle();
-        first.add_handle();
+        add_handle(&first);
         assert!(!first.is_retired(), "a rejoining handle revives its store");
         let third = Store::open(&options(tmp.path())).unwrap();
         assert!(Arc::ptr_eq(&first, &third));
@@ -1572,7 +1718,7 @@ mod tests {
         let tmp = TempDir::new("store-pin-back");
         let store = Store::open(&options(tmp.path())).unwrap();
         let db_path = open::db_path(tmp.path());
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         // Live: the store keeps its own pin and hands the new one back.
         let (pin, _) = open_pin(&gate, &db_path).unwrap();
         let stores = registry(&gate);
@@ -1605,7 +1751,7 @@ mod tests {
         std::fs::create_dir(&d2).unwrap();
         std::fs::hard_link(open::db_path(&d1), open::db_path(&d2)).unwrap();
         let second = Store::open(&options(&d2)).unwrap();
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         let (pin, _) = open_pin(&gate, &open::db_path(&d1)).unwrap();
         let stores = registry(&gate);
         let (revived, unused) = first.claim(&stores, Some(pin));
@@ -1637,7 +1783,7 @@ mod tests {
         assert_eq!(keeper.handles.load(Ordering::Acquire), 0);
         assert!(keeper.is_retired());
         assert!(keeper.pin.lock().unwrap().is_none());
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         assert_eq!(keeper.pool.idle(&gate), 0);
     }
 
@@ -1676,7 +1822,7 @@ mod tests {
         std::fs::hard_link(open::db_path(&d1), open::db_path(&d2)).unwrap();
         let second = Store::open(&options(&d2)).unwrap();
         assert!(!Arc::ptr_eq(&first, &second));
-        first.add_handle();
+        add_handle(&first);
         assert!(first.is_retired(), "two live stores for one file");
         assert!(first.pin.lock().unwrap().is_none());
         assert!(!second.is_retired());
@@ -1691,11 +1837,11 @@ mod tests {
         let store = Store::open(&options(tmp.path())).unwrap();
         store.release_handle(); // Closed: retired, no handles.
         store.release_handle(); // The racing close's release lands first: -1.
-        store.add_handle(); // Then the reuse's add: back to 0.
+        add_handle(&store); // Then the reuse's add: back to 0.
         assert_eq!(store.handles.load(Ordering::Acquire), 0);
         assert!(store.is_retired(), "revived with no handles");
         assert!(store.pin.lock().unwrap().is_none(), "the file stays pinned with no handles");
-        store.add_handle();
+        add_handle(&store);
         assert!(!store.is_retired());
         store.release_handle();
     }
@@ -1704,7 +1850,7 @@ mod tests {
     fn a_lease_returned_after_the_last_close_is_closed_not_pooled() {
         let tmp = TempDir::new("store-late-lease");
         let store = Store::open(&options(tmp.path())).unwrap();
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         let lease = store.lease(&gate, T).unwrap();
         store.release_handle();
         drop(lease);
@@ -1761,6 +1907,7 @@ mod tests {
 
     #[test]
     fn a_held_transaction_finishes_on_another_thread_while_a_fork_waits_for_it() {
+        let _forks = crate::testutil::one_global_fork_at_a_time();
         // The fork waits for the transaction's level; the thread ending it must not wait for the
         // fork. It enters on the transaction's own level instead (review 07, architect).
         let tmp = TempDir::new("store-hold-fork-finish");
@@ -1791,6 +1938,7 @@ mod tests {
 
     #[test]
     fn a_held_transaction_finished_elsewhere_waits_out_its_owners_fork() {
+        let _forks = crate::testutil::one_global_fork_at_a_time();
         // That fork counts the transaction's level as the owner's own, so it doesn't wait for it,
         // and the finish must not run its COMMIT while the fork is exclusive.
         let tmp = TempDir::new("store-hold-owner-forks");
@@ -1822,8 +1970,7 @@ mod tests {
         let (done, ended) = std::sync::mpsc::channel();
         let end_thread = std::thread::spawn(move || {
             // Before the operation starts, and on the transaction's own level: tests run in one
-            // process, and a plain entry here would wait for another test's pending fork, which
-            // waits for this transaction, which only this thread can end.
+            // process, and behind another test's pending fork a plain entry has no level to give.
             let _level = level.then(|| held.share.as_ref().unwrap().enter());
             go.recv().unwrap();
             let started = Instant::now();
@@ -1973,14 +2120,14 @@ mod tests {
         let start = Instant::now();
         std::thread::scope(|s| {
             s.spawn(|| {
-                let _gate = GATE.enter_shared(); // Depth > 0, as inside another operation.
+                let _gate = GATE.enter_shared_blocking(); // Depth > 0, as inside another operation.
                 assert!(matches!(store.begin_hold(Duration::from_secs(5)), Err(Error::WriteLockBusyInTransaction)));
             });
         });
         assert!(start.elapsed() < Duration::from_secs(1), "begin_hold waited for the write lock at depth > 0");
         drop(token);
         let held = {
-            let _gate = GATE.enter_shared();
+            let _gate = GATE.enter_shared_blocking();
             store.begin_hold(T).expect("a free write lock is taken at depth > 0")
         };
         held.finish(true).unwrap();
@@ -2031,7 +2178,7 @@ mod tests {
         assert!(matches!(write("outside", quick), Err(Error::Timeout { .. })));
         // At depth > 0 (a nested operation) it must not wait for the lock: that holder may be
         // blocked entering the gate behind a pending fork that is waiting for this very level.
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         let start = Instant::now();
         write("nested", T).unwrap();
         assert!(start.elapsed() < Duration::from_secs(1), "a nested write waited for the write lock");
@@ -2047,7 +2194,7 @@ mod tests {
         let tmp = TempDir::new("store-depth-starving");
         let store = Store::open(&options(tmp.path())).unwrap();
         crate::genlock::tests_support::mark_starving(&store.write_lock);
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         let start = Instant::now();
         put(&store, "nested", b"v");
         assert!(start.elapsed() < Duration::from_secs(1), "a nested write waited behind a starving writer");
@@ -2066,7 +2213,7 @@ mod tests {
         .unwrap();
         let writes = crate::wal::CHECK_EVERY_COMMITS * 2;
         {
-            let _gate = GATE.enter_shared(); // A nested write: depth > 0.
+            let _gate = GATE.enter_shared_blocking(); // A nested write: depth > 0.
             for i in 0..writes {
                 put(&store, &format!("n{i}"), b"v");
             }
@@ -2080,7 +2227,15 @@ mod tests {
                 store_time: f64::from(u32::try_from(i).unwrap()),
                 expire_time: None,
             };
-            store.write_nowait(|w| w.upsert(&row)).unwrap().unwrap();
+            // It skips while another test's fork is pending.
+            let wrote = (0..5_000).any(|_| {
+                let wrote = store.write_nowait(|w| w.upsert(&row)).is_some();
+                if !wrote {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                wrote
+            });
+            assert!(wrote, "write_nowait kept skipping");
         }
         assert_eq!(store.wal_stats().checks, 0, "a nested or write_nowait write checked the WAL");
         put(&store, "top", b"v");
@@ -2144,7 +2299,7 @@ mod tests {
         let tmp = TempDir::new("store-fresh-read");
         let store = Store::open(&options(tmp.path())).unwrap();
         put(&store, "k", b"v");
-        store.pool.clear(&GATE.enter_shared());
+        store.pool.clear(&GATE.enter_shared_blocking());
         let peer = Connection::open(open::db_path(tmp.path())).unwrap();
         peer.execute_batch("PRAGMA locking_mode = EXCLUSIVE; SELECT count(*) FROM Cache;").unwrap();
         let release = std::thread::spawn(move || {

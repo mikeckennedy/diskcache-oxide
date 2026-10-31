@@ -32,6 +32,13 @@
 //! - Both rely on a second rule: **no thread waits on a gate holder while attached** to the
 //!   interpreter. Every wait for the write lock, a slot or a pending fork goes through the blocker.
 //!   Otherwise a holder that released the interpreter could deadlock re-taking it on a GIL build.
+//! - A wait behind a pending fork belongs to an operation and ends at its deadline
+//!   ([`Gate::enter_shared_until`]). Only a thread with no level ever waits here, and a waiter holds
+//!   no level and no count, so giving up leaves nothing to undo. Code with no deadline doesn't wait:
+//!   it tries once and defers or skips. The exceptions are [`Gate::begin_fork`], since Python can't
+//!   refuse a fork and proceeding without quiescence would hand the child half a transaction, and
+//!   [`HeldShare::enter`], while the share's owner is forking or parked or the share was inherited;
+//!   `transact()` must bound those before it ships.
 //! - [`Gate::begin_fork`] waits until the only holders left are the calling thread's own levels and
 //!   those of threads parked in `begin_fork` behind it, so forking inside your own transaction
 //!   doesn't deadlock, and neither do two threads that each hold their own and fork at once: a
@@ -57,10 +64,10 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::marker::PhantomData;
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 use crate::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
-use crate::sync::{Arc, LocalKey, thread};
-use std::time::Duration;
+use crate::sync::{Arc, LocalKey, now, thread};
 
 /// How often [`Gate::begin_fork`] re-checks the claim and the holder count. Holders never notify on
 /// exit, which keeps the exit path to one atomic decrement.
@@ -177,6 +184,10 @@ pub struct Gate {
     pending: AtomicBool,
     /// Bumped in the forked child, see [`Owner::epoch`].
     epoch: AtomicU64,
+    /// Work with no deadline was left for the end of a fork (see [`Gate::mark_deferred`]).
+    deferred: AtomicBool,
+    /// How many [`Gate::enter_shared_until`] calls gave up behind a pending fork. Cold path only.
+    fork_timeouts: AtomicU64,
     local: &'static LocalKey<ThreadState>,
     /// Run when the forking thread enters at depth 0 before its fork has ended (see
     /// [`enter_child_early`]).
@@ -201,6 +212,8 @@ impl Gate {
             counts: AtomicU64::new(0),
             pending: AtomicBool::new(false),
             epoch: AtomicU64::new(0),
+            deferred: AtomicBool::new(false),
+            fork_timeouts: AtomicU64::new(0),
             local,
             early_child_entry: early,
         }
@@ -243,24 +256,116 @@ impl Gate {
         }
     }
 
-    /// Enters in shared mode, running any wait through the installed [`Blocker`].
-    pub fn enter_shared(&self) -> SharedGuard<'_> {
+    /// Enters in shared mode, waiting through the blocker while a fork is pending, until `deadline`.
+    /// `None` means the deadline passed behind a pending fork. A waiter holds no level and no count,
+    /// so there's nothing to undo.
+    ///
+    /// It takes an `Instant` rather than a timeout so the caller reads the clock: the fast path has
+    /// no deadline, and uses [`Gate::try_enter_shared`] instead.
+    #[inline]
+    pub fn enter_shared_until(&self, deadline: Instant) -> Option<SharedGuard<'_>> {
+        match self.try_enter_shared() {
+            Some(guard) => Some(guard),
+            None => self.enter_shared_slow(deadline),
+        }
+    }
+
+    /// Behind a pending fork. It always tries once more after a wait, so a fork that ends as the
+    /// deadline passes can still let this entry in, slightly late.
+    #[cold]
+    fn enter_shared_slow(&self, deadline: Instant) -> Option<SharedGuard<'_>> {
+        loop {
+            if now() >= deadline {
+                self.fork_timeouts.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+            run_blocking(&|| self.wait_while_pending_until(deadline));
+            if let Some(guard) = self.try_enter_shared() {
+                return Some(guard);
+            }
+        }
+    }
+
+    /// Enters in shared mode with no deadline, running any wait through the installed [`Blocker`].
+    /// Only for [`HeldShare::enter`], whose callers have nowhere to park a transaction that couldn't
+    /// end: an operation uses [`Gate::enter_shared_until`], and code with no deadline
+    /// [`Gate::try_enter_shared`].
+    fn enter_unbounded(&self) -> SharedGuard<'_> {
         loop {
             if let Some(guard) = self.try_enter_shared() {
                 return guard;
             }
-            match BLOCKER.get() {
-                Some(blocker) => blocker(&|| self.wait_while_pending()),
-                None => self.wait_while_pending(),
-            }
+            run_blocking(&|| self.wait_while_pending());
         }
     }
 
     /// Sleeps until no fork is pending. Call it with the interpreter released, so the forking
     /// thread (and a free-threaded stop-the-world) isn't held up by the waiter.
-    pub fn wait_while_pending(&self) {
+    fn wait_while_pending(&self) {
         while self.pending.load(Ordering::SeqCst) {
             thread::sleep(WAITER_POLL);
+        }
+    }
+
+    /// [`Gate::wait_while_pending`], until `deadline`.
+    fn wait_while_pending_until(&self, deadline: Instant) {
+        while self.pending.load(Ordering::SeqCst) {
+            let left = deadline.saturating_duration_since(now());
+            if left.is_zero() {
+                return;
+            }
+            thread::sleep(WAITER_POLL.min(left));
+        }
+    }
+
+    /// Leaves work for the end of the pending fork, for a caller with no deadline. `record` records
+    /// the work (a count [`Gate::drain_deferred`]'s closure will find), then the flag is set, then
+    /// `try_drain` tries [`Gate::drain_deferred`] on this thread. The order is the point. Recorded
+    /// after the flag, a drain could clear the flag and miss the work. And the last step closes the
+    /// race with a fork that ended just as the work was recorded, whose end didn't see it.
+    pub fn defer(&self, record: impl FnOnce(), try_drain: impl FnOnce()) {
+        record();
+        self.mark_deferred();
+        try_drain();
+    }
+
+    fn mark_deferred(&self) {
+        self.deferred.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether any work is waiting for [`Gate::drain_deferred`]. One load, for the after-fork hooks.
+    #[must_use]
+    pub fn has_deferred(&self) -> bool {
+        self.deferred.load(Ordering::SeqCst)
+    }
+
+    /// Runs `drain` under a shared level if work was deferred and the gate can be entered now.
+    ///
+    /// The order matters. The flag is cleared only once the level is held, and `drain` collects only
+    /// after that. Clearing first strands a release: one fork's drain clears the flag, its try fails
+    /// because a second fork has claimed, and the second fork's end sees no flag. With this order,
+    /// work recorded after the collection set the flag after the clear, so the flag stays set and
+    /// its deferrer tries for itself. A deferral can only exist because a fork was pending, so that
+    /// fork's end, or the next one's if another claimed first, is coming.
+    pub fn drain_deferred(&self, drain: impl FnOnce(&SharedGuard<'_>)) {
+        if !self.deferred.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(gate) = self.try_enter_shared() else { return };
+        self.deferred.store(false, Ordering::SeqCst);
+        drain(&gate);
+    }
+
+    /// A consistent view of the gate, for tests and diagnosis.
+    #[must_use]
+    pub fn stats(&self) -> GateStats {
+        let (holders, parked) = split(self.counts.load(Ordering::SeqCst));
+        GateStats {
+            pending: self.pending.load(Ordering::SeqCst),
+            holders,
+            parked,
+            fork_timeouts: self.fork_timeouts.load(Ordering::Relaxed),
+            deferred: self.deferred.load(Ordering::SeqCst),
         }
     }
 
@@ -274,6 +379,12 @@ impl Gate {
     /// new shared entries and waits, with no timeout, until the only levels left are the calling
     /// thread's own and those of threads parked here waiting for the claim. Call it with the
     /// interpreter released.
+    ///
+    /// It has no timeout because Python can't refuse a fork: returning early would let the fork
+    /// proceed without quiescence, and hand the child half a transaction. So a level that's never
+    /// released keeps this fork stuck. Meanwhile every thread with no level gets a timeout from
+    /// [`Gate::enter_shared_until`], on every store in the process, and a thread with a level carries
+    /// on. Another fork queues behind this one.
     ///
     /// While it waits for the claim, the calling thread's levels count as parked. So two threads
     /// that each hold a transaction and fork at once take turns: the first forks, and the second
@@ -367,6 +478,8 @@ impl Gate {
         self.counts.store(0, Ordering::SeqCst);
         self.pending.store(false, Ordering::SeqCst);
         self.epoch.store(0, Ordering::SeqCst);
+        self.deferred.store(false, Ordering::SeqCst);
+        self.fork_timeouts.store(0, Ordering::Relaxed);
     }
 
     #[cfg(test)]
@@ -378,6 +491,21 @@ impl Gate {
     fn parked(&self) -> isize {
         split(self.counts.load(Ordering::SeqCst)).1
     }
+}
+
+/// What [`Gate::stats`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GateStats {
+    /// A fork is claimed.
+    pub pending: bool,
+    /// Shared levels held, across all threads.
+    pub holders: isize,
+    /// Levels of threads parked behind another thread's claim.
+    pub parked: isize,
+    /// How many bounded entries gave up behind a pending fork.
+    pub fork_timeouts: u64,
+    /// Work is waiting for the next drain.
+    pub deferred: bool,
 }
 
 fn signed(levels: usize) -> isize {
@@ -466,32 +594,29 @@ impl<'g> HeldShare<'g> {
     ///
     /// Not every fork waits for the share: not one claimed by the share's owner (its levels are its
     /// own), nor one claimed by another thread while the owner is parked behind it (parked levels
-    /// don't count). While the owner is forking or parked, this waits, through the blocker, which
-    /// can't deadlock: that fork doesn't wait for the share. It keeps the share's authority
-    /// meanwhile, since the next fork may be one that does. A share inherited across `fork()` counts
-    /// for nothing in the child, so there it enters as usual, after the child's early reset, as
-    /// every gate entry does.
+    /// don't count). While the owner is forking or parked, this waits, through the blocker, with no
+    /// deadline. That fork doesn't wait for the share, but it can still wait for a third thread's
+    /// level, and if that third thread depends on this one, the wait is a cycle. It keeps the share's
+    /// authority meanwhile, since the next fork may be one that does. A share inherited across
+    /// `fork()` counts for nothing in the child, so there it enters with no deadline, after the
+    /// child's early reset, which a stuck fork of that child's own can also hold up.
     pub fn enter(&self) -> SharedGuard<'g> {
         let gate = self.gate;
         loop {
             match self.try_enter() {
                 ShareEntry::Entered(guard) => return guard,
                 ShareEntry::OwnersFork => {}
-                ShareEntry::Inherited => return gate.enter_shared(),
+                ShareEntry::Inherited => return gate.enter_unbounded(),
             }
             // Reentrant (this thread holds levels of its own), or no fork is pending any more.
             if let Some(guard) = gate.try_enter_shared() {
                 return guard;
             }
-            let wait = || {
+            run_blocking(&|| {
                 while gate.pending.load(Ordering::SeqCst) && self.owner.levels.load(Ordering::SeqCst) & FLAGS != 0 {
                     thread::sleep(WAITER_POLL);
                 }
-            };
-            match BLOCKER.get() {
-                Some(blocker) => blocker(&wait),
-                None => wait(),
-            }
+            });
         }
     }
 
@@ -1020,9 +1145,222 @@ mod tests {
         gate.begin_fork().end_parent();
     }
 
+    /// Blocks until the holder's fork has claimed.
+    fn wait_for_claim(gate: &'static Gate) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !gate.pending.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "the fork never became pending");
+            thread::yield_now();
+        }
+    }
+
+    /// The wedge, deterministically: a holder waits on a channel for an entrant, and a fork claims
+    /// and waits for the holder. With an unbounded entry this hangs, and the watchdog reports it.
+    #[test]
+    fn a_bounded_entry_breaks_the_cycle_between_a_holder_a_fork_and_an_entrant() {
+        let gate = test_gate!(G);
+        let (held_tx, held_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel::<(bool, Duration)>();
+        let (done_tx, done_rx) = mpsc::channel();
+        let holder = thread::spawn(move || {
+            let guard = gate.try_enter_shared().unwrap();
+            held_tx.send(()).unwrap();
+            // Depends on the entrant, as a pickle hook waiting on another thread's cache call does.
+            let report = result_rx.recv().unwrap();
+            drop(guard);
+            done_tx.send(report).unwrap();
+        });
+        held_rx.recv().unwrap();
+        let forked = Arc::new(AtomicBool::new(false));
+        let fork_thread = {
+            let forked = Arc::clone(&forked);
+            thread::spawn(move || {
+                let fork = gate.begin_fork();
+                forked.store(true, Ordering::SeqCst);
+                fork.end_parent();
+            })
+        };
+        wait_for_claim(gate);
+        let bound = Duration::from_millis(200);
+        thread::spawn(move || {
+            let start = Instant::now();
+            let entered = gate.enter_shared_until(start + bound).is_some();
+            result_tx.send((entered, start.elapsed())).unwrap();
+        });
+        let (entered, took) = done_rx.recv_timeout(Duration::from_secs(5)).expect("the cycle never cleared");
+        assert!(!entered, "the entry got in beside a pending fork");
+        assert!(took >= bound, "gave up after {took:?}, before its deadline");
+        assert_eq!(gate.stats().fork_timeouts, 1);
+        holder.join().unwrap();
+        fork_thread.join().unwrap();
+        assert!(forked.load(Ordering::SeqCst), "the fork completes once the holder lets go");
+        assert!(gate.enter_shared_until(Instant::now()).is_some(), "a fresh entry succeeds");
+        assert_eq!((gate.holders(), gate.parked()), (0, 0));
+    }
+
+    #[test]
+    fn a_passed_deadline_still_tries_once_and_waits_for_nothing() {
+        let gate = test_gate!(G);
+        let past = Instant::now();
+        assert!(gate.enter_shared_until(past).is_some(), "no fork: the first try gets in");
+        assert_eq!(gate.stats().fork_timeouts, 0);
+        let fork = gate.begin_fork();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let start = Instant::now();
+            let entered = gate.enter_shared_until(past).is_some();
+            tx.send((entered, start.elapsed())).unwrap();
+        });
+        let (entered, took) = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!entered);
+        assert!(took < Duration::from_millis(500), "a passed deadline waited {took:?}");
+        assert_eq!(gate.stats().fork_timeouts, 1);
+        fork.end_parent();
+    }
+
+    #[test]
+    fn a_bounded_entry_gets_in_when_the_fork_ends_before_its_deadline() {
+        let gate = test_gate!(G);
+        let fork = gate.begin_fork();
+        let entrant = thread::spawn(move || {
+            let entered = gate.enter_shared_until(Instant::now() + Duration::from_secs(5)).is_some();
+            assert!(entered, "timed out though the fork ended");
+        });
+        thread::sleep(Duration::from_millis(50));
+        fork.end_parent();
+        entrant.join().unwrap();
+        assert_eq!(gate.stats().fork_timeouts, 0);
+        assert_eq!(gate.holders(), 0);
+    }
+
+    /// What `Store::on_pinned` and `begin_hold` rely on: `None` from a try proves the thread has no
+    /// level, so no transaction, since an owner has a held level and a thread inside an operation
+    /// has depth > 0.
+    #[test]
+    fn a_thread_with_a_level_or_a_share_always_gets_past_a_pending_fork() {
+        let gate = test_gate!(G);
+        let (held_tx, held_rx) = mpsc::channel();
+        let (check_tx, check_rx) = mpsc::channel::<()>();
+        let holder = thread::spawn(move || {
+            let share = gate.try_enter_shared().unwrap().into_held();
+            let plain = gate.try_enter_shared().unwrap();
+            held_tx.send(()).unwrap();
+            check_rx.recv().unwrap();
+            assert!(gate.try_enter_shared().is_some(), "a level holder was refused");
+            assert!(gate.enter_shared_until(Instant::now()).is_some(), "a level holder timed out");
+            drop(plain);
+            assert!(gate.try_enter_shared().is_some(), "a share's owner was refused");
+            assert!(gate.enter_shared_until(Instant::now()).is_some(), "a share's owner timed out");
+            drop(share);
+        });
+        held_rx.recv().unwrap();
+        let forker = thread::spawn(move || gate.begin_fork().end_parent());
+        wait_for_claim(gate);
+        check_tx.send(()).unwrap();
+        holder.join().unwrap();
+        forker.join().unwrap();
+        assert_eq!(gate.stats().fork_timeouts, 0);
+        assert_eq!(gate.holders(), 0);
+    }
+
+    /// The forking thread itself, between the hooks.
+    #[test]
+    fn the_forking_thread_never_times_out_between_its_hooks() {
+        let gate = test_gate!(G);
+        let fork = gate.begin_fork();
+        assert!(gate.enter_shared_until(Instant::now()).is_some());
+        fork.end_parent();
+        assert_eq!(gate.stats().fork_timeouts, 0);
+    }
+
+    /// `HeldShare::enter` while the share's owner is forking keeps waiting, with no deadline, until
+    /// that fork ends: bounding it needs somewhere to park an ended transaction (Phase 6b).
+    #[test]
+    fn a_share_entered_during_its_owners_fork_waits_with_no_deadline() {
+        let gate = test_gate!(G);
+        let share = gate.try_enter_shared().unwrap().into_held();
+        let fork = gate.begin_fork();
+        let (tx, rx) = mpsc::channel();
+        let ender = thread::spawn(move || {
+            let guard = share.enter();
+            tx.send(()).unwrap();
+            drop(guard);
+            drop(share);
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "it worked beside its owner's fork");
+        fork.end_parent();
+        rx.recv_timeout(Duration::from_secs(5)).expect("it never entered after the fork");
+        ender.join().unwrap();
+    }
+
+    /// The `Inherited` arm: a child thread finalizing an inherited hold, behind that child's own
+    /// stuck fork.
+    #[test]
+    fn an_inherited_share_behind_a_stuck_fork_waits_until_the_fork_ends() {
+        let gate = test_gate!(G);
+        let (share_tx, share_rx) = mpsc::channel();
+        // Its owner is parked, so the fork below doesn't wait for it, and the "child" forgets it.
+        thread::spawn(move || {
+            let held = gate.try_enter_shared().unwrap().into_held();
+            gate.park();
+            share_tx.send(held).unwrap();
+        })
+        .join()
+        .unwrap();
+        let inherited = share_rx.recv().unwrap();
+        // The "child": its epoch has moved on, so the share counts for nothing here.
+        gate.begin_fork().end_child();
+        let fork = gate.begin_fork();
+        let (tx, rx) = mpsc::channel();
+        let ender = thread::spawn(move || {
+            let guard = inherited.enter();
+            tx.send(()).unwrap();
+            drop(guard);
+            drop(inherited);
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "it entered beside a fork");
+        fork.end_parent();
+        rx.recv_timeout(Duration::from_secs(5)).expect("the watchdog: it never entered after the fork");
+        ender.join().unwrap();
+        assert_eq!(gate.holders(), 0);
+    }
+
+    #[test]
+    fn a_drain_runs_only_with_a_level_and_clears_the_flag_only_then() {
+        let gate = test_gate!(G);
+        let ran = std::cell::Cell::new(0);
+        gate.drain_deferred(|_| ran.set(ran.get() + 1));
+        assert_eq!(ran.get(), 0, "nothing was deferred");
+        gate.mark_deferred();
+        assert!(gate.has_deferred());
+        let fork = gate.begin_fork();
+        let (tx, rx) = mpsc::channel();
+        thread::scope(|s| {
+            s.spawn(move || {
+                let mut ran = false;
+                gate.drain_deferred(|_| ran = true);
+                tx.send((ran, gate.has_deferred())).unwrap();
+            });
+        });
+        assert_eq!(rx.recv().unwrap(), (false, true), "a failed try must leave the flag set");
+        fork.end_parent();
+        gate.drain_deferred(|guard| {
+            let _ = guard;
+            assert_eq!(gate.own_depth(), 1, "a drain runs under a level");
+            assert!(!gate.has_deferred(), "the flag is cleared before the collection");
+            ran.set(ran.get() + 1);
+        });
+        assert_eq!(ran.get(), 1);
+        assert!(!gate.has_deferred());
+        assert_eq!(gate.holders(), 0);
+    }
+
     #[test]
     fn a_leftover_fork_guard_is_ended_by_the_next_before_hook() {
-        // Uses the global gate and HELD_FORK, on a fresh thread so no other test's levels count.
+        let _forks = crate::testutil::one_global_fork_at_a_time();
+        // Uses the global gate and HELD_FORK. A fresh thread starts with no guard and no levels of
+        // its own. The gate is process-wide, though, so both `begin_fork`s still wait for other
+        // tests' levels.
         thread::spawn(|| {
             begin_fork();
             // The after-hook "never ran"; the next before-hook must not wait for its claim.

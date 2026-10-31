@@ -20,6 +20,7 @@ __all__ = [
     '_encode',
     '_decode',
     '_sqlite_memory',
+    '_gate_stats',
     'FormatMismatchError',
     'Cache',
 ]
@@ -31,7 +32,7 @@ _DEBUG_BUILD: bool
 """True for an unoptimized (debug) build of the extension."""
 
 class Timeout(TimeoutError):
-    """The database stayed locked for longer than the cache's timeout."""
+    """A lock stayed held, or a fork stayed pending, for longer than the cache's timeout."""
 
 class UnsafeValueError(TypeError):
     """A pickle=False cache read a value that was stored with pickle."""
@@ -54,6 +55,8 @@ def sqlite_compile_options() -> list[str]:
 def _encode(value: object, serializer: str = 'msgpack', pickle: bool = False) -> tuple[int, bytes | int | float]:
     """Test hook: `_core._encode(value, serializer='msgpack', pickle=False) -> (mode, payload)`."""
 
+def _gate_stats() -> dict[str, Any]:
+    """Test hook: the fork gate's state and counters (pending, holders, parked, fork_timeouts, deferred)."""
 def _sqlite_memory(reset: bool = False) -> tuple[int, int]:
     """Test hook: the bundled SQLite's (bytes in use, high-water mark), optionally resetting the mark."""
 
@@ -70,8 +73,9 @@ class Cache:
 
     Args:
         directory: The cache directory. It's created (owner-only, `0700`) if it doesn't exist.
-        timeout: Seconds a write waits for another process's lock before raising `Timeout`
-            (default 60).
+        timeout: Seconds a call waits for a lock or a pending fork before raising `Timeout`
+            (default 60). It has to exceed work in flight plus a fork: see the Concurrency and
+            Forks guide.
         size_limit: The disk budget in bytes, database plus value files (default 1 GiB, minimum
             1 MiB). Stored in the cache, so it applies to every process.
         cull_limit: How many least-recently-stored entries a `set()` evicts when the cache is over
@@ -105,7 +109,8 @@ class Cache:
         ValueError: A setting is out of range, such as a `size_limit` under 1 MiB.
         TypeError: An argument has the wrong type, including a `bool` for `timeout`.
         FormatMismatchError: The directory holds a database in a format this version can't read.
-        Timeout: Another process held the database locked for longer than `timeout`.
+        Timeout: Another process held the database locked, or a fork stayed pending, for longer
+            than `timeout`.
     """
 
     def __new__(
@@ -129,7 +134,7 @@ class Cache:
         """The cache directory, as given to the constructor."""
     @property
     def timeout(self) -> float:
-        """Seconds a write waits for another process's lock before raising `Timeout`."""
+        """Seconds a call waits for a lock or a pending fork before raising `Timeout`."""
     @property
     def size_limit(self) -> int:
         """The disk budget in bytes. A `set()` that finds the cache over it evicts entries."""
@@ -337,12 +342,12 @@ class Cache:
         or after a large `clear()`. `close()` also does it for a log left large.
 
         Args:
-            timeout: Seconds to keep retrying while other processes are busy (default: the cache's
-                `timeout`).
+            timeout: Seconds to keep retrying while other processes or a pending fork are busy
+                (default: the cache's `timeout`).
 
         Returns:
-            True if the log was reset, False if readers or writers in other processes kept it
-            busy. It never raises for a busy database.
+            True if the log was reset, False if readers or writers in other processes, or a
+            pending fork, kept it busy. It never raises for a busy database.
         """
     def close(self, *, checkpoint: bool = True) -> None:
         """Close this handle and return its connections.
@@ -350,13 +355,18 @@ class Cache:
         When the last handle on a directory in the process closes, every connection to it closes,
         whichever threads used them. Using the cache again afterwards reopens it.
 
+        It never raises. Behind a fork that stays stuck it returns after about 2 seconds at most,
+        whatever `timeout` is, and those connections close when the fork ends.
+
         Args:
             checkpoint: If this is the process's last handle and the write-ahead log is over half
                 of `wal_size_limit`, checkpoint it first, waiting at most 1 second. A small log
                 costs nothing extra.
         """
     def _wal_stats(self) -> dict[str, int]:
-        """Test hook: forced WAL checkpoint counters (checks, attempts, successes, busy, errors, no_slot, max_pause_us, max_passive_us, max_truncate_us, slow, last_wal_bytes)."""
+        """Test hook: forced WAL checkpoint counters (checks, attempts, successes, busy, errors, no_slot, fork_pending, max_pause_us, max_passive_us, max_truncate_us, slow, last_wal_bytes)."""
+    def _handle_count(self) -> int:
+        """Test hook: how many open handles this cache's store counts, deferred releases included."""
     def _hold_write_transaction(self) -> AbstractContextManager[None]:
         """Test hook until transact() lands: holds a write transaction until the block exits."""
     def __getitem__(self, key: str, /) -> Any:

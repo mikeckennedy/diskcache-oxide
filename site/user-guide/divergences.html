@@ -469,6 +469,24 @@ ul.task-list li input[type="checkbox"] {
 <td>Can grow past 1 GiB and stay there</td>
 <td>Trimmed; <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> on demand</td>
 </tr>
+<tr class="odd">
+<td>D-025</td>
+<td>A key iterator used by two threads at once</td>
+<td><code>ValueError</code> from the generator</td>
+<td><code>ValueError</code>, from a native iterator with no <code>send()</code> or <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a></td>
+</tr>
+<tr class="even">
+<td>D-026</td>
+<td><a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> of a value it can’t read</td>
+<td>Row is deleted, then the decode fails</td>
+<td>Decodes first, so the row stays unless no build could read it</td>
+</tr>
+<tr class="odd">
+<td>D-027</td>
+<td>A call behind a pending fork</td>
+<td>Never waits: there’s no fork barrier</td>
+<td>Waits within its <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, then raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
+</tr>
 </tbody>
 </table>
 </section>

@@ -24,7 +24,7 @@ Methods for the Cache class
 The cache directory, as given to the constructor.
 
 [Cache.timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout)  
-Seconds a write waits for another process's lock before raising `Timeout`.
+Seconds a call waits for a lock or a pending fork before raising `Timeout`.
 
 [Cache.size_limit](Cache.size_limit.md#diskcache_oxide.Cache.size_limit)  
 The disk budget in bytes. A `set()` that finds the cache over it evicts entries.
@@ -382,7 +382,7 @@ Exceptions raised by cache operations.
 
 
 [Timeout](Timeout.md#diskcache_oxide.Timeout)  
-The database stayed locked for longer than the cache's timeout.
+A lock stayed held, or a fork stayed pending, for longer than the cache's timeout.
 
 [UnsafeValueError](UnsafeValueError.md#diskcache_oxide.UnsafeValueError)  
 A pickle=False cache read a value that was stored with pickle.

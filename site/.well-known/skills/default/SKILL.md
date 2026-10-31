@@ -166,7 +166,7 @@ Methods for the Caches class
 
 Exceptions raised by cache operations.
 
-- `Timeout`: The database stayed locked for longer than the cache's timeout
+- `Timeout`: A lock stayed held, or a fork stayed pending, for longer than the cache's timeout
 - `UnsafeValueError`: A pickle=False cache read a value that was stored with pickle
 - `CorruptValueError`: A stored value couldn't be decoded: an unknown mode, or bytes that don't parse
 - `ForeignValueError`: A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote it), or a time zone missing from this host

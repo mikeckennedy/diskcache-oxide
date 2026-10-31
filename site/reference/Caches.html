@@ -1046,7 +1046,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/caches.py#L87-L351" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/caches.py#L91-L356" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">Caches</span>(</span>
@@ -1071,11 +1071,11 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </dd>
 <dt><code><span class="doc-parameter-name">on_open_error</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Callable[[str, Exception], object] | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
-<p>Called as <code>on_open_error(name, exc)</code> when a cache can’t open (default: log at ERROR on the <code>diskcache_oxide</code> logger). Whatever it raises is logged.</p>
+<p>Called as <code>on_open_error(name, exc)</code> when a cache can’t open (default: log at ERROR on the <code>diskcache_oxide</code> logger, or at WARNING with no traceback for a <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>). Whatever it raises is logged.</p>
 </dd>
 <dt><code><span class="doc-parameter-name">retry_open_after</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">float</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="fl">10.0</span></span></code></dt>
 <dd>
-<p>Seconds before a cache that failed to open is tried again (default 10). Lookups in between get a <a href="NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> without trying.</p>
+<p>Seconds before a cache that failed to open is tried again (default 10). Lookups in between get a <a href="NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> without trying. A <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> means busy rather than broken, so that’s tried again after at most 1 s.</p>
 </dd>
 <dt><code><span class="doc-parameter-name">**defaults</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Any</span></code></dt>
 <dd>

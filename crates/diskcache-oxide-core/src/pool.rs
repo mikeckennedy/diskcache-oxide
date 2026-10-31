@@ -271,7 +271,13 @@ impl Pool {
 
 impl Drop for Pool {
     fn drop(&mut self) {
-        let gate = GATE.enter_shared();
+        // Behind a pending fork, nothing is closed outside the gate. The forgotten reference keeps the
+        // registry's `Weak` alive, so that fork's `close_idle_all` closes the idle connections with
+        // the gate held exclusively.
+        let Some(gate) = GATE.try_enter_shared() else {
+            std::mem::forget(Arc::clone(&self.shared));
+            return;
+        };
         self.clear(&gate);
         let mut pools = registry();
         pools.retain(|weak| weak.strong_count() > 0 && !std::ptr::eq(weak.as_ptr(), Arc::as_ptr(&self.shared)));
@@ -302,7 +308,7 @@ mod tests {
 
     #[test]
     fn checkout_reuses_idle_connections() {
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         let pool = Pool::new(&gate, 2);
         let a = pool.checkout(&gate, memory).unwrap();
         let b = pool.checkout(&gate, memory).unwrap();
@@ -317,7 +323,7 @@ mod tests {
 
     #[test]
     fn a_raised_idle_limit_keeps_more_connections() {
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         let pool = Pool::new(&gate, 1);
         pool.raise_max_idle(3);
         pool.raise_max_idle(2); // Never lowered.
@@ -330,7 +336,7 @@ mod tests {
 
     #[test]
     fn a_stale_connection_coming_back_is_forgotten_not_counted() {
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         let pool = Pool::new(&gate, 2);
         let pooled = pool.checkout(&gate, memory).unwrap();
         let stale = PooledConn {
@@ -357,11 +363,12 @@ mod tests {
 
     #[test]
     fn dropped_pools_leave_the_registry() {
-        let gate = GATE.enter_shared();
+        let gate = GATE.enter_shared_blocking();
         let pool = Pool::new(&gate, 1);
         let weak = Arc::downgrade(&pool.shared);
-        drop(gate);
+        // Dropped under the level: behind another test's pending fork, it would stay in the registry.
         drop(pool);
+        drop(gate);
         assert!(registry().iter().all(|w| !w.ptr_eq(&weak)));
     }
 }

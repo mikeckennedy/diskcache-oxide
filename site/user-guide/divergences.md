@@ -33,6 +33,9 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-022 | `disk=`, `eviction_policy=` | Supported | Not supported (policies coming) |
 | D-023 | SQLite memory | 32 MiB cache + 64 MiB mmap per thread | 1 MiB per pooled connection |
 | D-024 | WAL file size | Can grow past 1 GiB and stay there | Trimmed; [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) on demand |
+| D-025 | A key iterator used by two threads at once | `ValueError` from the generator | `ValueError`, from a native iterator with no `send()` or [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) |
+| D-026 | [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) of a value it can't read | Row is deleted, then the decode fails | Decodes first, so the row stays unless no build could read it |
+| D-027 | A call behind a pending fork | Never waits: there's no fork barrier | Waits within its [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout), then raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) |
 
 
 # Safety

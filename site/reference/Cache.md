@@ -35,7 +35,7 @@ Every thread and process that opens the same directory shares one cache. The API
 The cache directory. It's created (owner-only, `0700`) if it doesn't exist.
 
 `timeout: float | None = None`  
-Seconds a write waits for another process's lock before raising [Timeout](Timeout.md#diskcache_oxide.Timeout) (default 60).
+Seconds a call waits for a lock or a pending fork before raising [Timeout](Timeout.md#diskcache_oxide.Timeout) (default 60). It has to exceed work in flight plus a fork: see the Concurrency and Forks guide.
 
 `size_limit: int | None = None`  
 The disk budget in bytes, database plus value files (default 1 GiB, minimum 1 MiB). Stored in the cache, so it applies to every process.
@@ -81,4 +81,4 @@ An argument has the wrong type, including a `bool` for [timeout](Cache.timeout.m
 The directory holds a database in a format this version can't read.
 
 `Timeout`  
-Another process held the database locked for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
+Another process held the database locked, or a fork stayed pending, for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).

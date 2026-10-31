@@ -1047,7 +1047,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L64-L382" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L67-L392" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">Cache</span>(</span>
@@ -1079,7 +1079,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </dd>
 <dt><code><span class="doc-parameter-name">timeout</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">float | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
-<p>Seconds a write waits for another process’s lock before raising <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> (default 60).</p>
+<p>Seconds a call waits for a lock or a pending fork before raising <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> (default 60). It has to exceed work in flight plus a fork: see the Concurrency and Forks guide.</p>
 </dd>
 <dt><code><span class="doc-parameter-name">size_limit</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
@@ -1142,7 +1142,7 @@ What a read does with a stored value it can’t decode. <code>'raise'</code> (th
 </dd>
 <dt><code> <span class="doc-parameter-annotation">Timeout</span></code></dt>
 <dd>
-Another process held the database locked for longer than <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>.
+Another process held the database locked, or a fork stayed pending, for longer than <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>.
 </dd>
 </dl>
 </div>

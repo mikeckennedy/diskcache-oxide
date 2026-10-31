@@ -7,7 +7,7 @@
 //!
 //! Values of `spill::THRESHOLD` bytes or more are stored in value files (see `spill`).
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, OptionalExtension};
@@ -163,7 +163,20 @@ impl Store {
         refuse: impl Fn(i64) -> bool,
         mut decode: impl FnMut(i64, ValueRef<'_>) -> Result<T>,
     ) -> Result<Option<Hit<T>>> {
-        let mut row = self.read(timeout, |conn| look_up(conn, key, now, timeout, &mut decode))?;
+        let (mut row, taken) =
+            self.read_with_deadline(timeout, |conn| look_up(conn, key, now, timeout, &mut decode))?;
+        // One budget for every read and the fallback's write. The first read's deadline if its slow
+        // path took one, else `now + timeout` at the first missing file, since the fast path has no
+        // wait to charge. A hit never reads the clock.
+        let mut budget = taken;
+        let left = |budget: &mut Option<Instant>| {
+            let deadline = *budget.get_or_insert_with(|| crate::lockwait::deadline_after(Instant::now(), timeout));
+            deadline.saturating_duration_since(Instant::now())
+        };
+        let whole_timeout = |error| match error {
+            Error::Timeout { .. } => Error::Timeout { seconds: timeout.as_secs_f64() },
+            other => other,
+        };
         for _ in 0..spill::OPTIMISTIC_ATTEMPTS {
             let file = match row {
                 Found::Miss => return Ok(None),
@@ -177,7 +190,9 @@ impl Store {
                 return Ok(Some(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?)));
             }
             // Missing or short: overwritten since the row was read, or truly gone.
-            row = self.read(timeout, |conn| look_up(conn, key, now, timeout, &mut decode))?;
+            row = self
+                .read(left(&mut budget), |conn| look_up(conn, key, now, timeout, &mut decode))
+                .map_err(whole_timeout)?;
             if let Found::File(again) = &row
                 && again.version == file.version
             {
@@ -193,13 +208,15 @@ impl Store {
         if self.check_writable().is_err() {
             return Ok(None);
         }
-        let opened = self.write(timeout, |_, conn| {
-            let Some(file) = file_row(conn, key, now, timeout)? else { return Ok(None) };
-            if refuse(file.mode) {
-                return Ok(Some(Err(file)));
-            }
-            Ok(spill::open(self.directory(), &file.relative)?.map(|(handle, path)| Ok((handle, path, file))))
-        })?;
+        let opened = self
+            .write(left(&mut budget), |_, conn| {
+                let Some(file) = file_row(conn, key, now, timeout)? else { return Ok(None) };
+                if refuse(file.mode) {
+                    return Ok(Some(Err(file)));
+                }
+                Ok(spill::open(self.directory(), &file.relative)?.map(|(handle, path)| Ok((handle, path, file))))
+            })
+            .map_err(whole_timeout)?;
         let (handle, path, file) = match opened {
             None => return Ok(None),
             // Replaced by a value of a refused mode while this reader retried: never read it.
@@ -215,8 +232,8 @@ impl Store {
     /// Deletes exactly `version` (nothing newer, D-013) and its value file, if that needs no waiting
     /// at all: not for the write lock, a connection slot, or another process's lock. Skipped while
     /// this thread holds a write transaction on any cache or is inside any cache operation (gate
-    /// depth > 0: the gate is process-wide), and in a child that can't write this file. Like any
-    /// operation, it waits while a fork is pending. An error is reported as a skip.
+    /// depth > 0: the gate is process-wide), in a child that can't write this file, and while a fork
+    /// is pending. An error is reported as a skip.
     pub fn delete_version_nowait(&self, version: Version) -> VersionDelete {
         match self.write_nowait(|writer| writer.delete_version(version.id, version.store_seq)) {
             Some(Ok(Some(removed))) => {
@@ -674,6 +691,17 @@ mod tests {
     const T: Duration = Duration::from_secs(5);
     const NOW: f64 = 1_000_000.0;
 
+    /// `delete_version_nowait`, past another test's pending fork, behind which it skips.
+    fn delete_nowait(s: &Store, version: Version) -> VersionDelete {
+        for _ in 0..5_000 {
+            match s.delete_version_nowait(version) {
+                VersionDelete::Skipped => std::thread::sleep(Duration::from_millis(1)),
+                done => return done,
+            }
+        }
+        VersionDelete::Skipped
+    }
+
     fn store(dir: &Path, requested: Requested) -> Arc<Store> {
         Store::open(&OpenOptions {
             directory: dir.to_path_buf(),
@@ -784,11 +812,11 @@ mod tests {
         let second = version(&s, "k").unwrap();
         assert_ne!(first, second, "an overwrite is a new version");
 
-        assert_eq!(s.delete_version_nowait(first), VersionDelete::Gone, "an older version deletes nothing");
+        assert_eq!(delete_nowait(&s, first), VersionDelete::Gone, "an older version deletes nothing");
         assert_eq!(get(&s, "k", NOW).unwrap().0, b"b");
-        assert_eq!(s.delete_version_nowait(second), VersionDelete::Removed);
+        assert_eq!(delete_nowait(&s, second), VersionDelete::Removed);
         assert!(get(&s, "k", NOW).is_none());
-        assert_eq!(s.delete_version_nowait(second), VersionDelete::Gone, "already gone");
+        assert_eq!(delete_nowait(&s, second), VersionDelete::Gone, "already gone");
         assert_eq!(len(&s), 0);
     }
 
@@ -815,8 +843,8 @@ mod tests {
         s.set(T, "k", text("v"), None, NOW).unwrap();
         let v = version(&s, "k").unwrap();
 
-        // A connection of its own, not a held transaction: with a hold on another thread, waiting at
-        // the gate behind another test's fork would wedge the gate.
+        // A connection of its own, not a held transaction, so nothing here holds up another test's
+        // fork for the length of this wait.
         let holder = crate::open::connect(tmp.path(), T).unwrap();
         holder.execute_batch("BEGIN IMMEDIATE").unwrap();
         let short = Duration::from_millis(50);
@@ -877,7 +905,7 @@ mod tests {
         let big = vec![b'x'; spill::THRESHOLD];
         s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
         assert_eq!(value_files(tmp.path()).len(), 1);
-        assert_eq!(s.delete_version_nowait(version(&s, "k").unwrap()), VersionDelete::Removed);
+        assert_eq!(delete_nowait(&s, version(&s, "k").unwrap()), VersionDelete::Removed);
         assert!(value_files(tmp.path()).is_empty());
     }
 
@@ -891,6 +919,14 @@ mod tests {
             std::fs::remove_file(file).unwrap();
         }
         assert!(get(&s, "k", NOW).is_none());
+        // Its cleanup skips while another test's fork is pending; a later read retries.
+        for _ in 0..5_000 {
+            if len(&s) == 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+            assert!(get(&s, "k", NOW).is_none());
+        }
         assert_eq!(len(&s), 0, "the row of the lost file was removed (D-013)");
     }
 
@@ -927,7 +963,7 @@ mod tests {
         let held = s.begin_hold(T).unwrap();
         assert_eq!(s.delete_version_nowait(v), VersionDelete::Skipped);
         held.finish(false).unwrap();
-        assert_eq!(s.delete_version_nowait(v), VersionDelete::Removed, "and works once nothing is held");
+        assert_eq!(delete_nowait(&s, v), VersionDelete::Removed, "and works once nothing is held");
     }
 
     #[test]

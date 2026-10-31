@@ -78,7 +78,7 @@ pub struct WalStats {
     /// `-wal` file checks.
     pub checks: u64,
     /// Forced checkpoints attempted: one per automatic check over the limit, and one per
-    /// `checkpoint()` call (however many times it retried). Each ends in exactly one of the next four.
+    /// `checkpoint()` call (however many times it retried). Each ends in exactly one of the next five.
     pub attempts: u64,
     /// ...that completed (the WAL was reset and truncated).
     pub successes: u64,
@@ -89,6 +89,9 @@ pub struct WalStats {
     pub errors: u64,
     /// ...that were skipped because every connection slot was in use.
     pub no_slot: u64,
+    /// ...that were skipped because a fork was pending. Kept apart from `busy`, so that stays a count
+    /// of WAL contention, and with no backoff: a fork says nothing about the WAL.
+    pub fork_pending: u64,
     /// The longest single round of SQLite work (both steps), in microseconds.
     pub max_pause_us: u64,
     /// The longest PASSIVE step (copying frames without waiting), in microseconds.
@@ -117,6 +120,7 @@ pub(crate) struct WalState {
     busy: AtomicU64,
     errors: AtomicU64,
     no_slot: AtomicU64,
+    fork_pending: AtomicU64,
     max_pause_us: AtomicU64,
     max_passive_us: AtomicU64,
     max_truncate_us: AtomicU64,
@@ -143,6 +147,8 @@ pub(crate) enum Outcome {
     Failed(crate::Error),
     /// No connection slot was free; skipped.
     NoSlot,
+    /// A fork was pending; skipped, without waiting for it.
+    ForkPending,
 }
 
 impl Default for WalState {
@@ -165,6 +171,7 @@ impl WalState {
             busy: AtomicU64::new(0),
             errors: AtomicU64::new(0),
             no_slot: AtomicU64::new(0),
+            fork_pending: AtomicU64::new(0),
             max_pause_us: AtomicU64::new(0),
             max_passive_us: AtomicU64::new(0),
             max_truncate_us: AtomicU64::new(0),
@@ -202,7 +209,8 @@ impl WalState {
     }
 
     /// Records how a forced checkpoint ended (automatic, explicit or on close): one attempt, and its
-    /// final outcome. Anything but success starts the [`RETRY_AFTER_BUSY`] backoff.
+    /// final outcome. A success ends the [`RETRY_AFTER_BUSY`] backoff, a pending fork leaves it as it
+    /// is, and anything else starts it.
     pub(crate) fn record_outcome(&self, outcome: &Outcome) {
         self.attempts.fetch_add(1, Ordering::Relaxed);
         let counter = match outcome {
@@ -210,8 +218,12 @@ impl WalState {
             Outcome::Busy => &self.busy,
             Outcome::Failed(_) => &self.errors,
             Outcome::NoSlot => &self.no_slot,
+            Outcome::ForkPending => &self.fork_pending,
         };
         counter.fetch_add(1, Ordering::Relaxed);
+        if matches!(outcome, Outcome::ForkPending) {
+            return;
+        }
         let next = if matches!(outcome, Outcome::Done) { 0 } else { self.now_ms() + millis(RETRY_AFTER_BUSY) };
         self.next_attempt_ms.store(next, Ordering::Relaxed);
     }
@@ -237,6 +249,7 @@ impl WalState {
             busy: self.busy.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
             no_slot: self.no_slot.load(Ordering::Relaxed),
+            fork_pending: self.fork_pending.load(Ordering::Relaxed),
             max_pause_us: self.max_pause_us.load(Ordering::Relaxed),
             max_passive_us: self.max_passive_us.load(Ordering::Relaxed),
             max_truncate_us: self.max_truncate_us.load(Ordering::Relaxed),
@@ -304,6 +317,19 @@ mod tests {
         assert!(state.in_backoff());
         state.record_outcome(&Outcome::Done);
         assert!(!state.in_backoff(), "a success ends the backoff");
+    }
+
+    #[test]
+    fn a_pending_fork_counts_apart_and_starts_no_backoff() {
+        let state = WalState::new();
+        state.record_outcome(&Outcome::ForkPending);
+        let seen = state.stats();
+        assert_eq!((seen.attempts, seen.fork_pending, seen.busy), (1, 1, 0));
+        assert!(!state.in_backoff(), "an ordinary fork says nothing about the WAL");
+        state.record_outcome(&Outcome::Busy);
+        assert!(state.in_backoff());
+        state.record_outcome(&Outcome::ForkPending);
+        assert!(state.in_backoff(), "and it doesn't end a backoff either");
     }
 
     #[test]

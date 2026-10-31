@@ -1029,7 +1029,7 @@ ul.task-list li input[type="checkbox"] {
 </dd>
 <dt><a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="doc-attribute doc-label doc-label-property">Cache.timeout</a></dt>
 <dd>
-<p>Seconds a write waits for another process’s lock before raising <code>Timeout</code>.</p>
+<p>Seconds a call waits for a lock or a pending fork before raising <code>Timeout</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="doc-attribute doc-label doc-label-property">Cache.size_limit</a></dt>
 <dd>
@@ -1505,7 +1505,7 @@ ul.task-list li input[type="checkbox"] {
 <dl>
 <dt><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="doc-class doc-label doc-label-exception">Timeout</a></dt>
 <dd>
-<p>The database stayed locked for longer than the cache’s timeout.</p>
+<p>A lock stayed held, or a fork stayed pending, for longer than the cache’s timeout.</p>
 </dd>
 <dt><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="doc-class doc-label doc-label-exception">UnsafeValueError</a></dt>
 <dd>

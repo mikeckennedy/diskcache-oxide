@@ -2,6 +2,15 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
+/// Held by a test that claims a fork on the global gate, so `pending` always means this test's own
+/// fork. Take it first, with no gate level held: a test holding a level here would hold up a fork
+/// that holds this.
+pub(crate) fn one_global_fork_at_a_time() -> MutexGuard<'static, ()> {
+    static FORKS: Mutex<()> = Mutex::new(());
+    FORKS.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// A fresh directory under the system temp dir, removed on drop.
 pub(crate) struct TempDir(PathBuf);

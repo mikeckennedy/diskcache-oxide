@@ -39,6 +39,8 @@ A cache can fail to open: a permissions problem, a disk that went away, a databa
 
 The failure is remembered for `retry_open_after` seconds (10 by default), so a broken cache costs one failed open every 10 seconds, not one per request, and the lookup after that tries again. A cache that recovers is picked up without a restart. Under load, several threads may make that retry at the same moment, and each one that fails reports it.
 
+A [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) at open means busy, not broken: another process holding the lock, or a first lookup that collided with a fork. It's remembered for at most 1 second, and the default report is a `WARNING` with no traceback. A custom `on_open_error` still gets the exception. Lookups of a cache that's already open never touch any of this.
+
 A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead.
 
 

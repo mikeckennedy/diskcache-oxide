@@ -10,8 +10,8 @@ use rusqlite::ErrorCode;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// The database stayed locked for longer than the cache's timeout.
-    #[error("database timed out waiting for a lock after {seconds} s")]
+    /// A lock stayed held, or a fork stayed pending, for longer than the cache's timeout.
+    #[error("timed out after {seconds} s waiting for a lock or a pending fork")]
     Timeout { seconds: f64 },
 
     #[error("I/O error on {path}: {source}")]

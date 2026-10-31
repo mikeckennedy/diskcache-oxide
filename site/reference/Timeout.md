@@ -1,7 +1,7 @@
 ## Timeout
 
 
-The database stayed locked for longer than the cache's timeout.
+A lock stayed held, or a fork stayed pending, for longer than the cache's timeout.
 
 
 Usage

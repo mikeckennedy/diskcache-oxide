@@ -182,6 +182,7 @@ impl Cache {
             ("busy", s.busy),
             ("errors", s.errors),
             ("no_slot", s.no_slot),
+            ("fork_pending", s.fork_pending),
             ("max_pause_us", s.max_pause_us),
             ("max_passive_us", s.max_passive_us),
             ("max_truncate_us", s.max_truncate_us),
@@ -191,6 +192,11 @@ impl Cache {
             d.set_item(k, v)?;
         }
         Ok(d)
+    }
+
+    /// Test hook: how many open handles this cache's store counts, deferred releases included.
+    fn _handle_count(&self) -> isize {
+        self.store.handles()
     }
 
     fn __repr__(&self) -> String {
@@ -245,13 +251,13 @@ impl Cache {
     fn __contains__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
         let key = str_key(key)?;
         let now = self.now(py)?;
-        self.ensure_open();
-        self.store.contains(self.timeout, key, now).map_err(to_py_err)
+        let timeout = self.ensure_open(self.timeout)?;
+        self.store.contains(timeout, key, now).map_err(to_py_err)
     }
 
     fn __len__(&self) -> PyResult<usize> {
-        self.ensure_open();
-        let count = self.store.len(self.timeout).map_err(to_py_err)?;
+        let timeout = self.ensure_open(self.timeout)?;
+        let count = self.store.len(timeout).map_err(to_py_err)?;
         Ok(usize::try_from(count).unwrap_or(0))
     }
 
@@ -262,8 +268,8 @@ impl Cache {
     }
 
     fn volume(&self) -> PyResult<i64> {
-        self.ensure_open();
-        self.store.volume(self.timeout).map_err(to_py_err)
+        let timeout = self.ensure_open(self.timeout)?;
+        self.store.volume(timeout).map_err(to_py_err)
     }
 
     /// Checkpoints the write-ahead log and truncates it to zero (D-024), retrying until `timeout`.
@@ -272,7 +278,12 @@ impl Cache {
     #[pyo3(signature = (*, timeout = None))]
     fn checkpoint(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
         let timeout = self.call_timeout(timeout)?;
-        self.ensure_open();
+        // A closed handle that can't rejoin behind a fork is busy too, and this never raises for busy.
+        let timeout = match self.ensure_open(timeout) {
+            Ok(left) => left,
+            Err(error) if error.is_instance_of::<crate::Timeout>(py) => return Ok(false),
+            Err(error) => return Err(error),
+        };
         // Each round waits on the write lock and backs off after a busy one. Detached, none of
         // those waits takes the interpreter back in between (the copy itself always runs detached).
         crate::detach(py, || self.store.checkpoint(timeout)).map_err(to_py_err)
@@ -293,8 +304,8 @@ impl Cache {
         let encoded = codec::encode(py, value, self.serializer, self.pickle)?;
         let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
         let now = self.now(py)?;
-        self.ensure_open();
-        self.store.set(self.timeout, key, value, expire, now).map_err(to_py_err)
+        let timeout = self.ensure_open(self.timeout)?;
+        self.store.set(timeout, key, value, expire, now).map_err(to_py_err)
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -314,15 +325,15 @@ impl Cache {
         let encoded = codec::encode(py, value, self.serializer, self.pickle)?;
         let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
         let now = self.now(py)?;
-        self.ensure_open();
-        self.store.add(self.timeout, key, value, expire, now).map_err(to_py_err)
+        let timeout = self.ensure_open(self.timeout)?;
+        self.store.add(timeout, key, value, expire, now).map_err(to_py_err)
     }
 
     fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
         let key = str_key(key)?;
         let now = self.now(py)?;
-        self.ensure_open();
-        self.store.delete(self.timeout, key, now).map_err(to_py_err)
+        let timeout = self.ensure_open(self.timeout)?;
+        self.store.delete(timeout, key, now).map_err(to_py_err)
     }
 
     fn __delitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -333,10 +344,10 @@ impl Cache {
     fn pop(&self, py: Python<'_>, key: &Bound<'_, PyAny>, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
         let key = str_key(key)?;
         let now = self.now(py)?;
-        self.ensure_open();
+        let timeout = self.ensure_open(self.timeout)?;
         // In a child that can't write (D-020) a read could report a miss; a pop raises.
         self.store.check_writable().map_err(to_py_err)?;
-        Ok(self.pop_value(py, key, now)?.unwrap_or_else(|| default.unwrap_or_else(|| py.None())))
+        Ok(self.pop_value(py, key, now, timeout)?.unwrap_or_else(|| default.unwrap_or_else(|| py.None())))
     }
 
     #[pyo3(signature = (key, expire = None))]
@@ -344,8 +355,8 @@ impl Cache {
         let key = str_key(key)?;
         let expire = optional_seconds("expire", expire)?;
         let now = self.now(py)?;
-        self.ensure_open();
-        self.store.touch(self.timeout, key, expire, now).map_err(to_py_err)
+        let timeout = self.ensure_open(self.timeout)?;
+        self.store.touch(timeout, key, expire, now).map_err(to_py_err)
     }
 
     #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
@@ -366,7 +377,7 @@ impl Cache {
     fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
         let timeout = self.call_timeout(timeout)?;
         let now = self.now(py)?;
-        self.ensure_open();
+        let timeout = self.ensure_open(timeout)?;
         crate::detach(py, || self.store.expire(timeout, now)).map_err(to_py_err)
     }
 
@@ -375,7 +386,7 @@ impl Cache {
     #[pyo3(signature = (*, timeout = None))]
     fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
         let timeout = self.call_timeout(timeout)?;
-        self.ensure_open();
+        let timeout = self.ensure_open(timeout)?;
         crate::detach(py, || self.store.clear(timeout)).map_err(to_py_err)
     }
 
@@ -385,7 +396,7 @@ impl Cache {
     fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
         let timeout = self.call_timeout(timeout)?;
         let now = self.now(py)?;
-        self.ensure_open();
+        let timeout = self.ensure_open(timeout)?;
         crate::detach(py, || self.store.cull(timeout, now)).map_err(to_py_err)
     }
 
@@ -411,6 +422,9 @@ impl Cache {
     /// larger than its trim size (half of `wal_size_limit`), waiting at most 1 s (or `timeout`, if
     /// shorter) for other processes; a copy already under way can run past that (D-024). A small
     /// WAL, the usual case, costs one `stat`. Close never fails because of the checkpoint.
+    ///
+    /// Behind a pending fork it waits at most 1 s for that checkpoint and 1 s for the release, then
+    /// returns and leaves the release for the end of the fork (D-027).
     #[pyo3(signature = (*, checkpoint = true))]
     fn close(&self, py: Python<'_>, checkpoint: bool) {
         if !self.closed.swap(true, Ordering::AcqRel) {
@@ -466,15 +480,30 @@ impl Cache {
     }
 
     /// A handle that was closed and is used again rejoins its store (diskcache reopens lazily).
-    fn ensure_open(&self) {
-        if self.closed.swap(false, Ordering::AcqRel) {
-            self.store.add_handle();
-        }
+    /// Returns what's left of `timeout` for the operation: all of it, unless the handle was closed.
+    #[inline]
+    fn ensure_open(&self, timeout: Duration) -> PyResult<Duration> {
+        if self.closed.load(Ordering::Acquire) { self.reopen(timeout) } else { Ok(timeout) }
+    }
+
+    /// The closed flag flips under the gate level the count is taken on. A timeout before that
+    /// changes nothing: the handle stays closed and isn't counted. Flipping it first would leave the
+    /// count one too low once another thread's `close` released it.
+    #[cold]
+    fn reopen(&self, timeout: Duration) -> PyResult<Duration> {
+        let deadline = lockwait::deadline_after(Instant::now(), timeout);
+        self.store.add_handle_until(deadline, || self.closed.swap(false, Ordering::AcqRel)).map_err(|error| {
+            to_py_err(match error {
+                Error::Timeout { .. } => Error::Timeout { seconds: timeout.as_secs_f64() },
+                other => other,
+            })
+        })?;
+        Ok(deadline.saturating_duration_since(Instant::now()))
     }
 
     fn lookup(&self, py: Python<'_>, key: &str, now: f64) -> PyResult<Option<(Py<PyAny>, Option<f64>)>> {
-        self.ensure_open();
-        let Some(hit) = self.read_row(py, self.timeout, key, now).map_err(to_py_err)? else { return Ok(None) };
+        let timeout = self.ensure_open(self.timeout)?;
+        let Some(hit) = self.read_row(py, timeout, key, now).map_err(to_py_err)? else { return Ok(None) };
         match hit.value {
             Ok(value) => Ok(Some((value, hit.expire_time))),
             Err((mode, e)) => self.decode_failed(py, key, mode, e, Row::Stored(hit.version)).map(|()| None),
@@ -504,8 +533,8 @@ impl Cache {
     /// slow hooks can't stretch it to many times the cache's timeout. A race lost after that deadline
     /// raises `Timeout` and deletes nothing: the fallback removes before it decodes, so it's only for
     /// a caller that really lost `OPTIMISTIC_ATTEMPTS` times, not one that ran out of time.
-    fn pop_value(&self, py: Python<'_>, key: &str, now: f64) -> PyResult<Option<Py<PyAny>>> {
-        let deadline = lockwait::deadline_after(Instant::now(), self.timeout);
+    fn pop_value(&self, py: Python<'_>, key: &str, now: f64, timeout: Duration) -> PyResult<Option<Py<PyAny>>> {
+        let deadline = lockwait::deadline_after(Instant::now(), timeout);
         let left = || deadline.saturating_duration_since(Instant::now());
         for _ in 0..spill::OPTIMISTIC_ATTEMPTS {
             let Some(hit) = self.read_row(py, left(), key, now).map_err(|e| self.pop_error(e))? else {
@@ -679,8 +708,8 @@ impl Cache {
             };
         }
         let now = self.now(py)?;
-        self.ensure_open();
-        match self.store.incr(self.timeout, name, delta, default, now) {
+        let timeout = self.ensure_open(self.timeout)?;
+        match self.store.incr(timeout, name, delta, default, now) {
             Ok(Number::Int(n)) => Ok(n.into_pyobject(py)?.into_any().unbind()),
             Ok(Number::Real(x)) => Ok(PyFloat::new(py, x).into_any().unbind()),
             Err(Error::KeyMissing) => Err(PyKeyError::new_err(key.clone().unbind())),
@@ -752,11 +781,9 @@ impl KeyIterator {
             return Ok(None);
         }
         let cache = self.cache.get();
-        cache.ensure_open();
-        let (keys, next) = cache
-            .store
-            .keys_page(cache.timeout, self.order, self.prefix.as_deref(), &state.cursor)
-            .map_err(to_py_err)?;
+        let timeout = cache.ensure_open(cache.timeout)?;
+        let (keys, next) =
+            cache.store.keys_page(timeout, self.order, self.prefix.as_deref(), &state.cursor).map_err(to_py_err)?;
         if keys.is_empty() {
             state.done = true;
             return Ok(None);
@@ -782,8 +809,8 @@ pub(crate) struct WriteHold {
 impl WriteHold {
     fn __enter__(&self, py: Python<'_>) -> PyResult<()> {
         let cache = self.cache.get();
-        cache.ensure_open();
-        let held = crate::detach(py, || cache.store.begin_hold(cache.timeout)).map_err(to_py_err)?;
+        let timeout = cache.ensure_open(cache.timeout)?;
+        let held = crate::detach(py, || cache.store.begin_hold(timeout)).map_err(to_py_err)?;
         self.abandoned.store(false, Ordering::Release);
         let mut slot = self.held.lock().unwrap_or_else(PoisonError::into_inner);
         let old = slot.replace(held);

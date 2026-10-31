@@ -9,7 +9,7 @@ mod codec;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use diskcache_oxide_core::{Error, gate, sqlite};
+use diskcache_oxide_core::{Error, gate, sqlite, store};
 use pyo3::create_exception;
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyRuntimeWarning, PyTimeoutError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -21,7 +21,7 @@ create_exception!(
     diskcache_oxide,
     Timeout,
     PyTimeoutError,
-    "The database stayed locked for longer than the cache's timeout."
+    "A lock stayed held, or a fork stayed pending, for longer than the cache's timeout."
 );
 create_exception!(
     diskcache_oxide,
@@ -128,6 +128,11 @@ fn detached_wait(wait: &(dyn Fn() + Sync)) {
 
 /// `os.register_at_fork(before=...)`: waits, with the interpreter released and no timeout, for every
 /// other thread's SQLite work in this process to finish, and holds off new work until the fork.
+///
+/// No timeout because Python can't refuse a fork, and proceeding without quiescence would hand the
+/// child half a transaction. So code that holds a transaction or runs in a pickle hook, and depends
+/// on another thread's cache call, can keep this waiting: that other call gets `Timeout` at its
+/// `timeout`, and the fork proceeds once the first thread lets go.
 #[pyfunction]
 fn _before_fork(py: Python<'_>) {
     if gate::GATE.own_depth() > 0 {
@@ -146,13 +151,36 @@ fn _before_fork(py: Python<'_>) {
 }
 
 #[pyfunction]
-fn _after_fork_in_parent() {
+fn _after_fork_in_parent(py: Python<'_>) {
     gate::end_fork_parent();
+    drain_deferred_releases(py);
 }
 
 #[pyfunction]
-fn _after_fork_in_child() {
+fn _after_fork_in_child(py: Python<'_>) {
     gate::end_fork_child();
+    drain_deferred_releases(py);
+}
+
+/// Releases the handles closed behind the fork that just ended. One atomic load unless there are
+/// some; closing a last connection can run SQLite's own checkpoint, so that's detached.
+fn drain_deferred_releases(py: Python<'_>) {
+    if gate::GATE.has_deferred() {
+        detach(py, store::drain_deferred_releases);
+    }
+}
+
+/// Test hook: the fork gate's state and counters. Not part of the public API.
+#[pyfunction]
+fn _gate_stats(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let s = gate::GATE.stats();
+    let d = PyDict::new(py);
+    d.set_item("pending", s.pending)?;
+    d.set_item("holders", s.holders)?;
+    d.set_item("parked", s.parked)?;
+    d.set_item("fork_timeouts", s.fork_timeouts)?;
+    d.set_item("deferred", s.deferred)?;
+    Ok(d)
 }
 
 /// Set once the fork hooks are registered. The gate is process-wide, so its hooks must be too: a
@@ -182,6 +210,12 @@ fn register_fork_hooks(m: &Bound<'_, PyModule>) -> PyResult<()> {
     if !os.hasattr("register_at_fork")? {
         return Ok(()); // No fork() on this platform.
     }
+    // Before-hooks run in reverse registration order, and these two take a module lock in theirs and
+    // keep it until the after-hook. Imported first, they run after ours, so those locks are only
+    // taken once the fork has quiesced: a pickle hook that logs or submits work while a fork waits for
+    // it can still finish and let go. A failed import mustn't stop the hooks registering.
+    let _ = py.import("logging");
+    let _ = py.import("concurrent.futures.thread");
     let hooks = PyDict::new(py);
     hooks.set_item("before", wrap_pyfunction!(_before_fork, m)?)?;
     hooks.set_item("after_in_parent", wrap_pyfunction!(_after_fork_in_parent, m)?)?;
@@ -218,6 +252,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(codec::_encode, m)?)?;
     m.add_function(wrap_pyfunction!(codec::_decode, m)?)?;
     m.add_function(wrap_pyfunction!(_sqlite_memory, m)?)?;
+    m.add_function(wrap_pyfunction!(_gate_stats, m)?)?;
     m.add("FormatMismatchError", py.get_type::<FormatMismatchError>())?;
     m.add_class::<cache::Cache>()?;
     install_fork_barrier(m)?;
