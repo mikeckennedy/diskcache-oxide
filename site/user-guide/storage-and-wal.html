@@ -303,6 +303,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#on-demand-checkpoint" id="toc-on-demand-checkpoint" class="nav-link" data-scroll-target="#on-demand-checkpoint">On demand: <code>checkpoint()</code></a></li>
   <li><a href="#at-close" id="toc-at-close" class="nav-link" data-scroll-target="#at-close">At close</a></li>
   <li><a href="#opt-in-automatic-checkpoints" id="toc-opt-in-automatic-checkpoints" class="nav-link" data-scroll-target="#opt-in-automatic-checkpoints">Opt-in: automatic checkpoints</a></li>
+  <li><a href="#the-limit-is-a-target-not-a-bound" id="toc-the-limit-is-a-target-not-a-bound" class="nav-link" data-scroll-target="#the-limit-is-a-target-not-a-bound">The limit is a target, not a bound</a></li>
   </ul></li>
   <li><a href="#maintenance-calls" id="toc-maintenance-calls" class="nav-link" data-scroll-target="#maintenance-calls">Maintenance calls</a></li>
   </ul>
@@ -392,7 +393,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="opt-in-automatic-checkpoints" class="level2">
 <h2 class="anchored" data-anchor-id="opt-in-automatic-checkpoints">Opt-in: automatic checkpoints</h2>
 <div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, wal_checkpoint<span class="op">=</span><span class="st">'auto'</span>)</span></code></pre></div>
-<p>With <code>'auto'</code>, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it’s over the limit, with the interpreter released and a 1-second backoff if other processes are busy. It never fails a write. It isn’t the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. The plan is to move this into a background maintenance thread so writes never pay for it at all.</p>
+<p>With <code>'auto'</code>, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it’s over the limit, with the interpreter released. Readers in other processes can get in the way for a moment, so it tries the final truncation up to 8 times, a couple of milliseconds each, before backing off for a second. It never fails a write. It isn’t the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. The plan is to move this into a background maintenance thread so writes never pay for it at all. Writes queue behind a checkpoint for tens of milliseconds, so a <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> under about 35 ms can time out behind one.</p>
+</section>
+<section id="the-limit-is-a-target-not-a-bound" class="level2">
+<h2 class="anchored" data-anchor-id="the-limit-is-a-target-not-a-bound">The limit is a target, not a bound</h2>
+<p><code>wal_size_limit</code> says where the log should stay, not where it’s guaranteed to stay. Sustained writes from several processes near flat out can take it to tens of times the limit: we measured 6 GiB on free-threaded 3.15 and 21 GiB on 3.14 in 10 minutes, against a 64 MiB limit. It’s much smaller below flat out, for example 250 MiB at about 2,600 writes per second across 3 writers in <code>auto</code>.</p>
+<p>In the default <code>manual</code> mode, with busy readers in other processes, the log grows until something checkpoints. If your app has that shape, use <code>wal_checkpoint='auto'</code> or call <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> periodically. A script should call <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> or <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> after a large fill.</p>
 </section>
 </section>
 <section id="maintenance-calls" class="level1">

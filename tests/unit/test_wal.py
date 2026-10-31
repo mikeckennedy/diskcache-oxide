@@ -8,11 +8,18 @@ clear left a 538 MiB WAL against a few-MiB database, for good.
 It needs readers truly running in parallel: on 3.14t the old behavior balloons (538 MiB to
 1 GiB); on 3.14 the GIL leaves gaps that let normal resets happen (4.3 MiB), so there the burst test
 is a bound check, and the regression it guards is caught by the 3.14t run in scripts/check.sh.
+
+The burst test pins itself and its readers to 8 CPUs where the platform can (Linux). With more CPUs
+than threads it hides a real defect: on 18 CPUs, or a container's `--cpus 8` (a quota, not a pin),
+the failure rate of forced checkpoints it guards (plan 09, step 2b) showed as an occasional flake;
+pinned to 8, removing TRUNCATE's retries fails about 40% of runs.
 """
 
 from __future__ import annotations
 
+import collections.abc
 import multiprocessing
+import os
 import threading
 import time
 from pathlib import Path
@@ -44,7 +51,22 @@ def _reader(directory: str, stop_at: float, ready: object) -> None:
         t.join()
 
 
+@pytest.fixture
+def pinned_to_8_cpus() -> collections.abc.Iterator[None]:
+    """Holds the calling thread, and the processes it starts, to 8 CPUs, where the platform can."""
+    if not hasattr(os, 'sched_setaffinity'):
+        yield
+        return
+    allowed = os.sched_getaffinity(0)
+    os.sched_setaffinity(0, sorted(allowed)[:8])
+    try:
+        yield
+    finally:
+        os.sched_setaffinity(0, allowed)
+
+
 @pytest.mark.timeout(120)
+@pytest.mark.usefixtures('pinned_to_8_cpus')
 def test_auto_mode_shrinks_the_wal_back_after_a_burst_with_readers_in_other_processes(tmp_path: Path) -> None:
     directory = tmp_path / 'c'
     cache = Cache(directory, size_limit=2**34, wal_size_limit=LIMIT, wal_checkpoint='auto')
@@ -73,6 +95,8 @@ def test_auto_mode_shrinks_the_wal_back_after_a_burst_with_readers_in_other_proc
         # must succeed. A slower one (3.14) can leave gaps for normal resets and need none.
         stats = cache._wal_stats()
         assert stats['errors'] == 0 and (stats['attempts'] == 0 or stats['successes'] >= 1), stats
+        # And nearly all must succeed: TRUNCATE's retries are what make that so (plan 09, step 2b).
+        assert stats['busy'] <= max(1, stats['attempts'] // 10), stats
     finally:
         for p in readers:
             p.terminate()
@@ -88,14 +112,18 @@ def _wal_bytes(directory: Path) -> int:
 
 
 def test_auto_mode_never_forces_a_checkpoint_on_a_healthy_workload(tmp_path: Path) -> None:
-    # Readers in this process only, and a small limit: the scaled autocheckpoint keeps the WAL far
-    # under the trigger, so no forced checkpoint (and no write pause) ever happens.
+    # Readers in this process only, at a modest rate, and a small limit: normal resets keep the WAL
+    # under the trigger, so no forced checkpoint (and no write pause) happens. The margin is small,
+    # about 8% even with idle readers. The readers are paced because four flat-out threads on a
+    # free-threaded build hold read marks almost constantly, and then the WAL legitimately passes
+    # the limit under load.
     cache = Cache(tmp_path / 'c', wal_size_limit=LIMIT, wal_checkpoint='auto')
     stop = threading.Event()
 
     def read() -> None:
         while not stop.is_set():
             cache.get('k')
+            time.sleep(0.001)
 
     readers = [threading.Thread(target=read) for _ in range(4)]
     for t in readers:

@@ -673,7 +673,7 @@ fn row_9_the_automatic_checkpoint_never_waits_behind_a_fork() {
     assert!(store.wal_bytes() > crate::wal::MIN_SIZE_LIMIT, "the WAL has to be over the limit");
     behind_a_fork(|| {
         let started = Instant::now();
-        store.maybe_checkpoint();
+        store.maybe_checkpoint(started + T);
         assert!(started.elapsed() < SLACK, "it waited behind the fork");
     });
     let stats = store.wal_stats();
@@ -883,4 +883,87 @@ fn held_by_this_thread_never_waits_behind_a_fork() {
         assert!(!seen);
         assert!(took < SHORT, "took {took:?}");
     });
+}
+
+// -- step 2b: mid-round ----------------------------------------------------------------------------
+
+/// A fork that arrives after the round's first try. A peer's snapshot makes every try wait out its
+/// window, so without the stop a round takes at least all the windows, and with it the fork waits
+/// for the try under way. Timing only decides whether an attempt counts: a fork that came before
+/// the round entered the gate, or after it ended busy, goes round again; a descheduled round can't
+/// fail it.
+#[test]
+fn a_fork_arriving_mid_round_stops_the_tries_and_counts_as_fork_pending() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-mid-round");
+    let store = open_store(tmp.path());
+    put(&store, "k0");
+    let peer = Connection::open(open::db_path(tmp.path())).unwrap();
+    peer.execute_batch("BEGIN; SELECT count(*) FROM cache;").unwrap();
+    put(&store, "k1");
+    let window = lockwait::ATTACHED_WINDOW;
+    let all_windows = window * crate::wal::TRUNCATE_TRIES;
+    let mut stopped_mid_round = 0;
+    for _ in 0..50 {
+        let (done, finished) = mpsc::channel();
+        let (outcome, took) = std::thread::scope(|s| {
+            let store = &store;
+            s.spawn(move || {
+                let started = Instant::now();
+                let outcome = store.checkpoint_once(started + T);
+                let _ = done.send((outcome, started.elapsed()));
+            });
+            std::thread::sleep(window * 2);
+            gate::begin_fork();
+            end_fork_after(&finished)
+        });
+        match outcome {
+            crate::wal::Outcome::ForkPending if took >= window && took < all_windows => stopped_mid_round += 1,
+            crate::wal::Outcome::ForkPending => {} // Stopped at the gate, or the fork came on the last try.
+            crate::wal::Outcome::Busy => assert!(took >= all_windows, "stopped after {took:?} and called it busy"),
+            other => panic!("{other:?}"),
+        }
+        if stopped_mid_round >= 3 {
+            break;
+        }
+    }
+    assert!(stopped_mid_round >= 3, "only {stopped_mid_round} rounds stopped for a fork");
+    peer.execute_batch("ROLLBACK").unwrap();
+}
+
+/// A reader in another process that outlasts a few windows doesn't fail the round: a floor on what
+/// the tries wait in all, so lowering the count fails this every run. The WAL starts empty, so the
+/// reader is on lock 0 and PASSIVE copies nothing: all the round's time is windows. A round that
+/// loses to a late release, or starts late, goes round again.
+#[test]
+fn a_reader_that_outlasts_a_few_windows_doesnt_fail_the_round() {
+    const HOLD: Duration = Duration::from_millis(14);
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("store-wal-outlast");
+    let store = open_store(tmp.path());
+    put(&store, "k0");
+    let mut outcomes = Vec::new();
+    for _ in 0..20 {
+        assert!(matches!(store.checkpoint_once(Instant::now() + T), crate::wal::Outcome::Done));
+        let peer = Connection::open(open::db_path(tmp.path())).unwrap();
+        peer.execute_batch("BEGIN; SELECT count(*) FROM cache;").unwrap();
+        put(&store, "k1");
+        let (outcome, started, released) = std::thread::scope(|s| {
+            let started = Instant::now();
+            let release = s.spawn(move || {
+                std::thread::sleep(HOLD);
+                peer.execute_batch("ROLLBACK").unwrap();
+                Instant::now()
+            });
+            let outcome = store.checkpoint_once(started + T);
+            (outcome, started, release.join().unwrap())
+        });
+        assert!(released.duration_since(started) >= HOLD);
+        let done = matches!(outcome, crate::wal::Outcome::Done);
+        outcomes.push(done);
+        if done {
+            return;
+        }
+    }
+    panic!("the round never outlasted the reader: {outcomes:?}");
 }

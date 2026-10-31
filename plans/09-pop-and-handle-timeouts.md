@@ -328,9 +328,43 @@ Still raised, because they're bugs and not outages: `TypeError` (a non-`str` key
 
 **Tests:** every row of the table against a peer process holding the lock, and against a real I/O failure where one can be forced; the default raises; a held transaction raises; bugs still raise; the log limit, with a count; `Caches` passthrough; `NullCache` accepts and validates it (`bool` only).
 
+## Step 2b: a forced checkpoint that survives readers
+
+Built on `9751682`. An architect looking into a test that failed about 15% of the time on Linux 3.15t (`test_auto_mode_shrinks_the_wal_back_after_a_burst_with_readers_in_other_processes`, `{'checks': 316, 'attempts': 9, 'successes': 0, 'busy': 9}`) found a real defect, not a bad test: under sustained writes beside readers in other processes, most forced checkpoints in `wal_checkpoint='auto'` failed, and the WAL reached many times its limit.
+
+**The mechanism.** This is a reading of how SQLite's WAL works, consistent with the measurements below; this build's source wasn't read. `checkpoint_once` runs PASSIVE right after a commit, when a reader on an older read mark stops it copying anything. TRUNCATE then does the copy and the sync inside its one 2 ms window, and by the time it needs the read locks the window is gone, so one reader in flight means busy. Oversubscribed CPUs add to it, since a descheduled reader holds its lock for longer than a window. So one retry isn't enough.
+
+**The fix.** `wal::truncate_tries` repeats TRUNCATE while it reports busy, up to `TRUNCATE_TRIES` (8) times in all, each in a fresh window, still detached.
+
+- **Safe to repeat.** Each try is its own autocommit statement and SQLite has released every lock by the time it returns, so a retry starts clean, and a reader or a writer in another process can run between tries. A real error ends the round at once. The first try still gets a whole window, whatever the deadline.
+- **The deadline.** A later try only starts before the deadline, and its window ends by it. That bounds the waiting, not the work: a try's copy and fsyncs can run past it (855 ms measured beside peers on a saturated disk), as `Store::checkpoint`'s docs say. `checkpoint(timeout)` passes its own deadline. `maybe_checkpoint` now takes the write's, so a `timeout=0` write gets one try.
+- **A fork.** No later try starts once a fork is pending, and that round counts as `fork_pending`, with no backoff: it says nothing about the WAL. A fork that arrives mid-round waits for the try under way. One that arrives before the first try waits for the rest of PASSIVE and that first try, which always runs and is where the copying is, the same shape as before this step. A try isn't bounded by its window, since it can copy frames another process has added: the worst TRUNCATE step seen beside a single writer was 77 ms, and 439 ms beside two flat-out peers. Step 1b's 1.4 s for a forced checkpoint in the soak is what was seen, not a bound, and the guarantee in step 1b stands.
+- **The write that triggers it.** It holds the write lock and a gate level longer, about 20 ms instead of 6 ms at the median, and a write behind it queues. A `timeout` under about 35 ms can time out in `auto` behind a round.
+
+**Why 8, not the 5 the review suggested.** An engineering choice from measurements. On Linux 3.15t, pinned to 8 CPUs, a flat-out writer and 4x4 readers, 64 MiB limit, three 45 s runs per cap:
+
+| Tries | Rounds still busy | Peak WAL (MiB) | Worst TRUNCATE step (ms) |
+|---|---|---|---|
+| 3 | 51 of 149 | 211 to 722 | 58 |
+| 5 | 8 of 144 | 119 to 160 | 77 |
+| 6 | 0 of 140 | 65 | 47 |
+| 8 | 0 of 144 | 65 | 34 |
+
+With the cap at 30, the try that succeeded was: within 5 in 95% and 97% of rounds, within 6 in 99% and 100%, within 7 in nearly all, and try 9 in 1 of 860. The zeros above aren't a promise: at 8 a tail of about 0.1-0.4% of rounds stays busy. A round that stays busy costs a second of backoff, up to about 100 MiB of WAL at this rate. A spare try costs a window only when every earlier one was busy, so 8 gives a margin over 6 at no cost to a round that succeeds. This is one machine and a deliberately oversubscribed load, so the count isn't a derived bound.
+
+**No spacing between tries.** Tried, because a try returns in microseconds while another process holds the checkpoint lock. It wasn't useful: with two peer writers in other processes and 5 tries, 15 of 129 of the writer's rounds succeeded with no gap, 0 of 117 with a 2 ms gap, and 1 of 114 with 10 ms. That's one flat-out load, not proof that spacing hurts in general.
+
+**The tests.** The burst test pins itself and its readers to 8 CPUs with `sched_setaffinity` where the platform has it, since `--cpus 8` is a quota, which hid this. It also now requires `busy <= max(1, attempts // 10)`, which passed 30 of 30 pinned on each of 3.14, 3.14t, 3.15 and 3.15t on Linux, though the GIL builds force few checkpoints there. Two core tests in `store/fork_timeout.rs` pin the rest deterministically: a fork arriving mid-round stops the tries and counts as `fork_pending`, and a reader that outlasts a few windows (14 ms) doesn't fail the round, so lowering the count fails it. The healthy-workload test's readers are now paced: four flat-out threads on a free-threaded build hold read marks almost constantly, so the WAL legitimately passes the limit under load, and its old comment's "far under" was false.
+
+**Not fixed: several writers in several processes.** With two peer writers, also flat out and in `auto`, the WAL stays far over its limit. On 3.15t the peaks were 3 to 6 GiB against stock's 13 to 22 GiB in 60 s, with about 12% of the main writer's rounds succeeding against 0%. On 3.14 only 1% succeeded (18 of 1,687), with a 21 GiB peak in 600 s. The retries help on 3.15t and don't solve it on either: `wal_size_limit` is a target, not a bound, and D-024 and the guide now say so. See "Several-writer back-pressure" below.
+
 ## Step 3: re-soak
 
 After steps 1 and 2 and the 24-hour result: add `pop` to the soak worker, with a check that each value is delivered exactly once, then stop the current run, keeping its partial results, and run 24 hours on the final commit on the mini (Michael, 2026-10-30). Phase 3's production cutover waits for it.
+
+## Later: several-writer back-pressure
+
+Not a precondition for the soak or Phase 3. A soft ceiling: after a commit, a writer sleeps while the WAL is over 2 to 4 times the limit, so writers near flat out can't outrun the checkpoint. A prototype took the WAL from 4.1 GiB to 157-276 MiB, and the write rate from 26.8k to 7.3-12.4k a second, in single 120 s runs. That's a real cost on the write path, so it needs its own design and review. Until then, the limit is documented as a target.
 
 ## Architect's review of this plan (2026-10-30): changes to make while building
 
@@ -408,6 +442,19 @@ Per Michael (2026-10-30), the re-soak is a fresh full 24 hours on the final libr
 - **Accepted:** `SQLITE_TOOBIG`, at about 1 GB, is answered as an outage.
 - **A later alignment:** a handler failure in a decode report goes to `write_unraisable` whatever it is (`report_decode_error`), while `durable.rs`'s `record` lets `MemoryError` and non-`Exception`s through. They should agree.
 - **A flaky test that isn't this step's:** `test_auto_mode_shrinks_the_wal_back_after_a_burst_with_readers_in_other_processes` fails on Linux 3.15t when every forced checkpoint in the run is busy and the WAL still shrinks (`attempts: 9, successes: 0`). It failed 4 of 30 repeats on this build and 5 of 30 on `58508b8`. Left alone.
+
+**Step 2b built (2026-10-31). Not yet committed, and not yet reviewed.** See "Step 2b" above for the design and the count.
+
+- **The test, pinned, Linux, 30 runs of each build, alternating:** 3.15t new 30 passed, stock 20 passed and 10 failed; 3.14t new 30 passed, stock 14 passed and 16 failed. With `TRUNCATE_TRIES` set to 1 in a scratch copy, 13 of 30 failed, so a single run catches removing the retries about 40% of the time.
+- **Sustained writes, Linux, pinned to 8 unless noted, forced successes and peak WAL, stock against new:** 3.15t, 64 MiB, 120 s, 3 of 117 and 1,522 MiB against 116 of 116 and 65 MiB. 3.15t, 4 MiB, 60 s, 7 of 65 and 987 MiB against 748 of 749 and 41 MiB. 3.14, 64 MiB, 120 s, no forced checkpoints in either, 9 MiB. 3.14 pinned to 2 CPUs, 60 s, 0 of 57 and 975 MiB against 95 of 95 and 66 MiB.
+- **macOS, 60 s:** 3.14t, 15 of 66 and 557 MiB against 105 of 105 and 65 MiB. 3.14, no forced checkpoints in either, 4 MiB.
+- **A write that triggers a checkpoint, Linux 3.15t:** p50 about 6 ms to 19 ms, p99 23 to 34 ms (one stock run hit 336 ms). Other writes unchanged. Sustained write rate moved from 4,637 to 3,849 a second at 64 MiB and 3,926 to 3,127 at 4 MiB in the single runs, while the two 60 s pairs measuring cost went +16% and -15%, so that's unsettled.
+- **A fork beside that load, Linux 3.15t, about 1,050 per run:** p50 2.9 to 3.0 ms, p99 11 to 22 ms against 10 to 12 ms, max 60 and 320 ms against 455 and 52 ms, so no visible change. `bench.fork_cost`'s quiet fork on macOS, 5 interleaved runs, parent side p50, stock against new: 1,108 and 1,113 us on 3.14, 1,334 and 1,331 us on 3.14t.
+- **`bench.gate`'s rules, 8 interleaved rounds, on AC, new against `9751682`:** `set_small` 0.756x and 0.759x on 3.14, 0.763x and 0.761x on 3.14t. All GO, with load averages of 3 to 7.
+- **Mutants of the new core tests, macOS, 6 runs each:** the stop probe forced false, the fork check removed and the busy-to-`fork_pending` mapping removed each failed the mid-round test 6 of 6. `TRUNCATE_TRIES` of 1 to 6 each failed the outlast test 6 of 6. The correct code passed both, 6 of 6.
+- **The review (2026-10-31): the retry logic is approved, with no code defect, and the fixes above are made.** The neighbour's one failure in `scripts/linux-check.sh` on 3.15t (`test_auto_mode_never_forces_a_checkpoint_on_a_healthy_workload`, `attempts: 1, successes: 1`) was the test's assumption, not the code: unpaced readers failed it 15 of 15 on both builds with 16 CPU hogs, and paced readers made 0 attempts in 40 such runs.
+- **Accepted (F7):** explicit `checkpoint()` beside a peer holding a snapshot throughout slows in-process writes during the call, from about 39k to 22k a second, with the worst write going from 13-28 ms to 29-37 ms. Passing `Instant::now()` as the round's deadline there would restore the old behavior if wanted.
+- **Accepted (F8):** a fork arriving during the 8th try labels that round `fork_pending`, so it gets no backoff. It's harmless: the next check is at least 64 commits or 250 ms later.
 
 **Open follow-ups:**
 

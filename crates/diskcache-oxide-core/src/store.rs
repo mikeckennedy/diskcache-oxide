@@ -836,20 +836,21 @@ impl Store {
         // Never for a nested write (depth > 0): it may get a token from try_lock_nested, but an outer
         // snapshot on this thread would only make the checkpoint report busy.
         if result.is_ok() && top_level && self.auto_checkpoint.load(Ordering::Relaxed) {
-            self.maybe_checkpoint();
+            self.maybe_checkpoint(deadline);
         }
         drop(token);
         result
     }
 
-    /// The WAL check after a committed write; see [`crate::wal`]. Never fails, never waits beyond one
-    /// attached window, and only records what happened.
-    fn maybe_checkpoint(&self) {
+    /// The WAL check after a committed write; see [`crate::wal`]. Never fails, waits for readers at
+    /// most [`crate::wal::TRUNCATE_TRIES`] attached windows and no later than the write's `deadline`
+    /// after the first, and only records what happened.
+    fn maybe_checkpoint(&self, deadline: Instant) {
         use crate::wal::Decision;
         let limit = self.wal_size_limit.load(Ordering::Relaxed);
         let decision = self.wal.after_commit(limit, || self.wal_bytes());
         if decision == Decision::Checkpoint {
-            let outcome = self.checkpoint_once();
+            let outcome = self.checkpoint_once(deadline);
             self.wal.record_outcome(&outcome);
         }
     }
@@ -864,8 +865,8 @@ impl Store {
     /// was reset, `Ok(false)` if readers or writers in other processes, or a pending fork, kept it
     /// busy the whole time,
     /// and a real error (a full disk, an I/O error) at once. `timeout` bounds the waiting, not a
-    /// round already running: its PASSIVE copy of a large backlog can take longer, and its TRUNCATE
-    /// always gets a fresh 2 ms window. For
+    /// round already running: copying a large backlog and syncing it, in PASSIVE or in any TRUNCATE
+    /// try, can take longer, and the first try always gets one fresh 2 ms window. For
     /// `Cache.checkpoint()`: an app calls it when a pause suits it (at shutdown, in a maintenance
     /// job, after a large `clear()`). Inside the calling thread's own held transaction, or a nested
     /// operation, it returns `Ok(false)` without trying (its own open transaction keeps the WAL busy).
@@ -886,7 +887,7 @@ impl Store {
             // instead of meeting SQLite's busy handler while the checkpoint resets the WAL.
             let token = self.write_lock.lock_until(deadline);
             let outcome = match token {
-                Some(_) => self.checkpoint_once(),
+                Some(_) => self.checkpoint_once(deadline),
                 // Writers queued behind a fork hold the lock: that's the fork, not WAL contention.
                 None if GATE.stats().pending => Outcome::ForkPending,
                 None => Outcome::Busy,
@@ -939,13 +940,16 @@ impl Store {
         self.handles.load(Ordering::Acquire) == 1 && self.wal_bytes() > trim
     }
 
-    /// One round of a forced checkpoint: PASSIVE, then TRUNCATE in a fresh 2 ms window. Records how
-    /// long it took; the caller records the outcome. The window opens after PASSIVE, never sooner:
-    /// a window that PASSIVE's copy had already used up would let TRUNCATE lose to a reader
-    /// microseconds into its transaction, after all the copying was done. So a round can end up to
-    /// [`lockwait::ATTACHED_WINDOW`] past its caller's deadline. Behind a pending fork it doesn't wait:
-    /// [`Store::maybe_checkpoint`] holds the write lock here, and has no deadline.
-    fn checkpoint_once(&self) -> crate::wal::Outcome {
+    /// One round of a forced checkpoint: PASSIVE, then TRUNCATE, repeated while it reports busy, each
+    /// try in a fresh 2 ms window ([`crate::wal::truncate_tries`]). Records how long it took; the
+    /// caller records the outcome. The first window opens after PASSIVE, whatever the time: a window
+    /// that PASSIVE's copy had already used up would let TRUNCATE lose to a reader microseconds into
+    /// its transaction, after all the copying was done. Later windows end by `deadline`, but `deadline`
+    /// bounds only the waiting: a try's copy and syncs can run past it, as [`Store::checkpoint`] says.
+    /// Behind a pending fork it doesn't wait, and no later try starts once a fork is pending, because
+    /// [`Store::maybe_checkpoint`] holds the write lock here. So a fork that arrives mid-round waits
+    /// for the try under way, and one that arrives sooner for the rest of PASSIVE and the first try.
+    fn checkpoint_once(&self, deadline: Instant) -> crate::wal::Outcome {
         use crate::wal::Outcome;
         let classify = |error: Error| match error {
             Error::Timeout { .. } => Outcome::Busy,
@@ -962,17 +966,24 @@ impl Store {
             Err(error) => return classify(error),
         };
         // Two steps. PASSIVE first, with no busy window: it copies whatever frames it can into the
-        // database without waiting for anyone. Then TRUNCATE in a fresh window: it waits for readers
-        // on older snapshots (ours take microseconds), copies the small remainder and truncates the
-        // file. A single TRUNCATE spent its whole window copying a large backlog and then reported
-        // busy before it could wait for readers (seen on Linux with readers in other processes).
-        // Busy comes back as a row (busy = 1), not an error.
+        // database without waiting for anyone. Then TRUNCATE: it waits for readers on older snapshots
+        // (ours take microseconds), copies the rest, syncs and truncates the file. A single TRUNCATE
+        // spent its whole window copying a large backlog and then reported busy before it could wait
+        // for readers (seen on Linux with readers in other processes).
         //
-        // Both run with the interpreter released (through the gate's blocker), although this thread
-        // holds the gate: copying a large backlog under a loaded disk took up to 1.4 s in the soak,
-        // and on a GIL build every other thread of the process would have frozen with it. This is
-        // the same exception spill-file reads make: bounded work with no waiting on another lock or
-        // on the interpreter, so a pending fork waits at most this long, and can't deadlock.
+        // PASSIVE can't be relied on to do that copy: it runs right after a commit, and a reader on an
+        // older read mark stops it copying anything. Then the first TRUNCATE does the copy and spends
+        // its window on it, and one reader in flight makes it report busy, so sustained writes beside
+        // readers in other processes failed most forced checkpoints (plan 09, step 2b). Hence the
+        // repeat: a later try has nothing left to copy, so its whole window goes to the readers, and
+        // SQLite has released every lock between tries. Busy comes back as a row (busy = 1), not an
+        // error; a real error ends the round at once.
+        //
+        // All of it runs with the interpreter released (through the gate's blocker), although this thread
+        // holds the gate: copying a large backlog under a loaded disk took up to 1.4 s in the soak
+        // (what was seen, not a bound), and on a GIL build every other thread of the process would have
+        // frozen with it. This is the same exception spill-file reads make: work with no waiting on
+        // another lock or on the interpreter, so a pending fork waits for it and can't deadlock.
         // The blocker's closure must be `Sync` and a `Connection` isn't, so the closure borrows the
         // lease's connection through a mutex (`&mut PooledConn` is `Send`).
         let mut timings = None;
@@ -985,11 +996,15 @@ impl Store {
                 let start = Instant::now();
                 let _ = conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| r.get::<_, i64>(0));
                 let passive = start.elapsed();
-                let row = {
-                    // `open` caps the window at ATTACHED_WINDOW from now.
-                    let _window = lockwait::AttachedWindow::open(Instant::now() + lockwait::ATTACHED_WINDOW);
-                    conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0))
-                };
+                let row = crate::wal::truncate_tries(
+                    deadline,
+                    || GATE.stats().pending,
+                    |ends| {
+                        // `open` caps the window at ATTACHED_WINDOW from now.
+                        let _window = lockwait::AttachedWindow::open(ends);
+                        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0))
+                    },
+                );
                 **out = Some((row, passive, start.elapsed().saturating_sub(passive)));
             });
         }
@@ -1005,6 +1020,8 @@ impl Store {
         self.wal.record_pause(passive, truncate);
         match row {
             Ok(0) => Outcome::Done,
+            // It may have stopped trying for the fork: that says nothing about the WAL, so no backoff.
+            Ok(_) if GATE.stats().pending => Outcome::ForkPending,
             Ok(_) => Outcome::Busy,
             Err(error) => classify(Error::from_sqlite(error, Duration::ZERO)),
         }
@@ -2305,6 +2322,35 @@ mod tests {
         assert!(store.checkpoint(T).unwrap(), "an idle store checkpoints at once");
         assert_eq!(store.wal_bytes(), 0, "TRUNCATE leaves an empty WAL");
         assert_eq!(store.wal_stats().successes, 1);
+    }
+
+    #[test]
+    fn a_busy_truncate_is_tried_again_in_fresh_windows_until_the_deadline_stops_it() {
+        // Another test's fork would end the round early: the gate is process-wide.
+        let _forks = crate::testutil::one_global_fork_at_a_time();
+        // A peer's open snapshot outlasts every window, so each try waits out its whole window.
+        let tmp = TempDir::new("store-wal-tries");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        put(&store, "k0", b"v");
+        let peer = Connection::open(open::db_path(tmp.path())).unwrap();
+        peer.execute_batch("BEGIN; SELECT count(*) FROM Cache;").unwrap();
+        put(&store, "k1", b"v");
+
+        let start = Instant::now();
+        let outcome = store.checkpoint_once(start + T);
+        let elapsed = start.elapsed();
+        assert!(matches!(outcome, crate::wal::Outcome::Busy), "{outcome:?}");
+        let all_windows = lockwait::ATTACHED_WINDOW * crate::wal::TRUNCATE_TRIES;
+        assert!(elapsed >= all_windows, "{elapsed:?}: it should have waited out {all_windows:?}");
+
+        // Past its deadline a round still gets its one window, and only that one. No upper bound on
+        // the time here: a descheduled test would fail it. The count is in wal.rs's tests.
+        let outcome = store.checkpoint_once(Instant::now());
+        assert!(matches!(outcome, crate::wal::Outcome::Busy), "{outcome:?}");
+
+        peer.execute_batch("ROLLBACK").unwrap();
+        assert!(matches!(store.checkpoint_once(Instant::now() + T), crate::wal::Outcome::Done));
+        assert_eq!(store.wal_bytes(), 0);
     }
 
     #[test]

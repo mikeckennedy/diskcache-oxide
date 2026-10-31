@@ -103,7 +103,7 @@ diskcache's default is a 32 MiB page cache and a 64 MiB memory map per connectio
 
 ### D-024: a WAL that shrinks
 
-With readers in other processes, a burst of writes makes SQLite's write-ahead log grow to fit the burst and stay that size: hundreds of MiB to over 1 GiB beside a database of a few MiB. diskcache-oxide trims the log whenever it resets (`wal_size_limit`), offers `checkpoint()` to empty it on demand, checkpoints a large log at `close()`, and can checkpoint automatically with `wal_checkpoint='auto'`. See [Storage and WAL](storage-and-wal.qmd).
+With readers in other processes, a burst of writes makes SQLite's write-ahead log grow to fit the burst and stay that size: hundreds of MiB to over 1 GiB beside a database of a few MiB. diskcache-oxide trims the log whenever it resets (`wal_size_limit`), offers `checkpoint()` to empty it on demand, checkpoints a large log at `close()`, and can checkpoint automatically with `wal_checkpoint='auto'`, which tries a few times in a row so that a reader in flight in another process doesn't defeat it. See [Storage and WAL](storage-and-wal.qmd).
 
 ## API differences
 

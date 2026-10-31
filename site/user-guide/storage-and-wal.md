@@ -90,7 +90,14 @@ cache.checkpoint()   # True if the log was reset and truncated
 cache = Cache('/var/cache/my-app', wal_checkpoint='auto')
 ```
 
-With `'auto'`, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it's over the limit, with the interpreter released and a 1-second backoff if other processes are busy. It never fails a write. It isn't the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. The plan is to move this into a background maintenance thread so writes never pay for it at all.
+With `'auto'`, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it's over the limit, with the interpreter released. Readers in other processes can get in the way for a moment, so it tries the final truncation up to 8 times, a couple of milliseconds each, before backing off for a second. It never fails a write. It isn't the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. The plan is to move this into a background maintenance thread so writes never pay for it at all. Writes queue behind a checkpoint for tens of milliseconds, so a [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) under about 35 ms can time out behind one.
+
+
+## The limit is a target, not a bound
+
+`wal_size_limit` says where the log should stay, not where it's guaranteed to stay. Sustained writes from several processes near flat out can take it to tens of times the limit: we measured 6 GiB on free-threaded 3.15 and 21 GiB on 3.14 in 10 minutes, against a 64 MiB limit. It's much smaller below flat out, for example 250 MiB at about 2,600 writes per second across 3 writers in `auto`.
+
+In the default `manual` mode, with busy readers in other processes, the log grows until something checkpoints. If your app has that shape, use `wal_checkpoint='auto'` or call [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) periodically. A script should call [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) or [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) after a large fill.
 
 
 # Maintenance calls

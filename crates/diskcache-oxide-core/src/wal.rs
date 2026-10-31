@@ -15,9 +15,15 @@
 //! A forced checkpoint runs with the interpreter released: `PRAGMA wal_checkpoint(PASSIVE)` (copy
 //! what it can, no waiting), then `wal_checkpoint(TRUNCATE)` under a fresh busy window
 //! ([`crate::lockwait::ATTACHED_WINDOW`], opened after PASSIVE), which waits for
-//! in-flight readers (ours are microseconds long), copies the remainder and truncates the file. The
-//! PASSIVE copy itself has no time limit: on a saturated disk, copying a large backlog took seconds
-//! in the soak. The counters' pause times measure the SQLite work only, not re-taking the
+//! in-flight readers (ours are microseconds long), copies the remainder and truncates the file.
+//! TRUNCATE is repeated while it reports busy, up to [`TRUNCATE_TRIES`] times, each in a fresh
+//! window, because PASSIVE often copies nothing: right after a commit, a reader on an older read
+//! mark stops it. The first TRUNCATE then spends its window on the copy, and any reader in flight
+//! makes it report busy; a later try has its whole window for the readers. No later try starts past
+//! the caller's deadline or once a fork is pending. So a fork that arrives mid-round waits for the
+//! try under way, and one that arrives sooner waits for the rest of PASSIVE and the first try, which
+//! always runs and is where the copying is. The copying has no time limit, in PASSIVE or in any try:
+//! on a saturated disk, copying a large backlog took seconds in the soak. The counters' pause times measure the SQLite work only, not re-taking the
 //! interpreter.
 //!
 //! By default it runs only when the app asks: `Store::checkpoint` (`Cache.checkpoint()`), which
@@ -48,6 +54,12 @@ pub const CHECK_EVERY: Duration = Duration::from_millis(250);
 pub const CHECK_EVERY_COMMITS: u64 = 64;
 /// After a busy or failed forced checkpoint, the store waits this long before the next attempt.
 pub const RETRY_AFTER_BUSY: Duration = Duration::from_secs(1);
+
+/// How many times one forced round tries TRUNCATE while it reports busy. An engineering choice from
+/// measurements, not a derived bound (plan 09, step 2b): 3 left about 30% of rounds busy, 5 about 6%,
+/// and 8 about 0.1-0.4%. A success stops the tries, so only a round that stays busy pays for the
+/// spare ones.
+pub const TRUNCATE_TRIES: u32 = 8;
 
 /// A forced checkpoint at least this long counts as slow in [`WalStats::slow`].
 pub const SLOW_PAUSE: Duration = Duration::from_millis(100);
@@ -89,14 +101,15 @@ pub struct WalStats {
     pub errors: u64,
     /// ...that were skipped because every connection slot was in use.
     pub no_slot: u64,
-    /// ...that were skipped because a fork was pending. Kept apart from `busy`, so that stays a count
-    /// of WAL contention, and with no backoff: a fork says nothing about the WAL.
+    /// ...that were skipped, or stopped retrying, because a fork was pending. Kept apart from `busy`,
+    /// so that stays a count of WAL contention, and with no backoff: a fork says nothing about the WAL.
     pub fork_pending: u64,
     /// The longest single round of SQLite work (both steps), in microseconds.
     pub max_pause_us: u64,
     /// The longest PASSIVE step (copying frames without waiting), in microseconds.
     pub max_passive_us: u64,
-    /// The longest TRUNCATE step (waiting for readers, the remainder, the truncation), in microseconds.
+    /// The longest TRUNCATE step, all its tries (waiting for readers, the remainder, the truncation),
+    /// in microseconds.
     pub max_truncate_us: u64,
     /// Rounds that took at least [`SLOW_PAUSE`].
     pub slow: u64,
@@ -259,6 +272,26 @@ impl WalState {
     }
 }
 
+/// Runs `try_once` until it stops reporting busy (a non-zero row), for at most [`TRUNCATE_TRIES`]
+/// tries, and returns the last answer. `try_once` is given the time its busy window may end at. The
+/// first try always runs, in a whole window; a later one only if `deadline` hasn't passed, in a window
+/// cut off at `deadline`, and if `fork_pending` says no fork is waiting for this round's gate level.
+pub(crate) fn truncate_tries<E>(
+    deadline: Instant,
+    fork_pending: impl Fn() -> bool,
+    mut try_once: impl FnMut(Instant) -> Result<i64, E>,
+) -> Result<i64, E> {
+    let mut row = try_once(Instant::now() + crate::lockwait::ATTACHED_WINDOW);
+    for _ in 1..TRUNCATE_TRIES {
+        let busy = matches!(row, Ok(status) if status != 0);
+        if !busy || Instant::now() >= deadline || fork_pending() {
+            break;
+        }
+        row = try_once(deadline);
+    }
+    row
+}
+
 fn millis(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
@@ -275,6 +308,62 @@ mod tests {
             assert!(journal_size_limit(limit) < limit);
         }
         assert_eq!(autocheckpoint_pages(DEFAULT_SIZE_LIMIT), SQLITE_AUTOCHECKPOINT);
+    }
+
+    /// Runs `truncate_tries` against scripted answers (the last repeats); returns the answer and the
+    /// window end each try was given.
+    fn run_tries(
+        answers: &[Result<i64, &'static str>],
+        deadline: Instant,
+        fork_pending: impl Fn() -> bool,
+    ) -> (Result<i64, &'static str>, Vec<Instant>) {
+        let mut windows = Vec::new();
+        let row = truncate_tries(deadline, fork_pending, |ends| {
+            let answer = answers[windows.len().min(answers.len() - 1)];
+            windows.push(ends);
+            answer
+        });
+        (row, windows)
+    }
+
+    #[test]
+    fn truncate_is_tried_until_it_is_not_busy_and_no_more_than_the_limit() {
+        let far = Instant::now() + Duration::from_secs(3600);
+        let no_fork = || false;
+        let (row, windows) = run_tries(&[Ok(0)], far, no_fork);
+        assert_eq!((row, windows.len()), (Ok(0), 1), "a success isn't tried again");
+        let (row, windows) = run_tries(&[Ok(1), Ok(1), Ok(0)], far, no_fork);
+        assert_eq!((row, windows.len()), (Ok(0), 3));
+        let (row, windows) = run_tries(&[Ok(1)], far, no_fork);
+        assert_eq!((row, windows.len()), (Ok(1), TRUNCATE_TRIES as usize), "bounded, and reports busy");
+        let (row, windows) = run_tries(&[Ok(1), Err("disk full"), Ok(0)], far, no_fork);
+        assert_eq!((row, windows.len()), (Err("disk full"), 2), "a real error isn't retried");
+    }
+
+    #[test]
+    fn a_truncate_try_past_the_deadline_never_starts_but_the_first_always_does() {
+        let before = Instant::now();
+        let (row, windows) = run_tries(&[Ok(1)], before, || false);
+        assert_eq!((row, windows.len()), (Ok(1), 1));
+        assert!(windows[0] >= before + crate::lockwait::ATTACHED_WINDOW, "the first window is whole, deadline or not");
+
+        let deadline = Instant::now() + Duration::from_secs(3600);
+        let (_, windows) = run_tries(&[Ok(1)], deadline, || false);
+        assert!(windows[1..].iter().all(|ends| *ends == deadline), "later windows stop at the deadline");
+    }
+
+    #[test]
+    fn a_pending_fork_stops_the_truncate_tries_at_once() {
+        let far = Instant::now() + Duration::from_secs(3600);
+        let (row, windows) = run_tries(&[Ok(1)], far, || true);
+        assert_eq!((row, windows.len()), (Ok(1), 1));
+        let asked = std::cell::Cell::new(0);
+        let fork_arrives_after_two = || {
+            asked.set(asked.get() + 1);
+            asked.get() == 2
+        };
+        let (row, windows) = run_tries(&[Ok(1)], far, fork_arrives_after_two);
+        assert_eq!((row, windows.len()), (Ok(1), 2));
     }
 
     #[test]
