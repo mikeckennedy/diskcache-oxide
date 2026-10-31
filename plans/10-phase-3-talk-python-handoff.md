@@ -39,7 +39,7 @@ Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency wor
 3. **Add `pop` and durable lanes to the soak kit,** stop the current soak, start 24 hours on that commit. Rule: one soak at a time on the mini. Use `zsh -lc` over ssh, and see the memory note `soak-on-mini`.
 4. **Write the port plan** from section 6, settling section 7's decisions with Michael. The architect reviews it.
 5. **Port on the branch.** Run `./venv/bin/ty check`, `./venv/bin/ruff check --fix talk_python_to_me_com/`, `./venv/bin/ruff format talk_python_to_me_com/` and the tests, from `APP`. About 8,500 tests, serial, and `tests/test_type_check.py` fails on any `ty` diagnostic.
-6. **Before production:** the soak PASS on the final library commit, a Linux wheel (section 9), and the cold-cutover steps (section 7, items 1 and 2).
+6. **Before production:** the soak PASS on the final library commit, a Linux wheel (section 9), and the cold-cutover steps (section 7, items 1 and 2). Near the end, Michael runs a real test on `talk-python-htz`, on real Linux, as the near-final check (2026-10-30). That's where Linux performance gets measured.
 
 Library changes during the port: Python-only changes such as `Caches` shouldn't need another soak. A change to `get_with`, `pop` or the locking does.
 
