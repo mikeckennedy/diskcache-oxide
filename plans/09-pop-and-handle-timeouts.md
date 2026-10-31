@@ -1,0 +1,71 @@
+# Plan 09: a `pop` that keeps foreign values, and `handle_timeouts`
+
+Two follow-ups from plan 08, both Michael's decisions (2026-10-30). He also confirmed the name `ForeignValueError`. Each step gets the architect's review once built, and the suite runs on all four interpreters.
+
+**The soak's scope.** The 24-hour run is on commit `0f1b9b8`. Plans 08 and 09 change `get_with` and `pop` after that commit, so its PASS doesn't cover them. The soak worker doesn't call `pop` at all today, so the kit needs it added. A shorter soak of the final code should run before Phase 3 goes to production. See step 3.
+
+## Step 1: `pop` decodes before it deletes
+
+**Problem.** `Store::pop` deletes inside its write transaction and decodes after the commit (decoding can run a pickle hook, which must not run inside the transaction). So a value in a known mode with an unknown tag or extension, or a missing time zone, is destroyed by a `pop` that can't read it. A newer peer's data is lost during a deploy, and under `on_decode_error='raise'` the caller gets an error with the row already gone.
+
+**Design.** `Cache::pop` becomes optimistic:
+
+1. Read and decode with `get_with`, exactly as `get` does: no write lock, and hooks run where a `get`'s hooks run. A miss returns the default.
+2. On a clean decode, delete exactly that version with a new blocking `Store::delete_version(timeout, version) -> Result<bool>` (through `write_files`, so a held transaction defers the file's unlink as `pop` does today).
+   - `true`: this caller removed it, so it returns the value. Two racing `pop`s can't both get `true`, so a value still goes to one caller.
+   - `false`: another writer replaced or removed it first, so go back to 1, up to `POP_ATTEMPTS` (8, as `spill::OPTIMISTIC_ATTEMPTS`).
+3. After that many losses to overwrites, fall back to today's locked `Store::pop`. It can't starve, and only then can a foreign tag be destroyed; the docs say so.
+
+**When the decode fails:**
+
+| Failure | `'raise'` | `'miss'` / callable |
+|---|---|---|
+| Foreign, `UnsafeValueError` | raises, row kept | Foreign: default, row kept. Unsafe: raises, row kept |
+| Unreadable (malformed bytes, a failing unpickle) | deletes that version, then raises (today's "a value that fails to decode is still removed") | deletes that version, returns the default, reports |
+| Passthrough (`Timeout`, `MemoryError` and so on from a hook) | row kept, raises | row kept, raises |
+
+The last row changes today's behavior for the better: a transient error no longer costs the value. Under `'raise'` the delete is blocking, as `pop` is today, and a `Timeout` from that delete replaces the decode error.
+
+**Costs and checks:**
+- `pop` is now a read plus a write. It's off the gate's list and isn't a hot path, but measure it (`pop` of a small value, before and after).
+- `refuse` and `Pop::Refused` stay for the fallback.
+- Inside a held transaction, the read and the delete both use the transaction's connection.
+- A D-020 child reads, then the delete raises as `pop` does today.
+- Hooks now run before the row is gone, so a hook that overwrites its own key loses the race, retries and eventually takes the fallback. Bounded.
+
+**Tests:**
+- a foreign tag and a missing zone under both policies: row kept;
+- N threads and processes racing `pop` over many keys: each value returned exactly once (the soak's ledger does this too);
+- `pop` losing to an overwrite returns the newer value or falls back;
+- a hook raising `Timeout` under both policies keeps the row;
+- the two existing hook tests (`test_pop_decodes_after_its_write_commits` is renamed, since the order is the point) and the held-transaction test;
+- `test_pop_of_a_foreign_tag_says_it_was_deleted` flips to "kept".
+
+## Step 2: `Cache(..., handle_timeouts=False)`
+
+A busy lock on a request path is an outage of the cache, not of the app. Talk Python's `DurableCache` hides read timeouts by accident today, and its `set` raises. This makes it a choice, and covers both.
+
+**The option.** `handle_timeouts: bool = False`. `True` means a `Timeout` from a single-key operation doesn't raise. Per handle, not persisted. `NullCache` accepts and ignores it; `Caches` passes it through like any setting. Off by default, so diskcache's behavior is unchanged.
+
+| Call | With `handle_timeouts=True`, on `Timeout` |
+|---|---|
+| `get`, `pop`, `in` | the default, or False. `cache[key]` raises `KeyError` |
+| `set`, `add`, `touch` | False. `cache[key] = v` drops the write |
+| `incr`, `decr` | `default ± delta`, as `NullCache` does, so a rate limiter fails open. `default=None` raises `KeyError` |
+| `delete`, `del cache[key]` | **see the open question** |
+| `clear`, `expire`, `cull`, `checkpoint`, `len`, `volume`, iteration | raise as today: admin callers need the truth, and these have their own `timeout=` |
+| anything inside a held transaction, including `WriteLockBusyInTransaction` | raises: swallowing it would break the transaction's atomicity |
+
+`Timeout` only. `OSError` (disk full) and the rest still raise.
+
+**Reporting.** A swallowed timeout is logged as a warning on the `diskcache_oxide` logger, at most once per handle every 60 s, with a count of those suppressed since. An outage can be thousands a second. There's no callback in this step.
+
+**Open question for Michael: `delete`.** A swallowed `delete` looks like "wasn't there", so the invalidation is lost and stale data is served until it expires. Talk Python's "every episode write invalidates its page immediately" depends on it. **Recommendation:** `delete` keeps raising, so a failed invalidation is loud.
+
+**Tests:** every row of the table against a peer process holding the lock, on both builds; the default raises; a held transaction raises; the log limit, with a count; `Caches` passthrough; `NullCache` accepts and validates it (`bool` only).
+
+## Step 3: re-soak
+
+After steps 1 and 2 and the 24-hour result: add `pop` to the soak worker, with a check that each value is delivered exactly once, then run the kit on the final commit on the mini for 6-8 hours. Phase 3's production cutover waits for it.
+
+## Progress
