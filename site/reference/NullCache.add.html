@@ -1040,7 +1040,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/null.py#L194-L201" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/null.py#L204-L212" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">NullCache</span><span class="op">.</span><span class="sig-name">add</span>(
@@ -1050,7 +1050,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 )</span></code></pre></div>
 </div>
 <div class="doc-text">
-<p>With caching off, every caller’s <a href="Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> succeeds, so don’t rely on it for job claims or locks.</p>
+<p>With caching off, every caller’s <a href="Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> succeeds, so don’t rely on it for job claims or locks. A <code>Cache(durable=True)</code> does the opposite when a write fails: its <a href="Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> returns False.</p>
 </div>
 
 

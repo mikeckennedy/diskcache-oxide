@@ -28,7 +28,9 @@ Seconds from now until the entry expires, or None to make it never expire.
 
 
 `bool`  
-True if the entry existed and was updated, False if it was missing or expired.
+True if the entry existed and was updated, False if it was missing or expired, or with
+
+`durable=True`, if the call failed.
 
 
 ## Raises

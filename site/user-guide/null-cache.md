@@ -41,6 +41,8 @@ The constructor accepts the same arguments as [Cache](../reference/Cache.md#disk
 
 The rule means [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) always succeeds on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache). If you use [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) to claim a job so only one worker runs it, then with caching off every worker's claim succeeds and the job runs once per worker. That's harmless for idempotent work and wrong for work with side effects, like sending email. Keep claims like that on a cache that's never switched off.
 
+`Cache(durable=True)` goes the other way: its [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) returns `False` when a write fails, so a claim fails closed there and open here. Keep claims on a handle that isn't durable and handle its exceptions. See [A cache that can't take a request down](getting-started.md#a-cache-that-cant-take-a-request-down).
+
 
 # `if cache:` means "caching is on"
 

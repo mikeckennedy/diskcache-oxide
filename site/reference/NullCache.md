@@ -20,7 +20,8 @@ NullCache(
     sqlite_cache_size=None,
     wal_size_limit=None,
     wal_checkpoint="manual",
-    on_decode_error="raise",
+    on_decode_error=None,
+    durable=False,
     invalidate=None
 )
 ```

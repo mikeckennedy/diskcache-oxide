@@ -1101,19 +1101,19 @@ ul.task-list li input[type="checkbox"] {
 </dd>
 <dt><a href="../reference/Cache.__getitem__.html#diskcache_oxide.Cache.__getitem__" class="doc-function doc-label doc-label-method">Cache.__getitem__()</a></dt>
 <dd>
-<p><code>cache[key]</code>: the value, or <code>KeyError</code> if it’s missing or expired.</p>
+<p><code>cache[key]</code>: the value, or <code>KeyError</code> if it’s missing or expired, or the read failed under <code>durable=True</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.__setitem__.html#diskcache_oxide.Cache.__setitem__" class="doc-function doc-label doc-label-method">Cache.__setitem__()</a></dt>
 <dd>
-<p><code>cache[key] = value</code>: store a value that never expires, like <code>set()</code>.</p>
+<p><code>cache[key] = value</code>: store a value that never expires, like <code>set()</code>. Under <code>durable=True</code> a failed write is dropped.</p>
 </dd>
 <dt><a href="../reference/Cache.__delitem__.html#diskcache_oxide.Cache.__delitem__" class="doc-function doc-label doc-label-method">Cache.__delitem__()</a></dt>
 <dd>
-<p><code>del cache[key]</code>: remove the entry, or raise <code>KeyError</code> if it’s missing or expired.</p>
+<p><code>del cache[key]</code>: remove the entry, or raise <code>KeyError</code> if it’s missing or expired, or the delete failed under <code>durable=True</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.__contains__.html#diskcache_oxide.Cache.__contains__" class="doc-function doc-label doc-label-method">Cache.__contains__()</a></dt>
 <dd>
-<p><code>key in cache</code>: True if the key holds a live (unexpired) value.</p>
+<p><code>key in cache</code>: True if the key holds a live (unexpired) value. False if the check failed under <code>durable=True</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.__len__.html#diskcache_oxide.Cache.__len__" class="doc-function doc-label doc-label-method">Cache.__len__()</a></dt>
 <dd>

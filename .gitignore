@@ -258,3 +258,5 @@ soak.out
 # Great Docs' build directory; the deployable site is mirrored into site/ (committed).
 /great-docs/
 
+# LLVM coverage and instrumentation output.
+*.profraw

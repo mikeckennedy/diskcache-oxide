@@ -35,14 +35,18 @@ The starting value for a missing or expired key (default 0). Pass None to raise 
 
 
 `int | float`  
-The new value.
+The new value. With `durable=True`, `default + delta` if the call failed, whatever was
+
+stored, so a rate limiter fails open. Don't use that number as an id: two callers can
+
+get the same one.
 
 
 ## Raises
 
 
 `KeyError`  
-The key is missing and `default` is None.
+The key is missing and `default` is None, or with `durable=True`, the call failed and `default` is None.
 
 `TypeError`  
 The stored value isn't a number.

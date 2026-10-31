@@ -57,11 +57,19 @@ def _check_timeout(value: object) -> None:
 
 def _check_decode_policy(value: Any) -> None:
     """As `Cache` validates `on_decode_error`."""
+    if value is None:
+        return
     if isinstance(value, str):
         if value not in ('raise', 'miss'):
             raise ValueError(f"on_decode_error must be 'raise', 'miss' or a callable, got {value!r}")
     elif not callable(value):
         raise TypeError(f"on_decode_error must be 'raise', 'miss' or a callable, not {type(value).__name__}")
+
+
+def _check_durable(value: object) -> None:
+    """As `Cache` validates `durable`: a `bool`, not something truthy."""
+    if not isinstance(value, bool):
+        raise TypeError(f'durable must be a bool, not {type(value).__name__}')
 
 
 class NullCache:
@@ -95,11 +103,13 @@ class NullCache:
         sqlite_cache_size: int | None = None,
         wal_size_limit: int | None = None,
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
-        on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] = 'raise',
+        on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
+        durable: bool = False,
         invalidate: CacheLike | None = None,
     ) -> None:
         _check_timeout(timeout)
         _check_decode_policy(on_decode_error)
+        _check_durable(durable)
         self._directory = None if directory is None else os.fspath(directory)
         self._timeout = 60.0 if timeout is None else float(timeout)
         self._size_limit = DEFAULT_SIZE_LIMIT if size_limit is None else size_limit
@@ -195,6 +205,7 @@ class NullCache:
         """Return True without storing anything: the key is always absent, so the add succeeds.
 
         With caching off, every caller's `add()` succeeds, so don't rely on it for job claims or locks.
+        A `Cache(durable=True)` does the opposite when a write fails: its `add()` returns False.
         """
         _check_key(key)
         _check_seconds('expire', expire)

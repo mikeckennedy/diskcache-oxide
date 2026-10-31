@@ -14,7 +14,9 @@ that. A lookup is one dict read, with no lock, so it's cheap enough to do on eve
 **When a cache can't open** (a permissions problem, a database in a format this version can't read,
 another process holding the lock past `timeout`), the lookup returns a `NullCache` instead of
 raising, reports the error through `on_open_error`, and tries again after `retry_open_after` seconds.
-A bad setting (`size_limit=True`) is a bug, not an outage, so that still raises.
+A bad setting (`size_limit=True`) is a bug, not an outage, so that still raises. With `durable=True`
+among the settings, the handle a lookup returns doesn't raise for an outage either, so the two together
+keep a cache failure out of a request: the registry covers opening, and `durable` everything after.
 
 **Switches.** `disable(name)` makes later lookups return `NullCache(invalidate=real)`: reads miss and
 writes are dropped, but deletes and clears still reach the real cache, so nothing stale is served
@@ -102,7 +104,7 @@ class Caches[N: str = str]:
         retry_open_after: Seconds before a cache that failed to open is tried again (default 10).
             Lookups in between get a `NullCache` without trying. A `Timeout` means busy rather than
             broken, so that's tried again after at most 1 s.
-        **defaults: `Cache` settings for every cache, such as `timeout=1.0` or
+        **defaults: `Cache` settings for every cache, such as `timeout=1.0`, `durable=True` or
             `on_decode_error='miss'`. `register` can override them. A callable `on_decode_error`
             here is called as `(name, key, exc)`, so one reporter can tell the caches apart.
     """

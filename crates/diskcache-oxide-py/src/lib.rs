@@ -5,13 +5,17 @@
 
 mod cache;
 mod codec;
+mod durable;
 
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use diskcache_oxide_core::{Error, gate, sqlite, store};
 use pyo3::create_exception;
-use pyo3::exceptions::{PyOSError, PyRuntimeError, PyRuntimeWarning, PyTimeoutError, PyTypeError, PyValueError};
+use pyo3::exceptions::{
+    PyMemoryError, PyOSError, PyRuntimeError, PyRuntimeWarning, PyTimeoutError, PyTypeError, PyValueError,
+};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -64,6 +68,9 @@ fn sqlite_compile_options() -> PyResult<Vec<String>> {
 /// Maps a core error to the Python exception the public API documents.
 pub(crate) fn to_py_err(error: Error) -> PyErr {
     let message = error.to_string();
+    if error.is_out_of_memory() {
+        return PyMemoryError::new_err(message);
+    }
     match error {
         Error::Timeout { .. } | Error::WriteLockBusyInTransaction => Timeout::new_err(message),
         Error::DiskFull { .. } => PyOSError::new_err((libc::ENOSPC, message)),
@@ -224,6 +231,13 @@ fn register_fork_hooks(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
+/// Test hook: the exception a SQLite result code becomes, as a store call would raise it.
+#[pyfunction]
+fn _sqlite_error(code: i32) -> PyErr {
+    let failure = rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None);
+    to_py_err(Error::from_sqlite(failure, Duration::ZERO))
+}
+
 /// Test hook: the bundled SQLite's (bytes in use now, high-water mark) across the whole process,
 /// optionally resetting the mark. Not part of the public API.
 #[pyfunction]
@@ -253,6 +267,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(codec::_decode, m)?)?;
     m.add_function(wrap_pyfunction!(_sqlite_memory, m)?)?;
     m.add_function(wrap_pyfunction!(_gate_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(_sqlite_error, m)?)?;
     m.add("FormatMismatchError", py.get_type::<FormatMismatchError>())?;
     m.add_class::<cache::Cache>()?;
     install_fork_barrier(m)?;

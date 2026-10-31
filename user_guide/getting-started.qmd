@@ -145,25 +145,92 @@ cache.get('homepage')  # None if the stored value can't be decoded; the bad row 
 - `'miss'` returns the default, deletes the bad row, and logs a warning on the `diskcache_oxide` logger. Only that exact stored version is deleted, so a fresh value another process wrote in the meantime survives, and the read never waits for the write lock to do it. If the lock is busy, the row stays and a later read tries again.
 - A value this version can't read but another might, such as one written by a newer diskcache-oxide or one that needs a time zone this host lacks, is a miss too, but its row is kept. Reading it with the default `'raise'` raises `ForeignValueError`, a subclass of `CorruptValueError`.
 - Pass a function instead to report the failure yourself, for example to Sentry. It's called as `report(key, exc)` in place of the warning, after the row has been dealt with. Anything it raises is logged, and the read is still a miss.
-- Errors that aren't about the stored bytes still raise: `Timeout`, `MemoryError`, an I/O error, and `UnsafeValueError` (a pickled value read by a cache without `pickle=True`, which is a configuration mistake, not damage).
+- Errors that aren't about the stored bytes still raise: `Timeout`, `MemoryError`, an I/O error, and `UnsafeValueError` (a pickled value read by a cache without `pickle=True`, which is a configuration mistake, not damage). [`durable=True`](#a-cache-that-cant-take-a-request-down) makes a `Timeout`, an I/O error or a `RecursionError` from a pickle hook a miss too.
 
 It covers `get`, `cache[key]` (which raises `KeyError`) and `pop`. A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read.
 
 `pop` decodes the value before it deletes the row, so a value that another version or host might read survives it. This table is the usual path; the fallback described below it removes the row first:
 
-| What went wrong | `'raise'` | `'miss'` or a function |
-|---|---|---|
-| A foreign value | raises `ForeignValueError`, row kept | returns the default and reports, row kept |
-| `UnsafeValueError` | raises, row kept | raises, row kept |
-| An unreadable value (malformed bytes, a failing unpickle) | deletes that version, then raises | deletes that version, returns the default and reports |
-| Any other error from a pickle hook (`Timeout`, `MemoryError`, an I/O error) | raises, row kept | raises, row kept |
+| What went wrong | `'raise'` | `'miss'` or a function | `durable=True`, with its default `'miss'` or a function |
+|---|---|---|---|
+| A foreign value | raises `ForeignValueError`, row kept | returns the default and reports, row kept | the same as `'miss'` |
+| `UnsafeValueError` | raises, row kept | raises, row kept | raises, row kept |
+| An unreadable value (malformed bytes, a failing unpickle) | deletes that version, then raises | deletes that version, returns the default and reports | the same as `'miss'` |
+| An unreadable value, and that delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default and reports both, row kept |
+| `Timeout`, an I/O error or `RecursionError` from a pickle hook | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
+| `MemoryError` or a `BaseException` from a pickle hook | raises, row kept | raises, row kept | raises, row kept |
+| The value decoded, and the delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default, never the value, row kept |
 
-If that delete itself fails, for example with `Timeout`, its error is raised under every policy with the decode error as its `__cause__`, and the row stays.
+`durable=True` with an explicit `on_decode_error='raise'` follows the `'raise'` column, except that when an unreadable value's delete fails it raises the decode error rather than the delete's.
+
+If that delete itself fails, for example with `Timeout`, its error is raised under every policy with the decode error as its `__cause__`, unless `durable=True`, and the row stays.
 
 A value still goes to exactly one caller, because `pop` deletes only the version it decoded. A `pop` that loses that delete to another writer reads again, and after 8 losses it falls back to removing the row first and decoding afterwards, so it can't starve. If its `timeout` has run out by the time it loses, it raises `Timeout` instead: this `pop` deletes nothing, and whatever the other writer left stays. There are two limits:
 
 - That fallback is the one place a failed decode can cost the value, because the row is already gone: a foreign value in a known mode, or any error from a pickle hook (`Timeout`, `MemoryError`, an I/O error). It's possible on a heavily overwritten key, since a `pop` can lose while it queues for the write lock. How often it happens hasn't been measured yet.
 - Like `get`, `pop` doesn't wait to clean up a row whose large value file has gone missing. It returns the default, and if the write lock is busy the row can stay until a later `pop` or write removes it.
+
+## A cache that can't take a request down
+
+A cache is a copy. If every caller can fall back to its source of truth, an outage in the cache should cost you speed, not a failed request. `durable=True` does that for the calls a request makes:
+
+```python
+cache = Cache('/var/cache/my-app', timeout=1.0, durable=True)
+page = cache.get('homepage')  # None if the cache is locked, full, broken or the disk failed
+```
+
+"Durable" here means the cache keeps your app running. It doesn't mean what it means in a database, where a durable write survives a crash. This option does the opposite: it can drop writes. It's off by default.
+
+An operational failure is a `Timeout`, an `OSError` (disk full, I/O), a SQLite error including a damaged database, or a child forked inside a transaction that can't write. On a single-key call it's answered like this:
+
+| Call | On an operational failure |
+|---|---|
+| `get`, `pop` | the default; `get(key, expire_time=True)` gives `(default, None)` |
+| `key in cache` | `False` |
+| `cache[key]` | raises `KeyError` |
+| `set`, `add`, `touch` | `False` |
+| `cache[key] = value` | drops the write |
+| `incr`, `decr` | `default + delta` or `default - delta`, as `NullCache` does. `default=None` raises `KeyError` |
+| `delete` | `False` |
+| `del cache[key]` | raises `KeyError` |
+
+These always raise:
+
+- **Bugs.** A non-`str` key, a value that can't be stored without pickle, a non-numeric `incr`, an `incr` past 64 bits, `UnsafeValueError`, and misusing a transaction.
+- **`MemoryError` and `KeyboardInterrupt`.** That includes SQLite running out of memory.
+- **Admin calls.** `clear`, `expire`, `cull`, `checkpoint`, `len`, `volume` and iteration, because their callers need the truth, and most have their own `timeout=`. `checkpoint` still returns `False` when it's only busy.
+- **The constructor, and starting a transaction.** Use [`Caches`](caches.qmd) if opening shouldn't raise: it gives you a `NullCache` until the cache can open.
+- **Anything inside a transaction you hold on this cache.** A dropped write there would break the transaction's atomicity.
+- **Errors from your own code**, other than the pickle hooks on a read described above. A `clock=` function that raises, or a pickle hook on a write, raises as usual, even if what it raises is a `Timeout`.
+
+`on_decode_error` defaults to `'miss'` under `durable=True`, and a value you pass wins.
+
+### What a dropped call costs
+
+A failure reaches you as "wasn't there", so know what each one means before you turn this on.
+
+- **A dropped `set`, `delete`, `pop` or version-bump `incr` serves stale data.** The old entry stays. It's served until it expires, and with no expiry that means forever, or until a later write replaces it. `delete` returns `False`, the same as for a key that wasn't there, so your code can't tell. The log line is the only signal. If stale data would be a real problem, give those entries an expiry.
+- **A `pop` whose delete fails returns the default, not the value**, since the row is still there and a later `pop` could deliver the value a second time.
+- **A fake `incr` isn't a count.** It's what a `NullCache` returns, so a rate limiter fails open. Don't use one as an id: two callers can get the same number.
+- **`add` fails closed.** It returns `False` under `durable=True`, but `True` on a `NullCache`, so `Caches` can give you either answer for one key. Use a separate handle without `durable` for claims and locks, and treat its exceptions as "not claimed".
+
+### It doesn't bound time
+
+A call still waits up to its `timeout` before it gives up, so pair `durable=True` with a small `timeout=`. Not too small: `timeout` still has to exceed the work in flight, plus a fork, plus the interpreter handing over, or ordinary forks turn into misses. Beside busy threads on a GIL build, that hand-over alone takes tens to hundreds of milliseconds. See [How long a call waits for a fork](concurrency-and-forks.qmd#how-long-a-call-waits-for-a-fork).
+
+### Reporting
+
+Every swallowed failure is counted in one of three groups, and logged on the `diskcache_oxide` logger, so one group can't hide another:
+
+| Group | Level | What's in it |
+|---|---|---|
+| Busy | `WARNING` | `Timeout`: a lock or a fork outlasted `timeout` |
+| Failing | `ERROR` | Everything else: a full disk, an I/O error, a damaged database |
+| Lost invalidations | `ERROR` | Any failed `delete` |
+
+Each group logs its first failure at once, then at most once a minute per cache handle, with counts by operation since its last line: `get: 1204, set: 37`. An outage can be thousands of failures a second, and that's one line a minute. Failures after a group's last line stay counted until its next one, or until you call `close()`, which logs what's left. Dropping a handle without `close()` doesn't. An outage that ends within the minute can therefore show only its first failure until then, which is why each line says more may follow. A hook outage on a read is reported once per stored version, as in the `pop` table above, and counted here as busy for a timeout and failing otherwise, with no line of its own: the group's next line includes it. Time comes from the failing call's clock, so `clock=` drives it in tests. `cache._durable_stats()` has the running totals by group and operation, the place to look for "how many invalidations did we lose?". It's a private hook for now, like `_wal_stats()`.
+
+The limit is per handle, so a `with Cache(...)` per request logs on every request during an outage. A handle from `Caches` is opened once, so it isn't affected.
 
 ## Shutting down
 

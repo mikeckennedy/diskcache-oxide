@@ -1036,11 +1036,11 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 
 <div class="doc-subject">
-<p><code>cache[key]</code>: the value, or <code>KeyError</code> if it’s missing or expired.</p>
+<p><code>cache[key]</code>: the value, or <code>KeyError</code> if it’s missing or expired, or the read failed under <code>durable=True</code>.</p>
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L372-L373" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L404-L405" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">Cache</span><span class="op">.</span><span class="fu">__getitem__</span>(<span class="va">key</span>)</span></code></pre></div>

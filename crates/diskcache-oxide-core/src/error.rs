@@ -130,6 +130,44 @@ impl Error {
             _ => Self::Sqlite(error),
         }
     }
+
+    /// Whether this says the cache is unavailable right now, rather than that the call was wrong.
+    /// `Cache(durable=True)` answers an operational failure on a single-key call as a miss.
+    ///
+    /// Exhaustive on purpose: a new variant has to be decided here, and can't fall into either side
+    /// by default.
+    #[must_use]
+    pub fn is_operational(&self) -> bool {
+        match self {
+            Self::Timeout { .. }
+            | Self::Io { .. }
+            | Self::DiskFull { .. }
+            | Self::SqliteIo { .. }
+            | Self::Unwritable
+            | Self::ForkPoisoned => true,
+            Self::Sqlite(_) => !self.is_out_of_memory(),
+            // Only an open reports the first three, and the constructor always raises. The rest are
+            // bugs in the caller, or would break its transaction's atomicity.
+            Self::FormatMismatch { .. }
+            | Self::NotWal { .. }
+            | Self::InvalidSetting(_)
+            | Self::Closed
+            | Self::KeyMissing
+            | Self::NotNumeric
+            | Self::Overflow
+            | Self::NestedTransaction
+            | Self::WriteLockBusyInTransaction
+            | Self::NoTransaction
+            | Self::EndInsideOperation
+            | Self::TransactionAborted => false,
+        }
+    }
+
+    /// `SQLITE_NOMEM`: Python `MemoryError`, which is never answered as a miss.
+    #[must_use]
+    pub fn is_out_of_memory(&self) -> bool {
+        matches!(self, Self::Sqlite(e) if e.sqlite_error_code() == Some(ErrorCode::OutOfMemory))
+    }
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -158,5 +196,46 @@ mod tests {
         assert!(matches!(Error::from_sqlite(failure(ffi::SQLITE_CANTOPEN), timeout), Error::SqliteIo { .. }));
         assert!(matches!(Error::from_sqlite(failure(ffi::SQLITE_CORRUPT), timeout), Error::Sqlite(_)));
         assert!(matches!(Error::from_sqlite(rusqlite::Error::QueryReturnedNoRows, timeout), Error::Sqlite(_)));
+    }
+
+    #[test]
+    fn operational_failures_are_told_from_bugs() {
+        let timeout = Duration::from_secs(3);
+        let sqlite = |code| Error::from_sqlite(failure(code), timeout);
+        let operational = [
+            Error::Timeout { seconds: 1.0 },
+            Error::Io { path: PathBuf::from("x"), source: std::io::ErrorKind::PermissionDenied.into() },
+            sqlite(ffi::SQLITE_BUSY),
+            sqlite(ffi::SQLITE_FULL),
+            sqlite(ffi::SQLITE_IOERR_WRITE),
+            sqlite(ffi::SQLITE_CANTOPEN),
+            sqlite(ffi::SQLITE_CORRUPT),
+            sqlite(ffi::SQLITE_NOTADB),
+            Error::Unwritable,
+            Error::ForkPoisoned,
+        ];
+        for error in &operational {
+            assert!(error.is_operational(), "{error:?}");
+            assert!(!error.is_out_of_memory(), "{error:?}");
+        }
+        let raised = [
+            sqlite(ffi::SQLITE_NOMEM),
+            Error::FormatMismatch { found: 2, expected: 1 },
+            Error::NotWal { mode: "delete".into() },
+            Error::Closed,
+            Error::KeyMissing,
+            Error::NotNumeric,
+            Error::Overflow,
+            Error::InvalidSetting("x".into()),
+            Error::NestedTransaction,
+            Error::WriteLockBusyInTransaction,
+            Error::NoTransaction,
+            Error::EndInsideOperation,
+            Error::TransactionAborted,
+        ];
+        for error in &raised {
+            assert!(!error.is_operational(), "{error:?}");
+        }
+        assert!(sqlite(ffi::SQLITE_NOMEM).is_out_of_memory());
     }
 }

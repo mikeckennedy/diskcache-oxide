@@ -35,7 +35,11 @@ Seconds until the entry expires, or None for never.
 
 
 `bool`  
-True if the value was stored, False if the key already held a live value.
+True if the value was stored, False if the key already held a live value. With
+
+`durable=True`, also False if the write failed, so a claim fails closed. A [NullCache](NullCache.md#diskcache_oxide.NullCache)
+
+returns True, so use a non-durable handle for claims and locks.
 
 
 ## Raises

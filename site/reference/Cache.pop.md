@@ -31,7 +31,9 @@ Returned when the key is missing or expired, or its value file is missing.
 
 
 `Any`  
-The removed value, or `default`.
+The removed value, or `default`. With `durable=True`, a [pop](Cache.pop.md#diskcache_oxide.Cache.pop) whose delete fails returns
+
+`default`, never the value, which could otherwise be delivered twice. The row stays.
 
 
 ## Raises

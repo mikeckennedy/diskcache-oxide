@@ -60,6 +60,8 @@ Two calls don't raise. `checkpoint()` returns `False` when a fork keeps it from 
 
 Before-fork hooks run in reverse registration order, and `logging` and `concurrent.futures` each take a lock in theirs and keep it until the fork is over. `diskcache_oxide` makes sure its own hook runs before those two, so they stay usable while a fork waits for your code: a pickle hook can still log or submit work. Two things it can't fix. Another library's hook that takes a lock and is registered after `diskcache_oxide` stays held while a fork is stuck. And a thread that calls the cache while holding `logging`'s module lock can hold up a fork until that call's `timeout`.
 
+With [`durable=True`](getting-started.qmd#a-cache-that-cant-take-a-request-down), a `Timeout` behind a fork is a miss or `False` rather than an exception on a single-key call, so a `timeout` shorter than this makes ordinary forks into misses. A pickle hook that re-raises the `Timeout` it got from another thread's call lets go of its level under any policy, which clears the stuck fork. What `durable=True` adds is that the request doesn't fail: that `Timeout` is a miss, with the row kept.
+
 ### Forking from inside your own transaction
 
 CPython won't let a library refuse a fork, so the barrier can't wait for a transaction held by the very thread that is forking. Once `transact()` arrives (Phase 6b), the child's copy of that transaction is poisoned: anything done inside it raises `RuntimeError` and nothing commits, and the child's writes to that database raise `RuntimeError` straight away instead of stalling for a minute. The parent gets a `RuntimeWarning`. A clear error at the call site beats a mysterious 60-second hang in a fresh worker.

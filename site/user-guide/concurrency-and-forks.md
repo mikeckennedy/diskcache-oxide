@@ -63,6 +63,8 @@ Two calls don't raise. [checkpoint()](../reference/Cache.checkpoint.md#diskcache
 
 Before-fork hooks run in reverse registration order, and `logging` and `concurrent.futures` each take a lock in theirs and keep it until the fork is over. `diskcache_oxide` makes sure its own hook runs before those two, so they stay usable while a fork waits for your code: a pickle hook can still log or submit work. Two things it can't fix. Another library's hook that takes a lock and is registered after `diskcache_oxide` stays held while a fork is stuck. And a thread that calls the cache while holding `logging`'s module lock can hold up a fork until that call's [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout).
 
+With [`durable=True`](getting-started.md#a-cache-that-cant-take-a-request-down), a [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) behind a fork is a miss or `False` rather than an exception on a single-key call, so a [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) shorter than this makes ordinary forks into misses. A pickle hook that re-raises the [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) it got from another thread's call lets go of its level under any policy, which clears the stuck fork. What `durable=True` adds is that the request doesn't fail: that [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) is a miss, with the row kept.
+
 
 ## Forking from inside your own transaction
 

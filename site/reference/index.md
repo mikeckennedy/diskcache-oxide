@@ -78,16 +78,16 @@ Copy the write-ahead log into the database and truncate it to zero.
 Close this handle and return its connections.
 
 [Cache.__getitem__()](Cache.__getitem__.md#diskcache_oxide.Cache.__getitem__)  
-`cache[key]`: the value, or `KeyError` if it's missing or expired.
+`cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under `durable=True`.
 
 [Cache.__setitem__()](Cache.__setitem__.md#diskcache_oxide.Cache.__setitem__)  
-`cache[key] = value`: store a value that never expires, like `set()`.
+`cache[key] = value`: store a value that never expires, like `set()`. Under `durable=True` a failed write is dropped.
 
 [Cache.__delitem__()](Cache.__delitem__.md#diskcache_oxide.Cache.__delitem__)  
-`del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired.
+`del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired, or the delete failed under `durable=True`.
 
 [Cache.__contains__()](Cache.__contains__.md#diskcache_oxide.Cache.__contains__)  
-`key in cache`: True if the key holds a live (unexpired) value.
+`key in cache`: True if the key holds a live (unexpired) value. False if the check failed under `durable=True`.
 
 [Cache.__len__()](Cache.__len__.md#diskcache_oxide.Cache.__len__)  
 The number of entries, including expired entries not yet removed.

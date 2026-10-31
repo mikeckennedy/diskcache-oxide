@@ -35,7 +35,9 @@ Seconds until the entry expires, or None for never.
 
 
 `bool`  
-True.
+True. With `durable=True`, False if the write failed and was dropped: whatever was
+
+stored under `key` stays, and can be served stale.
 
 
 ## Raises

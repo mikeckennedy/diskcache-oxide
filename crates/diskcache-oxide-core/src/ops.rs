@@ -121,7 +121,8 @@ pub enum Number {
 }
 
 impl Number {
-    fn add(self, other: Number) -> Result<Number> {
+    /// This plus `other`, as Python adds them, or [`Error::Overflow`] past the 64-bit integer range.
+    pub fn checked_add(self, other: Number) -> Result<Number> {
         match (self, other) {
             (Number::Int(a), Number::Int(b)) => a.checked_add(b).map(Number::Int).ok_or(Error::Overflow),
             #[allow(clippy::cast_precision_loss)] // Python's int + float semantics.
@@ -430,7 +431,7 @@ impl Store {
                 Some(row) => (number_of(row)?, row.expire_time),
                 None => (default.ok_or(Error::KeyMissing)?, None),
             };
-            let next = current.add(delta)?;
+            let next = current.checked_add(delta)?;
             let (delta_size, mut removed) = put_value(writer, key, next.value(), None, now, expire, before.old())?;
             removed.extend(cull(writer, tx, &before, delta_size, now, timeout)?);
             Ok(Changed::removing(next, removed))

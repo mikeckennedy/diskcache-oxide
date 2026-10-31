@@ -51,4 +51,4 @@ The value was stored with pickle and this cache has `pickle=False`.
 The stored bytes can't be decoded.
 
 `Timeout`  
-Reading a large value kept losing to concurrent overwrites until [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
+Reading a large value kept losing to concurrent overwrites until [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), or a pending fork outlasted it. `durable=True` returns `default` instead.

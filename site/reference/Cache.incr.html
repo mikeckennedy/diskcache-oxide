@@ -1048,7 +1048,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L255-L274" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L282-L304" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Cache</span><span class="op">.</span><span class="sig-name">incr</span>(
@@ -1085,7 +1085,9 @@ The starting value for a missing or expired key (default 0). Pass None to raise 
 <dl>
 <dt><code> <span class="doc-parameter-annotation">int | float</span></code></dt>
 <dd>
-The new value.
+<p>The new value. With <code>durable=True</code>, <code>default + delta</code> if the call failed, whatever was</p>
+<p>stored, so a rate limiter fails open. Don’t use that number as an id: two callers can</p>
+get the same one.
 </dd>
 </dl>
 </div>
@@ -1096,7 +1098,7 @@ The new value.
 <dl>
 <dt><code> <span class="doc-parameter-annotation">KeyError</span></code></dt>
 <dd>
-<p>The key is missing and <code>default</code> is None.</p>
+<p>The key is missing and <code>default</code> is None, or with <code>durable=True</code>, the call failed and <code>default</code> is None.</p>
 </dd>
 <dt><code> <span class="doc-parameter-annotation">TypeError</span></code></dt>
 <dd>

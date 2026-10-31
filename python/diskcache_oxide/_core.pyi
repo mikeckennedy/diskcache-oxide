@@ -21,6 +21,7 @@ __all__ = [
     '_decode',
     '_sqlite_memory',
     '_gate_stats',
+    '_sqlite_error',
     'FormatMismatchError',
     'Cache',
 ]
@@ -57,6 +58,9 @@ def _encode(value: object, serializer: str = 'msgpack', pickle: bool = False) ->
 
 def _gate_stats() -> dict[str, Any]:
     """Test hook: the fork gate's state and counters (pending, holders, parked, fork_timeouts, deferred)."""
+def _sqlite_error(code: int) -> BaseException:
+    """Test hook: the exception a SQLite result code becomes, as a store call would raise it."""
+
 def _sqlite_memory(reset: bool = False) -> tuple[int, int]:
     """Test hook: the bundled SQLite's (bytes in use, high-water mark), optionally resetting the mark."""
 
@@ -95,15 +99,28 @@ class Cache:
             `close()`. `'auto'` also checkpoints after writes once the log is over
             `wal_size_limit`.
         on_decode_error: What a read does with a stored value it can't decode. `'raise'` (the
-            default) raises. `'miss'` treats it as a miss, logs a warning on the `diskcache_oxide`
+            default, unless `durable=True`, where it's `'miss'`) raises. `'miss'` treats it as a miss, logs a warning on the `diskcache_oxide`
             logger, and deletes the row if no build could ever read it (a class removed since it
             was pickled, malformed bytes). A row another version or host might read
             (`ForeignValueError`) is left in place. A callable does the same as `'miss'`, but is
             called with `(key, exc)` instead of the warning, after the row is dealt with; whatever
             it raises is logged. `UnsafeValueError`, `Timeout`, `MemoryError` and other errors that
-            aren't about the stored bytes always raise. Covers `get`, `cache[key]` and `pop`, which
+            aren't about the stored bytes raise, though under `durable=True` a `Timeout`, `OSError`
+            or `RecursionError` from a pickle hook is a miss, with the row kept. Covers `get`, `cache[key]` and `pop`, which
             decodes before it deletes, so it keeps a row it can't read. Under `'raise'`, `pop` still
             deletes a value no build could read, then raises.
+        durable: Keep the cache from taking a request down, for an app whose every caller can fall
+            back to its source of truth (default False). An outage on a single-key call (a `Timeout`,
+            a full disk, an I/O error, a damaged database) doesn't raise: `get`, `pop` and `in` give
+            the default or False, `set`, `add`, `touch` and `delete` give False, and `incr` and `decr`
+            give `default + delta`. It's reported on the `diskcache_oxide` logger, at most once a
+            minute per kind of failure. Bugs still raise (`TypeError`, `ValueError`,
+            `UnsafeValueError`), as do `MemoryError` and `KeyboardInterrupt`, the constructor, admin
+            calls (`len`, `volume`, `clear`, `expire`, `cull`, `checkpoint`, iteration) and anything
+            inside a transaction held on this cache. This isn't durability in the database sense:
+            this option can drop writes, and a dropped `set`, `delete`, `pop` or `incr` means stale
+            data until the entry expires, or forever if it has no expiry. See "A cache that can't
+            take a request down" in the Getting Started guide before you use it.
 
     Raises:
         ValueError: A setting is out of range, such as a `size_limit` under 1 MiB.
@@ -127,7 +144,8 @@ class Cache:
         sqlite_cache_size: int | None = None,
         wal_size_limit: int | None = None,
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
-        on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] = ...,
+        on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
+        durable: bool = False,
     ) -> Cache: ...
     @property
     def directory(self) -> str:
@@ -162,7 +180,8 @@ class Cache:
         Raises:
             UnsafeValueError: The value was stored with pickle and this cache has `pickle=False`.
             CorruptValueError: The stored bytes can't be decoded.
-            Timeout: Reading a large value kept losing to concurrent overwrites until `timeout`.
+            Timeout: Reading a large value kept losing to concurrent overwrites until `timeout`, or
+                a pending fork outlasted it. `durable=True` returns `default` instead.
         """
     @overload
     def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
@@ -178,7 +197,8 @@ class Cache:
             expire: Seconds until the entry expires, or None for never.
 
         Returns:
-            True.
+            True. With `durable=True`, False if the write failed and was dropped: whatever was
+            stored under `key` stays, and can be served stale.
 
         Raises:
             TypeError: The value can't be stored exactly without pickle, or `expire` is a `bool`.
@@ -196,7 +216,9 @@ class Cache:
             expire: Seconds until the entry expires, or None for never.
 
         Returns:
-            True if the value was stored, False if the key already held a live value.
+            True if the value was stored, False if the key already held a live value. With
+            `durable=True`, also False if the write failed, so a claim fails closed. A `NullCache`
+            returns True, so use a non-durable handle for claims and locks.
 
         Raises:
             TypeError: The value can't be stored exactly without pickle, or `expire` is a `bool`.
@@ -206,7 +228,10 @@ class Cache:
         """Remove `key`.
 
         Returns:
-            True if a live entry was removed, False if the key was missing or expired.
+            True if a live entry was removed, False if the key was missing or expired. With
+            `durable=True`, also False if the delete failed: that invalidation is lost, and the
+            entry can be served stale until it expires, or forever if it has no expiry. The log
+            line is the only signal.
 
         Raises:
             Timeout: Another process held the write lock for longer than `timeout`.
@@ -225,7 +250,8 @@ class Cache:
             default: Returned when the key is missing or expired, or its value file is missing.
 
         Returns:
-            The removed value, or `default`.
+            The removed value, or `default`. With `durable=True`, a `pop` whose delete fails returns
+            `default`, never the value, which could otherwise be delivered twice. The row stays.
 
         Raises:
             UnsafeValueError: The value was stored with pickle and this cache has `pickle=False`.
@@ -246,7 +272,8 @@ class Cache:
             expire: Seconds from now until the entry expires, or None to make it never expire.
 
         Returns:
-            True if the entry existed and was updated, False if it was missing or expired.
+            True if the entry existed and was updated, False if it was missing or expired, or with
+            `durable=True`, if the call failed.
 
         Raises:
             Timeout: Another process held the write lock for longer than `timeout`.
@@ -265,10 +292,13 @@ class Cache:
                 raise `KeyError` instead.
 
         Returns:
-            The new value.
+            The new value. With `durable=True`, `default + delta` if the call failed, whatever was
+            stored, so a rate limiter fails open. Don't use that number as an id: two callers can
+            get the same one.
 
         Raises:
-            KeyError: The key is missing and `default` is None.
+            KeyError: The key is missing and `default` is None, or with `durable=True`, the call
+                failed and `default` is None.
             TypeError: The stored value isn't a number.
             Timeout: Another process held the write lock for longer than `timeout`.
         """
@@ -365,18 +395,20 @@ class Cache:
         """
     def _wal_stats(self) -> dict[str, int]:
         """Test hook: forced WAL checkpoint counters (checks, attempts, successes, busy, errors, no_slot, fork_pending, max_pause_us, max_passive_us, max_truncate_us, slow, last_wal_bytes)."""
+    def _durable_stats(self) -> dict[str, dict[str, int]]:
+        """Test hook: every failure `durable=True` has swallowed on this handle, by bucket (busy, broken, lost_deletes) and then by operation. Empty on a handle that isn't durable."""
     def _handle_count(self) -> int:
         """Test hook: how many open handles this cache's store counts, deferred releases included."""
     def _hold_write_transaction(self) -> AbstractContextManager[None]:
         """Test hook until transact() lands: holds a write transaction until the block exits."""
     def __getitem__(self, key: str, /) -> Any:
-        """`cache[key]`: the value, or `KeyError` if it's missing or expired."""
+        """`cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under `durable=True`."""
     def __setitem__(self, key: str, value: Any, /) -> None:
-        """`cache[key] = value`: store a value that never expires, like `set()`."""
+        """`cache[key] = value`: store a value that never expires, like `set()`. Under `durable=True` a failed write is dropped."""
     def __delitem__(self, key: str, /) -> None:
-        """`del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired."""
+        """`del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired, or the delete failed under `durable=True`."""
     def __contains__(self, key: object, /) -> bool:
-        """`key in cache`: True if the key holds a live (unexpired) value."""
+        """`key in cache`: True if the key holds a live (unexpired) value. False if the check failed under `durable=True`."""
     def __len__(self) -> int:
         """The number of entries, including expired entries not yet removed."""
     def __bool__(self) -> bool:

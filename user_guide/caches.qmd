@@ -39,6 +39,8 @@ A cache can fail to open: a permissions problem, a disk that went away, a databa
 
 The failure is remembered for `retry_open_after` seconds (10 by default), so a broken cache costs one failed open every 10 seconds, not one per request, and the lookup after that tries again. A cache that recovers is picked up without a restart. Under load, several threads may make that retry at the same moment, and each one that fails reports it.
 
+`MemoryError` isn't an open failure, so it raises from the lookup, as it would from `Cache(...)`. That includes SQLite running out of memory while opening (`SQLITE_NOMEM`), which used to be an `OSError` and got a `NullCache`.
+
 A `Timeout` at open means busy, not broken: another process holding the lock, or a first lookup that collided with a fork. It's remembered for at most 1 second, and the default report is a `WARNING` with no traceback. A custom `on_open_error` still gets the exception. Lookups of a cache that's already open never touch any of this.
 
 A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead.
@@ -90,6 +92,7 @@ Talk Python's apps wrap diskcache in a `DurableCache` class and a `cache_service
 | `CacheProtocol` | `CacheLike` |
 | `NullCache`, `PerfTestNullCache` | `NullCache`, and `NullCache(invalidate=real)` |
 | `get` that logs, deletes and misses on any error | `Cache(on_decode_error='miss')` or a reporting function ([details](getting-started.qmd#values-that-cant-be-read)) |
+| A cache that can't take a request down | `Caches(base_dir, durable=True)`, which also covers `set`, whose failures `DurableCache` raises ([details](getting-started.qmd#a-cache-that-cant-take-a-request-down)) |
 | `create_cache(name, size_limit)` | `caches.register(name, size_limit=...)`, then `caches[name]` |
 | `timeout=1.0` on every open | `Caches(base_dir, timeout=1.0)` |
 | A `NullCache` when opening fails | the same, reported through `on_open_error` and retried after 10 s |
@@ -101,6 +104,6 @@ The library's self-healing read is safer than the wrapper's in three ways:
 
 - **It deletes only what failed.** The wrapper's `get`-then-`delete` can remove a fresh value another process wrote in between. The library deletes exactly the stored version it couldn't read.
 - **It never waits to clean up.** If the write lock is busy, the bad row stays and a later read tries again.
-- **It doesn't hide outages.** The wrapper catches every exception, so a lock `Timeout` also became a silent miss. In the library, `Timeout`, I/O errors and `MemoryError` still raise, and so does reading a pickled value from a cache without `pickle=True`, which is a configuration mistake.
+- **It doesn't hide outages.** The wrapper catches every exception, so a lock `Timeout` also became a silent miss. In the library, `Timeout`, I/O errors and `MemoryError` still raise by default, and so does reading a pickled value from a cache without `pickle=True`, which is a configuration mistake. `durable=True` is how you choose a miss for an outage, and it counts each one and logs them, at most once a minute, rather than staying silent; `MemoryError` and that mistake raise regardless.
 
 What stays in the app: reading its settings file and environment variables (pass the result as `base_dir`), its purposes and their on/off flags, descriptions for the admin page, and wiring the reporting functions to Sentry or logbook.

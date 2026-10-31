@@ -487,6 +487,12 @@ ul.task-list li input[type="checkbox"] {
 <td>Never waits: there’s no fork barrier</td>
 <td>Waits within its <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, then raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
 </tr>
+<tr class="even">
+<td>D-028</td>
+<td>An outage on a single-key call</td>
+<td><a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> raises; <code>FanoutCache</code> answers <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> alone as a miss</td>
+<td>Raises by default; <code>durable=True</code> answers it as a miss or <code>False</code>, and reports it</td>
+</tr>
 </tbody>
 </table>
 </section>
@@ -570,6 +576,7 @@ ul.task-list li input[type="checkbox"] {
 <li><strong>D-007:</strong> <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> subclasses <code>TimeoutError</code>, so <code>except TimeoutError</code> catches it too.</li>
 <li><strong>D-009:</strong> <code>bool(Cache)</code> is always True and <code>bool(NullCache)</code> is False, so <code>if cache:</code> means “caching is on”.</li>
 <li><strong>D-022:</strong> there’s no <code>disk=</code> (a Python <code>Disk</code> class would put Python code on every read and write) and no <code>eviction_policy=</code> until Phase 6a adds the other policies.</li>
+<li><strong>D-028:</strong> <code>Cache(..., durable=True)</code> has no counterpart in diskcache. It answers an outage on a single-key call as a miss or <code>False</code>, and it can drop writes. See <a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">A cache that can’t take a request down</a>.</li>
 <li><strong>D-025:</strong> <code>iter(cache)</code> and <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> return a native iterator, not a generator. Two threads calling <code>next()</code> on the same one at once get <code>ValueError</code> at once, as with a shared generator.</li>
 </ul>
 </section>

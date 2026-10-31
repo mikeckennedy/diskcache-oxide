@@ -348,6 +348,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <h1>When a cache can’t open</h1>
 <p>A cache can fail to open: a permissions problem, a disk that went away, a database written by a newer version, or another process holding the lock for longer than <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>. A lookup then returns a <a href="../user-guide/null-cache.html">NullCache</a> instead of raising, so the request carries on without the cache. The error goes to <code>on_open_error(name, exc)</code>, which logs it at <code>ERROR</code> on the <code>diskcache_oxide</code> logger by default. Pass your own function to send it to Sentry or your logging setup.</p>
 <p>The failure is remembered for <code>retry_open_after</code> seconds (10 by default), so a broken cache costs one failed open every 10 seconds, not one per request, and the lookup after that tries again. A cache that recovers is picked up without a restart. Under load, several threads may make that retry at the same moment, and each one that fails reports it.</p>
+<p><code>MemoryError</code> isn’t an open failure, so it raises from the lookup, as it would from <code>Cache(...)</code>. That includes SQLite running out of memory while opening (<code>SQLITE_NOMEM</code>), which used to be an <code>OSError</code> and got a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>.</p>
 <p>A <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> at open means busy, not broken: another process holding the lock, or a first lookup that collided with a fork. It’s remembered for at most 1 second, and the default report is a <code>WARNING</code> with no traceback. A custom <code>on_open_error</code> still gets the exception. Lookups of a cache that’s already open never touch any of this.</p>
 <p>A bad <em>setting</em> (<code>size_limit=True</code>, <code>serializer='yaml'</code>) is a bug, not an outage, so it raises on lookup instead.</p>
 </section>
@@ -407,26 +408,30 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td><code>Cache(on_decode_error='miss')</code> or a reporting function (<a href="../user-guide/getting-started.html#values-that-cant-be-read">details</a>)</td>
 </tr>
 <tr class="odd">
+<td>A cache that can’t take a request down</td>
+<td><code>Caches(base_dir, durable=True)</code>, which also covers <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, whose failures <code>DurableCache</code> raises (<a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">details</a>)</td>
+</tr>
+<tr class="even">
 <td><code>create_cache(name, size_limit)</code></td>
 <td><code>caches.register(name, size_limit=...)</code>, then <code>caches[name]</code></td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>timeout=1.0</code> on every open</td>
 <td><code>Caches(base_dir, timeout=1.0)</code></td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> when opening fails</td>
 <td>the same, reported through <code>on_open_error</code> and retried after 10 s</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>get_all_caches()</code>, <code>clear_*()</code>, <code>close_all_caches()</code></td>
 <td><code>caches.stats()</code>, <code>caches.clear(name, timeout=...)</code>, <code>caches.close_all()</code></td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>A separate maintenance handle with a 10 s timeout</td>
 <td><code>timeout=</code> on <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> and <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a></td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Hourly <code>expire_all_caches()</code> inside <code>create_cache</code></td>
 <td><code>caches.expire_all()</code> from a scheduled job</td>
 </tr>
@@ -436,7 +441,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <ul>
 <li><strong>It deletes only what failed.</strong> The wrapper’s <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>-then-<a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> can remove a fresh value another process wrote in between. The library deletes exactly the stored version it couldn’t read.</li>
 <li><strong>It never waits to clean up.</strong> If the write lock is busy, the bad row stays and a later read tries again.</li>
-<li><strong>It doesn’t hide outages.</strong> The wrapper catches every exception, so a lock <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> also became a silent miss. In the library, <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, I/O errors and <code>MemoryError</code> still raise, and so does reading a pickled value from a cache without <code>pickle=True</code>, which is a configuration mistake.</li>
+<li><strong>It doesn’t hide outages.</strong> The wrapper catches every exception, so a lock <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> also became a silent miss. In the library, <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, I/O errors and <code>MemoryError</code> still raise by default, and so does reading a pickled value from a cache without <code>pickle=True</code>, which is a configuration mistake. <code>durable=True</code> is how you choose a miss for an outage, and it counts each one and logs them, at most once a minute, rather than staying silent; <code>MemoryError</code> and that mistake raise regardless.</li>
 </ul>
 <p>What stays in the app: reading its settings file and environment variables (pass the result as <code>base_dir</code>), its purposes and their on/off flags, descriptions for the admin page, and wiring the reporting functions to Sentry or logbook.</p>
 

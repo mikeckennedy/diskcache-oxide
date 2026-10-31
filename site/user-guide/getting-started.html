@@ -307,6 +307,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#size-limits-and-eviction" id="toc-size-limits-and-eviction" class="nav-link" data-scroll-target="#size-limits-and-eviction">Size limits and eviction</a></li>
   <li><a href="#timeouts" id="toc-timeouts" class="nav-link" data-scroll-target="#timeouts">Timeouts</a></li>
   <li><a href="#values-that-cant-be-read" id="toc-values-that-cant-be-read" class="nav-link" data-scroll-target="#values-that-cant-be-read">Values that can’t be read</a></li>
+  <li><a href="#a-cache-that-cant-take-a-request-down" id="toc-a-cache-that-cant-take-a-request-down" class="nav-link" data-scroll-target="#a-cache-that-cant-take-a-request-down">A cache that can’t take a request down</a>
+  <ul class="collapse">
+  <li><a href="#what-a-dropped-call-costs" id="toc-what-a-dropped-call-costs" class="nav-link" data-scroll-target="#what-a-dropped-call-costs">What a dropped call costs</a></li>
+  <li><a href="#it-doesnt-bound-time" id="toc-it-doesnt-bound-time" class="nav-link" data-scroll-target="#it-doesnt-bound-time">It doesn’t bound time</a></li>
+  <li><a href="#reporting" id="toc-reporting" class="nav-link" data-scroll-target="#reporting">Reporting</a></li>
+  </ul></li>
   <li><a href="#shutting-down" id="toc-shutting-down" class="nav-link" data-scroll-target="#shutting-down">Shutting down</a></li>
   <li><a href="#testing-code-that-uses-a-cache" id="toc-testing-code-that-uses-a-cache" class="nav-link" data-scroll-target="#testing-code-that-uses-a-cache">Testing code that uses a cache</a></li>
   </ul>
@@ -442,7 +448,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <li><code>'miss'</code> returns the default, deletes the bad row, and logs a warning on the <code>diskcache_oxide</code> logger. Only that exact stored version is deleted, so a fresh value another process wrote in the meantime survives, and the read never waits for the write lock to do it. If the lock is busy, the row stays and a later read tries again.</li>
 <li>A value this version can’t read but another might, such as one written by a newer diskcache-oxide or one that needs a time zone this host lacks, is a miss too, but its row is kept. Reading it with the default <code>'raise'</code> raises <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>, a subclass of <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a>.</li>
 <li>Pass a function instead to report the failure yourself, for example to Sentry. It’s called as <code>report(key, exc)</code> in place of the warning, after the row has been dealt with. Anything it raises is logged, and the read is still a miss.</li>
-<li>Errors that aren’t about the stored bytes still raise: <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, <code>MemoryError</code>, an I/O error, and <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> (a pickled value read by a cache without <code>pickle=True</code>, which is a configuration mistake, not damage).</li>
+<li>Errors that aren’t about the stored bytes still raise: <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, <code>MemoryError</code>, an I/O error, and <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> (a pickled value read by a cache without <code>pickle=True</code>, which is a configuration mistake, not damage). <a href="#a-cache-that-cant-take-a-request-down"><code>durable=True</code></a> makes a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, an I/O error or a <code>RecursionError</code> from a pickle hook a miss too.</li>
 </ul>
 <p>It covers <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <code>cache[key]</code> (which raises <code>KeyError</code>) and <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a>. A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read.</p>
 <p><a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> decodes the value before it deletes the row, so a value that another version or host might read survives it. This table is the usual path; the fallback described below it removes the row first:</p>
@@ -452,6 +458,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <th>What went wrong</th>
 <th><code>'raise'</code></th>
 <th><code>'miss'</code> or a function</th>
+<th><code>durable=True</code>, with its default <code>'miss'</code> or a function</th>
 </tr>
 </thead>
 <tbody>
@@ -459,9 +466,11 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td>A foreign value</td>
 <td>raises <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>, row kept</td>
 <td>returns the default and reports, row kept</td>
+<td>the same as <code>'miss'</code></td>
 </tr>
 <tr class="even">
 <td><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a></td>
+<td>raises, row kept</td>
 <td>raises, row kept</td>
 <td>raises, row kept</td>
 </tr>
@@ -469,20 +478,147 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td>An unreadable value (malformed bytes, a failing unpickle)</td>
 <td>deletes that version, then raises</td>
 <td>deletes that version, returns the default and reports</td>
+<td>the same as <code>'miss'</code></td>
 </tr>
 <tr class="even">
-<td>Any other error from a pickle hook (<a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, <code>MemoryError</code>, an I/O error)</td>
+<td>An unreadable value, and that delete fails</td>
+<td>raises the delete’s error, row kept</td>
+<td>raises the delete’s error, row kept</td>
+<td>returns the default and reports both, row kept</td>
+</tr>
+<tr class="odd">
+<td><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, an I/O error or <code>RecursionError</code> from a pickle hook</td>
 <td>raises, row kept</td>
 <td>raises, row kept</td>
+<td>returns the default, row kept, reported once per stored version</td>
+</tr>
+<tr class="even">
+<td><code>MemoryError</code> or a <code>BaseException</code> from a pickle hook</td>
+<td>raises, row kept</td>
+<td>raises, row kept</td>
+<td>raises, row kept</td>
+</tr>
+<tr class="odd">
+<td>The value decoded, and the delete fails</td>
+<td>raises the delete’s error, row kept</td>
+<td>raises the delete’s error, row kept</td>
+<td>returns the default, never the value, row kept</td>
 </tr>
 </tbody>
 </table>
-<p>If that delete itself fails, for example with <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, its error is raised under every policy with the decode error as its <code>__cause__</code>, and the row stays.</p>
+<p><code>durable=True</code> with an explicit <code>on_decode_error='raise'</code> follows the <code>'raise'</code> column, except that when an unreadable value’s delete fails it raises the decode error rather than the delete’s.</p>
+<p>If that delete itself fails, for example with <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, its error is raised under every policy with the decode error as its <code>__cause__</code>, unless <code>durable=True</code>, and the row stays.</p>
 <p>A value still goes to exactly one caller, because <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> deletes only the version it decoded. A <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> that loses that delete to another writer reads again, and after 8 losses it falls back to removing the row first and decoding afterwards, so it can’t starve. If its <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> has run out by the time it loses, it raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> instead: this <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> deletes nothing, and whatever the other writer left stays. There are two limits:</p>
 <ul>
 <li>That fallback is the one place a failed decode can cost the value, because the row is already gone: a foreign value in a known mode, or any error from a pickle hook (<a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, <code>MemoryError</code>, an I/O error). It’s possible on a heavily overwritten key, since a <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> can lose while it queues for the write lock. How often it happens hasn’t been measured yet.</li>
 <li>Like <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> doesn’t wait to clean up a row whose large value file has gone missing. It returns the default, and if the write lock is busy the row can stay until a later <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> or write removes it.</li>
 </ul>
+</section>
+<section id="a-cache-that-cant-take-a-request-down" class="level1">
+<h1>A cache that can’t take a request down</h1>
+<p>A cache is a copy. If every caller can fall back to its source of truth, an outage in the cache should cost you speed, not a failed request. <code>durable=True</code> does that for the calls a request makes:</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>, durable<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>page <span class="op">=</span> cache.get(<span class="st">'homepage'</span>)  <span class="co"># None if the cache is locked, full, broken or the disk failed</span></span></code></pre></div>
+<p>“Durable” here means the cache keeps your app running. It doesn’t mean what it means in a database, where a durable write survives a crash. This option does the opposite: it can drop writes. It’s off by default.</p>
+<p>An operational failure is a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, an <code>OSError</code> (disk full, I/O), a SQLite error including a damaged database, or a child forked inside a transaction that can’t write. On a single-key call it’s answered like this:</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Call</th>
+<th>On an operational failure</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a></td>
+<td>the default; <code>get(key, expire_time=True)</code> gives <code>(default, None)</code></td>
+</tr>
+<tr class="even">
+<td><code>key in cache</code></td>
+<td><code>False</code></td>
+</tr>
+<tr class="odd">
+<td><code>cache[key]</code></td>
+<td>raises <code>KeyError</code></td>
+</tr>
+<tr class="even">
+<td><a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>, <a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a></td>
+<td><code>False</code></td>
+</tr>
+<tr class="odd">
+<td><code>cache[key] = value</code></td>
+<td>drops the write</td>
+</tr>
+<tr class="even">
+<td><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>, <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr</a></td>
+<td><code>default + delta</code> or <code>default - delta</code>, as <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> does. <code>default=None</code> raises <code>KeyError</code></td>
+</tr>
+<tr class="odd">
+<td><a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a></td>
+<td><code>False</code></td>
+</tr>
+<tr class="even">
+<td><code>del cache[key]</code></td>
+<td>raises <code>KeyError</code></td>
+</tr>
+</tbody>
+</table>
+<p>These always raise:</p>
+<ul>
+<li><strong>Bugs.</strong> A non-<code>str</code> key, a value that can’t be stored without pickle, a non-numeric <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>, an <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> past 64 bits, <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>, and misusing a transaction.</li>
+<li><strong><code>MemoryError</code> and <code>KeyboardInterrupt</code>.</strong> That includes SQLite running out of memory.</li>
+<li><strong>Admin calls.</strong> <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>, <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull</a>, <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint</a>, <code>len</code>, <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume</a> and iteration, because their callers need the truth, and most have their own <code>timeout=</code>. <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint</a> still returns <code>False</code> when it’s only busy.</li>
+<li><strong>The constructor, and starting a transaction.</strong> Use <a href="../user-guide/caches.html"><code>Caches</code></a> if opening shouldn’t raise: it gives you a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> until the cache can open.</li>
+<li><strong>Anything inside a transaction you hold on this cache.</strong> A dropped write there would break the transaction’s atomicity.</li>
+<li><strong>Errors from your own code</strong>, other than the pickle hooks on a read described above. A <code>clock=</code> function that raises, or a pickle hook on a write, raises as usual, even if what it raises is a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>.</li>
+</ul>
+<p><code>on_decode_error</code> defaults to <code>'miss'</code> under <code>durable=True</code>, and a value you pass wins.</p>
+<section id="what-a-dropped-call-costs" class="level2">
+<h2 class="anchored" data-anchor-id="what-a-dropped-call-costs">What a dropped call costs</h2>
+<p>A failure reaches you as “wasn’t there”, so know what each one means before you turn this on.</p>
+<ul>
+<li><strong>A dropped <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> or version-bump <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> serves stale data.</strong> The old entry stays. It’s served until it expires, and with no expiry that means forever, or until a later write replaces it. <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> returns <code>False</code>, the same as for a key that wasn’t there, so your code can’t tell. The log line is the only signal. If stale data would be a real problem, give those entries an expiry.</li>
+<li><strong>A <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> whose delete fails returns the default, not the value</strong>, since the row is still there and a later <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> could deliver the value a second time.</li>
+<li><strong>A fake <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> isn’t a count.</strong> It’s what a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> returns, so a rate limiter fails open. Don’t use one as an id: two callers can get the same number.</li>
+<li><strong><a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a> fails closed.</strong> It returns <code>False</code> under <code>durable=True</code>, but <code>True</code> on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, so <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> can give you either answer for one key. Use a separate handle without <code>durable</code> for claims and locks, and treat its exceptions as “not claimed”.</li>
+</ul>
+</section>
+<section id="it-doesnt-bound-time" class="level2">
+<h2 class="anchored" data-anchor-id="it-doesnt-bound-time">It doesn’t bound time</h2>
+<p>A call still waits up to its <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> before it gives up, so pair <code>durable=True</code> with a small <code>timeout=</code>. Not too small: <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> still has to exceed the work in flight, plus a fork, plus the interpreter handing over, or ordinary forks turn into misses. Beside busy threads on a GIL build, that hand-over alone takes tens to hundreds of milliseconds. See <a href="../user-guide/concurrency-and-forks.html#how-long-a-call-waits-for-a-fork">How long a call waits for a fork</a>.</p>
+</section>
+<section id="reporting" class="level2">
+<h2 class="anchored" data-anchor-id="reporting">Reporting</h2>
+<p>Every swallowed failure is counted in one of three groups, and logged on the <code>diskcache_oxide</code> logger, so one group can’t hide another:</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Group</th>
+<th>Level</th>
+<th>What’s in it</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Busy</td>
+<td><code>WARNING</code></td>
+<td><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>: a lock or a fork outlasted <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a></td>
+</tr>
+<tr class="even">
+<td>Failing</td>
+<td><code>ERROR</code></td>
+<td>Everything else: a full disk, an I/O error, a damaged database</td>
+</tr>
+<tr class="odd">
+<td>Lost invalidations</td>
+<td><code>ERROR</code></td>
+<td>Any failed <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a></td>
+</tr>
+</tbody>
+</table>
+<p>Each group logs its first failure at once, then at most once a minute per cache handle, with counts by operation since its last line: <code>get: 1204, set: 37</code>. An outage can be thousands of failures a second, and that’s one line a minute. Failures after a group’s last line stay counted until its next one, or until you call <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a>, which logs what’s left. Dropping a handle without <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> doesn’t. An outage that ends within the minute can therefore show only its first failure until then, which is why each line says more may follow. A hook outage on a read is reported once per stored version, as in the <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> table above, and counted here as busy for a timeout and failing otherwise, with no line of its own: the group’s next line includes it. Time comes from the failing call’s clock, so <code>clock=</code> drives it in tests. <code>cache._durable_stats()</code> has the running totals by group and operation, the place to look for “how many invalidations did we lose?”. It’s a private hook for now, like <code>_wal_stats()</code>.</p>
+<p>The limit is per handle, so a <code>with Cache(...)</code> per request logs on every request during an outage. A handle from <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> is opened once, so it isn’t affected.</p>
+</section>
 </section>
 <section id="shutting-down" class="level1">
 <h1>Shutting down</h1>
@@ -496,7 +632,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <li><strong><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a></strong> is a cache that’s switched off: every write succeeds and every read misses. Swap it in for tests or local development without touching call sites. See <a href="../user-guide/null-cache.html">NullCache</a>.</li>
 <li><strong><code>clock=</code></strong> controls the cache’s clock. diskcache-oxide reads time natively in Rust, so patching <code>time.time</code> doesn’t affect it on its own. Pass <code>clock=lambda: time.time()</code> and the cache follows your patched clock:</li>
 </ul>
-<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tmp_path, clock<span class="op">=</span><span class="kw">lambda</span>: time.time())</span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tmp_path, clock<span class="op">=</span><span class="kw">lambda</span>: time.time())</span></code></pre></div>
 
 
 </section>

@@ -1,7 +1,7 @@
 ## Cache.\_\_contains\_\_()
 
 
-`key in cache`: True if the key holds a live (unexpired) value.
+`key in cache`: True if the key holds a live (unexpired) value. False if the check failed under `durable=True`.
 
 
 Usage

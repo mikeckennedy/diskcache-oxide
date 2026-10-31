@@ -825,3 +825,62 @@ fn row_17_a_pool_dropped_behind_a_fork_is_closed_by_that_fork() {
     fork_thread.join().unwrap();
     assert_eq!(fds_inside(tmp.path()), 0, "the fork didn't close the dropped pool's connection");
 }
+
+// -- held_by_this_thread -------------------------------------------------------------------------
+
+#[test]
+fn held_by_this_thread_means_this_thread_on_this_store() {
+    let tmp = TempDir::new("held-by");
+    let (one, other) = (open_store(&tmp.path().join("one")), open_store(&tmp.path().join("other")));
+    put(&one, "k");
+    assert!(!one.held_by_this_thread(), "no transaction at all");
+    let held = one.begin_hold(T).unwrap();
+    assert!(one.held_by_this_thread());
+    assert!(!other.held_by_this_thread(), "a transaction on another store doesn't count");
+    // Inside one of the transaction's own operations too, where its connection is lent out.
+    one.read(T, |_| {
+        assert!(one.held_by_this_thread(), "inside its own operation");
+        Ok(())
+    })
+    .unwrap();
+    std::thread::scope(|s| {
+        s.spawn(|| assert!(!one.held_by_this_thread(), "another thread's transaction doesn't count"));
+    });
+    held.finish(true).unwrap();
+    assert!(!one.held_by_this_thread(), "ended");
+}
+
+#[test]
+fn held_by_this_thread_never_waits_behind_a_fork() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("held-by-fork");
+    let store = open_store(tmp.path());
+    let held = store.begin_hold(T).unwrap();
+    let (claimed, claim) = mpsc::channel();
+    let (end, ended) = mpsc::channel::<()>();
+    let behind = &store;
+    std::thread::scope(|s| {
+        // The fork waits for the held level, so it stays pending for as long as this test needs.
+        s.spawn(|| {
+            gate::begin_fork();
+            gate::end_fork_parent();
+        });
+        s.spawn(move || {
+            eventually(|| GATE.stats().pending);
+            // No level on this thread, so the try fails, and it says "not held" without waiting.
+            let started = Instant::now();
+            let _ = claimed.send((behind.held_by_this_thread(), started.elapsed()));
+            let _ = ended.recv_timeout(T);
+        });
+        let seen = claim.recv_timeout(T);
+        // The owner still gets through, reentrantly.
+        let owner = store.held_by_this_thread();
+        let _ = end.send(());
+        // Before any assert: the fork can't end, or this scope return, until the level goes.
+        held.finish(true).unwrap();
+        let (seen, took) = seen.expect("the watchdog: held_by_this_thread didn't return");
+        assert!(owner, "the owner, behind its own hold's fork");
+        assert!(!seen);
+        assert!(took < SHORT, "took {took:?}");
+    });
+}

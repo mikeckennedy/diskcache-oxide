@@ -1036,11 +1036,11 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 
 <div class="doc-subject">
-<p><code>cache[key] = value</code>: store a value that never expires, like <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>.</p>
+<p><code>cache[key] = value</code>: store a value that never expires, like <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>. Under <code>durable=True</code> a failed write is dropped.</p>
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L374-L375" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L406-L407" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">Cache</span><span class="op">.</span><span class="fu">__setitem__</span>(

@@ -207,6 +207,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
   - A hook that overwrites its own key loses the race on every try, so it runs up to 9 times and ends in the locked removal.
   - A row whose value file is missing can stay after `pop` when the write lock is busy, as with `get` (D-013). It's a miss either way, and a later `pop` or write removes it.
   - `timeout` covers the whole call, including the time spent in hooks and on lost races, not each step. A race lost after it has run out raises `Timeout` rather than going on to the locked removal: this `pop` deletes nothing, and whatever the other writer left stays.
+  - With `durable=True` (D-028), a failed delete or read is the default and the row stays, and a hook's `Timeout`, `OSError` or `RecursionError` is the default with the row kept.
 - Why: a newer peer's value in an unknown format must survive a `pop` during a deploy, and a transient error in a hook shouldn't cost the value.
 
 ## D-027 A pending fork counts against `timeout`
@@ -224,6 +225,20 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Importing `diskcache_oxide` also imports `logging` and `concurrent.futures.thread` (about 1.6 ms), so its before-fork hook runs before theirs and their locks are only taken once the fork has quiesced.
 - Why: `timeout=` should mean what it says, and a thread that depends on another thread's cache call while a fork is pending used to wedge the process's whole cache layer, with no error.
 - Tests: `tests/unit/test_fork_timeout.py`, `crates/diskcache-oxide-core/src/store/fork_timeout.rs`, and the gate's models.
+
+## D-028 durable=True answers an outage on a single-key call as a miss
+
+- Kind: note (pinned by `tests/unit/test_durable.py`; the option doesn't exist on diskcache, and it's off by default, so nothing changes unless it's asked for)
+- diskcache: `Cache` has no such option, and its calls raise `Timeout`, an `OSError` or a `sqlite3` error. `FanoutCache` answers `Timeout` alone as a miss or False, and raises the rest.
+- oxide: with `durable=True`, an operational failure on a single-key call doesn't raise. `get`, `pop` and `in` give the default or False, `cache[key]` raises `KeyError`, `set`, `add` and `touch` give False, `cache[key] = v` drops the write, `incr` and `decr` give `default ± delta` as `NullCache` does (`default=None` raises `KeyError`), `delete` gives False and `del cache[key]` raises `KeyError`. `on_decode_error` defaults to `'miss'`, and an explicit value wins.
+- What's operational is one exhaustive match, `Error::is_operational()`: `Timeout`, `OSError`s, SQLite errors including a damaged database, and a child forked inside a transaction (D-020). A failure is only swallowed where a store call returned it, so a `Timeout` from the caller's own `clock=`, or from a pickle hook during a write, still raises.
+- Still raised: bugs (`TypeError`, `ValueError`, `UnsafeValueError`, a non-numeric `incr`, an overflow, misuse of a transaction), `MemoryError` including `SQLITE_NOMEM` (which was an `OSError` before this, on any handle) and `KeyboardInterrupt`, the constructor and starting a transaction, admin calls (`clear`, `expire`, `cull`, `checkpoint`, `len`, `volume`, iteration), and anything on a store while this thread holds a transaction on it.
+- A pickle hook's `OSError` (`Timeout` included) or `RecursionError` on a read is a miss with the row kept, reported once per stored version, unless `on_decode_error='raise'` was passed. `MemoryError`, `BaseException` and `UnsafeValueError` still raise.
+- A durable `pop` whose delete fails returns the default, never the decoded value, which could otherwise be delivered twice.
+- It can drop writes, and that's the point of the name's warning: in database vocabulary "durable" means "survives a crash", and here it means the cache keeps the app running. A dropped `set`, `delete`, `pop` or version-bump `incr` serves stale data until the entry expires, and forever with no expiry. A fake `incr` is a duplicate if used as an id. `add` is False under durable but True on `NullCache`, so a claim needs a handle that isn't durable. It doesn't bound time either: a call still takes up to `timeout`, which must still exceed work in flight plus a fork plus the interpreter hand-off (D-027).
+- Reporting: three buckets on each handle, busy (`Timeout`, warning), broken (everything else, error) and lost deletes (any failed `delete`, error), so a timeout storm can't hide a damaged database. Each logs its first failure at once and then at most once per 60 s, with per-operation counts, timed by the failing call's own clock reading, and `close()` logs what's left. A hook outage on a read is reported once per stored version and counted in busy or broken, with no line of its own. `_durable_stats()` keeps the totals.
+- Why: Talk Python's callers all fall back to a source of truth, so a cache failure should cost a miss and not a failed request.
+- Tests: `tests/unit/test_durable.py`, `tests/unit/durable_scenarios.py`, and `error.rs` for the classification.
 
 # Community fork differences
 

@@ -1092,6 +1092,22 @@ impl Store {
         std::ptr::from_ref(self).addr()
     }
 
+    /// Whether the calling thread holds a write transaction on this store that this process can use,
+    /// inside one of its operations or between them. A transaction inherited across `fork()` doesn't
+    /// count. For a failure's path, not a call's: it takes the slot's mutex.
+    #[cold]
+    #[must_use]
+    pub fn held_by_this_thread(&self) -> bool {
+        if !self.pinned_active.load(Ordering::Relaxed) {
+            return false;
+        }
+        // Refused only to a thread with no level, which proves it holds nothing: see `on_pinned`.
+        let Some(gate) = GATE.try_enter_shared() else { return false };
+        let held = self.pinned.lock().unwrap_or_else(PoisonError::into_inner).held_by(std::thread::current().id());
+        drop(gate);
+        held
+    }
+
     /// Starts a write transaction that stays open across calls until [`HeldTransaction::finish`]
     /// (or drop, which rolls back). The calling thread's reads and writes on this store run inside
     /// it. It holds the write lock, a gate level and a pooled connection, and registers the file

@@ -409,6 +409,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="watch-add" class="level2">
 <h2 class="anchored" data-anchor-id="watch-add">Watch <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a></h2>
 <p>The rule means <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> always succeeds on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. If you use <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> to claim a job so only one worker runs it, then with caching off every worker’s claim succeeds and the job runs once per worker. That’s harmless for idempotent work and wrong for work with side effects, like sending email. Keep claims like that on a cache that’s never switched off.</p>
+<p><code>Cache(durable=True)</code> goes the other way: its <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> returns <code>False</code> when a write fails, so a claim fails closed there and open here. Keep claims on a handle that isn’t durable and handle its exceptions. See <a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">A cache that can’t take a request down</a>.</p>
 </section>
 </section>
 <section id="if-cache-means-caching-is-on" class="level1">

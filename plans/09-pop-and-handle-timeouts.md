@@ -18,11 +18,12 @@ Two follow-ups from plan 08, both Michael's decisions (2026-10-30). He also conf
 
 **When the decode fails:**
 
-| Failure | `'raise'` | `'miss'` / callable |
-|---|---|---|
-| Foreign, `UnsafeValueError` | raises, row kept | Foreign: default, row kept. Unsafe: raises, row kept |
-| Unreadable (malformed bytes, a failing unpickle) | deletes that version, then raises (today's "a value that fails to decode is still removed") | deletes that version, returns the default, reports |
-| Passthrough (`Timeout`, `MemoryError` and so on from a hook) | row kept, raises | row kept, raises |
+| Failure | `'raise'` | `'miss'` / callable | `durable=True` (step 2), with its default `'miss'` or a callable |
+|---|---|---|---|
+| Foreign, `UnsafeValueError` | raises, row kept | Foreign: default, row kept. Unsafe: raises, row kept | as `'miss'` |
+| Unreadable (malformed bytes, a failing unpickle) | deletes that version, then raises (today's "a value that fails to decode is still removed") | deletes that version, returns the default, reports | as `'miss'`. If that delete fails: default, row kept, both reported |
+| Passthrough (`Timeout`, `MemoryError` and so on from a hook) | row kept, raises | row kept, raises | `OSError`, `Timeout`, `RecursionError`: default, row kept, reported once per version. `MemoryError`, `BaseException`: raises, row kept |
+| None: decoded, then the delete fails | raises | raises | default, never the value, row kept |
 
 The last row changes today's behavior for the better: a transient error no longer costs the value. Under `'raise'` the delete is blocking, as `pop` is today, and a `Timeout` from that delete replaces the decode error.
 
@@ -390,6 +391,23 @@ Per Michael (2026-10-30), the re-soak is a fresh full 24 hours on the final libr
 **Step 1b, the architect's review (2026-10-31): mechanism sound, small fixes made.** `checkpoint()` on a closed handle behind a fork returns False rather than raising. The record, flag and try sequence is one method, `Gate::defer`, shared by the store and the model, and the deferrer's drain runs through `gate::run_blocking`. A checkpoint that times out on the write lock with a fork pending counts as `fork_pending`. Row 7's test now takes the full loop, and the Python `join-failure` scenario, which never reached `join`, is `open-with-settings`.
 
 **Accepted, not fixed:** a fork landing between the count and the flag in `Gate::defer` gives that child a count with no flag, so D-018 is weaker in that child only. Nothing is corrupted: the child forgets those connections rather than closing them. Moving to `Gate::defer` doesn't change this. Recorded in D-027.
+
+**Step 2 built (2026-10-31), with the review's changes. Not yet committed, and not yet reviewed.**
+
+- **Core:** `Error::is_operational()`, an exhaustive match, with `is_out_of_memory()`, and `SQLITE_NOMEM` is now `MemoryError` on every handle. `Store::held_by_this_thread()`, on the error path only: a thread the gate refuses has no level, so it holds nothing, and that stops it waiting behind a fork. `Number::checked_add` is public for the fake `incr`.
+- **The seam:** `Cache::attempt`, a thin inline wrapper over the `#[cold]` `store_failed`, is the one place a failure can be swallowed. `ensure_open` now returns the core `Error`, so a closed handle goes through it, and admin calls map it themselves. `add_number` and `pop_failed` call `store_failed` directly, since each does more on failure. The off path costs only the `Err` arm.
+- **`durable.rs` (new):** `Failures`, three `Bucket`s of atomics. The first failure logs at once, a compare-and-swap on the clock reading picks one logger per 60 s, and a clock that jumps back by 60 s or more counts as due. A failed logging handler is unraisable, except `MemoryError` and anything that isn't an `Exception`, which reach the caller.
+- **`classify`:** a method wrapping the old function. Under durable and not in a hold, the review's "Decide" item: `OSError`, `Timeout` and `RecursionError` are `Failure::Transient`. That applies in any mode, though only pickle runs caller code. It goes through the decode policy, so an explicit `on_decode_error='raise'` still raises them.
+- **`on_decode_error`** is `Option<DecodePolicy>`, default `None`, in the signature, stubs and `NullCache`. `Caches` needed no code: its settings come from `Cache`'s signature.
+- **`pop` under durable:** every store failure goes through `pop_attempt`, including the race lost past the deadline. A failed delete of an unreadable value keeps the row and sends the decode error through the policy, so under an explicit `'raise'` the caller gets the decode error, not the swallowed one.
+- **Tests:** `tests/unit/test_durable.py` (new) and `tests/unit/durable_scenarios.py` (new, a fresh process for a stuck fork, `RLIMIT_FSIZE` and a fork inside a hold); `error.rs` and `store/fork_timeout.rs` in core; `_core._sqlite_error` so a test can see the `SQLITE_NOMEM` mapping without running out of memory. `RLIMIT_FSIZE` at 1 byte fails reads too on a connection that has to open, so that scenario doesn't pin `get` either way.
+- **Docs:** D-028, a line in D-026, the guide's "A cache that can't take a request down", the `pop` table's durable column here and in the guide, the stubs, `site/`.
+
+- **Measured:** `bench.gate`'s workloads and rules, 8 interleaved rounds of diskcache, `58508b8`, this build and this build with `durable=True`, on AC power. `get_hit_small` p50 on 3.14: 0.914, 0.917 and 0.919 us. On 3.14t: 0.910, 0.912 and 0.914 us. `set_small` against diskcache: 0.75x, 0.76x and 0.76x on 3.14, and 0.78x, 0.80x and 0.77x on 3.14t. All GO.
+- **The architect's review of step 2 (2026-10-31): mechanism approved, small fixes made.** A hook outage now counts in `busy` or `broken` with no line of its own, since it's reported once per version. A NaN from `clock=` can't silence the log. A backward step within `LOG_EVERY + timeout` isn't due, since a call that waited carries an old `now`. An explicit `close()` flushes what's counted, and each line says more may follow; `Drop` doesn't flush, since running logging handlers from a deallocation isn't safe.
+- **Accepted:** `SQLITE_TOOBIG`, at about 1 GB, is answered as an outage.
+- **A later alignment:** a handler failure in a decode report goes to `write_unraisable` whatever it is (`report_decode_error`), while `durable.rs`'s `record` lets `MemoryError` and non-`Exception`s through. They should agree.
+- **A flaky test that isn't this step's:** `test_auto_mode_shrinks_the_wal_back_after_a_burst_with_readers_in_other_processes` fails on Linux 3.15t when every forced checkpoint in the run is busy and the WAL still shrinks (`attempts: 9, successes: 0`). It failed 4 of 30 repeats on this build and 5 of 30 on `58508b8`. Left alone.
 
 **Open follow-ups:**
 
