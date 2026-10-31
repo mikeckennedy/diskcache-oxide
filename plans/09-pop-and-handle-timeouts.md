@@ -1,4 +1,4 @@
-# Plan 09: a `pop` that keeps foreign values, and `handle_timeouts`
+# Plan 09: a `pop` that keeps foreign values, and `durable`
 
 Two follow-ups from plan 08, both Michael's decisions (2026-10-30). He also confirmed the name `ForeignValueError`. Each step gets the architect's review once built, and the suite runs on all four interpreters.
 
@@ -41,28 +41,32 @@ The last row changes today's behavior for the better: a transient error no longe
 - the two existing hook tests (`test_pop_decodes_after_its_write_commits` is renamed, since the order is the point) and the held-transaction test;
 - `test_pop_of_a_foreign_tag_says_it_was_deleted` flips to "kept".
 
-## Step 2: `Cache(..., handle_timeouts=False)`
+## Step 2: `Cache(..., durable=False)`
 
-A busy lock on a request path is an outage of the cache, not of the app. Talk Python's `DurableCache` hides read timeouts by accident today, and its `set` raises. This makes it a choice, and covers both.
+Michael, 2026-10-30: "durable means DURABLE as much as we can deliver." An app whose every caller falls back to its source of truth wants a cache that can't take a request down. So this is one option covering every operational failure, not only timeouts (this replaces the `handle_timeouts` draft). Talk Python's `DurableCache` hides read errors today, and its `set` raises.
 
-**The option.** `handle_timeouts: bool = False`. `True` means a `Timeout` from a single-key operation doesn't raise. Per handle, not persisted. `NullCache` accepts and ignores it; `Caches` passes it through like any setting. Off by default, so diskcache's behavior is unchanged.
+**The option.** `durable: bool = False`. Per handle, not persisted. `NullCache` accepts and ignores it; `Caches` passes it through like any setting. Off by default, so diskcache's behavior is unchanged.
 
-| Call | With `handle_timeouts=True`, on `Timeout` |
+With `durable=True`:
+- `on_decode_error` defaults to `'miss'` instead of `'raise'`. An explicit value wins.
+- An operational failure on a single-key call doesn't raise: `Timeout`, `OSError` (disk full, I/O), SQLite errors including a damaged database, and the `RuntimeError`s of a child forked mid-transaction that can't write.
+
+| Call | On an operational failure |
 |---|---|
 | `get`, `pop`, `in` | the default, or False. `cache[key]` raises `KeyError` |
 | `set`, `add`, `touch` | False. `cache[key] = v` drops the write |
 | `incr`, `decr` | `default ± delta`, as `NullCache` does, so a rate limiter fails open. `default=None` raises `KeyError` |
-| `delete`, `del cache[key]` | **see the open question** |
+| `delete` | False. `del cache[key]` raises `KeyError` |
 | `clear`, `expire`, `cull`, `checkpoint`, `len`, `volume`, iteration | raise as today: admin callers need the truth, and these have their own `timeout=` |
-| anything inside a held transaction, including `WriteLockBusyInTransaction` | raises: swallowing it would break the transaction's atomicity |
+| anything inside a held transaction | raises: swallowing it would break the transaction's atomicity |
 
-`Timeout` only. `OSError` (disk full) and the rest still raise.
+Still raised, because they're bugs and not outages: `TypeError` (a non-`str` key, a value that can't be stored without pickle), `ValueError`, `UnsafeValueError`, a non-numeric `incr`, `NestedTransaction` and the other misuse errors. `MemoryError` and `KeyboardInterrupt` always raise.
 
-**Reporting.** A swallowed timeout is logged as a warning on the `diskcache_oxide` logger, at most once per handle every 60 s, with a count of those suppressed since. An outage can be thousands a second. There's no callback in this step.
+**`delete` (Michael, 2026-10-30): returns False.** A failure never reaches the caller. A swallowed `delete` looks like "wasn't there", so that invalidation is lost and stale data is served until the entry expires. The log line is the signal, and the docs must say this plainly.
 
-**Open question for Michael: `delete`.** A swallowed `delete` looks like "wasn't there", so the invalidation is lost and stale data is served until it expires. Talk Python's "every episode write invalidates its page immediately" depends on it. **Recommendation:** `delete` keeps raising, so a failed invalidation is loud.
+**Reporting.** A swallowed failure is logged as a warning on the `diskcache_oxide` logger, at most once per handle every 60 s, with a count of those suppressed since. An outage can be thousands a second.
 
-**Tests:** every row of the table against a peer process holding the lock, on both builds; the default raises; a held transaction raises; the log limit, with a count; `Caches` passthrough; `NullCache` accepts and validates it (`bool` only).
+**Tests:** every row of the table against a peer process holding the lock, and against a real I/O failure where one can be forced; the default raises; a held transaction raises; bugs still raise; the log limit, with a count; `Caches` passthrough; `NullCache` accepts and validates it (`bool` only).
 
 ## Step 3: re-soak
 
