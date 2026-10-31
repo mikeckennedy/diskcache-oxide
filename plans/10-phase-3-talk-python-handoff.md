@@ -29,7 +29,8 @@ Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency wor
 - **A failed open is retried every 10 s** (`retry_open_after=10.0`).
 - **Self-healing reads are a constructor option, and the registry is called `Caches`.** Purposes, the settings file, Sentry and logbook stay in the app.
 - **The soak restarts once plan 09 is built:** a fresh 24 hours on that commit, replacing the 6-8 hour re-soak. The mini is Michael's to give; it's currently dedicated to this.
-- **Use `ty`, never mypy.** Talk Python enforces `ty` at zero. The library's `scripts/check.sh` and `test_mypy_sees_both_classes_as_cache_like` still call mypy and `mypy.stubtest`; whether to migrate them is an open question for Michael (stubtest has no `ty` equivalent). Don't add mypy to anything else.
+- **No pickle in Talk Python: msgpack only, and the app adjusts.** The two dataclass values become plain dicts (section 5, step 3). No cache opens with `pickle=True`.
+- **Use `ty`, never mypy,** in the library too.
 
 ## 3. What to do next, in order
 
@@ -91,11 +92,31 @@ Then on the branch:
    - `expire` (:305): `self._cache.expire()`.
    - `push` (:317): no such method and no production caller, so delete it or leave it uncalled.
    - `__exit__` (:324): pass the three exception arguments through.
-2. **`infrastructure/cache_service.py`:** `import diskcache_oxide as diskcache`, and add `pickle=True` to the open at :519. **Without it the homepage breaks** (section 7, item 3).
-3. **Expect a cold cache.** Oxide uses `diskcache-oxide.sqlite` and ignores the old `cache.db`, so the first requests regenerate everything, and the HTTP hash cache downloads remote assets to hash them. Warm up before measuring, and compare warm against warm.
-4. **Rate-limit settings reset locally too** (section 7, item 1), since they live in a cache.
+2. **`infrastructure/cache_service.py`:** `import diskcache_oxide as diskcache`. No `pickle=True`.
+3. **`viewmodels/home/homeviewmodel.py`:** store plain dicts. Without this the homepage raises `TypeError` on `set`. The app's `nosql.db_helpers` already does the work; tested with real `Episode`, `Guest` and `Review` objects through the library's msgpack, and they come back equal, nested dataclasses included. Only the runtime-only `_` fields (`_loaded_guests`, `_has_transcript`) are dropped, and the home viewmodels don't use them.
 
-The maintenance handles (`:302`, `:570` and so on) open with `pickle=False`, which is fine for count, volume, clear and expire. Reading a pickled value through one raises `UnsafeValueError`.
+   ```python
+   # _save_snapshot (:195-205)
+   def doc(x): return to_doc(x, include_id=True) if x is not None else None
+   home_cache.set(SNAPSHOT_KEY, {
+       'latest_episode': doc(self.latest_episode),
+       'latest_guests': [doc(g) for g in self.latest_guests],
+       'reviews': [doc(r) for r in self.reviews],
+       'upcoming_episodes': [doc(e) for e in self.upcoming_episodes],
+       'upcoming_guest_lookup': {k: doc(g) for k, g in lookup.items()},
+   }, expire=SNAPSHOT_TTL_SECONDS)
+
+   # _restore_snapshot
+   self.latest_episode = from_doc(Episode, snapshot.get('latest_episode'))
+   self.latest_guests = from_doc_list(Guest, snapshot.get('latest_guests', []))
+   self.reviews = from_doc_list(Review, snapshot.get('reviews', []))
+   self.upcoming_episodes = from_doc_list(Episode, snapshot.get('upcoming_episodes', []))
+   return {k: from_doc(Guest, g) for k, g in snapshot.get('upcoming_guest_lookup', {}).items()}
+   ```
+
+   And `list[FeaturedCourse]` (:316): `courses_cache.set(cache_key, [dataclasses.asdict(c) for c in courses], expire=...)`, with `[FeaturedCourse(**d) for d in cached]` where it's read back. The snippets above haven't been run in the app; the round trip of the models has.
+4. **Expect a cold cache.** Oxide uses `diskcache-oxide.sqlite` and ignores the old `cache.db`, so the first requests regenerate everything, and the HTTP hash cache downloads remote assets to hash them. Warm up before measuring, and compare warm against warm.
+5. **Rate-limit settings reset locally too** (section 7, item 1), since they live in a cache.
 
 Comparison tips: production runs Granian with `--workers 1 --runtime-threads 1 --runtime-mode st`, and the existing load test is `locust -f load_testing/locustfile.py`. `bin/perf/diskcache_perf.py` writes to the real General directory with a 60 s timeout, so don't treat it as a clean benchmark. In production the difference should show most on page caches, which are reads, and very little where an uncached render dominates the request.
 
@@ -169,7 +190,7 @@ What that does to callers:
 - Doubles carrying `retry` or `push`: `rate_limit_doubles.py:85,93,102`, `test_rate_limit_service.py:532,657,873-877`, `test_home_viewmodel_resilience.py:45`, `test_cache_service.py:543-552`.
 - Library `NullCache` uses `__slots__`, so shortcuts that skip `__init__` hit `AttributeError`: `test_cache_service.py:270`, `test_youtube_thumbnails.py:1116`, and subclasses at `rate_limit_doubles.py:52`, `test_cache_service.py:543`, `test_rate_limit_service.py:401,432,528,567,653,863,1173`.
 - AST and name guards: `test_app_module_shape.py:38,50` pins `init_diskcache` and `init_diskcache_set`; `test_cache_service.py:515-541` pins one `create_cache` with no purpose.
-- Fake-cache tests accept anything, so **none would catch a missing `pickle=True`**. Add a test that sends real homepage values through a real `Cache`.
+- Fake-cache tests accept anything, so **none would catch a value msgpack can't store**. Add a test that sends real homepage values through a real `Cache`. `tests/test_home_viewmodel_resilience.py:130-131` (`is EPISODE`) has to change, since the snapshot now holds dicts. The comments at `homeviewmodel.py` and `:175` of that test about "a pickle write" go too.
 
 **Docs that go stale:** `APP/CLAUDE.md:79,99,229-232,270-284,522` and `AGENTS.md`, `README.md:12,418,508`, `.cursor/rules/coding-guidelines.mdc:72-74`, `CLAUDE-reference.md:155-159,242,266`, `docs/package-guides/diskcache_reference.md`. Comments at `cache_service.py:64-96,502-517`, `scheduled_jobs_service.py:25,42,285`, `rate_limit_config.py:191`, `sponsor_inquiry_service.py:156`.
 
@@ -179,11 +200,10 @@ What that does to callers:
 
 1. **Rate-limit settings don't survive the cutover. This is the biggest risk, and it's not about the API.** Rate Limit Config holds the layer modes, the manual allowlist and the denylist (`cache_service.py:281-290`, `rate_limit_config.py:100`). "All caches are cleared at deploy" (roadmap) silently reverts enforcement to report-only and drops both lists. **Recommendation:** export before the deploy and reseed after, as an explicit cutover step, and think about whether settings belong in a cache at all.
 2. **Cold-start load.** About 555 show pages share 4 regeneration slots (`show_page_cache_service.py:182-187` cites a stampede), RSS is source-of-truth in the cache, and the HTTP hash cache downloads hundreds of images per page when cold (`conftest.py:381-382`). **Recommendation:** an off-peak deploy, with a warm-up pass over the top pages.
-3. **Where pickle lives.** Exactly two values need it, both in General: the homepage snapshot (`homeviewmodel.py:195-205`, nested slots dataclasses, key `home:snapshot:v1`) and `list[FeaturedCourse]` (`homeviewmodel.py:316`). Pickle is per handle, and `Caches.register` refuses two names on one directory. Either all of General opens with `pickle=True`, or those values move to a new cache (added to `cache_map`, repeated at `cache_service.py:481,550,710`, plus `PURPOSE_CACHES` at :171 and `get_all_caches`), or they become plain dicts. **Recommendation:** a small new `pickled` cache now, so General stays pickle-free, and plain dicts as a follow-up. Forgetting pickle fails unevenly: the snapshot's `TypeError` at `homeviewmodel.py:136` escapes `STORE_OUTAGE_ERRORS`, so `/` 500s about once per 5-minute gate window, while courses are swallowed at :318, so every home request does a blocking RSS fetch and shows no courses. Values were read from the code, not run through `_encode`; naive datetimes (claims, job status) are worth one quick check.
+3. **Decided (Michael, 2026-10-30): no pickle, the app adjusts** (section 5, step 3). What to know: values were read from the code and only the homepage models were run through the codec, so anything missed shows up as a `TypeError` on `set`, which `durable=True` deliberately still raises. Everything else stored is primitives, and naive datetimes, dates, tuples, sets and non-`str` dict keys round-trip exactly (tested). `timedelta` and `time` are refused. Run a real-cache pass of the test suite to shake out any others.
 4. **Should the port wait for `durable=True`?** **Recommendation: yes.** Today's `DurableCache.get` swallows everything, and most `get` callers have no `try`. `on_decode_error='miss'` alone doesn't cover `Timeout`. Note that `DurableCache.set` doesn't swallow errors today (`durable_cache.py:254-256`), despite the comments at `rendered_cache.py:85` and `rss_service.py:198`, so durable is an upgrade there.
 5. **Where `expire_all()` runs.** Today it's synchronous on whichever request passes the hour. `scheduled_jobs_service.py` is Memberful-specific and off outside production or with `TALKPYTHON_SCHEDULED_JOBS=0`, so there's no home yet. Separately, `transcripts_admin.py:109,128` and `mcp_service.py:69` (from `infrastructure/mcp/protocol.py:150,210,236`, `views/mcp_views.py:206`) call `expire()` on the 1 s request handle, on the event loop.
 6. **How production gets the library** (section 9).
-7. **Migrate the library from mypy to `ty`?** (Section 2.)
 
 ## 8. The soak
 
