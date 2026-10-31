@@ -230,6 +230,18 @@ impl Store {
         }
     }
 
+    /// Deletes exactly `version` (nothing newer) and its value file, waiting for the write lock up to
+    /// `timeout`. Returns whether this call removed it, so of any number of racing callers exactly
+    /// one gets `true`: the compare-and-delete runs inside `BEGIN IMMEDIATE`, and `store_seq` never
+    /// repeats. Inside a held transaction the row goes in the transaction and its value file when
+    /// the transaction commits, as for any other write.
+    pub fn delete_version(&self, timeout: Duration, version: Version) -> Result<bool> {
+        self.write_files(timeout, LockPriority::Normal, |writer, _| {
+            let removed = writer.delete_version(version.id, version.store_seq)?;
+            Ok(Changed::removing(removed.is_some(), removed))
+        })
+    }
+
     /// Rows stored, including expired ones not yet swept (as diskcache counts). O(1): `totals`.
     pub fn len(&self, timeout: Duration) -> Result<i64> {
         self.read(timeout, |conn| {
@@ -312,10 +324,14 @@ impl Store {
         })
     }
 
-    /// Removes the live value of `key` and returns it, still encoded, or `None` if it was missing or
-    /// expired. The caller decodes it after the write has committed: decoding a pickle can run
-    /// Python (`__setstate__`) that uses this cache, and inside the transaction a write from it
-    /// would wait out the whole timeout behind its own thread (roadmap Phase 2.5, item 7).
+    /// Removes the live value of `key` and returns it, still encoded, or [`Pop::Missing`] if it was
+    /// missing or expired. The caller decodes it after the write has committed: decoding a pickle
+    /// can run Python (`__setstate__`) that uses this cache, and inside the transaction a write from
+    /// it would wait out the whole timeout behind its own thread (roadmap Phase 2.5, item 7).
+    ///
+    /// The value is gone before anyone has decoded it, so `Cache.pop` reads and decodes with
+    /// [`Store::get_with`] and removes that version with [`Store::delete_version`], and comes here
+    /// only after losing that race [`spill::OPTIMISTIC_ATTEMPTS`] times: this can't starve.
     ///
     /// A live row whose mode `refuse` rejects is left in place and reported as [`Pop::Refused`].
     /// The check runs inside the transaction, before the delete, so a value the caller can't decode
@@ -777,6 +793,60 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_version_removes_only_that_version_and_says_who_won() {
+        let tmp = TempDir::new("ops-version-blocking");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "k", text("a"), None, NOW).unwrap();
+        let first = version(&s, "k").unwrap();
+        s.set(T, "k", text("b"), None, NOW).unwrap();
+        assert!(!s.delete_version(T, first).unwrap(), "an older version deletes nothing");
+        assert_eq!(get(&s, "k", NOW).unwrap().0, b"b");
+
+        let second = version(&s, "k").unwrap();
+        assert!(s.delete_version(T, second).unwrap());
+        assert!(!s.delete_version(T, second).unwrap(), "only the first caller removes it");
+        assert_eq!(len(&s), 0);
+    }
+
+    #[test]
+    fn deleting_a_version_waits_for_the_write_lock_up_to_its_timeout() {
+        let tmp = TempDir::new("ops-version-wait");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "k", text("v"), None, NOW).unwrap();
+        let v = version(&s, "k").unwrap();
+
+        // A connection of its own, not a held transaction: with a hold on another thread, waiting at
+        // the gate behind another test's fork would wedge the gate.
+        let holder = crate::open::connect(tmp.path(), T).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let short = Duration::from_millis(50);
+        let started = std::time::Instant::now();
+        assert!(matches!(s.delete_version(short, v), Err(Error::Timeout { .. })));
+        assert!(started.elapsed() >= short);
+        holder.execute_batch("ROLLBACK").unwrap();
+        assert!(s.delete_version(T, v).unwrap(), "and it succeeds once the lock is free");
+    }
+
+    #[test]
+    fn deleting_a_spilled_version_in_a_held_transaction_keeps_its_file_until_the_commit() {
+        for commit in [false, true] {
+            let tmp = TempDir::new("ops-version-held");
+            let s = store(tmp.path(), Requested::default());
+            let big = vec![b'x'; spill::THRESHOLD];
+            s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
+            let v = version(&s, "k").unwrap();
+
+            let held = s.begin_hold(T).unwrap();
+            assert!(s.delete_version(T, v).unwrap());
+            assert_eq!(value_files(tmp.path()).len(), 1, "the file stays until the transaction ends");
+            held.finish(commit).unwrap();
+
+            assert_eq!(value_files(tmp.path()).len(), usize::from(!commit));
+            assert_eq!(get(&s, "k", NOW).is_some(), !commit);
+        }
+    }
+
+    #[test]
     fn a_refused_spilled_value_is_never_read() {
         let tmp = TempDir::new("ops-refused-file");
         let s = store(tmp.path(), Requested::default());
@@ -831,7 +901,9 @@ mod tests {
         s.set(T, "k", text("v"), None, NOW).unwrap();
         let v = version(&s, "k").unwrap();
 
-        // Another thread holds the write lock.
+        // Another thread holds the write lock. Safe only because `write_nowait` returns at
+        // `write_lock.try_lock()` before it enters the gate: entered first, it would wait behind
+        // another test's pending fork, which waits for this hold, and that could hang the suite.
         let (held_tx, held_rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
         let holder = {

@@ -28,6 +28,8 @@ INCR_OPS = 1000
 ADD_ROUNDS = 300
 MIXED_OPS = 1000
 MIXED_KEYS = 24
+POP_KEYS = 300
+POP_TOKENS = 500
 JOIN_TIMEOUT = 30.0
 
 LAYOUTS = pytest.mark.parametrize('layout', ['shared', 'per-thread'])
@@ -91,6 +93,64 @@ def test_racing_add_has_exactly_one_winner(layout: str, make_cache: Callable[...
         assert len(winners) == 1, f'round {r}: winners {winners}'
         # The stored value is the winner's, never overwritten by a loser.
         assert caches[0].get(f'round-{r}') == winners[0]
+
+
+@LAYOUTS
+def test_racing_pop_gets_each_value_exactly_once(layout: str, make_cache: Callable[..., Any], cache_dir: Path, backend: Any) -> None:
+    caches = _caches(layout, make_cache, cache_dir)
+    filler = 'x' * (2 * backend.spill_threshold)  # Every 20th value is in a value file.
+    values = {f'pop-{i}': f'pop-{i}|' + (filler if i % 20 == 0 else '') for i in range(POP_KEYS)}
+    for key, value in values.items():
+        caches[0].set(key, value)
+    got: list[str] = []
+    lock = threading.Lock()
+
+    def work(tid: int, cache: Any) -> None:
+        mine = [value for key in values if (value := cache.pop(key)) is not None]
+        with lock:
+            got.extend(mine)
+
+    _run(work, caches)
+    assert sorted(got) == sorted(values.values())
+    assert len(caches[0]) == 0
+
+
+# Defined only where threads run in parallel: a GIL build rarely overlaps this way, and test_processes.py
+# has this race for those. Not a skip, since conftest.py fails the oxide run on any skip without a marker.
+if not sys._is_gil_enabled():
+
+    @LAYOUTS
+    def test_consumers_racing_a_producer_never_get_a_value_twice(layout: str, make_cache: Callable[..., Any], cache_dir: Path) -> None:
+        # One producer and separate consumers, so several consumers read the same stored token and only
+        # the delete can pick one of them. A thread that pops what it just set would prove nothing.
+        caches = _caches(layout, make_cache, cache_dir)
+        got: list[str] = []
+        lock = threading.Lock()
+        produced = threading.Event()
+
+        def work(tid: int, cache: Any) -> None:
+            if tid == 0:
+                try:
+                    for n in range(POP_TOKENS):
+                        cache.set('hot', f'token-{n}')
+                        time.sleep(0.0005)
+                finally:
+                    produced.set()
+                return
+            mine = []
+            while not produced.is_set():
+                if (value := cache.pop('hot')) is not None:
+                    mine.append(value)
+            if (value := cache.pop('hot')) is not None:
+                mine.append(value)
+            with lock:
+                got.extend(mine)
+
+        _run(work, caches)
+        assert len(got) == len(set(got)), f'{len(got) - len(set(got))} values were delivered twice'
+        assert got, 'nothing was popped'
+        assert set(got) <= {f'token-{n}' for n in range(POP_TOKENS)}
+        assert 'hot' not in caches[0]
 
 
 def _mixed_value(key: str, tid: int, n: int, spill_size: int) -> str:

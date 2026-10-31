@@ -168,9 +168,8 @@ def test_oxide_pickle_false_handle_refuses_to_unpickle(make_cache: Callable[...,
 
 @pytest.mark.backend_only('oxide')
 def test_oxide_pickle_false_pop_refuses_and_keeps_the_row(make_cache: Callable[..., Any], cache_dir: Path, backend: Any) -> None:
-    # `pop` deletes inside its transaction and decodes after the commit, so the refusal has to come
-    # before the delete: a pickle=False handle's pop raised UnsafeValueError but had already removed
-    # the peer's row (found by the architect's plan-08 review).
+    # A pickle=False handle's pop once raised UnsafeValueError with the peer's row already gone
+    # (found by the architect's plan-08 review). The refusal has to come before any delete.
     writer = make_cache(cache_dir, pickle=True)
     snapshot = HomepageSnapshot('Talk Python', [500, 501], dt.datetime(2026, 10, 27))
     writer.set('snapshot', snapshot)

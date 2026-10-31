@@ -9,16 +9,16 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use std::collections::{HashSet, VecDeque};
 
 use diskcache_oxide_core::maintenance::{Cursor, Order};
-use diskcache_oxide_core::ops::{Number, Pop, Value, Version, VersionDelete};
+use diskcache_oxide_core::ops::{Hit, Number, Pop, Value, Version, VersionDelete};
 use diskcache_oxide_core::store::{
     DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, HeldTransaction, OpenOptions, Store,
 };
-use diskcache_oxide_core::{Error, ValueRef, lockwait, open::Requested};
+use diskcache_oxide_core::{Error, ValueRef, lockwait, open::Requested, spill};
 use pyo3::PyTraverseError;
 use pyo3::exceptions::{
     PyException, PyKeyError, PyMemoryError, PyOSError, PyOverflowError, PyRecursionError, PyTypeError, PyValueError,
@@ -334,21 +334,9 @@ impl Cache {
         let key = str_key(key)?;
         let now = self.now(py)?;
         self.ensure_open();
-        // Decoded only after the delete has committed: unpickling can run Python that uses this
-        // cache (see `Store::pop`). A value that fails to decode is still removed, but a pickled
-        // value this handle may not read is refused before the delete and stays (D-001).
-        let allow_pickle = self.pickle;
-        let default = || default.unwrap_or_else(|| py.None());
-        match self.store.pop(self.timeout, key, now, |mode| codec::refuses(mode, allow_pickle)).map_err(to_py_err)? {
-            Pop::Removed(popped) => match decode_value(py, popped.mode, popped.value_ref(), allow_pickle) {
-                Ok(value) => Ok(value),
-                Err(e) => self.decode_failed(py, key, popped.mode, e, Row::Removed).map(|()| default()),
-            },
-            Pop::Refused { mode } => {
-                self.decode_failed(py, key, mode, codec::refusal(mode), Row::Kept).map(|()| default())
-            }
-            Pop::Missing => Ok(default()),
-        }
+        // In a child that can't write (D-020) a read could report a miss; a pop raises.
+        self.store.check_writable().map_err(to_py_err)?;
+        Ok(self.pop_value(py, key, now)?.unwrap_or_else(|| default.unwrap_or_else(|| py.None())))
     }
 
     #[pyo3(signature = (key, expire = None))]
@@ -486,21 +474,106 @@ impl Cache {
 
     fn lookup(&self, py: Python<'_>, key: &str, now: f64) -> PyResult<Option<(Py<PyAny>, Option<f64>)>> {
         self.ensure_open();
-        let allow_pickle = self.pickle;
-        let found = self
-            .store
-            .get_with(
-                self.timeout,
-                key,
-                now,
-                |mode| codec::refuses(mode, allow_pickle),
-                |mode, value| Ok(decode_value(py, mode, value, allow_pickle).map_err(|e| (mode, e))),
-            )
-            .map_err(to_py_err)?;
-        let Some(hit) = found else { return Ok(None) };
+        let Some(hit) = self.read_row(py, self.timeout, key, now).map_err(to_py_err)? else { return Ok(None) };
         match hit.value {
             Ok(value) => Ok(Some((value, hit.expire_time))),
             Err((mode, e)) => self.decode_failed(py, key, mode, e, Row::Stored(hit.version)).map(|()| None),
+        }
+    }
+
+    /// The live value of `key`, decoded, or the decode error with the row's mode. A store failure is
+    /// the outer `Err`, so the decode policy never sees one.
+    #[inline]
+    fn read_row(&self, py: Python<'_>, timeout: Duration, key: &str, now: f64) -> Result<Option<Decoded>, Error> {
+        let allow_pickle = self.pickle;
+        self.store.get_with(
+            timeout,
+            key,
+            now,
+            |mode| codec::refuses(mode, allow_pickle),
+            |mode, value| Ok(decode_value(py, mode, value, allow_pickle).map_err(|e| (mode, e))),
+        )
+    }
+
+    /// `pop`, with a miss as `None`. Reads and decodes as `get` does, with no write lock and with
+    /// pickle hooks running where a `get`'s run, then deletes exactly that version, so a value it
+    /// can't read stays. A caller that loses the delete to another writer reads again, and after
+    /// `OPTIMISTIC_ATTEMPTS` of those takes the locked `Store::pop`, which can't starve.
+    ///
+    /// The whole call shares one deadline and the caller's one clock reading, so losing races and
+    /// slow hooks can't stretch it to many times the cache's timeout. A race lost after that deadline
+    /// raises `Timeout` and deletes nothing: the fallback removes before it decodes, so it's only for
+    /// a caller that really lost `OPTIMISTIC_ATTEMPTS` times, not one that ran out of time.
+    fn pop_value(&self, py: Python<'_>, key: &str, now: f64) -> PyResult<Option<Py<PyAny>>> {
+        let deadline = lockwait::deadline_after(Instant::now(), self.timeout);
+        let left = || deadline.saturating_duration_since(Instant::now());
+        for _ in 0..spill::OPTIMISTIC_ATTEMPTS {
+            let Some(hit) = self.read_row(py, left(), key, now).map_err(|e| self.pop_error(e))? else {
+                return Ok(None);
+            };
+            match hit.value {
+                Ok(value) => {
+                    if self.store.delete_version(left(), hit.version).map_err(|e| self.pop_error(e))? {
+                        return Ok(Some(value));
+                    }
+                }
+                Err((mode, e)) => {
+                    if self.pop_failed(py, key, mode, e, hit.version, left())? {
+                        return Ok(None);
+                    }
+                }
+            }
+            if left().is_zero() {
+                return Err(self.pop_error(Error::Timeout { seconds: 0.0 }));
+            }
+        }
+        let allow_pickle = self.pickle;
+        let refuse = |mode| codec::refuses(mode, allow_pickle);
+        match self.store.pop(left(), key, now, refuse).map_err(|e| self.pop_error(e))? {
+            Pop::Removed(popped) => match decode_value(py, popped.mode, popped.value_ref(), allow_pickle) {
+                Ok(value) => Ok(Some(value)),
+                Err(e) => self.decode_failed(py, key, popped.mode, e, Row::Removed).map(|()| None),
+            },
+            Pop::Refused { mode } => self.decode_failed(py, key, mode, codec::refusal(mode), Row::Kept).map(|()| None),
+            Pop::Missing => Ok(None),
+        }
+    }
+
+    /// A store failure during `pop`. A timeout names the cache's timeout: the store only knows the
+    /// part of it that was left.
+    fn pop_error(&self, error: Error) -> PyErr {
+        to_py_err(match error {
+            Error::Timeout { .. } => Error::Timeout { seconds: self.timeout.as_secs_f64() },
+            other => other,
+        })
+    }
+
+    /// The value `pop` read as `version` failed to decode with `e`. Returns whether the `pop` is over
+    /// as a miss; `false` means another writer replaced or removed that version first, so read again.
+    ///
+    /// An unreadable value goes under every policy, waiting for the write lock as any `pop` does,
+    /// before the error is raised or reported. If that delete fails, its error is raised with `e` as
+    /// its cause. A foreign value, or an error that isn't about the stored bytes, keeps the row.
+    fn pop_failed(
+        &self,
+        py: Python<'_>,
+        key: &str,
+        mode: i64,
+        e: PyErr,
+        version: Version,
+        timeout: Duration,
+    ) -> PyResult<bool> {
+        if !matches!(classify(py, mode, &e), Failure::Unreadable) {
+            return self.decode_failed(py, key, mode, e, Row::Stored(version)).map(|()| true);
+        }
+        match self.store.delete_version(timeout, version) {
+            Ok(true) => self.decode_failed(py, key, mode, e, Row::Removed).map(|()| true),
+            Ok(false) => Ok(false),
+            Err(error) => {
+                let error = self.pop_error(error);
+                error.set_cause(py, Some(e));
+                Err(error)
+            }
         }
     }
 
@@ -516,7 +589,10 @@ impl Cache {
         }
         let (outcome, stays) = match (classify(py, mode, &e), row) {
             (Failure::Passthrough, _) => return Err(e),
-            (Failure::Foreign | Failure::Unreadable, Row::Removed) => ("deleted (pop removes before decoding)", None),
+            (Failure::Unreadable, Row::Removed) => ("deleted", None),
+            (Failure::Foreign, Row::Removed) => {
+                ("deleted, since pop lost too many races and had to remove it first", None)
+            }
             (Failure::Foreign | Failure::Unreadable, Row::Kept) => ("left in place", None),
             (Failure::Foreign, Row::Stored(version)) => {
                 ("left in place for a version or host that can read it", Some(version))
@@ -797,6 +873,9 @@ enum Row {
     /// Deliberately not deleted (a refused `pop`).
     Kept,
 }
+
+/// What a read of a live row found: the value, or the row's mode and why it couldn't be decoded.
+type Decoded = Hit<Result<Py<PyAny>, (i64, PyErr)>>;
 
 /// What kind of decode failure an error is (plan 08, step 2b).
 enum Failure {

@@ -10,7 +10,7 @@ Paths: `LIB` = `~/github/mk/diskcache-oxide`. `APP` = `~/github/talk-python/talk
 |---|---|
 | Core `Cache`, thread-, process- and fork-safe | Done (Phases 2, 2.5). Gates are GO on macOS and Linux, 3.14 and 3.14t |
 | Plan 08: `on_decode_error`, `ForeignValueError`, per-call `timeout=`, `Caches` | Done, committed, architect-reviewed |
-| Plan 09 step 1: `pop` keeps values it can't read | **Designed and reviewed, not built** |
+| Plan 09 step 1: `pop` keeps values it can't read | Built and reviewed |
 | Plan 09 step 2: `Cache(durable=True)` | **Designed and reviewed, not built** |
 | Plan 09 step 3: `pop` in the soak kit, then a fresh 24-hour run | **Not started** |
 | 24-hour soak on the mini | Running on commit `0f1b9b8`, clean at 9.3 h. It's to be stopped and replaced (section 8) |

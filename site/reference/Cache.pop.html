@@ -121,7 +121,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="Remove key and return its value, atomically.">
+  <meta name="description" content="Remove key and return its value, delivering it to exactly one caller.">
   <script type="application/ld+json">
 [
   {
@@ -152,13 +152,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </script>
   <meta property="og:type" content="website">
   <meta property="og:title" content="Cache.pop() – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="Remove key and return its value, atomically.">
+  <meta property="og:description" content="Remove key and return its value, delivering it to exactly one caller.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.pop.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Cache.pop() – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="Remove key and return its value, atomically.">
+  <meta name="twitter:description" content="Remove key and return its value, delivering it to exactly one caller.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -1044,17 +1044,20 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 
 <div class="doc-subject">
-<p>Remove <code>key</code> and return its value, atomically.</p>
+<p>Remove <code>key</code> and return its value, delivering it to exactly one caller.</p>
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L207-L220" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L209-L235" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Cache</span><span class="op">.</span><span class="sig-name">pop</span>(
     <span class="va">key</span>,
     <span class="va">default</span><span class="op">=</span><span class="cn-none">None</span>,
 )</span></code></pre></div>
+</div>
+<div class="doc-text">
+<p>Reads and decodes the value first, as <a href="Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> does, then deletes exactly that stored version, so a value it can’t read stays for whoever can. A <a href="Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> that loses that delete to other writers 8 times falls back to removing the row first and decoding afterwards. Only then can a failed decode cost the value: one from a newer version, or any error from a pickle hook. <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> covers the whole call.</p>
 </div>
 <section id="parameters" class="level2 doc-parameters">
 <h2 class="doc-parameters">Parameters</h2>
@@ -1066,7 +1069,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </dd>
 <dt><code><span class="doc-parameter-name">default</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Any</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
-Returned when the key is missing or expired.
+Returned when the key is missing or expired, or its value file is missing.
 </dd>
 </dl>
 </div>
@@ -1088,11 +1091,19 @@ The removed value, or <code>default</code>.
 <dl>
 <dt><code> <span class="doc-parameter-annotation">UnsafeValueError</span></code></dt>
 <dd>
-<p>The value was stored with pickle and this cache has <code>pickle=False</code>.</p>
+<p>The value was stored with pickle and this cache has <code>pickle=False</code>. The row stays.</p>
+</dd>
+<dt><code> <span class="doc-parameter-annotation">ForeignValueError</span></code></dt>
+<dd>
+<p><code>on_decode_error='raise'</code>, and another version or host might read the value. The row stays.</p>
+</dd>
+<dt><code> <span class="doc-parameter-annotation">CorruptValueError</span></code></dt>
+<dd>
+<p><code>on_decode_error='raise'</code>, and no build could read the value. The row is deleted first.</p>
 </dd>
 <dt><code> <span class="doc-parameter-annotation">Timeout</span></code></dt>
 <dd>
-Another process held the write lock for longer than <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>.
+Another process held the write lock for longer than <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, or <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> ran out after losing a race to another writer. This <a href="Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> deletes nothing, and whatever the other writer left stays.
 </dd>
 </dl>
 </div>

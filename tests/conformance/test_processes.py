@@ -27,6 +27,9 @@ from tests.conformance.backends import Backend
 
 REPO_ROOT = proc_workers.REPO_ROOT
 JOIN_TIMEOUT = 30.0
+POP_KEYS = 300
+POP_TOKENS = 500
+N_PROCS = 4
 
 pytestmark = pytest.mark.timeout(60)
 
@@ -90,6 +93,38 @@ def test_spawned_processes_racing_add_on_an_expired_key_have_one_winner(backend:
     winners = _race_add(backend, cache_dir, 'job')
     assert len(winners) == 1, f'winners: {winners}'
     assert cache.get('job', expire_time=True) == (winners[0], None)
+
+
+def test_spawned_processes_racing_pop_get_each_value_exactly_once(backend: Backend, cache: Any, cache_dir: Path) -> None:
+    # Every 20th value spills to a file.
+    filler = 'x' * proc_workers.spill_min(backend)
+    keys = [f'pop-{i}' for i in range(POP_KEYS)]
+    values = {key: f'{key}|' + (filler if i % 20 == 0 else '') for i, key in enumerate(keys)}
+    for key, value in values.items():
+        cache.set(key, value)
+    barrier = SPAWN.Barrier(N_PROCS)
+    results = SPAWN.Queue()
+    procs = _start(proc_workers.pop_many, [(backend.name, str(cache_dir), barrier, keys, results)] * N_PROCS)
+    popped = [value for _ in range(N_PROCS) for value in results.get(timeout=JOIN_TIMEOUT)]
+    _join_all(procs)
+    assert sorted(popped) == sorted(values.values())
+    assert len(cache) == 0
+
+
+def test_consumer_processes_racing_a_producer_never_get_a_value_twice(backend: Backend, cache: Any, cache_dir: Path) -> None:
+    # Several consumers read the same stored token, and only the delete can pick one of them.
+    barrier = SPAWN.Barrier(N_PROCS + 1)
+    produced = SPAWN.Event()
+    results = SPAWN.Queue()
+    producer = _start(proc_workers.pop_producer, [(backend.name, str(cache_dir), barrier, 'hot', POP_TOKENS, produced)])
+    consumers = _start(proc_workers.pop_consumer, [(backend.name, str(cache_dir), barrier, 'hot', produced, results)] * N_PROCS)
+    with _reaped(produced, producer, consumers):
+        got = [value for _ in range(N_PROCS) for value in results.get(timeout=JOIN_TIMEOUT)]
+        _join_all(producer + consumers)
+    assert len(got) == len(set(got)), f'{len(got) - len(set(got))} values were delivered twice'
+    assert got, 'nothing was popped'
+    assert set(got) <= {f'token-{n}' for n in range(POP_TOKENS)}
+    assert 'hot' not in cache
 
 
 def test_spawned_processes_incr_total_is_exact(backend: Backend, cache: Any, cache_dir: Path) -> None:

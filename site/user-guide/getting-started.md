@@ -156,7 +156,23 @@ cache.get('homepage')  # None if the stored value can't be decoded; the bad row 
 - Pass a function instead to report the failure yourself, for example to Sentry. It's called as `report(key, exc)` in place of the warning, after the row has been dealt with. Anything it raises is logged, and the read is still a miss.
 - Errors that aren't about the stored bytes still raise: [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), `MemoryError`, an I/O error, and [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) (a pickled value read by a cache without `pickle=True`, which is a configuration mistake, not damage).
 
-It covers [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), `cache[key]` (which raises `KeyError`) and [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop). A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read. One limit: [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) removes the row before it decodes the value, so it can only keep a foreign value whose *mode* it doesn't know. One with an unknown tag inside a known mode is removed, as [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) was asked to do.
+It covers [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), `cache[key]` (which raises `KeyError`) and [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop). A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read.
+
+[pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) decodes the value before it deletes the row, so a value that another version or host might read survives it. This table is the usual path; the fallback described below it removes the row first:
+
+| What went wrong | `'raise'` | `'miss'` or a function |
+|----|----|----|
+| A foreign value | raises [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError), row kept | returns the default and reports, row kept |
+| [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) | raises, row kept | raises, row kept |
+| An unreadable value (malformed bytes, a failing unpickle) | deletes that version, then raises | deletes that version, returns the default and reports |
+| Any other error from a pickle hook ([Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), `MemoryError`, an I/O error) | raises, row kept | raises, row kept |
+
+If that delete itself fails, for example with [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), its error is raised under every policy with the decode error as its `__cause__`, and the row stays.
+
+A value still goes to exactly one caller, because [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) deletes only the version it decoded. A [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) that loses that delete to another writer reads again, and after 8 losses it falls back to removing the row first and decoding afterwards, so it can't starve. If its [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) has run out by the time it loses, it raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) instead: this [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) deletes nothing, and whatever the other writer left stays. There are two limits:
+
+- That fallback is the one place a failed decode can cost the value, because the row is already gone: a foreign value in a known mode, or any error from a pickle hook ([Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), `MemoryError`, an I/O error). It's possible on a heavily overwritten key, since a [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) can lose while it queues for the write lock. How often it happens hasn't been measured yet.
+- Like [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) doesn't wait to clean up a row whose large value file has gone missing. It returns the default, and if the write lock is busy the row can stay until a later [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) or write removes it.
 
 
 # Shutting down

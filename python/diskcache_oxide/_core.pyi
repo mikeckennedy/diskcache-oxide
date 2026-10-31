@@ -97,7 +97,9 @@ class Cache:
             (`ForeignValueError`) is left in place. A callable does the same as `'miss'`, but is
             called with `(key, exc)` instead of the warning, after the row is dealt with; whatever
             it raises is logged. `UnsafeValueError`, `Timeout`, `MemoryError` and other errors that
-            aren't about the stored bytes always raise. Covers `get`, `cache[key]` and `pop`.
+            aren't about the stored bytes always raise. Covers `get`, `cache[key]` and `pop`, which
+            decodes before it deletes, so it keeps a row it can't read. Under `'raise'`, `pop` still
+            deletes a value no build could read, then raises.
 
     Raises:
         ValueError: A setting is out of range, such as a `size_limit` under 1 MiB.
@@ -205,18 +207,31 @@ class Cache:
             Timeout: Another process held the write lock for longer than `timeout`.
         """
     def pop(self, key: str, default: Any = None) -> Any:
-        """Remove `key` and return its value, atomically.
+        """Remove `key` and return its value, delivering it to exactly one caller.
+
+        Reads and decodes the value first, as `get` does, then deletes exactly that stored version,
+        so a value it can't read stays for whoever can. A `pop` that loses that delete to other
+        writers 8 times falls back to removing the row first and decoding afterwards. Only then can
+        a failed decode cost the value: one from a newer version, or any error from a pickle hook.
+        `timeout` covers the whole call.
 
         Args:
             key: The key.
-            default: Returned when the key is missing or expired.
+            default: Returned when the key is missing or expired, or its value file is missing.
 
         Returns:
             The removed value, or `default`.
 
         Raises:
             UnsafeValueError: The value was stored with pickle and this cache has `pickle=False`.
-            Timeout: Another process held the write lock for longer than `timeout`.
+                The row stays.
+            ForeignValueError: `on_decode_error='raise'`, and another version or host might read
+                the value. The row stays.
+            CorruptValueError: `on_decode_error='raise'`, and no build could read the value. The row
+                is deleted first.
+            Timeout: Another process held the write lock for longer than `timeout`, or `timeout` ran
+                out after losing a race to another writer. This `pop` deletes nothing, and whatever
+                the other writer left stays.
         """
     def touch(self, key: str, expire: float | None = None) -> bool:
         """Change the expiry of an existing entry without rewriting its value.

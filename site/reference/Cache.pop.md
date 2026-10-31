@@ -1,7 +1,7 @@
 ## Cache.pop()
 
 
-Remove `key` and return its value, atomically.
+Remove `key` and return its value, delivering it to exactly one caller.
 
 
 Usage
@@ -14,6 +14,9 @@ Cache.pop(
 ```
 
 
+Reads and decodes the value first, as [get](Cache.get.md#diskcache_oxide.Cache.get) does, then deletes exactly that stored version, so a value it can't read stays for whoever can. A [pop](Cache.pop.md#diskcache_oxide.Cache.pop) that loses that delete to other writers 8 times falls back to removing the row first and decoding afterwards. Only then can a failed decode cost the value: one from a newer version, or any error from a pickle hook. [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) covers the whole call.
+
+
 ## Parameters
 
 
@@ -21,7 +24,7 @@ Cache.pop(
 The key.
 
 `default: Any = None`  
-Returned when the key is missing or expired.
+Returned when the key is missing or expired, or its value file is missing.
 
 
 ## Returns
@@ -35,7 +38,13 @@ The removed value, or `default`.
 
 
 `UnsafeValueError`  
-The value was stored with pickle and this cache has `pickle=False`.
+The value was stored with pickle and this cache has `pickle=False`. The row stays.
+
+`ForeignValueError`  
+`on_decode_error='raise'`, and another version or host might read the value. The row stays.
+
+`CorruptValueError`  
+`on_decode_error='raise'`, and no build could read the value. The row is deleted first.
 
 `Timeout`  
-Another process held the write lock for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
+Another process held the write lock for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), or [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) ran out after losing a race to another writer. This [pop](Cache.pop.md#diskcache_oxide.Cache.pop) deletes nothing, and whatever the other writer left stays.

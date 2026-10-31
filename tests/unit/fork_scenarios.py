@@ -95,6 +95,9 @@ def d020(directory: Path) -> list[str]:
         assert cache.get('before') == 'parent', 'a read after leaving the transaction'
         assert cache.get('in-hold') is None, "the parent's uncommitted write is visible"
         fails_fast('write through the inherited Cache', lambda: cache.set('child', 1))
+        fails_fast('pop of a key the child can read', lambda: cache.pop('before'))
+        fails_fast('pop of a missing key', lambda: cache.pop('missing'))
+        assert cache.get('before') == 'parent', 'the refused pop removed nothing'
         fresh = Cache(directory, timeout=TIMEOUT)
         assert fresh.get('before') == 'parent'
         fails_fast('write through a fresh Cache', lambda: fresh.set('child', 1))

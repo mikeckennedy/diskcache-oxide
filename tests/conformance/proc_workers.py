@@ -197,6 +197,36 @@ def incr_many(backend_name: str, directory: str, barrier: Barrier, ops: int) -> 
             cache.incr('counter')
 
 
+@titled('race-pop')
+def pop_many(backend_name: str, directory: str, barrier: Barrier, keys: list[str], results: Any) -> None:
+    with open_cache(backend_name, directory) as cache:
+        barrier.wait(SYNC_TIMEOUT)
+        results.put([value for key in keys if (value := cache.pop(key)) is not None])
+
+
+@titled('pop-producer')
+def pop_producer(backend_name: str, directory: str, barrier: Barrier, key: str, tokens: int, produced: Event) -> None:
+    with open_cache(backend_name, directory) as cache:
+        barrier.wait(SYNC_TIMEOUT)
+        for n in range(tokens):
+            cache.set(key, f'token-{n}')
+            time.sleep(0.0005)
+    produced.set()
+
+
+@titled('pop-consumer')
+def pop_consumer(backend_name: str, directory: str, barrier: Barrier, key: str, produced: Event, results: Any) -> None:
+    got = []
+    with open_cache(backend_name, directory) as cache:
+        barrier.wait(SYNC_TIMEOUT)
+        while not produced.is_set():
+            if (value := cache.pop(key)) is not None:
+                got.append(value)
+        if (value := cache.pop(key)) is not None:
+            got.append(value)
+    results.put(got)
+
+
 @titled('overlap-holder')
 def overlap_holder(backend_name: str, directory: str, barrier: Barrier, writer_done: Event, results: Any) -> None:
     """Process A: opens the cache and uses it, then stays open while B writes and exits."""

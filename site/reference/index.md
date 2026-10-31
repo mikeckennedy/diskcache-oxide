@@ -45,7 +45,7 @@ Store `value` only if `key` is missing or expired.
 Remove `key`.
 
 [Cache.pop()](Cache.pop.md#diskcache_oxide.Cache.pop)  
-Remove `key` and return its value, atomically.
+Remove `key` and return its value, delivering it to exactly one caller.
 
 [Cache.touch()](Cache.touch.md#diskcache_oxide.Cache.touch)  
 Change the expiry of an existing entry without rewriting its value.

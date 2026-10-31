@@ -194,6 +194,20 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: waiting would block a thread with the interpreter attached behind one that may be waiting, detached, for a pending fork, which hung the whole process (review 07). Raising is what a shared generator already does.
 - Tests: `tests/unit/test_concurrency.py` (fork scenario `shared-iterator-while-a-fork-waits`)
 
+## D-026 pop decodes before it deletes
+
+- Kind: note (pinned by `tests/unit/test_pop.py`; the racing tests in `test_threads.py` and `test_processes.py` run on every backend)
+- diskcache: `pop` reads and deletes the row inside one write transaction, then deserializes it, so the row is gone before anything runs on the value.
+- oxide: `pop` reads and decodes the value with no write lock, as `get` does, then deletes exactly that stored version in its own transaction. Each value still reaches exactly one caller. If another writer replaced or removed that version first, `pop` reads again, and after 8 tries takes a locked removal that decodes afterwards. What a caller can see:
+  - A pickle hook (`__setstate__`) sees the key still present.
+  - A hook that raises `Timeout`, `MemoryError`, `RecursionError`, `OSError` or a `BaseException` leaves the row in place. So does a foreign value, whatever `on_decode_error` says. A value no build can read is still deleted, and under `'raise'` the error comes after the delete. The exception is the locked removal after 8 tries: it removes before it decodes, so there a foreign value or any hook error costs the value.
+  - `pop` of a missing key doesn't take the write lock, so it no longer times out behind a writer.
+  - A hook that pops its own key now recurses, since the key is still there each time: `RecursionError` at the default recursion limit. Each level holds a connection, so a low fd limit gets there first, as an `OSError` (depth 125 at `ulimit -n 256`). A spilled value always reaches `RecursionError`, even at `ulimit -n 64`, since no connection is held during its decode. Nothing is deleted on the way out.
+  - A hook that overwrites its own key loses the race on every try, so it runs up to 9 times and ends in the locked removal.
+  - A row whose value file is missing can stay after `pop` when the write lock is busy, as with `get` (D-013). It's a miss either way, and a later `pop` or write removes it.
+  - `timeout` covers the whole call, including the time spent in hooks and on lost races, not each step. A race lost after it has run out raises `Timeout` rather than going on to the locked removal: this `pop` deletes nothing, and whatever the other writer left stays.
+- Why: a newer peer's value in an unknown format must survive a `pop` during a deploy, and a transient error in a hook shouldn't cost the value.
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.

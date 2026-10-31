@@ -164,9 +164,12 @@ def test_an_unknown_msgpack_tag_is_foreign_and_kept(directory: Path) -> None:
     assert _stored(directory, 'k')
     with pytest.raises(ForeignValueError):
         Cache(directory).get('k')
-    # pop decodes after its delete, so it can't keep the row; it was asked to remove it anyway.
+    # pop decodes before it deletes, so a newer peer's value survives it.
     assert cache.pop('k', 'default') == 'default'
-    assert not _stored(directory, 'k')
+    assert _stored(directory, 'k')
+    with pytest.raises(ForeignValueError):
+        Cache(directory).pop('k')
+    assert _stored(directory, 'k')
     cache.close()
 
 
@@ -400,17 +403,22 @@ def test_a_callable_covers_pop_too(directory: Path) -> None:
     _sql(directory, "UPDATE cache SET value = X'c1' WHERE key = 'k'")
     assert cache.pop('k', 'default') == 'default'
     assert calls == ['k']
+    assert not _stored(directory, 'k')
     cache.close()
 
 
-def test_pop_of_a_foreign_tag_says_it_was_deleted(directory: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_pop_of_a_foreign_tag_says_it_was_kept(directory: Path, caplog: pytest.LogCaptureFixture) -> None:
     cache = Cache(directory, on_decode_error='miss')
     cache.set('k', {'a': 1})
     _sql(directory, f"UPDATE cache SET value = X'81a5{b'$nope'.hex()}01' WHERE key = 'k'")
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         assert cache.pop('k') is None
+        assert cache.pop('k') is None
+        assert cache.get('k') is None
     [record] = [r for r in caplog.records if r.name == LOGGER]
-    assert 'pop removes before decoding' in record.getMessage()
+    assert 'left in place' in record.getMessage()
+    assert 'ForeignValueError' in record.getMessage()
+    assert _stored(directory, 'k')
     cache.close()
 
 
@@ -429,6 +437,11 @@ def test_a_time_zone_this_host_lacks_is_foreign(directory: Path) -> None:
     with pytest.raises(ForeignValueError) as info:
         Cache(directory).get('k')
     assert isinstance(info.value.__cause__, zoneinfo.ZoneInfoNotFoundError)
+    assert cache.pop('k', 'default') == 'default'
+    assert _stored(directory, 'k'), 'a host with that time zone can read it'
+    with pytest.raises(ForeignValueError):
+        Cache(directory).pop('k')
+    assert _stored(directory, 'k')
     cache.close()
 
 

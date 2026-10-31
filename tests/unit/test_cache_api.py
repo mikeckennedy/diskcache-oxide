@@ -83,9 +83,10 @@ class _WritesOnUnpickle:
 
 
 @pytest.mark.parametrize('popped', ['inline', 'spilled'])
-def test_pop_decodes_after_its_write_commits(tmp_path: Path, popped: str) -> None:
+def test_pop_decodes_outside_any_write_transaction(tmp_path: Path, popped: str) -> None:
     # Decoding inside pop's write transaction made a __setstate__ that writes the same cache wait
-    # out the whole timeout behind its own transaction, then raise Timeout.
+    # out the whole timeout behind its own transaction, then raise Timeout. Now it decodes first,
+    # as a get does, and deletes afterwards.
     cache = Cache(tmp_path / 'c', timeout=2, pickle=True)
     _REENTRANT['cache'] = cache
     try:

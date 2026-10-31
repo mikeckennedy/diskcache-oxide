@@ -444,7 +444,45 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <li>Pass a function instead to report the failure yourself, for example to Sentry. It’s called as <code>report(key, exc)</code> in place of the warning, after the row has been dealt with. Anything it raises is logged, and the read is still a miss.</li>
 <li>Errors that aren’t about the stored bytes still raise: <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, <code>MemoryError</code>, an I/O error, and <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> (a pickled value read by a cache without <code>pickle=True</code>, which is a configuration mistake, not damage).</li>
 </ul>
-<p>It covers <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <code>cache[key]</code> (which raises <code>KeyError</code>) and <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a>. A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read. One limit: <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> removes the row before it decodes the value, so it can only keep a foreign value whose <em>mode</em> it doesn’t know. One with an unknown tag inside a known mode is removed, as <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> was asked to do.</p>
+<p>It covers <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <code>cache[key]</code> (which raises <code>KeyError</code>) and <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a>. A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read.</p>
+<p><a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> decodes the value before it deletes the row, so a value that another version or host might read survives it. This table is the usual path; the fallback described below it removes the row first:</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>What went wrong</th>
+<th><code>'raise'</code></th>
+<th><code>'miss'</code> or a function</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>A foreign value</td>
+<td>raises <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>, row kept</td>
+<td>returns the default and reports, row kept</td>
+</tr>
+<tr class="even">
+<td><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a></td>
+<td>raises, row kept</td>
+<td>raises, row kept</td>
+</tr>
+<tr class="odd">
+<td>An unreadable value (malformed bytes, a failing unpickle)</td>
+<td>deletes that version, then raises</td>
+<td>deletes that version, returns the default and reports</td>
+</tr>
+<tr class="even">
+<td>Any other error from a pickle hook (<a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, <code>MemoryError</code>, an I/O error)</td>
+<td>raises, row kept</td>
+<td>raises, row kept</td>
+</tr>
+</tbody>
+</table>
+<p>If that delete itself fails, for example with <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, its error is raised under every policy with the decode error as its <code>__cause__</code>, and the row stays.</p>
+<p>A value still goes to exactly one caller, because <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> deletes only the version it decoded. A <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> that loses that delete to another writer reads again, and after 8 losses it falls back to removing the row first and decoding afterwards, so it can’t starve. If its <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> has run out by the time it loses, it raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> instead: this <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> deletes nothing, and whatever the other writer left stays. There are two limits:</p>
+<ul>
+<li>That fallback is the one place a failed decode can cost the value, because the row is already gone: a foreign value in a known mode, or any error from a pickle hook (<a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, <code>MemoryError</code>, an I/O error). It’s possible on a heavily overwritten key, since a <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> can lose while it queues for the write lock. How often it happens hasn’t been measured yet.</li>
+<li>Like <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> doesn’t wait to clean up a row whose large value file has gone missing. It returns the default, and if the write lock is busy the row can stay until a later <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> or write removes it.</li>
+</ul>
 </section>
 <section id="shutting-down" class="level1">
 <h1>Shutting down</h1>

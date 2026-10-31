@@ -723,7 +723,23 @@ cache.get('homepage')  # None if the stored value can't be decoded; the bad row 
 - Pass a function instead to report the failure yourself, for example to Sentry. It's called as `report(key, exc)` in place of the warning, after the row has been dealt with. Anything it raises is logged, and the read is still a miss.
 - Errors that aren't about the stored bytes still raise: `Timeout`, `MemoryError`, an I/O error, and `UnsafeValueError` (a pickled value read by a cache without `pickle=True`, which is a configuration mistake, not damage).
 
-It covers `get`, `cache[key]` (which raises `KeyError`) and `pop`. A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read. One limit: `pop` removes the row before it decodes the value, so it can only keep a foreign value whose *mode* it doesn't know. One with an unknown tag inside a known mode is removed, as `pop` was asked to do.
+It covers `get`, `cache[key]` (which raises `KeyError`) and `pop`. A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read.
+
+`pop` decodes the value before it deletes the row, so a value that another version or host might read survives it. This table is the usual path; the fallback described below it removes the row first:
+
+| What went wrong | `'raise'` | `'miss'` or a function |
+|---|---|---|
+| A foreign value | raises `ForeignValueError`, row kept | returns the default and reports, row kept |
+| `UnsafeValueError` | raises, row kept | raises, row kept |
+| An unreadable value (malformed bytes, a failing unpickle) | deletes that version, then raises | deletes that version, returns the default and reports |
+| Any other error from a pickle hook (`Timeout`, `MemoryError`, an I/O error) | raises, row kept | raises, row kept |
+
+If that delete itself fails, for example with `Timeout`, its error is raised under every policy with the decode error as its `__cause__`, and the row stays.
+
+A value still goes to exactly one caller, because `pop` deletes only the version it decoded. A `pop` that loses that delete to another writer reads again, and after 8 losses it falls back to removing the row first and decoding afterwards, so it can't starve. If its `timeout` has run out by the time it loses, it raises `Timeout` instead: this `pop` deletes nothing, and whatever the other writer left stays. There are two limits:
+
+- That fallback is the one place a failed decode can cost the value, because the row is already gone: a foreign value in a known mode, or any error from a pickle hook (`Timeout`, `MemoryError`, an I/O error). It's possible on a heavily overwritten key, since a `pop` can lose while it queues for the write lock. How often it happens hasn't been measured yet.
+- Like `get`, `pop` doesn't wait to clean up a row whose large value file has gone missing. It returns the default, and if the write lock is busy the row can stay until a later `pop` or write removes it.
 
 ## Shutting down
 
@@ -1213,7 +1229,7 @@ The pool never holds more than `max_connections` connections, so at most `2 × m
 Any number of processes can open the same directory, each with its own `Cache`. That's the normal deployment: every gunicorn or uvicorn worker opens the cache at startup.
 
 - **WAL mode, always.** SQLite runs in write-ahead-log mode, so readers never block writers and writers never block readers. One writer at a time commits to each database file. diskcache-oxide checks that WAL mode is really on when it opens a cache, and fails loudly if it isn't (on some network filesystems, for example).
-- **Atomic across processes.** `add()`, `incr()`, `decr()`, `pop()` and every other write is a single transaction. Two processes can't both win an `add()`, and two `incr()` calls never lose an update.
+- **Atomic across processes.** `add()`, `incr()`, `decr()` and every other write is a single transaction. Two processes can't both win an `add()`, and two `incr()` calls never lose an update. `pop()` is a read and then a transaction that deletes exactly the version it read, so two processes can't both get the same value.
 - **Maintenance that doesn't destroy work.** Every write gets a new sequence number. `clear()` and `expire()` note the latest number when they start and only touch older rows, so writes from other processes that land while they run are kept.
 - **Large values are always whole.** A process reading a large value while another overwrites it gets the old value or the new one, never a miss. (diskcache's standalone reproduction of that race sees about 40 misses in every 325,000 reads.)
 - **Opening never writes.** Opening a cache with unchanged settings and reading from it never takes the write lock or touches the database file, so a read-mostly worker costs the writers nothing.
