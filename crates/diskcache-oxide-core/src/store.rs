@@ -1821,8 +1821,11 @@ mod tests {
         let (inside, go) = std::sync::mpsc::channel();
         let (done, ended) = std::sync::mpsc::channel();
         let end_thread = std::thread::spawn(move || {
+            // Before the operation starts, and on the transaction's own level: tests run in one
+            // process, and a plain entry here would wait for another test's pending fork, which
+            // waits for this transaction, which only this thread can end.
+            let _level = level.then(|| held.share.as_ref().unwrap().enter());
             go.recv().unwrap();
-            let _level = level.then(|| GATE.enter_shared());
             let started = Instant::now();
             let result = held.finish(commit);
             done.send((started.elapsed(), result)).unwrap();
