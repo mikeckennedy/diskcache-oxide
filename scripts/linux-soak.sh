@@ -54,7 +54,7 @@ command -v gdb >/dev/null || echo "soak: no gdb in the image (scripts/linux-soak
 mkdir -p /work/repo
 tar -C /src -cf - \
     --exclude=./target --exclude="./venv" --exclude="./venv*" --exclude="./.venv*" \
-    --exclude="*/__pycache__" --exclude=./.mypy_cache --exclude=./.pytest_cache \
+    --exclude="*/__pycache__" --exclude=./.pytest_cache \
     --exclude=./.ruff_cache --exclude=./.hypothesis --exclude="./python/diskcache_oxide/*.so" \
     --exclude=./soak-results --exclude=./site \
     . | tar -C /work/repo -xf -

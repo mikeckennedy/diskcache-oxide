@@ -85,16 +85,16 @@ class CacheLike(Protocol):
     def close(self, *, checkpoint: bool = True) -> None:
         """Close this handle and return its connections."""
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str, /) -> Any:
         """`cache[key]`: the value, or `KeyError` if it's missing or expired."""
 
-    def __setitem__(self, key: str, value: Any) -> None:
+    def __setitem__(self, key: str, value: Any, /) -> None:
         """`cache[key] = value`: store a value that never expires."""
 
-    def __delitem__(self, key: str) -> None:
+    def __delitem__(self, key: str, /) -> None:
         """`del cache[key]`: remove the entry, or raise `KeyError`."""
 
-    def __contains__(self, key: object) -> bool:
+    def __contains__(self, key: object, /) -> bool:
         """`key in cache`: True if the key holds a live value."""
 
     def __len__(self) -> int:

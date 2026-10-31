@@ -1,4 +1,4 @@
-"""Type stubs for the compiled `diskcache_oxide._core` extension (hand-written, checked by stubtest)."""
+"""Type stubs for the compiled `diskcache_oxide._core` extension (hand-written, checked by tests/unit/test_stubs.py)."""
 
 import os
 from types import TracebackType

@@ -15,7 +15,7 @@ Paths: `LIB` = `~/github/mk/diskcache-oxide`. `APP` = `~/github/talk-python/talk
 | Plan 09 step 3: `pop` in the soak kit, then a fresh 24-hour run | **Not started** |
 | 24-hour soak on the mini | Running on commit `0f1b9b8`, clean at 9.3 h. It's to be stopped and replaced (section 8) |
 | PGO wheels | Built into `LIB/dist/`, macOS arm64 only (section 4) |
-| Linux wheel, PyPI release | **Neither exists.** Version is still `0.0.0`. Blocks production, not local work |
+| Linux wheel | **Doesn't exist.** Production installs from a wheel, not PyPI (Michael). Version is still `0.0.0`. Blocks production, not local work |
 | Port plan | **Not written.** Section 6 has the raw material; it goes in `plans/` and gets the architect's review |
 
 Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency work), `plans/08` (what's built, with the reasoning), `plans/09` (what's next, including the review's required changes).
@@ -39,7 +39,7 @@ Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency wor
 3. **Add `pop` and durable lanes to the soak kit,** stop the current soak, start 24 hours on that commit. Rule: one soak at a time on the mini. Use `zsh -lc` over ssh, and see the memory note `soak-on-mini`.
 4. **Write the port plan** from section 6, settling section 7's decisions with Michael. The architect reviews it.
 5. **Port on the branch.** Run `./venv/bin/ty check`, `./venv/bin/ruff check --fix talk_python_to_me_com/`, `./venv/bin/ruff format talk_python_to_me_com/` and the tests, from `APP`. About 8,500 tests, serial, and `tests/test_type_check.py` fails on any `ty` diagnostic.
-6. **Before production:** the soak PASS on the final library commit, a Linux wheel or PyPI release (section 9), and the cold-cutover steps (section 7, items 1 and 2).
+6. **Before production:** the soak PASS on the final library commit, a Linux wheel (section 9), and the cold-cutover steps (section 7, items 1 and 2).
 
 Library changes during the port: Python-only changes such as `Caches` shouldn't need another soak. A change to `get_with`, `pop` or the locking does.
 
@@ -203,7 +203,6 @@ What that does to callers:
 3. **Decided (Michael, 2026-10-30): no pickle, the app adjusts** (section 5, step 3). What to know: values were read from the code and only the homepage models were run through the codec, so anything missed shows up as a `TypeError` on `set`, which `durable=True` deliberately still raises. Everything else stored is primitives, and naive datetimes, dates, tuples, sets and non-`str` dict keys round-trip exactly (tested). `timedelta` and `time` are refused. Run a real-cache pass of the test suite to shake out any others.
 4. **Should the port wait for `durable=True`?** **Recommendation: yes.** Today's `DurableCache.get` swallows everything, and most `get` callers have no `try`. `on_decode_error='miss'` alone doesn't cover `Timeout`. Note that `DurableCache.set` doesn't swallow errors today (`durable_cache.py:254-256`), despite the comments at `rendered_cache.py:85` and `rss_service.py:198`, so durable is an upgrade there.
 5. **Where `expire_all()` runs.** Today it's synchronous on whichever request passes the hour. `scheduled_jobs_service.py` is Memberful-specific and off outside production or with `TALKPYTHON_SCHEDULED_JOBS=0`, so there's no home yet. Separately, `transcripts_admin.py:109,128` and `mcp_service.py:69` (from `infrastructure/mcp/protocol.py:150,210,236`, `views/mcp_views.py:206`) call `expire()` on the 1 s request handle, on the event loop.
-6. **How production gets the library** (section 9).
 
 ## 8. The soak
 
@@ -214,14 +213,12 @@ What that does to callers:
 
 ## 9. Getting it into production
 
-**Nothing is installable yet.** PyPI has no `diskcache-oxide`, the version is `0.0.0`, there's no `.github/`, and the roadmap defers release wheels until "once Phase 3 is in production", which is circular. Production is documented as Python 3.14, with the architecture unverified. The dev venv is 3.15.
+**Decided (Michael, 2026-10-30): install from a wheel, not PyPI, for now.** The wheel goes in the Docker build context and installs with `--find-links`. PyPI can come later.
 
-Options:
-1. **Publish to PyPI,** as chameleon-rs does. Easiest. Add `--exclude-newer-package diskcache-oxide="1 second"` to `UV_COMPILE_FLAGS` (root `Makefile:11`), because `--exclude-newer "1 week"` would otherwise hide a fresh release.
-2. **Build a Linux wheel and add it to the build context,** installed with `--find-links`. `build_pgo.sh` would need to run in `LIB/docker/linux-dev.Dockerfile`, and it's untested there.
-3. **A Rust stage in the Docker build.** It needs toolchain 1.99.1 and must build from the repo root so `.cargo/config.toml` applies `LIBSQLITE3_FLAGS`; a build from an sdist may lose them (unverified). `builder-base` lives in a separate infrastructure repo, and whether it has Rust is unknown.
-
-**Recommendation:** option 1, with a real version number and PGO wheels for Linux and macOS.
+What that needs:
+- **A Linux wheel, which doesn't exist yet.** `dist/` is macOS only. Production is documented as Python 3.14, so it's `cp314` for production's architecture, which is unverified: check it before building. `scripts/build_pgo.sh` would need to run inside `LIB/docker/linux-dev.Dockerfile` (or a manylinux image, so the wheel's glibc requirement isn't newer than the production image's), and that's untested.
+- **A version.** The wheel is still `0.0.0`. A real version number makes it clear which build is deployed; `viewmodels/admin/server_info_viewmodel.py:30` lists package versions on the admin page.
+- **The Docker build:** requirements install at `etc/docker/Dockerfile:26-28`, and the runtime stage copies `/venv`, so the compiled extension carries over. The COPY paths imply a parent build context, so the wheel needs to live inside it. `requirements.piptools` and `requirements.txt` swap `diskcache==5.6.3` for the wheel. `builder-base` lives in a separate infrastructure repo.
 
 **Also check:** new value-file subdirectories are `0700` (D-015). Host-side `bin/` scripts on the bind mount, running as another UID, may be locked out of large values (inferred, not tested). Old `cache.db*` files stay on the `${TALKPYTHON_CACHE}` volume until deleted, which is useful for rollback.
 
@@ -232,3 +229,4 @@ Options:
 - **Testing with a second process:** a stdlib `sqlite3` connection in the test process can't stand in for one, since POSIX locks are per process. Use `tests/conformance/proc_workers.SqlitePeer`. A peer holding the write lock doesn't make `get` or `in` fail either.
 - **Markdown:** never hard-wrap prose.
 - **Commits:** no `Co-Authored-By` or attribution lines.
+- **Type checking in the library:** `ty check` in `scripts/check.sh`, and `tests/unit/test_stubs.py` checks `_core.pyi` against the compiled module (what `mypy.stubtest` did). `ty` also found that `CacheLike`'s `__contains__` and friends allowed a keyword `key` where `Cache` doesn't; they're positional-only now.

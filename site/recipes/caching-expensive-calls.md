@@ -36,8 +36,8 @@ print(f'cached:      {(time.perf_counter() - start) * 1000:.1f} µs per call')  
 ```
 
 
-    first call:  210.9 ms
-    cached:      3.6 µs per call
+    first call:  205.4 ms
+    cached:      2.9 µs per call
 
 
 Always give cached values an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire). It bounds how stale a value can get if an invalidation is ever missed.

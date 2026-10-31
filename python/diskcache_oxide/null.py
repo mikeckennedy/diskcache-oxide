@@ -149,12 +149,12 @@ class NullCache:
         _check_key(key)
         return (default, None) if expire_time else default
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str, /) -> Any:
         """Always raises `KeyError`, as every entry has already expired."""
         _check_key(key)
         raise KeyError(key)
 
-    def __contains__(self, key: object) -> bool:
+    def __contains__(self, key: object, /) -> bool:
         """Always False."""
         return False
 
@@ -187,7 +187,7 @@ class NullCache:
         _check_seconds('expire', expire)
         return True
 
-    def __setitem__(self, key: str, value: Any) -> None:
+    def __setitem__(self, key: str, value: Any, /) -> None:
         """Store nothing, as `set()` does."""
         self.set(key, value)
 
@@ -230,7 +230,7 @@ class NullCache:
             return self._invalidate.delete(key)
         return False
 
-    def __delitem__(self, key: str) -> None:
+    def __delitem__(self, key: str, /) -> None:
         """Raise `KeyError`, or with `invalidate=`, delete the key from that cache."""
         if not self.delete(key) and self._invalidate is None:
             raise KeyError(key)

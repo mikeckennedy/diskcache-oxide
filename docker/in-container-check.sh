@@ -10,7 +10,7 @@
 #   DCO_SLOW     1 adds the slow tests
 #   DCO_BENCH    1 runs the latency gate on 3.14 and 3.14t, writing to /out
 #   DCO_RUST     0 skips fmt, clippy, cargo test and deny
-#   DCO_TESTS    0 skips the per-Python smoke test, stubtest and pytest (envs are still synced)
+#   DCO_TESTS    0 skips the per-Python smoke test, ty and pytest (envs are still synced)
 #   DCO_EXEC     a shell command run in the repo copy once per Python, with $VENV and $PY set
 #   DCO_ROUNDS   gate rounds (default 4)
 set -uo pipefail
@@ -48,7 +48,7 @@ step "snapshot /src -> $REPO"
 rm -rf "$REPO" && mkdir -p "$REPO"
 tar -C /src -cf - \
     --exclude=./target --exclude='./venv' --exclude='./venv*' --exclude='./.venv*' \
-    --exclude='*/__pycache__' --exclude=./.mypy_cache --exclude=./.pytest_cache \
+    --exclude='*/__pycache__' --exclude=./.pytest_cache \
     --exclude=./.ruff_cache --exclude=./.hypothesis --exclude='./python/diskcache_oxide/*.so' \
     . | tar -C "$REPO" -xf -
 cd "$REPO" || exit 1
@@ -106,10 +106,8 @@ assert "ENABLE_STAT4" not in opts and "DEFAULT_MEMSTATUS=0" in opts, f"built wit
 build = "free-threaded" if not sys._is_gil_enabled() else "GIL"
 print(f"diskcache_oxide {d.__version__} on {sys.version.split()[0]} ({build}), SQLite {d.sqlite_version()}")
 '
-    step "stubtest on Python $py"
-    run "stubtest $py" "$env/bin/python" -m mypy.stubtest diskcache_oxide --concise
-    step "mypy --strict on Python $py"
-    run "mypy $py" "$env/bin/python" -m mypy --strict --no-incremental python/diskcache_oxide
+    step "ty on Python $py"
+    run "ty $py" "$env/bin/ty" check --python "$env" python/diskcache_oxide
     # The suite against diskcache 5.6.3 (the behavior oracle), then against diskcache-oxide.
     step "pytest on Python $py"
     run "pytest $py" "$env/bin/pytest" -q -p no:cacheprovider

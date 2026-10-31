@@ -2,7 +2,7 @@
 # Everything a CI job would run, locally. Usage: scripts/check.sh [--slow]
 #
 # Builds the extension into one environment per supported Python, then runs the Rust checks, the
-# extension smoke test, stubtest, strict mypy, and the conformance suite against diskcache 5.6.3
+# extension smoke test, ty, and the conformance suite against diskcache 5.6.3
 # (the oracle) and against diskcache-oxide in each.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -54,8 +54,7 @@ assert "ENABLE_STAT4" not in opts and "DEFAULT_MEMSTATUS=0" in opts, f"built wit
 build = "free-threaded" if not sys._is_gil_enabled() else "GIL"
 print(f"diskcache_oxide {d.__version__} on {sys.version.split()[0]} ({build}), SQLite {d.sqlite_version()}")
 '
-    "$env/bin/python" -m mypy.stubtest diskcache_oxide --concise
-    "$env/bin/python" -m mypy --strict --no-incremental python/diskcache_oxide
+    "$env/bin/ty" check --python "$env" python/diskcache_oxide
 
     # The suite against diskcache 5.6.3 (the behavior oracle), then against diskcache-oxide.
     "$env/bin/pytest" -q -p no:cacheprovider

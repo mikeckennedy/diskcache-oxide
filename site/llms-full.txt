@@ -179,11 +179,11 @@ get(self, key: 'str', default: 'Any' = None, *, expire_time: 'bool' = False) -> 
 
 Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`.
 
-__getitem__(self, key: 'str') -> 'Any'
+__getitem__(self, key: 'str', /) -> 'Any'
 
 Always raises `KeyError`, as every entry has already expired.
 
-__contains__(self, key: 'object') -> 'bool'
+__contains__(self, key: 'object', /) -> 'bool'
 
 Always False.
 
@@ -211,7 +211,7 @@ set(self, key: 'str', value: 'Any', expire: 'float | None' = None) -> 'bool'
 
 Return True without storing anything: the write succeeds, then expires instantly.
 
-__setitem__(self, key: 'str', value: 'Any') -> 'None'
+__setitem__(self, key: 'str', value: 'Any', /) -> 'None'
 
 Store nothing, as `set()` does.
 
@@ -240,7 +240,7 @@ delete(self, key: 'str') -> 'bool'
 
 False, or with `invalidate=`, delete the key from that cache and return its result.
 
-__delitem__(self, key: 'str') -> 'None'
+__delitem__(self, key: 'str', /) -> 'None'
 
 Raise `KeyError`, or with `invalidate=`, delete the key from that cache.
 
@@ -362,19 +362,19 @@ close(self, *, checkpoint: 'bool' = True) -> 'None'
 
 Close this handle and return its connections.
 
-__getitem__(self, key: 'str') -> 'Any'
+__getitem__(self, key: 'str', /) -> 'Any'
 
 `cache[key]`: the value, or `KeyError` if it's missing or expired.
 
-__setitem__(self, key: 'str', value: 'Any') -> 'None'
+__setitem__(self, key: 'str', value: 'Any', /) -> 'None'
 
 `cache[key] = value`: store a value that never expires.
 
-__delitem__(self, key: 'str') -> 'None'
+__delitem__(self, key: 'str', /) -> 'None'
 
 `del cache[key]`: remove the entry, or raise `KeyError`.
 
-__contains__(self, key: 'object') -> 'bool'
+__contains__(self, key: 'object', /) -> 'bool'
 
 `key in cache`: True if the key holds a live value.
 
@@ -1064,7 +1064,7 @@ When caching comes back on, nothing stale is waiting.
 
 ## `CacheLike`
 
-`CacheLike` is a `typing.Protocol` that both `Cache` and `NullCache` satisfy. Annotate with it and mypy or pyright will accept either:
+`CacheLike` is a `typing.Protocol` that both `Cache` and `NullCache` satisfy. Annotate with it and ty or pyright will accept either:
 
 ```python
 from diskcache_oxide import CacheLike
@@ -1110,7 +1110,7 @@ from typing import Literal
 
 CacheName = Literal['general', 'pages']
 caches: Caches[CacheName] = Caches('/var/cache/my-app')
-caches['genral']  # mypy: invalid argument
+caches['genral']  # ty: invalid argument
 ```
 
 ## When a cache can't open

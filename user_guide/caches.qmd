@@ -30,7 +30,7 @@ from typing import Literal
 
 CacheName = Literal['general', 'pages']
 caches: Caches[CacheName] = Caches('/var/cache/my-app')
-caches['genral']  # mypy: invalid argument
+caches['genral']  # ty: invalid argument
 ```
 
 ## When a cache can't open

@@ -34,7 +34,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Generic, Self, TypeVar
+from typing import Any, Self
 
 from diskcache_oxide._core import Cache
 from diskcache_oxide.null import NullCache
@@ -42,9 +42,6 @@ from diskcache_oxide.protocol import CacheLike
 
 __all__ = ['CacheStats', 'Caches']
 
-# The type of the cache names. A classic TypeVar rather than PEP 695 syntax: mypy's stubtest
-# doesn't yet understand `__type_params__` on a pure-Python class.
-N = TypeVar('N', bound=str, default=str)
 
 log = logging.getLogger('diskcache_oxide')
 
@@ -87,7 +84,7 @@ def _check_settings(settings: dict[str, Any]) -> None:
             raise TypeError(f'a Caches on_decode_error is called as (name, key, exc); {report!r} does not take those') from None
 
 
-class Caches(Generic[N]):
+class Caches[N: str = str]:
     """A registry of named caches under one base directory.
 
     `Caches[Literal['general', 'show_pages']]` makes a misspelled name a type error.

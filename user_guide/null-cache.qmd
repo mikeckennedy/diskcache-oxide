@@ -72,7 +72,7 @@ When caching comes back on, nothing stale is waiting.
 
 ## `CacheLike`
 
-`CacheLike` is a `typing.Protocol` that both `Cache` and `NullCache` satisfy. Annotate with it and mypy or pyright will accept either:
+`CacheLike` is a `typing.Protocol` that both `Cache` and `NullCache` satisfy. Annotate with it and ty or pyright will accept either:
 
 ```python
 from diskcache_oxide import CacheLike

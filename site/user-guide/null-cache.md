@@ -75,7 +75,7 @@ When caching comes back on, nothing stale is waiting.
 
 # [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike)
 
-[CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) is a `typing.Protocol` that both [Cache](../reference/Cache.md#diskcache_oxide.Cache) and [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) satisfy. Annotate with it and mypy or pyright will accept either:
+[CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) is a `typing.Protocol` that both [Cache](../reference/Cache.md#diskcache_oxide.Cache) and [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) satisfy. Annotate with it and ty or pyright will accept either:
 
 ``` python
 from diskcache_oxide import CacheLike

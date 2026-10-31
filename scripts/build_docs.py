@@ -181,7 +181,7 @@ def _stub_extension() -> griffe.Extension:
     1. A stub method that is only `@overload`s (no implementation is allowed in a stub) never
        becomes a member, so `Cache.get` got no page. Add one built from the overloads, using the
        docstring of whichever overload has it and widening each `Literal[...]` parameter to `bool`.
-    2. PyO3 classes are built by `__new__`, and the stub must say so for stubtest, but the usage
+    2. PyO3 classes are built by `__new__`, and the stub says so (tests/unit/test_stubs.py checks it), but the usage
        line comes from `__init__`, so `Cache` showed as `Cache()`. Add an `__init__` that mirrors
        `__new__`'s parameters.
     """

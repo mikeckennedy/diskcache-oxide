@@ -9,7 +9,7 @@
 #   --python      which Pythons to test (default 3.14,3.14t,3.15,3.15t)
 #   --cpus        CPUs for the container (default 8; benchmarks need at least 8)
 #   --no-rust     skip fmt, clippy, cargo test and cargo deny
-#   --no-tests    skip the per-Python smoke test, stubtest and pytest (with --bench: bench only)
+#   --no-tests    skip the per-Python smoke test, ty and pytest (with --bench: bench only)
 #   --exec CMD    instead of the checks, run CMD in the repo copy once per Python, with $VENV
 #                 (e.g. .venv-ft) and $PY (e.g. 3.14t) set. Example:
 #                   scripts/linux-check.sh --python 3.14t --exec '$VENV/bin/pytest -q --backend=oxide -k fork'

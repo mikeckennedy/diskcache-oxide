@@ -33,7 +33,7 @@ def test_every_protocol_method_has_the_same_parameters_on_both_classes(name: str
     expected = params(getattr(CacheLike, name))
     assert params(getattr(NullCache, name)) == expected, f'NullCache.{name}'
     if name.startswith('__') and name not in {'__enter__', '__exit__'}:
-        return  # PyO3 dunder slots don't carry text signatures; mypy checks them below.
+        return  # PyO3 dunder slots don't carry text signatures; ty checks them below.
     assert params(getattr(Cache, name)) == expected, f'Cache.{name}'
 
 
@@ -48,7 +48,7 @@ def test_constructors_take_the_same_arguments() -> None:
     assert null_params == [*cache_params, 'invalidate']
 
 
-def test_mypy_sees_both_classes_as_cache_like(tmp_path: Path) -> None:
+def test_ty_sees_both_classes_as_cache_like(tmp_path: Path) -> None:
     probe = tmp_path / 'probe.py'
     probe.write_text(
         'from diskcache_oxide import Cache, CacheLike, NullCache\n'
@@ -57,7 +57,7 @@ def test_mypy_sees_both_classes_as_cache_like(tmp_path: Path) -> None:
         'forwarding: CacheLike = NullCache(invalidate=real)\n'
     )
     result = subprocess.run(
-        [sys.executable, '-m', 'mypy', '--strict', '--no-incremental', str(probe)], capture_output=True, text=True, cwd=REPO
+        [sys.executable, '-m', 'ty', 'check', '--python', sys.prefix, str(probe)], capture_output=True, text=True, cwd=REPO
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
