@@ -219,6 +219,7 @@ impl Serialize for Enc<'_, '_> {
         if o.is_none() {
             return s.serialize_unit();
         }
+        common::check_stack(py).map_err(|e| ctx.fail(e))?;
         if let Ok(d) = o.cast_exact::<PyDict>() {
             return self.serialize_dict(s, d);
         }
@@ -318,11 +319,13 @@ impl<'de, 'py> Visitor<'de> for Any<'_, 'py> {
         self.visit_unit()
     }
     fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+        common::check_stack(self.cx.py).map_err(|e| self.cx.fail(e))?;
         let items = collect(self.cx, seq)?;
         Ok(PyList::new(self.cx.py, items).map_err(|e| self.cx.fail(e))?.into_any())
     }
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
         let cx = self.cx;
+        common::check_stack(cx.py).map_err(|e| cx.fail(e))?;
         match map.next_key_seed(KeySeed { cx, first: true })? {
             None => Ok(PyDict::new(cx.py).into_any()),
             Some(Key::Tag(t)) => {

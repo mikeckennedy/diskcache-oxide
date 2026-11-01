@@ -158,6 +158,7 @@ It covers `get`, `cache[key]` (which raises `KeyError`) and `pop`. A row that st
 | An unreadable value (malformed bytes, a failing unpickle) | deletes that version, then raises | deletes that version, returns the default and reports | the same as `'miss'` |
 | An unreadable value, and that delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default and reports both, row kept |
 | `Timeout`, an I/O error or `RecursionError` from a pickle hook | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
+| `RecursionError` from a value too deep for this thread's stack | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
 | `MemoryError` or a `BaseException` from a pickle hook | raises, row kept | raises, row kept | raises, row kept |
 | The value decoded, and the delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default, never the value, row kept |
 

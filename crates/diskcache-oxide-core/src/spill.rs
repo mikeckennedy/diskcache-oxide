@@ -47,8 +47,7 @@ impl PendingFile {
             gate::run_blocking(&|| {
                 let result = (|| -> std::io::Result<()> {
                     DirBuilder::new().recursive(true).mode(0o700).create(&parent)?;
-                    let mut file = FileOptions::new().write(true).create_new(true).open(&pending.tmp)?;
-                    file.write_all(data)
+                    write_new(&pending.tmp, data)
                 })();
                 if let Err(error) = result
                     && let Ok(mut slot) = outcome_slot.lock()
@@ -76,6 +75,16 @@ impl PendingFile {
         let _ = std::fs::remove_file(&self.tmp);
         let _ = std::fs::remove_file(&self.val);
     }
+}
+
+/// Creates `path` holding `data`. A write that fails partway removes the file: the caller gets no
+/// [`PendingFile`] to discard, and no row or total will ever count it. A failed create removes
+/// nothing, since whatever holds that name isn't this call's.
+fn write_new(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let mut file = FileOptions::new().write(true).create_new(true).open(path)?;
+    file.write_all(data).inspect_err(|_| {
+        let _ = std::fs::remove_file(path);
+    })
 }
 
 /// Reads a value file whose row says it holds `size` bytes. `Ok(None)` if it's missing or its
@@ -211,6 +220,16 @@ mod tests {
         let error = read(tmp.path(), &pending.relative, size).unwrap_err();
         assert!(error.is_out_of_memory(), "{error:?}");
         assert!(!error.is_operational(), "{error:?}");
+    }
+
+    #[test]
+    fn a_name_already_taken_is_an_error_and_keeps_that_file() {
+        let tmp = TempDir::new("spill-collision");
+        let path = tmp.path().join("taken.tmp");
+        std::fs::write(&path, b"someone else's").unwrap();
+        let error = write_new(&path, b"mine").unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&path).unwrap(), b"someone else's");
     }
 
     #[test]

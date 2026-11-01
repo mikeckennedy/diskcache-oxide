@@ -57,6 +57,7 @@ pub fn encode<W: Write>(o: &Bound<'_, PyAny>, t: &Types, depth: u32, out: &mut W
     if o.is_none() {
         return w::write_nil(out).map_err(io);
     }
+    common::check_stack(py)?;
     if let Ok(d) = o.cast_exact::<PyDict>() {
         // A snapshot on the free-threaded build, so the length written first matches the entries.
         let d = common::DictEntries::of(d);
@@ -277,6 +278,7 @@ impl<'a> Reader<'a> {
     }
 
     fn map<'py>(&mut self, py: Python<'py>, n: usize) -> PyResult<Bound<'py, PyAny>> {
+        common::check_stack(py)?;
         let d = PyDict::new(py);
         if n == 0 {
             return Ok(d.into_any());
@@ -309,6 +311,7 @@ impl<'a> Reader<'a> {
     }
 
     fn items<'py>(&mut self, py: Python<'py>) -> PyResult<Vec<Bound<'py, PyAny>>> {
+        common::check_stack(py)?;
         let n = self.array_len()?;
         // Every item takes at least one byte, so a crafted length can't make us over-allocate.
         let mut v = Vec::with_capacity(n.min(self.data.len() - self.pos).min(4096));
@@ -392,7 +395,8 @@ impl<'a> Reader<'a> {
     }
 
     fn value<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        // A crafted row must not overflow the stack; the encoder never writes deeper than this.
+        // The encoder never writes deeper than this, so deeper is damage. The stack itself is
+        // guarded by `common::check_stack`, on each container.
         if self.depth > 2 * common::MAX_DEPTH {
             return Err(corrupt("msgpack nested too deeply"));
         }

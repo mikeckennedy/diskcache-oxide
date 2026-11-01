@@ -18,7 +18,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::io::Write;
 
-use pyo3::exceptions::{PyException, PyMemoryError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyException, PyMemoryError, PyRecursionError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::critical_section::with_critical_section;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
@@ -242,11 +242,19 @@ pub fn decode(py: Python<'_>, mode: i64, stored: Stored<'_>, allow_pickle: bool)
     Ok(value.unbind())
 }
 
+/// Imports what the codecs use, on the caller's stack. Otherwise it happens on whichever thread first
+/// encodes a container, and an import can need more stack than a small worker thread has.
+pub fn load_types(py: Python<'_>) -> PyResult<()> {
+    common::types(py).map(|_| ())
+}
+
 /// Wraps a Python error raised while decoding as `CorruptValueError`, keeping it as `__cause__`.
-/// `MemoryError` and non-`Exception` errors (`KeyboardInterrupt`) pass through unchanged.
+/// `MemoryError`, `RecursionError` (this thread's stack, not the row: another thread can read it) and
+/// non-`Exception` errors (`KeyboardInterrupt`) pass through unchanged.
 fn as_corrupt(py: Python<'_>, e: PyErr, what: &str) -> PyErr {
     if e.is_instance_of::<CorruptValueError>(py)
         || e.is_instance_of::<PyMemoryError>(py)
+        || e.is_instance_of::<PyRecursionError>(py)
         || !e.is_instance_of::<PyException>(py)
     {
         return e;

@@ -12,7 +12,25 @@ use pyo3::types::{PyDict, PyFloat, PyInt, PyString, PyTuple, PyType};
 
 /// Nesting limit, counted in output containers (a tag wrapper counts as one). `serde_json`'s decoder
 /// stops at 128, so the encoder refuses anything deeper rather than write a row it can't read back.
+/// This bounds what a row can hold, not the stack it takes: that's [`check_stack`].
 pub const MAX_DEPTH: u32 = 120;
+
+/// `RecursionError` if this thread's C stack is nearly used up. The codecs call it once per container,
+/// because a value within [`MAX_DEPTH`] can still overflow a small thread stack, which would kill the
+/// process. Since 3.14 `CPython` compares the stack pointer with this thread's real limits here,
+/// leaving a margin that a frame or two of ours fit in. That also makes the call its own check, with
+/// nothing to keep entered: `Py_LeaveRecursiveCall` only pairs it up.
+#[allow(unsafe_code)]
+pub fn check_stack(py: Python<'_>) -> PyResult<()> {
+    // SAFETY: `py` says this thread is attached, and the message is a static C string.
+    let overflow = unsafe { pyo3::ffi::Py_EnterRecursiveCall(c" in a cached value".as_ptr()) } != 0;
+    if overflow {
+        return Err(PyErr::fetch(py));
+    }
+    // SAFETY: as above, and it matches the enter that just succeeded.
+    unsafe { pyo3::ffi::Py_LeaveRecursiveCall() };
+    Ok(())
+}
 
 // Tag names. A tag is a map with exactly one entry whose key is one of these. Any user dict whose
 // first key starts with '$' is wrapped in TAG_ESC, so the whole '$' namespace is reserved.

@@ -106,7 +106,8 @@ class Cache:
             called with `(key, exc)` instead of the warning, after the row is dealt with; whatever
             it raises is logged. `UnsafeValueError`, `Timeout`, `MemoryError` and other errors that
             aren't about the stored bytes raise, though under `durable=True` a `Timeout`, `OSError`
-            or `RecursionError` from a pickle hook is a miss, with the row kept. Covers `get`, `cache[key]` and `pop`, which
+            or `RecursionError` from a pickle hook is a miss, with the row kept, and so is a
+            `RecursionError` from a value too deep for this thread's stack. Covers `get`, `cache[key]` and `pop`, which
             decodes before it deletes, so it keeps a row it can't read. Under `'raise'`, `pop` still
             deletes a value no build could read, then raises.
         durable: Keep the cache from taking a request down, for an app whose every caller can fall
@@ -115,7 +116,8 @@ class Cache:
             the default or False, `set`, `add`, `touch` and `delete` give False, and `incr` and `decr`
             give `default + delta`. It's reported on the `diskcache_oxide` logger, at most once a
             minute per kind of failure. Bugs still raise (`TypeError`, `ValueError`,
-            `UnsafeValueError`), as do `MemoryError` and `KeyboardInterrupt`, the constructor, admin
+            `UnsafeValueError`), as do `MemoryError` and `KeyboardInterrupt`, a `RecursionError` from
+            encoding a value too deep for this thread's stack, the constructor, admin
             calls (`len`, `volume`, `clear`, `expire`, `cull`, `checkpoint`, iteration) and anything
             inside a transaction held on this cache. This isn't durability in the database sense:
             this option can drop writes, and a dropped `set`, `delete`, `pop` or `incr` means stale

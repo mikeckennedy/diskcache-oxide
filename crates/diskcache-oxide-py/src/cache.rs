@@ -89,6 +89,7 @@ impl Cache {
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
     ) -> PyResult<Self> {
+        codec::load_types(py)?;
         let timeout = timeout_duration(match timeout {
             Some(t) => seconds("timeout", t)?,
             None => 60.0,

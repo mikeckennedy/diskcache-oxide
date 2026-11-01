@@ -234,6 +234,8 @@ def rlimit_fsize(directory: Path) -> None:
                 assert 'too large' in str(exc).lower(), exc
             else:
                 raise AssertionError('the default raises')
+            assert c.add('big', BIG_VALUE) is False, 'a value file past the limit'
+            assert not list((directory / 'c').rglob('*.tmp')), 'a failed write left its partial file'
             assert c.set('small', 'y' * 2000) is False, 'the WAL past the limit'
             assert c.add('small', 'y' * 2000) is False
             assert c.incr('n', 1, 5) == 6
