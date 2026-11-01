@@ -119,9 +119,13 @@ def analyze(run: Path) -> dict[str, Any]:
     for e in problems:
         kinds[e['kind']] = kinds.get(e['kind'], 0) + 1
     finished = any(e['kind'] == 'finish' for e in events)
+    # The auto group's WAL counts too, so a store that outruns its limit badly shows as a flag.
+    wal_max = max(wal_max, max((t.get('auto_peak_wal') or 0 for t in timeline), default=0))
     flags = sum(lk['rss_flag'] + lk['fds_flag'] for lk in leaks) + sum(d['flag'] for d in drift.values()) + (wal_max > WAL_WARN_BYTES)
     start = next((e for e in events if e['kind'] == 'start'), {})
+    lanes = next((e for e in reversed(events) if e['kind'] == 'lanes'), None)
     return {
+        'lanes': lanes,
         'timeline': timeline,
         'workers': workers,
         'maint': maint,
@@ -227,6 +231,13 @@ def build(run: Path, final: bool) -> dict[str, Any]:
         chart('Chaos: kills, restarts, forks and maintenance calls', {'kills': col(t, 'kills'), 'restarts': col(t, 'restarts'), 'forks ok': col(t, 'forks_ok'), 'forks failed': col(t, 'forks_failed'), 'maintenance calls': col(t, 'maint_calls'), 'held commits': col(t, 'held_commits'), 'held rollbacks': col(t, 'held_rollbacks')}),
         chart('Forced WAL checkpoints (D-024)', {'attempts': col(t, 'wal_ckpt_attempts'), 'busy': col(t, 'wal_ckpt_busy'), 'slow (>= 100 ms)': col(t, 'wal_ckpt_slow')}),
         chart('Worst forced-checkpoint pause', {'max pause': col(t, 'wal_ckpt_max_pause_us')}, 'µs'),
+        chart('pop calls', {'chaos': col(t, 'pops_chaos'), 'held': col(t, 'pops_held'), 'fork': col(t, 'pops_fork'), 'exactly-once': col(t, 'pops_pq')}),
+        chart('Exactly-once lane', {'produced': col(t, 'pq_produced'), 'delivered': col(t, 'pq_delivered'), 'duplicates': col(t, 'pq_duplicates')}),
+        chart('Durable lane', {'calls': col(t, 'durable_calls'), 'answered as failures': col(t, 'durable_false'), 'escaped': col(t, 'durable_escapes')}),
+        chart('Forks behind traffic and stuck forks', {'forks behind': col(t, 'forks_behind'), 'over budget': col(t, 'budget_overruns'), 'stuck forks': col(t, 'stuck_forks'), 'callers hung': col(t, 'stuck_callers_hung')}),
+        chart('Forced checkpoints, auto group', {'rounds': col(t, 'auto_rounds'), 'successes': col(t, 'auto_successes'), 'busy': col(t, 'auto_busy'), 'fork pending': col(t, 'auto_fork_pending')}),
+        chart('Load', {'1-minute': col(t, 'load_1m')}),
+        chart('Peak WAL, auto group', {'peak': col(t, 'auto_peak_wal', mib)}, 'MiB'),
         chart('Maintenance call duration', {op: [(m['elapsed_h'], m['seconds']) for m in a['maint'] if m['op'] == op] for op in ('clear', 'expire', 'cull')}, 's'),
     ]
     page = render_html(a, charts, final)
@@ -255,6 +266,39 @@ def verdict_lines(a: dict[str, Any]) -> list[str]:
     return lines or ['no problems, no leak or drift flags']
 
 
+def lane_lines(a: dict[str, Any]) -> list[str]:
+    """Plan 09's lanes, one line each, or nothing before the run's final checks."""
+    lanes = a.get('lanes')
+    if not lanes:
+        return []
+    t, pq = lanes['totals'], lanes.get('pq') or {}
+    lines = [
+        f'pop: {t["pops"]:,} calls (chaos {t["pops_chaos"]:,}, held {t["pops_held"]:,}, fork {t["pops_fork"]:,}, exactly-once {t["pops_pq"]:,}). Locked-fallback hits: not observable, no counter reaches Python.',
+        f'exactly-once: {pq.get("produced", 0):,} tokens recorded, {pq.get("delivered", 0):,} delivered, {pq.get("duplicates", 0)} duplicates, {pq.get("queued", 0)} still queued, {pq.get("lost", 0)} lost ({pq.get("lost_excused_by_kills", 0)} excused by a kill, allowance {pq.get("kill_allowance", 0)}), {pq.get("unrecorded", 0)} with no record (a kill between add and record).',
+        f'durable: {t["durable_calls"]:,} calls, {t["durable_false"]:,} answered as failures with the read-back checked, {t["durable_misses"]:,} misses on a key that was there, {t["durable_escapes"]} exceptions escaped. Swallowed: busy {t["durable_busy"]:,}, broken {t["durable_broken"]}, lost deletes {t["durable_lost_deletes"]:,}. Log lines by bucket: {lanes.get("durable_lines")}. `_durable_stats()` by operation: {lanes.get("durable_by_op")}.',
+        f'forks behind traffic: {t["forks_behind"]:,} forks over {t["behind_calls"]:,} budgeted calls, {t["behind_timeouts"]:,} timed out, worst overrun {t["max_overrun_s"]} s, {t["budget_overruns"]} over the allowance. Longest os.fork(): {t["fork_max_s"]} s, longest forked child: {t["child_max_s"]} s.',
+        f'fork_timeouts: {t["fork_timeouts_normal"]} in the normal lanes (must be 0), {t["fork_timeouts_lanes"]} in the lanes with small timeouts.',
+        f'stuck forks: {t["stuck_forks"]} (callers timed out {t["stuck_callers_timed_out"]}, finished after the level went {t["stuck_forks_completed"]}, callers hung {t["stuck_callers_hung"]}, longest caller {t["stuck_caller_max_s"]} s).',
+        f'peak 1-minute load: {max((row.get("load_1m") or 0 for row in a["timeline"]), default=0)} on {a["start"].get("cpus")} CPUs.',
+        f'side chaos on the lanes and auto group: {lanes.get("side_kills")} kills, {lanes.get("side_restarts")} restarts.',
+    ]
+    return lines
+
+
+def auto_rows(a: dict[str, Any]) -> list[list[str]]:
+    lanes = a.get('lanes') or {}
+    rows = []
+    for store, st in (lanes.get('auto') or {}).items():
+        peak, limit = st['peak_wal'] / 2**20, (st.get('limit') or 0) / 2**20
+        rate = '?' if st['success_rate'] is None else f'{st["success_rate"] * 100:.2f}%'
+        rows.append([str(store), str(st['writers']), f'{peak:.1f} / {limit:.0f}', f'{st["rounds"]:,}', f'{st["successes"]:,}', f'{st["busy"]:,}', f'{st["fork_pending"]:,}', rate, f'{st["max_pause_us"] / 1000:.1f}'])
+    return rows
+
+
+AUTO_HEADER = ['store', 'writers', 'peak WAL / limit (MiB)', 'rounds', 'successes', 'busy', 'fork_pending', 'success rate', 'worst pause (ms)']
+PAUSE_CAVEAT = 'Pauses (`wal_ckpt_max_pause_us` and this table) now sum every TRUNCATE try in a round (plan 09, step 2b), so they are not comparable with soaks before commit 5b2ea85, which timed one try.'
+
+
 def render_summary(a: dict[str, Any]) -> str:
     out = [f'# Soak summary: {a["verdict"]}', '', f'Ran {a["hours"]:.2f} h. Args: `{json.dumps(a["start"].get("args", {}))}`', '']
     out += ['## Verdict', ''] + [f'- {line}' for line in verdict_lines(a)] + ['']
@@ -271,6 +315,17 @@ def render_summary(a: dict[str, Any]) -> str:
         out += ['', '## Totals', '']
         for key in ('kills', 'restarts', 'forks_ok', 'forks_failed', 'maint_calls', 'stalls', 'timeouts_total', 'chaos_orphans', 'ledger_orphans', 'held_commits', 'held_rollbacks'):
             out.append(f'- {key}: {last.get(key)}')
+    if a.get('lanes'):
+        out += ['', '## Plan 09 lanes', ''] + [f'- {line}' for line in lane_lines(a)]
+        out += ['', '### Forced checkpoints, auto group', '', '| ' + ' | '.join(AUTO_HEADER) + ' |', '|' + '---|' * len(AUTO_HEADER)]
+        out += ['| ' + ' | '.join(row) + ' |' for row in auto_rows(a)]
+        limit = a['lanes'].get('auto_min_success_rate', 0)
+        out += ['', f'The run fails under {limit:.0%} on a one-writer store, or with under {a["lanes"].get("auto_min_rounds", 0)} rounds on a store. Several writers in several processes are a documented limit, reported and not judged. {PAUSE_CAVEAT}']
+        out += ['', '### By interpreter', '']
+        per_python = a['lanes'].get('per_python') or {}
+        keys = sorted({k for counts in per_python.values() for k in counts})
+        out += ['| counter | ' + ' | '.join(per_python) + ' |', '|---|' + '---|' * len(per_python)]
+        out += [f'| {k} | ' + ' | '.join(f'{per_python[py].get(k, 0):,}' for py in per_python) + ' |' for k in keys]
     out += ['', '## Problem events (first 50)', '']
     for e in a['problems'][:50]:
         detail = {k: v for k, v in e.items() if k not in ('time', 'kind', 'problem', 'elapsed_h')}
@@ -299,6 +354,11 @@ ul{margin:4px 0 12px 18px;padding:0}.empty{color:var(--muted)}
 
 def render_html(a: dict[str, Any], charts: list[str], final: bool) -> str:
     state = 'finished' if a['finished'] else 'running (refreshes every minute)'
+    lane_items = ''.join(f'<li>{html.escape(line)}</li>' for line in lane_lines(a))
+    auto_table = ''
+    if auto_rows(a):
+        auto_table = '<table><tr>' + ''.join(f'<th>{html.escape(h)}</th>' for h in AUTO_HEADER) + '</tr>' + ''.join('<tr>' + ''.join(f'<td>{html.escape(c)}</td>' for c in row) + '</tr>' for row in auto_rows(a)) + f'</table><p class="muted">{html.escape(PAUSE_CAVEAT)}</p>'
+    lane_section = f'<h2>Plan 09 lanes</h2><ul>{lane_items}</ul>{auto_table}' if lane_items else ''
     refresh = '' if final or a['finished'] else '<meta http-equiv="refresh" content="60">'
     verdict = ''.join(f'<li>{html.escape(line)}</li>' for line in verdict_lines(a))
     leak_rows = ''.join(
@@ -322,6 +382,7 @@ def render_html(a: dict[str, Any], charts: list[str], final: bool) -> str:
 <h1>diskcache-oxide soak: <span class="verdict {a["verdict"]}">{a["verdict"]}</span></h1>
 <p class="muted">{a["hours"]:.2f} h, {state}. Args: {html.escape(json.dumps(a["start"].get("args", {})))}</p>
 <ul>{verdict}</ul>
+{lane_section}
 <h2>Leak check (long-lived workers)</h2>{leaks}
 <div class="grid">{"".join(charts)}</div>
 <h2>Latest problem events</h2><ul>{recent}</ul>

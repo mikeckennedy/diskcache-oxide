@@ -225,6 +225,30 @@ fn collect_removed(
     rows.collect()
 }
 
+/// The statement for one page in key order. Every one binds `?1` the key type, `?2` the lower bound,
+/// `?3` the upper bound and `?4` the page size. There's one per shape of the range, and no statement
+/// has an optional condition: `?3 IS NULL OR key < ?3` can't be used to seek or to stop, so each page
+/// would scan from the prefix's start, or, past the prefix's end, to the end of the table. That made a
+/// walk quadratic. The soak's end-of-run check of 4.5M rows took about 5 minutes.
+fn key_page_sql(reverse: bool, after_cursor: bool, has_upper: bool) -> &'static str {
+    match (reverse, after_cursor, has_upper) {
+        (false, false, false) => "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 ORDER BY key LIMIT ?4",
+        (false, false, true) => {
+            "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 AND key < ?3 ORDER BY key LIMIT ?4"
+        }
+        (false, true, false) => "SELECT key FROM cache WHERE key_type = ?1 AND key > ?2 ORDER BY key LIMIT ?4",
+        (false, true, true) => {
+            "SELECT key FROM cache WHERE key_type = ?1 AND key > ?2 AND key < ?3 ORDER BY key LIMIT ?4"
+        }
+        // A reverse page's top is the cursor or the prefix's end, whichever applies, so only whether
+        // there is one matters.
+        (true, false, false) => "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 ORDER BY key DESC LIMIT ?4",
+        (true, _, _) => {
+            "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 AND key < ?3 ORDER BY key DESC LIMIT ?4"
+        }
+    }
+}
+
 fn page(
     conn: &Connection,
     timeout: Duration,
@@ -254,17 +278,15 @@ fn page(
                 Cursor::Key(key) => Some(key.as_str()),
                 _ => None,
             };
-            // One statement per direction; NULL bounds switch a condition off.
-            let sql = if reverse {
-                "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 AND (?3 IS NULL OR key < ?3)
-                 AND (?4 IS NULL OR key < ?4) ORDER BY key DESC LIMIT ?5"
-            } else {
-                "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 AND (?3 IS NULL OR key < ?3)
-                 AND (?4 IS NULL OR key > ?4) ORDER BY key LIMIT ?5"
+            // Forward, the cursor replaces the lower bound. In reverse, it replaces the upper one: it
+            // came from this prefix, so it's under the prefix's end.
+            let (low, high) = match (reverse, after) {
+                (false, after) => (after.unwrap_or(lower), upper),
+                (true, after) => (lower, after.or(upper)),
             };
             let keys: Vec<String> = conn
-                .prepare_cached(sql)
-                .and_then(|mut stmt| stmt.query_map((KEY_TYPE_STR, lower, upper, after, PAGE), |r| r.get(0))?.collect())
+                .prepare_cached(key_page_sql(reverse, after.is_some(), upper.is_some()))
+                .and_then(|mut stmt| stmt.query_map((KEY_TYPE_STR, low, high, PAGE), |r| r.get(0))?.collect())
                 .map_err(sqlite)?;
             let next = keys.last().map_or_else(|| cursor.clone(), |k| Cursor::Key(k.clone()));
             Ok((keys, next))
@@ -314,6 +336,160 @@ mod tests {
             }
             out.extend(keys);
             cursor = next;
+        }
+    }
+
+    /// Every shape `page` can ask for, as (reverse, after a cursor, has an upper bound, what the
+    /// index search must include).
+    const KEY_PAGE_SHAPES: [(bool, bool, bool, &str); 8] = [
+        (false, false, false, "key_type=? AND key>?"),
+        (false, false, true, "key_type=? AND key>? AND key<?"),
+        (false, true, false, "key_type=? AND key>?"),
+        (false, true, true, "key_type=? AND key>? AND key<?"),
+        (true, false, false, "key_type=? AND key>?"),
+        (true, false, true, "key_type=? AND key>? AND key<?"),
+        (true, true, false, "key_type=? AND key>? AND key<?"),
+        (true, true, true, "key_type=? AND key>? AND key<?"),
+    ];
+
+    #[test]
+    fn every_key_page_statement_seeks_on_both_of_its_bounds() {
+        let tmp = TempDir::new("maint-page-plan");
+        let s = store(tmp.path());
+        s.read(T, |conn| {
+            for (reverse, after, upper, search) in KEY_PAGE_SHAPES {
+                let plan = format!("EXPLAIN QUERY PLAN {}", key_page_sql(reverse, after, upper));
+                let detail: String = conn
+                    .prepare(&plan)
+                    .and_then(|mut stmt| {
+                        let params = (KEY_TYPE_STR, "a", "b", PAGE);
+                        stmt.query_row(params, |r| r.get(3))
+                    })
+                    .unwrap();
+                assert!(detail.contains(&format!("cache_key ({search})")), "{plan}: {detail}");
+                assert!(detail.starts_with("SEARCH"), "{plan}: {detail}");
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    /// The VM steps for one page, which unlike a time can't flake. With `rows` keys in the store, a
+    /// page that scanned from the start of the range would take thousands.
+    fn page_steps(conn: &Connection, sql: &str, low: &str, high: Option<&str>) -> (Vec<String>, i32) {
+        let mut stmt = conn.prepare(sql).unwrap();
+        let keys: Vec<String> = stmt
+            .query_map((KEY_TYPE_STR, low, high, PAGE), |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        (keys, stmt.get_status(rusqlite::StatementStatus::VmStep))
+    }
+
+    #[test]
+    fn a_key_page_costs_the_same_at_every_depth_in_both_directions() {
+        const ROWS: usize = 6_000;
+        let tmp = TempDir::new("maint-page-cost");
+        let s = store(tmp.path());
+        // A prefix in the middle of the table, with many keys on each side of it, so that one that
+        // scans past either end of its range costs as much as one that scans from its start.
+        for group in ["a", "m", "z"] {
+            for i in 0..ROWS {
+                put(&s, &format!("{group}:{i:06}"), None);
+            }
+        }
+        let budget = i32::try_from(PAGE).unwrap() * 12 + 100;
+        s.read(T, |conn| {
+            for (prefix, upper, expect) in [("", None, 3 * ROWS), ("m:", Some("m;"), ROWS)] {
+                for reverse in [false, true] {
+                    let mut after: Option<String> = None;
+                    let (mut seen, mut pages, mut worst) = (0, 0, 0);
+                    loop {
+                        let (low, high) = if reverse {
+                            (prefix, after.as_deref().or(upper))
+                        } else {
+                            (after.as_deref().unwrap_or(prefix), upper)
+                        };
+                        let sql = key_page_sql(reverse, after.is_some(), upper.is_some());
+                        let (keys, steps) = page_steps(conn, sql, low, high);
+                        worst = worst.max(steps);
+                        assert!(steps <= budget, "prefix {prefix:?} reverse {reverse}, page {pages}: {steps} steps");
+                        let Some(last) = keys.last() else { break };
+                        after = Some(last.clone());
+                        seen += keys.len();
+                        pages += 1;
+                    }
+                    assert_eq!(seen, expect, "prefix {prefix:?} reverse {reverse}, worst page {worst} steps");
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn key_pages_walk_exactly_the_keys_a_sort_gives() {
+        let tmp = TempDir::new("maint-page-model");
+        let s = store(tmp.path());
+        let mut keys: Vec<String> = vec![
+            String::new(),
+            "a".to_string(),
+            "a\u{0}".to_string(),
+            "a\u{D7FF}".to_string(),
+            "a\u{E000}".to_string(),
+            "a\u{10FFFF}".to_string(),
+            "a\u{10FFFF}x".to_string(),
+            "b".to_string(),
+            "\u{10FFFF}".to_string(),
+            "\u{10FFFF}\u{10FFFF}".to_string(),
+        ];
+        // More than two pages under one prefix, so the cursor and the prefix's end apply together.
+        keys.extend((0..PAGE * 2 + 7).map(|i| format!("ab{i:05}")));
+        keys.extend((0..PAGE + 3).map(|i| format!("ac{i:05}")));
+        for key in &keys {
+            put(&s, key, None);
+        }
+        keys.sort();
+        for prefix in
+            [None, Some(""), Some("a"), Some("ab"), Some("ac"), Some("a\u{10FFFF}"), Some("\u{10FFFF}"), Some("q")]
+        {
+            let mut want: Vec<String> = keys.iter().filter(|k| k.starts_with(prefix.unwrap_or(""))).cloned().collect();
+            assert_eq!(all(&s, Order::Key { reverse: false }, prefix), want, "prefix {prefix:?}");
+            want.reverse();
+            assert_eq!(all(&s, Order::Key { reverse: true }, prefix), want, "prefix {prefix:?} reverse");
+        }
+    }
+
+    #[test]
+    fn a_key_walk_sees_changes_ahead_of_its_cursor_and_not_behind_it() {
+        let tmp = TempDir::new("maint-page-changes");
+        let s = store(tmp.path());
+        for i in 0..PAGE * 2 {
+            put(&s, &format!("k{i:05}"), None);
+        }
+        for (reverse, ahead, behind, gone) in [(false, "k90000", "k", "k01000"), (true, "k", "k90000", "k00000")] {
+            let order = Order::Key { reverse };
+            let (first, cursor) = s.keys_page(T, order, Some("k"), &Cursor::Start).unwrap();
+            assert_eq!(i64::try_from(first.len()), Ok(PAGE));
+            put(&s, ahead, None);
+            put(&s, behind, None);
+            s.delete(T, gone, NOW).unwrap();
+            let mut rest = Vec::new();
+            let mut cursor = cursor;
+            loop {
+                let (keys, next) = s.keys_page(T, order, Some("k"), &cursor).unwrap();
+                if keys.is_empty() {
+                    break;
+                }
+                rest.extend(keys);
+                cursor = next;
+            }
+            assert!(rest.iter().any(|k| k == ahead), "reverse {reverse}: a key ahead of the cursor is seen");
+            assert!(rest.iter().all(|k| k != behind), "reverse {reverse}: a key behind the cursor isn't");
+            assert!(rest.iter().all(|k| k != gone), "reverse {reverse}: a deleted key isn't");
+            s.delete(T, ahead, NOW).unwrap();
+            s.delete(T, behind, NOW).unwrap();
+            put(&s, gone, None);
         }
     }
 

@@ -140,12 +140,11 @@ impl Error {
     pub fn is_operational(&self) -> bool {
         match self {
             Self::Timeout { .. }
-            | Self::Io { .. }
             | Self::DiskFull { .. }
             | Self::SqliteIo { .. }
             | Self::Unwritable
             | Self::ForkPoisoned => true,
-            Self::Sqlite(_) => !self.is_out_of_memory(),
+            Self::Io { .. } | Self::Sqlite(_) => !self.is_out_of_memory(),
             // Only an open reports the first three, and the constructor always raises. The rest are
             // bugs in the caller, or would break its transaction's atomicity.
             Self::FormatMismatch { .. }
@@ -163,10 +162,15 @@ impl Error {
         }
     }
 
-    /// `SQLITE_NOMEM`: Python `MemoryError`, which is never answered as a miss.
+    /// `SQLITE_NOMEM`, or no memory for a value file: Python `MemoryError`, which is never answered
+    /// as a miss.
     #[must_use]
     pub fn is_out_of_memory(&self) -> bool {
-        matches!(self, Self::Sqlite(e) if e.sqlite_error_code() == Some(ErrorCode::OutOfMemory))
+        match self {
+            Self::Sqlite(e) => e.sqlite_error_code() == Some(ErrorCode::OutOfMemory),
+            Self::Io { source, .. } => source.kind() == std::io::ErrorKind::OutOfMemory,
+            _ => false,
+        }
     }
 }
 
@@ -220,6 +224,7 @@ mod tests {
         }
         let raised = [
             sqlite(ffi::SQLITE_NOMEM),
+            Error::Io { path: PathBuf::from("x"), source: std::io::ErrorKind::OutOfMemory.into() },
             Error::FormatMismatch { found: 2, expected: 1 },
             Error::NotWal { mode: "delete".into() },
             Error::Closed,

@@ -83,7 +83,7 @@ impl PendingFile {
 pub fn read(directory: &Path, relative: &str, size: i64) -> Result<Option<Vec<u8>>> {
     let path = directory.join(relative);
     match File::open(&path) {
-        Ok(file) => read_open(file, &path, size),
+        Ok(file) => read_open(&file, &path, size),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io_error(&path, e)),
     }
@@ -100,23 +100,33 @@ pub fn open(directory: &Path, relative: &str) -> Result<Option<(File, PathBuf)>>
 }
 
 /// Reads an open value file, checking its length against `size`.
-pub fn read_open(mut file: File, path: &Path, size: i64) -> Result<Option<Vec<u8>>> {
-    let Ok(expected) = usize::try_from(size) else { return Ok(None) };
-    let mut data = Vec::with_capacity(expected);
-    let mut outcome = Ok(());
+pub fn read_open(file: &File, path: &Path, size: i64) -> Result<Option<Vec<u8>>> {
+    let Ok(expected) = u64::try_from(size) else { return Ok(None) };
+    let mut outcome = Ok(None);
     {
-        let slot = std::sync::Mutex::new((&mut file, &mut data, &mut outcome));
+        let slot = std::sync::Mutex::new(&mut outcome);
         gate::run_blocking(&|| {
-            if let Ok(mut guard) = slot.lock() {
-                let (file, data, outcome) = &mut *guard;
-                if let Err(error) = file.read_to_end(data) {
-                    **outcome = Err(error);
-                }
+            if let Ok(mut slot) = slot.lock() {
+                **slot = read_checked(file, expected);
             }
         });
     }
-    outcome.map_err(|source| io_error(path, source))?;
-    Ok((data.len() == expected).then_some(data))
+    outcome.map_err(|source| io_error(path, source))
+}
+
+/// `expected` comes from the database, so a damaged row can say anything: nothing is allocated from
+/// it until the file agrees, and an allocation that fails is an error, not an abort. The read stops
+/// one byte past `expected`, which is enough to see the file is longer, even if it grew since the
+/// length check.
+fn read_checked(file: &File, expected: u64) -> std::io::Result<Option<Vec<u8>>> {
+    if file.metadata()?.len() != expected {
+        return Ok(None);
+    }
+    let limit = expected.saturating_add(1);
+    let mut data = Vec::new();
+    usize::try_from(limit).ok().and_then(|room| data.try_reserve_exact(room).ok()).ok_or(ErrorKind::OutOfMemory)?;
+    file.take(limit).read_to_end(&mut data)?;
+    Ok((u64::try_from(data.len()) == Ok(expected)).then_some(data))
 }
 
 fn io_error(path: &Path, source: std::io::Error) -> Error {
@@ -164,6 +174,43 @@ mod tests {
         assert_eq!(read(tmp.path(), &pending.relative, size + 1).unwrap(), None, "a length mismatch reads as missing");
         pending.discard();
         assert_eq!(read(tmp.path(), &pending.relative, size).unwrap(), None);
+    }
+
+    #[test]
+    fn a_size_the_file_doesnt_match_reads_as_missing_without_allocating_it() {
+        let tmp = TempDir::new("spill-corrupt-size");
+        let pending = PendingFile::write(tmp.path(), b"x").unwrap();
+        pending.commit_name().unwrap();
+        // Allocating any of these up front aborts the process, or takes all its memory.
+        for size in [i64::MAX, 1 << 62, 1 << 40, -1, 0, 2] {
+            assert_eq!(read(tmp.path(), &pending.relative, size).unwrap(), None, "size {size}");
+        }
+    }
+
+    #[test]
+    fn a_file_longer_than_its_size_reads_as_missing() {
+        let tmp = TempDir::new("spill-long");
+        let pending = PendingFile::write(tmp.path(), &vec![7u8; THRESHOLD + 1]).unwrap();
+        pending.commit_name().unwrap();
+        let size = i64::try_from(THRESHOLD).unwrap();
+        assert_eq!(read(tmp.path(), &pending.relative, size).unwrap(), None);
+    }
+
+    #[test]
+    fn a_size_too_big_to_allocate_is_out_of_memory() {
+        let tmp = TempDir::new("spill-huge");
+        let pending = PendingFile::write(tmp.path(), b"x").unwrap();
+        pending.commit_name().unwrap();
+        // A sparse file that agrees with its row, past any address space. Not every filesystem
+        // allows one, and there's nothing to check on those.
+        let size = 1i64 << 54;
+        let file = FileOptions::new().write(true).open(&pending.val).unwrap();
+        if file.set_len(size.unsigned_abs()).is_err() {
+            return;
+        }
+        let error = read(tmp.path(), &pending.relative, size).unwrap_err();
+        assert!(error.is_out_of_memory(), "{error:?}");
+        assert!(!error.is_operational(), "{error:?}");
     }
 
     #[test]

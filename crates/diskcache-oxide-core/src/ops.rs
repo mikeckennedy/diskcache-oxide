@@ -224,7 +224,7 @@ impl Store {
             Some(Err(file)) => return Ok(Some(file.hit(decode(file.mode, ValueRef::Null)?))),
             Some(Ok(opened)) => opened,
         };
-        match spill::read_open(handle, &path, file.size)? {
+        match spill::read_open(&handle, &path, file.size)? {
             Some(bytes) => Ok(Some(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?))),
             None => Ok(None),
         }

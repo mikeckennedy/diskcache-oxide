@@ -292,6 +292,37 @@ def test_the_default_raises_on_a_value_file_it_cant_read(directory: Path) -> Non
     cache.close()
 
 
+@pytest.mark.parametrize('durable', [True, False])
+@pytest.mark.parametrize('size', [2**63 - 1, 2**62, 2**40, -1])
+def test_a_size_the_value_file_doesnt_match_is_a_miss(directory: Path, durable: bool, size: int) -> None:
+    # Allocating the size up front used to abort the whole process.
+    cache = Cache(directory, durable=durable)
+    cache.set('k', b'x' * BIG)
+    cache.set('p', b'y' * BIG)
+    _sql(directory, f'UPDATE cache SET size = {size}')
+    assert cache.get('k', 'default') == 'default'
+    assert cache.pop('p', 'default') == 'default'
+    cache.close()
+
+
+@pytest.mark.parametrize('durable', [True, False])
+def test_a_value_too_big_to_allocate_is_a_memory_error_and_stays(directory: Path, durable: bool) -> None:
+    size = 2**54  # past any address space, and a sparse file APFS allows
+    cache = Cache(directory, durable=durable)
+    cache.set('k', b'x' * BIG)
+    try:
+        os.truncate(_value_file(directory), size)
+    except OSError:
+        pytest.skip('this filesystem has no sparse file that big')
+    _sql(directory, f'UPDATE cache SET size = {size}')
+    with pytest.raises(MemoryError):
+        cache.get('k')
+    with pytest.raises(MemoryError):
+        cache.pop('k')
+    assert 'k' in cache
+    cache.close()
+
+
 def test_a_damaged_database_is_a_miss(directory: Path, caplog: pytest.LogCaptureFixture) -> None:
     cache = Cache(directory, timeout=SHORT, durable=True)
     plain = Cache(directory, timeout=SHORT)
