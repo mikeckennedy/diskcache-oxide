@@ -33,7 +33,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError, Weak};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
@@ -74,6 +74,27 @@ pub(crate) fn quiesce_registry() {
     if busy {
         drop(REGISTRY.lock());
     }
+}
+
+/// The stores with a release deferred behind a fork, one entry per release, so a store stays in the
+/// registry for its drain after its last other `Arc` has gone. Taken with no gate level, since a
+/// deferrer has none, so a fork can land while it's locked and leave a child with it locked for good.
+/// So nothing ever waits on it: see [`deferred_owners`].
+static DEFERRED_OWNERS: Mutex<Vec<Arc<Store>>> = Mutex::new(Vec::new());
+
+/// How many times [`deferred_owners`] tries. Anyone else in there is only pushing or taking.
+const DEFERRED_OWNERS_TRIES: usize = 64;
+
+/// [`DEFERRED_OWNERS`], unless it stays locked: by a thread that didn't survive a fork, in a child.
+fn deferred_owners() -> Option<MutexGuard<'static, Vec<Arc<Store>>>> {
+    for _ in 0..DEFERRED_OWNERS_TRIES {
+        match DEFERRED_OWNERS.try_lock() {
+            Ok(owners) => return Some(owners),
+            Err(TryLockError::Poisoned(poisoned)) => return Some(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) => std::thread::yield_now(),
+        }
+    }
+    None
 }
 
 /// How a handle wants its store opened.
@@ -608,16 +629,26 @@ impl Store {
 
     /// Leaves one handle's release for the drain at the end of the pending fork. Until then the
     /// store just looks like it has one more handle; the count is signed and decided by where it
-    /// lands, so a reopen meanwhile balances. The forgotten `Arc` keeps the store in the registry even
-    /// if this was its last one, so the drain can close its pin and connections under the gate. A
-    /// later open of the directory revives it, as with any retired store.
+    /// lands, so a reopen meanwhile balances. An entry in [`DEFERRED_OWNERS`] keeps the store in the
+    /// registry even if this was its last other `Arc`, so the drain can close its pin and connections
+    /// under the gate, and the drain then drops the entry. A later open of the directory revives the
+    /// store if something else still owns it, as with any retired store.
+    ///
+    /// Counted before the entry goes in: the drain takes the entries before it reads the counts, so it
+    /// never drops an entry for a release it won't make. A drain between the two makes the release
+    /// while the caller's `Arc` keeps the store alive, and the flag, set after both, gets the entry
+    /// dropped by this thread's try or by the pending fork's drain.
     fn defer_release(self: &Arc<Self>) {
-        std::mem::forget(Arc::clone(self));
         // The drain is process-wide, so it can close another store's last connection on a large WAL:
         // with the interpreter released, wherever this release was running.
         GATE.defer(
             || {
                 self.deferred_releases.fetch_add(1, Ordering::SeqCst);
+                match deferred_owners() {
+                    Some(mut owners) => owners.push(Arc::clone(self)),
+                    // The store outlives its drain, which is the safe direction: it still releases.
+                    None => std::mem::forget(Arc::clone(self)),
+                }
             },
             || gate::run_blocking(&drain_deferred_releases),
         );
@@ -1568,6 +1599,9 @@ impl Drop for FilePin {
 /// released. In a child, the connections it inherited are forgotten rather than closed.
 pub fn drain_deferred_releases() {
     GATE.drain_deferred(|gate| {
+        // Before the counts (see `Store::defer_release`), and kept past the releases. A last `Arc`
+        // goes at the end of this closure, under the level and outside both mutexes.
+        let _owners = deferred_owners().map(|mut owners| std::mem::take(&mut *owners)).unwrap_or_default();
         // Collected first, so an `Arc` dropped here can never close a pin under the registry mutex.
         let mut deferred: Vec<Arc<Store>> = registry(gate).iter().filter_map(Weak::upgrade).collect();
         deferred.retain(|store| store.deferred_releases.load(Ordering::SeqCst) > 0);

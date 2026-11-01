@@ -1,5 +1,7 @@
 # Deep review of `5b2ea85`
 
+**Follow-up:** The fixes were reviewed below under “Fix review.” Findings 1, 2 and 4 are addressed in the reviewed fixes; finding 3 is improved but remains open on the contention fallback. The original findings and evidence are preserved as history.
+
 Reviewed 2026-10-31. Exact revision: `5b2ea8552b717c0542cfa287a82e533ad550e265`.
 
 **Findings: 0 critical, 3 high, 1 medium. I would fix the two tier-1 spill-file findings before shipping this revision to Talk Python.** Both concern failure handling, not ordinary successful operations: a corrupt size can terminate the worker, and a failed spill write leaves disk space permanently occupied. The other findings concern deferred-close lifetime management and small thread stacks. No new wrong-key or duplicate-pop bug was demonstrated.
@@ -232,3 +234,49 @@ These are follow-ups, not extra severity-counted findings:
 - No exhaustive fork-from-pickle / nested-after-child-hook experiment. In particular, an inline decode can run Python while rusqlite row/statement guards exist; cleanup after a fork there deserves dedicated instrumentation beyond checking that pooled connections are forgotten.
 - No CPython shutdown/daemon-thread/stop-the-world experiment or independent CPython 3.14/3.15 source verification of every hook-order assumption. The local hook-registration code imports logging/executor modules first; third-party later hooks remain the documented limitation.
 - No claim that an unchanged successful test suite proves the failure paths safe. The four findings were outside the assertions that those passing tests currently make.
+
+## Fix review
+
+Reviewed `81aa84df220f97255b26e66058d0738a479ee79e` **plus the uncommitted deferred-owner changes** in `store.rs` and `store/fork_timeout.rs`. The changes were copied into a separate snapshot at `/private/tmp/dco-fix-review-81aa84d`. Their SHA-256 hashes were:
+
+```text
+store.rs              3be23d11a0372c59e70a5aa093a27c10df4069625559f3822b5a0ab747e01579
+store/fork_timeout.rs  ba27c1ef49adb383d3ea3479d3a6d8040d6e2d7370dee1e3f07e382928753ff7
+```
+
+### Remaining issue: ordinary contention still permanently leaks a deferred owner
+
+**High, tier 2; finding 3 partially resolved.** In the reviewed working-tree `store.rs:89`, `deferred_owners()` gives up after 64 `try_lock`/`yield_now` attempts. At `store.rs:650`, that result still executes `mem::forget(Arc::clone(self))`.
+
+The comment describes a mutex inherited locked from a vanished parent thread, but there is no generation or process check here. An ordinary live thread can be descheduled while holding the mutex around `owners.push(...)` or the drain's `mem::take`. Another deferrer can exhaust its 64 attempts before that thread runs again. `yield_now` is not a guarantee that the lock holder runs. That deferrer then leaks its strong reference permanently, even after the mutex becomes free, the fork finishes and every release is drained. Later drains cannot reclaim a reference that was never stored in the queue.
+
+The new `row_5_a_deferral_with_the_owners_locked_for_good_still_releases` test demonstrates the fallback in the parent without actually forking: it locks the mutex, calls `defer_release`, unlocks, and explicitly asserts a remaining strong count of 2. This proves the retained owner; the ordinary two-thread scheduling trigger above follows from the same branch. I did not run a new adversarial scheduler to measure its frequency.
+
+**Requested follow-up:** Separate actual inherited-lock recovery from temporary contention, and retain recoverable ownership in the latter case. Preserve the bounded fork behavior; replacing the bounded attempts with an unconditional blocking mutex acquisition would reintroduce the child deadlock. If an inherited-child leak is deliberately accepted, document that narrowly and test that live-parent contention does not take the same permanent-leak path.
+
+No new fd leak or incorrect handle count was demonstrated. The normal queue/drain path is fixed: the original external probe now prints:
+
+```text
+handles=0 strong_count=1
+store_alive_after_last_drop=false
+```
+
+### Assessment of the other fixes
+
+| Original finding | Assessment |
+|---|---|
+| 1: allocation from corrupt spill size | **Addressed.** `read_checked` checks the opened file's metadata before allocating, uses fallible reservation, and caps reads at the expected length plus one byte. That extra byte detects growth without reading an unbounded file. Allocation failure maps to `MemoryError` and remains excluded from durable suppression. Tests cover mismatched huge sizes, negative sizes, get/pop, and an agreeing but unallocatable sparse file. |
+| 2: partial temporary files | **Addressed.** `write_new` only removes the file after this attempt successfully created it and then failed to write it. A `create_new` collision leaves the pre-existing file alone. The resource-limit scenario now checks that failed large writes leave no `.tmp` file. Unlink failure and process death can still leave an orphan, but the original normal error-return leak is fixed. |
+| 3: retained deferred `Arc` | **Partially addressed.** The owned queue balances normal deferrals, including multiple releases and last-owner destruction. The permanent-leak fallback above remains reachable under ordinary contention. |
+| 4: small-stack codec crash | **Addressed for the tested platform/build.** Both codecs now check remaining C stack during recursive container processing. Decode preserves `RecursionError`, so durable reads can miss without deleting a valid row; failed encodes still raise. Constructor-time type loading avoids deferring imports until the first container operation on a small worker stack. Regression coverage includes reads, writes, several container shapes and progressively consumed stack. |
+
+The immediate enter/leave pairing in `check_stack` is consistent with CPython 3.14's implementation: its recursion-entry check tests the machine stack pointer, and the corresponding leave helper is empty. See the [CPython 3.14 recursion helpers](https://github.com/python/cpython/blob/3.14/Include/internal/pycore_ceval.h) and [stack-limit/error implementation](https://github.com/python/cpython/blob/3.14/Python/ceval.c). This source check does not replace Linux, free-threaded or 3.15 execution coverage.
+
+### Follow-up validation
+
+- Fresh isolated core build: **182 tests passed**.
+- Original external lifetime probe: normal deferred-release ownership now fully reclaimed.
+- Fresh release extension built from the follow-up snapshot, without modifying the repository's installed extension.
+- Python regression result recorded below after completion.
+
+**Disposition:** The two tier-1 issues that blocked the original review are addressed. I would not label all four findings closed until the live-parent contention leak is resolved or explicitly accepted. This follow-up does not re-review unrelated maintenance/soak changes or replace the original Linux and final-soak deployment gates. Only this review document was edited.

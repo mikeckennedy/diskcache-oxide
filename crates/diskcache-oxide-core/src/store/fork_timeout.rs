@@ -137,6 +137,13 @@ fn eventually(mut done: impl FnMut() -> bool) {
     }
 }
 
+/// `store` is the last owner of its store: a drain gives back what its deferrals retained. Polled, as
+/// another test's drain can hold its own reference for a moment.
+#[track_caller]
+fn only_owner(store: &Arc<Store>) {
+    eventually(|| Arc::strong_count(store) == 1);
+}
+
 /// Drains until `store`'s deferred releases are gone: another test's fork, whose end doesn't run the
 /// drain as the Python hooks do, can have been the one that failed its try.
 #[track_caller]
@@ -293,6 +300,7 @@ fn row_5_a_failed_join_behind_a_fork_defers_its_release_and_adds_no_wait() {
     drained(&store);
     assert_eq!(store.handles(), 1, "the failed join's handle was released");
     assert_eq!(GATE.own_depth(), 0);
+    only_owner(&store);
 }
 
 // -- row 4: reopening ----------------------------------------------------------------------------
@@ -353,6 +361,49 @@ fn row_5_a_release_behind_a_stuck_fork_defers_and_the_drain_finishes_it() {
     assert_eq!(store.pool.idle(&gate), 0);
     drop(gate);
     assert_eq!(fds_inside(tmp.path()), 0, "D-018 holds once the release has drained");
+    drop(store);
+    eventually(|| weak.strong_count() == 0);
+}
+
+/// Each deferral retains the store once and the drain gives every one back, with a handle still open
+/// and the store still working.
+#[test]
+fn row_5_a_drain_gives_back_every_deferral_on_a_store() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-release-many");
+    let store = open_store(tmp.path());
+    let deferrals = 5;
+    for _ in 0..deferrals {
+        add_handle(&store);
+    }
+    behind_a_fork(|| {
+        for _ in 0..deferrals {
+            store.release_handle_within(Duration::from_millis(1));
+        }
+        assert_eq!(Arc::strong_count(&store), 1 + deferrals, "a deferred release retains the store");
+    });
+    drained(&store);
+    assert_eq!(store.handles(), 1);
+    only_owner(&store);
+    put(&store, "k");
+}
+
+/// A store dropped between the drain and a new open is gone, so the open gets a store of its own.
+#[test]
+fn row_5_an_open_after_the_drain_and_the_last_drop_gets_a_new_store() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-release-reopen");
+    let store = open_store(tmp.path());
+    put(&store, "k");
+    let weak = Arc::downgrade(&store);
+    behind_a_fork(move || store.release_handle_within(Duration::from_millis(1)));
+    let store = weak.upgrade().unwrap();
+    drained(&store);
+    drop(store);
+    eventually(|| weak.strong_count() == 0);
+    let reopened = open_store(tmp.path());
+    assert!(reopened.contains(T, "k", NOW).unwrap());
+    assert_eq!(reopened.handles(), 1);
 }
 
 #[test]
@@ -384,6 +435,27 @@ fn row_5_a_deferrer_with_no_fork_pending_releases_for_itself() {
     assert_eq!(store.handles(), 0);
     assert!(store.is_retired());
     assert!(store.pin.lock().unwrap().is_none());
+}
+
+/// What a child sees if a fork landed on a thread inside the owners' mutex: locked for good. Nothing
+/// waits on it, and the release still happens. Only the store's memory stays.
+#[test]
+fn row_5_a_deferral_with_the_owners_locked_for_good_still_releases() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-release-locked");
+    let store = open_store(tmp.path());
+    put(&store, "k");
+    let locked = DEFERRED_OWNERS.lock().unwrap();
+    let started = Instant::now();
+    store.defer_release();
+    assert!(started.elapsed() < SLACK, "it waited on the mutex");
+    assert_eq!(store.deferred_releases.load(Ordering::SeqCst), 0);
+    assert_eq!(store.handles(), 0);
+    assert!(store.is_retired());
+    assert!(locked.iter().all(|owner| !Arc::ptr_eq(owner, &store)));
+    drop(locked);
+    assert_eq!(fds_inside(tmp.path()), 0);
+    assert_eq!(Arc::strong_count(&store), 2, "the fallback retains the store");
 }
 
 #[test]
@@ -419,6 +491,7 @@ fn row_5_a_deferral_racing_the_end_of_a_fork_is_never_stranded() {
         assert!(store.is_retired());
     }
     assert_eq!(fds_inside(tmp.path()), 0);
+    only_owner(&store);
 }
 
 fn add_handle(store: &Store) {
