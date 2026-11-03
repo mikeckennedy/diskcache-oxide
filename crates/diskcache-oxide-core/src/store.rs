@@ -1002,11 +1002,14 @@ impl Store {
         // spent its whole window copying a large backlog and then reported busy before it could wait
         // for readers (seen on Linux with readers in other processes).
         //
-        // PASSIVE can't be relied on to do that copy: it runs right after a commit, and a reader on an
-        // older read mark stops it copying anything. Then the first TRUNCATE does the copy and spends
-        // its window on it, and one reader in flight makes it report busy, so sustained writes beside
-        // readers in other processes failed most forced checkpoints (plan 09, step 2b). Hence the
-        // repeat: a later try has nothing left to copy, so its whole window goes to the readers, and
+        // PASSIVE can't be relied on to do that copy. It copies only up to the oldest snapshot a reader
+        // still uses (SQLite's `mxSafeFrame`), and right after a commit, with readers in other processes,
+        // that's often no further than the last checkpoint already copied (`nBackfill`): then it copies
+        // nothing. Then the first TRUNCATE does the copy and spends its window on it, and one reader in
+        // flight makes it report busy, so sustained writes beside readers in other processes failed
+        // most forced checkpoints (plan 09, step 2b). Hence the repeat: SQLite keeps the copy a busy
+        // try made, so a later try has little or nothing left to copy and its whole window goes to the
+        // readers, and
         // SQLite has released every lock between tries. Busy comes back as a row (busy = 1), not an
         // error; a real error ends the round at once.
         //

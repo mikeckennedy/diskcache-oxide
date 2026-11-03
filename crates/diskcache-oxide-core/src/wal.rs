@@ -17,8 +17,9 @@
 //! ([`crate::lockwait::ATTACHED_WINDOW`], opened after PASSIVE), which waits for
 //! in-flight readers (ours are microseconds long), copies the remainder and truncates the file.
 //! TRUNCATE is repeated while it reports busy, up to [`TRUNCATE_TRIES`] times, each in a fresh
-//! window, because PASSIVE often copies nothing: right after a commit, a reader on an older read
-//! mark stops it. The first TRUNCATE then spends its window on the copy, and any reader in flight
+//! window, because PASSIVE often copies nothing: it copies only up to the oldest snapshot a reader
+//! still uses, and right after a commit that's often no further than the last checkpoint already
+//! copied. The first TRUNCATE then spends its window on the copy, and any reader in flight
 //! makes it report busy; a later try has its whole window for the readers. No later try starts past
 //! the caller's deadline or once a fork is pending. So a fork that arrives mid-round waits for the
 //! try under way, and one that arrives sooner waits for the rest of PASSIVE and the first try, which
