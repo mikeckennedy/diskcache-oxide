@@ -16,11 +16,13 @@ from diskcache_oxide import Cache
 now = [1_000_000.0]  # a fake clock, so this example can move time forward
 cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
 
+
 def allow_request(client: str, limit: int = 5, window: int = 60) -> bool:
-    current = int(now[0] // window)          # in a real app: int(time.time() // window)
+    current = int(now[0] // window)  # in a real app: int(time.time() // window)
     key = f'rate:{client}:{current}'
-    cache.add(key, 0, expire=window * 2)     # start the window's counter, once
+    cache.add(key, 0, expire=window * 2)  # start the window's counter, once
     return cache.incr(key) <= limit
+
 
 print([allow_request('203.0.113.9') for _ in range(7)])
 
@@ -48,6 +50,7 @@ In a real app, use `time.time()` and leave out `clock=`; the fake clock is only 
 from fastapi import FastAPI, HTTPException, Request
 
 app = FastAPI()
+
 
 @app.get('/api/search')
 def search(request: Request, q: str) -> dict:

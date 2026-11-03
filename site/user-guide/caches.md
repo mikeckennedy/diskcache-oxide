@@ -49,9 +49,9 @@ A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage
 # Switching caches off
 
 ``` python
-caches.disable('pages')   # later lookups return NullCache(invalidate=real)
+caches.disable('pages')  # later lookups return NullCache(invalidate=real)
 caches.enable('pages')
-caches.enabled('pages')   # False while it's off
+caches.enabled('pages')  # False while it's off
 ```
 
 While a cache is disabled, its lookups return `NullCache(invalidate=real)`: reads miss and writes are dropped, but [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) and [clear](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) still reach the real cache, so nothing stale is served when it comes back on. Switches only change later lookups. Code that already holds the real [Cache](../reference/Cache.md#diskcache_oxide.Cache) keeps using it, so set them at startup, before you hand caches out.
@@ -61,6 +61,7 @@ If your app has its own names for what it caches (Talk Python calls them purpose
 ``` python
 PURPOSES = {'rss_feed': 'general', 'episode_html': 'episodes'}
 off = {'rss_feed'}  # from your settings file
+
 
 def cache_for(purpose: str) -> CacheLike:
     real = caches[PURPOSES[purpose]]
@@ -73,10 +74,10 @@ Build the wrapper on each call rather than memoizing it: `caches[...]` is alread
 # Admin and shutdown
 
 ``` python
-caches.stats()                      # {name: CacheStats(name, directory, enabled, count, volume, error)}
-caches.clear('pages', timeout=10)   # works on a disabled cache too
-caches.expire_all(timeout=10)       # {name: removed, or None if it failed}
-caches.close_all()                  # at shutdown; `with Caches(...) as caches:` does it too
+caches.stats()  # {name: CacheStats(name, directory, enabled, count, volume, error)}
+caches.clear('pages', timeout=10)  # works on a disabled cache too
+caches.expire_all(timeout=10)  # {name: removed, or None if it failed}
+caches.close_all()  # at shutdown; `with Caches(...) as caches:` does it too
 ```
 
 - [stats()](../reference/Caches.stats.md#diskcache_oxide.Caches.stats) opens every registered cache and never raises: a cache that can't be read has its `error` set.

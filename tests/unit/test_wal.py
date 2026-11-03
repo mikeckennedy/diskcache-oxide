@@ -25,7 +25,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from diskcache_oxide import Cache
 
 LIMIT = 4 * 2**20
@@ -67,7 +66,9 @@ def pinned_to_8_cpus() -> collections.abc.Iterator[None]:
 
 @pytest.mark.timeout(120)
 @pytest.mark.usefixtures('pinned_to_8_cpus')
-def test_auto_mode_shrinks_the_wal_back_after_a_burst_with_readers_in_other_processes(tmp_path: Path) -> None:
+def test_auto_mode_shrinks_the_wal_back_after_a_burst_with_readers_in_other_processes(
+    tmp_path: Path,
+) -> None:
     directory = tmp_path / 'c'
     cache = Cache(directory, size_limit=2**34, wal_size_limit=LIMIT, wal_checkpoint='auto')
     cache.set('k0', 'v')
@@ -111,7 +112,9 @@ def _wal_bytes(directory: Path) -> int:
         return 0
 
 
-def test_auto_mode_never_forces_a_checkpoint_on_a_healthy_workload(tmp_path: Path) -> None:
+def test_auto_mode_never_forces_a_checkpoint_on_a_healthy_workload(
+    tmp_path: Path,
+) -> None:
     # Readers in this process only, at a modest rate, and a small limit: normal resets keep the WAL
     # under the trigger, so no forced checkpoint (and no write pause) happens. The margin is small,
     # about 8% even with idle readers. The readers are paced because four flat-out threads on a
@@ -139,7 +142,9 @@ def test_auto_mode_never_forces_a_checkpoint_on_a_healthy_workload(tmp_path: Pat
     cache.close()
 
 
-def test_auto_mode_busy_checkpoint_never_fails_the_write_and_recovers_after(tmp_path: Path) -> None:
+def test_auto_mode_busy_checkpoint_never_fails_the_write_and_recovers_after(
+    tmp_path: Path,
+) -> None:
     from tests.conformance.proc_workers import SqlitePeer
 
     directory = tmp_path / 'c'
@@ -213,7 +218,9 @@ def _burst(cache: Cache, rows: int = 20_000) -> None:
 
 
 @pytest.mark.timeout(120)
-def test_by_default_writes_never_checkpoint_and_checkpoint_truncates_under_reader_processes(tmp_path: Path) -> None:
+def test_by_default_writes_never_checkpoint_and_checkpoint_truncates_under_reader_processes(
+    tmp_path: Path,
+) -> None:
     directory = tmp_path / 'c'
     cache = Cache(directory, size_limit=2**34, wal_size_limit=LIMIT, timeout=10)
     cache.set('k0', 'v')
@@ -237,7 +244,9 @@ def test_by_default_writes_never_checkpoint_and_checkpoint_truncates_under_reade
         cache.close()
 
 
-def test_checkpoint_returns_false_instead_of_raising_while_a_peer_holds_a_snapshot(tmp_path: Path) -> None:
+def test_checkpoint_returns_false_instead_of_raising_while_a_peer_holds_a_snapshot(
+    tmp_path: Path,
+) -> None:
     from tests.conformance.proc_workers import SqlitePeer
 
     directory = tmp_path / 'c'
@@ -322,7 +331,9 @@ def test_the_last_close_on_a_large_wal_lets_sqlite_checkpoint_it(tmp_path: Path,
 
 
 @pytest.mark.timeout(120)
-def test_a_cache_collected_as_garbage_on_a_large_wal_while_other_threads_run(tmp_path: Path) -> None:
+def test_a_cache_collected_as_garbage_on_a_large_wal_while_other_threads_run(
+    tmp_path: Path,
+) -> None:
     # Dropped by the garbage collector, a cache on a large WAL releases its handle with the
     # interpreter released, from inside deallocation. On the free-threaded build that's only safe if
     # the collector frees garbage with the world running again, not stopped: so free caches held in
@@ -392,7 +403,9 @@ def test_closing_twice_is_harmless_and_the_cache_reopens_after(tmp_path: Path) -
         cache.close()
 
 
-def test_closing_one_handle_repeatedly_leaves_the_other_as_the_last(tmp_path: Path) -> None:
+def test_closing_one_handle_repeatedly_leaves_the_other_as_the_last(
+    tmp_path: Path,
+) -> None:
     from tests.conformance.proc_workers import SqlitePeer
 
     directory = tmp_path / 'c'
@@ -420,7 +433,9 @@ def test_null_cache_checkpoint_and_close_take_the_same_arguments() -> None:
     null.close(checkpoint=False)
 
 
-def test_checkpoint_waits_for_another_threads_transaction_and_then_succeeds(tmp_path: Path) -> None:
+def test_checkpoint_waits_for_another_threads_transaction_and_then_succeeds(
+    tmp_path: Path,
+) -> None:
     cache = Cache(tmp_path / 'c', timeout=10)
     for i in range(100):
         cache.set(f'k{i}', 'x' * 5_000)
@@ -443,7 +458,9 @@ def test_checkpoint_waits_for_another_threads_transaction_and_then_succeeds(tmp_
     cache.close()
 
 
-def test_checkpoint_inside_your_own_transaction_returns_false_at_once(tmp_path: Path) -> None:
+def test_checkpoint_inside_your_own_transaction_returns_false_at_once(
+    tmp_path: Path,
+) -> None:
     cache = Cache(tmp_path / 'c', timeout=10)
     cache.set('k', 'v')
     with cache._hold_write_transaction():

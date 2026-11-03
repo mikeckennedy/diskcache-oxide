@@ -30,8 +30,8 @@ class Cache:
         directory: str | os.PathLike[str],
         timeout: float = 60.0,
         *,
-        size_limit: int | None = None,   # None: keep the stored value (default 2**30 for a new cache)
-        cull_limit: int | None = None,   # None: keep the stored value (default 10)
+        size_limit: int | None = None,  # None: keep the stored value (default 2**30 for a new cache)
+        cull_limit: int | None = None,  # None: keep the stored value (default 10)
         serializer: Literal['msgpack', 'json'] = 'msgpack',
         pickle: bool = False,
         clock: Callable[[], float] | None = None,

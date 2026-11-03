@@ -16,10 +16,16 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import diskcache_oxide
-from diskcache_oxide import Cache, CorruptValueError, ForeignValueError, NullCache, Timeout, UnsafeValueError
+import pytest
+from diskcache_oxide import (
+    Cache,
+    CorruptValueError,
+    ForeignValueError,
+    NullCache,
+    Timeout,
+    UnsafeValueError,
+)
 
 LOGGER = 'diskcache_oxide'
 MODE_MSGPACK = 3
@@ -59,8 +65,19 @@ def _reset_raises() -> Iterator[None]:
 
 def _sql(directory: Path, statement: str) -> None:
     """Runs one statement on the cache's database from another process, with the stdlib's SQLite."""
-    script = 'import sqlite3, sys\ncon = sqlite3.connect(sys.argv[1])\ncon.execute(sys.argv[2])\ncon.commit()\ncon.close()'
-    subprocess.run([sys.executable, '-c', script, str(directory / 'diskcache-oxide.sqlite'), statement], check=True)
+    script = (
+        'import sqlite3, sys\ncon = sqlite3.connect(sys.argv[1])\ncon.execute(sys.argv[2])\ncon.commit()\ncon.close()'
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            script,
+            str(directory / 'diskcache-oxide.sqlite'),
+            statement,
+        ],
+        check=True,
+    )
 
 
 def _stored(directory: Path, key: str) -> bool:
@@ -176,7 +193,10 @@ def test_an_unknown_msgpack_tag_is_foreign_and_kept(directory: Path) -> None:
 def test_an_unknown_json_tag_is_foreign_and_kept(directory: Path) -> None:
     cache = Cache(directory, serializer='json', on_decode_error='miss')
     cache.set('k', {'a': 1})
-    _sql(directory, """UPDATE cache SET value = CAST('{"$nope": 1}' AS BLOB) WHERE key = 'k'""")
+    _sql(
+        directory,
+        """UPDATE cache SET value = CAST('{"$nope": 1}' AS BLOB) WHERE key = 'k'""",
+    )
     assert cache.get('k') is None
     assert _stored(directory, 'k')
     cache.close()
@@ -197,7 +217,16 @@ def test_unsafe_value_error_still_raises(directory: Path) -> None:
     cache.close()
 
 
-@pytest.mark.parametrize('error', [Timeout('nested'), MemoryError(), RecursionError(), OSError('disk'), KeyboardInterrupt()])
+@pytest.mark.parametrize(
+    'error',
+    [
+        Timeout('nested'),
+        MemoryError(),
+        RecursionError(),
+        OSError('disk'),
+        KeyboardInterrupt(),
+    ],
+)
 def test_errors_that_arent_about_the_bytes_still_raise(directory: Path, error: BaseException) -> None:
     with Cache(directory, pickle=True) as writer:
         writer.set('k', Raises())
@@ -236,7 +265,9 @@ def test_only_the_version_that_failed_is_deleted(directory: Path) -> None:
     peer.close()
 
 
-def test_a_busy_write_lock_in_another_process_never_delays_the_miss(directory: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_busy_write_lock_in_another_process_never_delays_the_miss(
+    directory: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from tests.conformance.proc_workers import SqlitePeer
 
     _moved_away(directory, monkeypatch)
@@ -253,7 +284,9 @@ def test_a_busy_write_lock_in_another_process_never_delays_the_miss(directory: P
     cache.close()
 
 
-def test_a_write_transaction_on_another_thread_never_delays_the_miss(directory: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_write_transaction_on_another_thread_never_delays_the_miss(
+    directory: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _moved_away(directory, monkeypatch)
     cache = Cache(directory, pickle=True, timeout=30, on_decode_error='miss')
     other = Cache(directory)
@@ -279,7 +312,9 @@ def test_a_write_transaction_on_another_thread_never_delays_the_miss(directory: 
     cache.close()
 
 
-def test_inside_this_threads_own_transaction_the_delete_is_skipped(directory: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_inside_this_threads_own_transaction_the_delete_is_skipped(
+    directory: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _moved_away(directory, monkeypatch)
     cache = Cache(directory, pickle=True, on_decode_error='miss')
     with cache._hold_write_transaction():
@@ -341,14 +376,19 @@ def test_a_callable_that_reads_the_bad_key_again_is_not_called_again(
         assert cache.get(key) is None  # The delete was skipped, so this fails to decode again.
 
     cache = Cache(directory, pickle=True, on_decode_error=report)
-    with caplog.at_level(logging.WARNING, logger=LOGGER), cache._hold_write_transaction():
+    with (
+        caplog.at_level(logging.WARNING, logger=LOGGER),
+        cache._hold_write_transaction(),
+    ):
         assert cache.get('k') is None
     assert calls == ['k']
     assert not [r for r in caplog.records if r.name == LOGGER], 'a failure inside a report is not reported again'
     cache.close()
 
 
-def test_a_logging_handler_that_reads_the_bad_key_cant_recurse(directory: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_logging_handler_that_reads_the_bad_key_cant_recurse(
+    directory: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _moved_away(directory, monkeypatch)
     cache = Cache(directory, pickle=True, on_decode_error='miss')
     seen: list[str] = []
@@ -370,7 +410,9 @@ def test_a_logging_handler_that_reads_the_bad_key_cant_recurse(directory: Path, 
     cache.close()
 
 
-def test_the_warning_carries_the_traceback(directory: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_the_warning_carries_the_traceback(
+    directory: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     _moved_away(directory, monkeypatch)
     cache = Cache(directory, pickle=True, on_decode_error='miss')
     with caplog.at_level(logging.WARNING, logger=LOGGER):
@@ -430,8 +472,14 @@ def test_a_time_zone_this_host_lacks_is_foreign(directory: Path) -> None:
     import zoneinfo
 
     cache = Cache(directory, serializer='json', on_decode_error='miss')
-    cache.set('k', dt.datetime(2026, 10, 30, 12, tzinfo=zoneinfo.ZoneInfo('America/Los_Angeles')))
-    _sql(directory, "UPDATE cache SET value = CAST(replace(CAST(value AS TEXT), 'America/Los_Angeles', 'Mars/Olympus') AS BLOB) WHERE key = 'k'")
+    cache.set(
+        'k',
+        dt.datetime(2026, 10, 30, 12, tzinfo=zoneinfo.ZoneInfo('America/Los_Angeles')),
+    )
+    _sql(
+        directory,
+        "UPDATE cache SET value = CAST(replace(CAST(value AS TEXT), 'America/Los_Angeles', 'Mars/Olympus') AS BLOB) WHERE key = 'k'",
+    )
     assert cache.get('k') is None
     assert _stored(directory, 'k')
     with pytest.raises(ForeignValueError) as info:
@@ -463,7 +511,10 @@ def test_an_integer_over_this_hosts_digit_limit_is_foreign(directory: Path) -> N
 def test_an_unknown_json_tag_raises_foreign_under_raise(directory: Path) -> None:
     cache = Cache(directory, serializer='json')
     cache.set('k', [1, {'a': 1}])
-    _sql(directory, """UPDATE cache SET value = CAST('[1, {"$nope": 1}]' AS BLOB) WHERE key = 'k'""")
+    _sql(
+        directory,
+        """UPDATE cache SET value = CAST('[1, {"$nope": 1}]' AS BLOB) WHERE key = 'k'""",
+    )
     with pytest.raises(ForeignValueError):
         cache.get('k')
     cache.close()

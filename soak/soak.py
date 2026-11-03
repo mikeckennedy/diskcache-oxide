@@ -143,7 +143,15 @@ class Soak:
         self.reported_acked: dict[int, int] = {}
         self.final_acked: dict[int, int] = {}
         self.once_winners: dict[str, set[int]] = {}
-        self.counts = {'kills': 0, 'restarts': 0, 'respawns': 0, 'maint': 0, 'stalls': 0, 'side_kills': 0, 'side_restarts': 0}
+        self.counts = {
+            'kills': 0,
+            'restarts': 0,
+            'respawns': 0,
+            'maint': 0,
+            'stalls': 0,
+            'side_kills': 0,
+            'side_restarts': 0,
+        }
         self.kill_times: list[float] = []
         self.pq_result: dict[str, Any] = {}
         # Each worker's latest stats, kept after it exits, so run totals include killed workers.
@@ -156,7 +164,10 @@ class Soak:
         self.timeline = self._csv('timeline.csv', TIMELINE_FIELDS + per_store)
         self.quiet: dict[str, list[Any]] = {}
         self.workers_csv = self._csv('workers.csv', WORKER_FIELDS)
-        self.maint_csv = self._csv('maint.csv', ['time', 'elapsed_h', 'op', 'seconds', 'removed', 'ok', 'detail'])
+        self.maint_csv = self._csv(
+            'maint.csv',
+            ['time', 'elapsed_h', 'op', 'seconds', 'removed', 'ok', 'detail'],
+        )
         self.last_total_ops = -1
         self.last_total_progress = time.time()
         self.interval_no = 0
@@ -172,19 +183,32 @@ class Soak:
     # -- events -------------------------------------------------------------------------------
 
     def event(self, kind: str, problem: bool = False, **data: Any) -> None:
-        record = {'time': time.time(), 'elapsed_h': round(self.elapsed_h(), 4), 'kind': kind, 'problem': problem, **data}
+        record = {
+            'time': time.time(),
+            'elapsed_h': round(self.elapsed_h(), 4),
+            'kind': kind,
+            'problem': problem,
+            **data,
+        }
         with self.lock:
             if problem:
                 self.problems += 1
             self.events.write(json.dumps(record, default=str) + '\n')
         if problem:
-            print(f'!!! {time.strftime("%H:%M:%S")} {kind}: {json.dumps(data, default=str)[:400]}', flush=True)
+            print(
+                f'!!! {time.strftime("%H:%M:%S")} {kind}: {json.dumps(data, default=str)[:400]}',
+                flush=True,
+            )
 
     def elapsed_h(self) -> float:
         return (time.time() - self.started) / 3600
 
     def extra_stores(self) -> list[str]:
-        return ['durable', 'behind', *(f'auto-{n}' for n in range(self.args.auto_stores))]
+        return [
+            'durable',
+            'behind',
+            *(f'auto-{n}' for n in range(self.args.auto_stores)),
+        ]
 
     # -- workers ------------------------------------------------------------------------------
 
@@ -199,12 +223,39 @@ class Soak:
         ]  # fmt: skip
         seed = str(self.args.seed * 10_000 + wid)
         if role == 'lanes':
-            cmd = [python, '-m', 'soak.worker', 'lanes', str(self.dir), str(wid), seed, str(store)]
+            cmd = [
+                python,
+                '-m',
+                'soak.worker',
+                'lanes',
+                str(self.dir),
+                str(wid),
+                seed,
+                str(store),
+            ]
         elif role != 'run':
-            cmd = [python, '-m', 'soak.worker', role, str(self.dir), str(wid), seed, str(store), str(self.args.auto_stores)]
+            cmd = [
+                python,
+                '-m',
+                'soak.worker',
+                role,
+                str(self.dir),
+                str(wid),
+                seed,
+                str(store),
+                str(self.args.auto_stores),
+            ]
         proc = subprocess.Popen(cmd, cwd=REPO, stdout=log, stderr=log)
         self.workers[wid] = WorkerProc(wid, python, long_lived, proc, time.time(), log, role=role, store=store)
-        self.event('spawn', id=wid, pid=proc.pid, python=python, long_lived=long_lived, role=role, store=store)
+        self.event(
+            'spawn',
+            id=wid,
+            pid=proc.pid,
+            python=python,
+            long_lived=long_lived,
+            role=role,
+            store=store,
+        )
 
     def start_workers(self) -> None:
         for n in range(self.args.procs):
@@ -214,12 +265,22 @@ class Soak:
         # The first worker of the lanes per interpreter is never killed either, so its trends and its
         # counters cover the whole run; the rest are.
         for n in range(self.args.lanes):
-            self.spawn(self.pythons[n % len(self.pythons)], long_lived=n < len(self.pythons), role='lanes', store=n)
+            self.spawn(
+                self.pythons[n % len(self.pythons)],
+                long_lived=n < len(self.pythons),
+                role='lanes',
+                store=n,
+            )
         # Readers on the last interpreter (free-threaded, in soak/run.sh), since only readers truly in
         # parallel hold read marks enough to force a checkpoint; writers alternate.
         for store in range(self.args.auto_stores):
             for n in range(self.args.auto_writers):
-                self.spawn(self.pythons[(store + n) % len(self.pythons)], long_lived=False, role='auto-writer', store=store)
+                self.spawn(
+                    self.pythons[(store + n) % len(self.pythons)],
+                    long_lived=False,
+                    role='auto-writer',
+                    store=store,
+                )
             self.spawn(self.pythons[-1], long_lived=False, role='auto-reader', store=store)
 
     def reap(self) -> None:
@@ -237,8 +298,17 @@ class Soak:
             now = time.time()
             self.crashes = [t for t in self.crashes if now - t < CRASH_WINDOW] + [now]
             if len(self.crashes) > CRASH_LIMIT:
-                self.event('crash-loop', problem=True, deaths=len(self.crashes), window_s=CRASH_WINDOW, last_log_tail=tail)
-                print(f'soak: {len(self.crashes)} workers died within {CRASH_WINDOW:.0f}s; stopping. Last log:\n{tail}', flush=True)
+                self.event(
+                    'crash-loop',
+                    problem=True,
+                    deaths=len(self.crashes),
+                    window_s=CRASH_WINDOW,
+                    last_log_tail=tail,
+                )
+                print(
+                    f'soak: {len(self.crashes)} workers died within {CRASH_WINDOW:.0f}s; stopping. Last log:\n{tail}',
+                    flush=True,
+                )
                 self.fatal = True
                 return
             self.spawn(w.python, w.long_lived, w.role, w.store)
@@ -248,11 +318,17 @@ class Soak:
         path = self.dir / 'stats' / f'{w.id}.json'
         try:
             stats = json.loads(path.read_text())
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return
         new_problems = stats.get('problems', [])[len(w.stats.get('problems', [])) :]
         for text in new_problems:
-            self.event('worker-problem', problem=True, id=w.id, python=stats.get('python'), detail=text)
+            self.event(
+                'worker-problem',
+                problem=True,
+                id=w.id,
+                python=stats.get('python'),
+                detail=text,
+            )
         w.stats = stats
         self.last_stats[w.id] = stats
         self.reported_acked[w.id] = max(self.reported_acked.get(w.id, 0), stats.get('acked', 0))
@@ -264,7 +340,13 @@ class Soak:
         # outside the lanes that use small timeouts on purpose, any count means a fork was stuck.
         timeouts = (stats.get('gate') or {}).get('fork_timeouts', 0)
         if w.role != 'lanes' and timeouts > w.fork_timeouts_seen:
-            self.event('fork-timeouts-in-a-normal-lane', problem=True, id=w.id, role=w.role, count=timeouts)
+            self.event(
+                'fork-timeouts-in-a-normal-lane',
+                problem=True,
+                id=w.id,
+                role=w.role,
+                count=timeouts,
+            )
         w.fork_timeouts_seen = max(w.fork_timeouts_seen, timeouts)
 
     # -- chaos --------------------------------------------------------------------------------
@@ -272,10 +354,26 @@ class Soak:
     def chaos(self) -> None:
         # 'checkpoint' is the cookbook pattern for long-running apps: call Cache.checkpoint() now and then.
         # 'restart' is what gunicorn and friends do: SIGTERM, a clean shutdown, a fresh worker.
-        action = self.rng.choice(['kill', 'kill', 'restart', 'fork', 'fork', 'clear', 'expire', 'cull', 'checkpoint'])
+        action = self.rng.choice(
+            [
+                'kill',
+                'kill',
+                'restart',
+                'fork',
+                'fork',
+                'clear',
+                'expire',
+                'cull',
+                'checkpoint',
+            ]
+        )
         if action == 'restart':
             # Old enough to have installed its SIGTERM handler (a just-spawned one exits -15).
-            victims = [w for w in self.workers.values() if w.role == 'run' and not w.long_lived and time.time() - w.started > 30]
+            victims = [
+                w
+                for w in self.workers.values()
+                if w.role == 'run' and not w.long_lived and time.time() - w.started > 30
+            ]
             if victims:
                 self.restart(self.rng.choice(victims))
             return
@@ -293,7 +391,9 @@ class Soak:
     def side_chaos(self) -> None:
         """Kills and restarts for the lanes and the auto group, on a timer of their own so that the
         `run` workers see as much chaos as they did before those groups existed."""
-        victims = [w for w in self.workers.values() if w.role != 'run' and not w.long_lived and time.time() - w.started > 30]
+        victims = [
+            w for w in self.workers.values() if w.role != 'run' and not w.long_lived and time.time() - w.started > 30
+        ]
         if not victims:
             return
         w = self.rng.choice(victims)
@@ -310,7 +410,12 @@ class Soak:
             self.kill_times.append(time.time())
         else:
             self.counts['side_kills'] += 1
-        self.event('kill', id=w.id, role=w.role, acked_reported=self.reported_acked.get(w.id, 0))
+        self.event(
+            'kill',
+            id=w.id,
+            role=w.role,
+            acked_reported=self.reported_acked.get(w.id, 0),
+        )
         w.proc.wait()
         self.reap()
         self.spawn(w.python, False, w.role, w.store)
@@ -328,7 +433,12 @@ class Soak:
             self.capture_stall(f'worker-{w.id}-restart', w.proc.pid, w.python)
             w.proc.kill()
             code = w.proc.wait()
-            self.event('restart-hang', problem=True, id=w.id, seconds=round(time.time() - start, 1))
+            self.event(
+                'restart-hang',
+                problem=True,
+                id=w.id,
+                seconds=round(time.time() - start, 1),
+            )
         del self.workers[w.id]
         w.log.close()
         self.read_stats(w)
@@ -339,29 +449,70 @@ class Soak:
         elif not w.stats.get('final'):
             self.event('restart-no-final-stats', problem=True, id=w.id)
         else:
-            self.event('restart', id=w.id, role=w.role, seconds=round(time.time() - start, 2), acked=w.stats.get('acked'))
+            self.event(
+                'restart',
+                id=w.id,
+                role=w.role,
+                seconds=round(time.time() - start, 2),
+                acked=w.stats.get('acked'),
+            )
         self.spawn(w.python, False, w.role, w.store)
         self.counts['respawns'] += 1
 
     def verify_held(self) -> None:
         """The end-of-run check of every worker's held transactions (soak/worker.py)."""
         try:
-            proc = subprocess.run([self.pythons[0], '-m', 'soak.worker', 'maint', str(self.dir), 'verify-held'], cwd=REPO, capture_output=True, text=True, timeout=VERIFY_TIMEOUT)
+            proc = subprocess.run(
+                [
+                    self.pythons[0],
+                    '-m',
+                    'soak.worker',
+                    'maint',
+                    str(self.dir),
+                    'verify-held',
+                ],
+                cwd=REPO,
+                capture_output=True,
+                text=True,
+                timeout=VERIFY_TIMEOUT,
+            )
         except subprocess.TimeoutExpired:
-            self.event('final-held-error', problem=True, detail=f'ran over {VERIFY_TIMEOUT:.0f}s')
+            self.event(
+                'final-held-error',
+                problem=True,
+                detail=f'ran over {VERIFY_TIMEOUT:.0f}s',
+            )
             return
         lines = proc.stdout.splitlines()
         problems = [line.removeprefix('problem: ') for line in lines if line.startswith('problem: ')]
         for text in problems[:50]:
             self.event('held-atomicity', problem=True, detail=text)
         if proc.returncode != 0:
-            self.event('final-held-error', problem=True, exit=proc.returncode, detail=(proc.stdout + proc.stderr)[-2000:])
+            self.event(
+                'final-held-error',
+                problem=True,
+                exit=proc.returncode,
+                detail=(proc.stdout + proc.stderr)[-2000:],
+            )
         self.event('final-held', problems=len(problems), summary=lines[-1] if lines else '')
 
     def verify_pq(self) -> None:
         """The end-of-run check of the exactly-once lane (soak/worker.py)."""
         try:
-            proc = subprocess.run([self.pythons[0], '-m', 'soak.worker', 'maint', str(self.dir), 'verify-pq'], cwd=REPO, capture_output=True, text=True, timeout=VERIFY_TIMEOUT)
+            proc = subprocess.run(
+                [
+                    self.pythons[0],
+                    '-m',
+                    'soak.worker',
+                    'maint',
+                    str(self.dir),
+                    'verify-pq',
+                ],
+                cwd=REPO,
+                capture_output=True,
+                text=True,
+                timeout=VERIFY_TIMEOUT,
+            )
             result = json.loads(proc.stdout)
         except (subprocess.TimeoutExpired, ValueError) as ex:
             self.event('final-pq-error', problem=True, detail=repr(ex))
@@ -373,35 +524,70 @@ class Soak:
         ticks_per_s, threads = result.pop('ticks_per_s'), result.pop('threads')
         unexcused = assign_lost_to_kills(lost, self.kill_times, ticks_per_s, threads, PQ_KILL_WINDOW)
         for token in unexcused:
-            self.event('pq-lost', problem=True, token=token, detail=f'recorded, then neither delivered nor queued, with no kill left to excuse it (at most {threads} per kill, within {PQ_KILL_WINDOW:.0f}s after it)')
+            self.event(
+                'pq-lost',
+                problem=True,
+                token=token,
+                detail=f'recorded, then neither delivered nor queued, with no kill left to excuse it (at most {threads} per kill, within {PQ_KILL_WINDOW:.0f}s after it)',
+            )
         excused = len(lost) - len(unexcused)
         allowance = len(self.kill_times) * threads
-        self.pq_result = {**result, 'lost': len(lost), 'lost_excused_by_kills': excused, 'kill_allowance': allowance, 'delivered_and_queued': len(both), 'duplicates': self.ctotal('pq_duplicates')}
+        self.pq_result = {
+            **result,
+            'lost': len(lost),
+            'lost_excused_by_kills': excused,
+            'kill_allowance': allowance,
+            'delivered_and_queued': len(both),
+            'duplicates': self.ctotal('pq_duplicates'),
+        }
         self.event('final-pq', **self.pq_result)
 
     def maint(self, op: str) -> None:
         self.maint_running = True
         python = self.rng.choice(self.pythons)
         start = time.time()
-        proc = subprocess.Popen([python, '-m', 'soak.worker', 'maint', str(self.dir), op], cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(
+            [python, '-m', 'soak.worker', 'maint', str(self.dir), op],
+            cwd=REPO,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
         try:
             out, _ = proc.communicate(timeout=MAINT_TIMEOUT)
             text = out.decode(errors='replace').strip()
             ok = proc.returncode == 0
             parts = text.split()
             removed = parts[1] if ok and len(parts) >= 3 else ''
-            row = {'op': op, 'seconds': round(time.time() - start, 3), 'removed': removed, 'ok': ok, 'detail': '' if ok else text[-500:]}
+            row = {
+                'op': op,
+                'seconds': round(time.time() - start, 3),
+                'removed': removed,
+                'ok': ok,
+                'detail': '' if ok else text[-500:],
+            }
             if not ok:
                 self.event('maint-failed', problem=True, **row)
         except subprocess.TimeoutExpired:
             self.capture_stall(f'maint-{op}', proc.pid, python)
             proc.kill()
             proc.communicate()
-            row = {'op': op, 'seconds': round(time.time() - start, 3), 'removed': '', 'ok': False, 'detail': f'ran over {MAINT_TIMEOUT:.0f}s'}
+            row = {
+                'op': op,
+                'seconds': round(time.time() - start, 3),
+                'removed': '',
+                'ok': False,
+                'detail': f'ran over {MAINT_TIMEOUT:.0f}s',
+            }
             self.event('maint-stall', problem=True, **row)
         self.counts['maint'] += 1
         with self.lock:
-            self.maint_csv[1].writerow({'time': round(start, 3), 'elapsed_h': round((start - self.started) / 3600, 4), **row})
+            self.maint_csv[1].writerow(
+                {
+                    'time': round(start, 3),
+                    'elapsed_h': round((start - self.started) / 3600, 4),
+                    **row,
+                }
+            )
         self.maint_running = False
 
     # -- stalls -------------------------------------------------------------------------------
@@ -427,7 +613,14 @@ class Soak:
                 out.write_text(result.stdout + result.stderr)
         except (OSError, subprocess.TimeoutExpired) as ex:
             out.write_text(f'could not sample {pid}: {ex!r}\n')
-        self.event('stall-captured', problem=False, label=label, pid=pid, python=python, file=str(out.relative_to(self.dir)))
+        self.event(
+            'stall-captured',
+            problem=False,
+            label=label,
+            pid=pid,
+            python=python,
+            file=str(out.relative_to(self.dir)),
+        )
 
     def check_progress(self) -> None:
         now = time.time()
@@ -439,11 +632,25 @@ class Soak:
             if ops != w.last_ops:
                 w.last_ops, w.last_progress = ops, now
                 if w.stalled:
-                    self.event('worker-recovered', id=w.id, after_s=round(now - w.last_progress, 1))
+                    self.event(
+                        'worker-recovered',
+                        id=w.id,
+                        after_s=round(now - w.last_progress, 1),
+                    )
                 w.stalled = False
-            elif not w.stalled and now - w.last_progress > self.args.stall_after and now - w.started > self.args.stall_after:
+            elif (
+                not w.stalled
+                and now - w.last_progress > self.args.stall_after
+                and now - w.started > self.args.stall_after
+            ):
                 w.stalled = True
-                self.event('worker-stall', problem=True, id=w.id, python=w.stats.get('python'), no_progress_s=round(now - w.last_progress))
+                self.event(
+                    'worker-stall',
+                    problem=True,
+                    id=w.id,
+                    python=w.stats.get('python'),
+                    no_progress_s=round(now - w.last_progress),
+                )
                 self.capture_stall(f'worker-{w.id}', w.proc.pid, w.python)
         if total != self.last_total_ops:
             self.last_total_ops, self.last_total_progress = total, now
@@ -461,7 +668,15 @@ class Soak:
                     state[:] = [beats, now, False]
                 elif not state[2] and now - state[1] > self.args.stall_after:
                     state[2] = True
-                    self.event('lane-stall', problem=True, id=w.id, role=w.role, lane=lane, python=w.stats.get('python'), no_progress_s=round(now - state[1]))
+                    self.event(
+                        'lane-stall',
+                        problem=True,
+                        id=w.id,
+                        role=w.role,
+                        lane=lane,
+                        python=w.stats.get('python'),
+                        no_progress_s=round(now - state[1]),
+                    )
                     self.capture_stall(f'worker-{w.id}-{lane}', w.proc.pid, w.python)
 
     # -- database checks (stdlib sqlite3, read-only queries) ------------------------------------
@@ -486,7 +701,13 @@ class Soak:
             rows, row_size = conn.execute('SELECT COUNT(*), COALESCE(SUM(size), 0) FROM cache').fetchone()
             info.update(rows=rows, totals_ok=(count, size) == (rows, row_size))
             if (count, size) != (rows, row_size):
-                self.event('totals-mismatch', problem=True, db=name, totals=[count, size], actual=[rows, row_size])
+                self.event(
+                    'totals-mismatch',
+                    problem=True,
+                    db=name,
+                    totals=[count, size],
+                    actual=[rows, row_size],
+                )
             files = {r[0] for r in conn.execute('SELECT filename FROM cache WHERE filename IS NOT NULL')}
             info['value_files'] = len(files)
             conn.execute('COMMIT')
@@ -498,7 +719,12 @@ class Soak:
                 result = conn.execute('PRAGMA integrity_check').fetchall()
                 ok = result == [('ok',)]
                 info['integrity_ok'] = ok
-                self.event('integrity-check', problem=not ok, db=name, result=[r[0] for r in result[:20]])
+                self.event(
+                    'integrity-check',
+                    problem=not ok,
+                    db=name,
+                    result=[r[0] for r in result[:20]],
+                )
         except sqlite3.Error as ex:
             self.event('db-check-error', problem=True, db=name, error=repr(ex))
         finally:
@@ -520,17 +746,41 @@ class Soak:
         self.last_orphans[name] = len(orphans)
         # A row whose file is gone is a real bug, unless the row was deleted after our snapshot.
         missing = [f for f in files if not (root / f).exists()]
-        still = [f for f in missing if conn.execute('SELECT 1 FROM cache WHERE filename = ?', (f,)).fetchone() and not (root / f).exists()]
+        still = [
+            f
+            for f in missing
+            if conn.execute('SELECT 1 FROM cache WHERE filename = ?', (f,)).fetchone() and not (root / f).exists()
+        ]
         if still:
-            self.event('value-file-missing', problem=True, db=name, files=still[:20], count=len(still))
-        self.event('file-scan', db=name, orphans=len(orphans), orphan_tmp=sum(f.endswith('.tmp') for f in orphans), missing=len(still))
+            self.event(
+                'value-file-missing',
+                problem=True,
+                db=name,
+                files=still[:20],
+                count=len(still),
+            )
+        self.event(
+            'file-scan',
+            db=name,
+            orphans=len(orphans),
+            orphan_tmp=sum(f.endswith('.tmp') for f in orphans),
+            missing=len(still),
+        )
 
     def check_ledger(self, conn: sqlite3.Connection) -> None:
-        counters = {int(k.split(':')[1]): v for k, v in conn.execute("SELECT key, value FROM cache WHERE key LIKE 'ctr:%'")}
+        counters = {
+            int(k.split(':')[1]): v for k, v in conn.execute("SELECT key, value FROM cache WHERE key LIKE 'ctr:%'")
+        }
         for wid, acked in self.reported_acked.items():
             value = counters.get(wid, 0)
             if not isinstance(value, int) or value < acked:
-                self.event('lost-increment', problem=True, id=wid, stored=value, acknowledged=acked)
+                self.event(
+                    'lost-increment',
+                    problem=True,
+                    id=wid,
+                    stored=value,
+                    acknowledged=acked,
+                )
         for slot, winners in self.once_winners.items():
             if len(winners) > 1:
                 self.event('add-two-winners', problem=True, slot=slot, winners=sorted(winners))
@@ -548,9 +798,15 @@ class Soak:
         now = time.time()
         live = list(self.workers.values())
         ops = sum(w.stats.get('ops', 0) for w in live)
-        lat = {op: [w.stats['latency'][op] for w in live if w.stats.get('latency', {}).get(op)] for op in ('get', 'set')}
+        lat = {
+            op: [w.stats['latency'][op] for w in live if w.stats.get('latency', {}).get(op)] for op in ('get', 'set')
+        }
         if self.last_total_ops >= 0 and now - self.last_total_progress > self.args.stall_after:
-            self.event('system-stall', problem=True, no_progress_s=round(now - self.last_total_progress))
+            self.event(
+                'system-stall',
+                problem=True,
+                no_progress_s=round(now - self.last_total_progress),
+            )
         for w in live:
             s = w.stats
             if not s:
@@ -583,10 +839,14 @@ class Soak:
             dt = now - self._prev_time
             # Respawned workers restart at zero, so count only growth per worker.
             # The `run` workers only, so this stays comparable with --rate and with earlier soaks.
-            ops_rate = sum(max(0, w.stats.get('ops', 0) - self._prev_ops.get(w.id, 0)) for w in live if w.role == 'run') / dt if dt else 0.0
+            ops_rate = (
+                sum(max(0, w.stats.get('ops', 0) - self._prev_ops.get(w.id, 0)) for w in live if w.role == 'run') / dt
+                if dt
+                else 0.0
+            )
         self._prev_ops = {w.id: w.stats.get('ops', 0) for w in live}
         self._prev_time = now
-        median = lambda xs: sorted(xs)[len(xs) // 2] if xs else None  # noqa: E731
+        median = lambda xs: sorted(xs)[len(xs) // 2] if xs else None
         trow = {
             'time': round(now, 3),
             'elapsed_h': round(self.elapsed_h(), 4),
@@ -608,7 +868,11 @@ class Soak:
             'forks_failed': self.total('forks_failed'),
             'maint_calls': self.counts['maint'],
             'stalls': self.counts['stalls'],
-            **{f'{n}_{k}': db.get(n, {}).get(k) for n in ('chaos', 'ledger') for k in ('rows', 'db_bytes', 'wal_bytes', 'value_files')},
+            **{
+                f'{n}_{k}': db.get(n, {}).get(k)
+                for n in ('chaos', 'ledger')
+                for k in ('rows', 'db_bytes', 'wal_bytes', 'value_files')
+            },
             'chaos_orphans': self.last_orphans.get('chaos'),
             'ledger_orphans': self.last_orphans.get('ledger'),
             # Held write transactions on the ledger, over every worker of the run.
@@ -617,7 +881,10 @@ class Soak:
             # Forced WAL checkpoints (D-024), over every worker of the run (killed ones included).
             'wal_ckpt_attempts': self.wal_total('attempts'),
             'wal_ckpt_busy': self.wal_total('busy'),
-            'wal_ckpt_max_pause_us': max(((s.get('wal') or {}).get('max_pause_us', 0) for s in self.last_stats.values()), default=0),
+            'wal_ckpt_max_pause_us': max(
+                ((s.get('wal') or {}).get('max_pause_us', 0) for s in self.last_stats.values()),
+                default=0,
+            ),
             'wal_ckpt_slow': self.wal_total('slow'),
             **self.lane_totals(),
             'load_1m': round(os.getloadavg()[0], 2),
@@ -643,7 +910,11 @@ class Soak:
 
     def ctotal(self, key: str, python: str | None = None) -> int:
         """A plan 09 lane's counter summed over every worker of the run, or one interpreter's."""
-        return sum((s.get('c') or {}).get(key, 0) for s in self.last_stats.values() if python is None or s.get('python') == python)
+        return sum(
+            (s.get('c') or {}).get(key, 0)
+            for s in self.last_stats.values()
+            if python is None or s.get('python') == python
+        )
 
     def durable_buckets(self) -> dict[str, int]:
         """What durable handles swallowed, by bucket, over every worker of the run."""
@@ -656,7 +927,22 @@ class Soak:
     def auto_summary(self) -> dict[int, dict[str, Any]]:
         """Each auto store's forced checkpoints, over all of its writers, killed ones included."""
         stores: dict[int, dict[str, Any]] = {
-            n: dict.fromkeys(('rounds', 'successes', 'busy', 'errors', 'no_slot', 'fork_pending', 'checks', 'slow', 'max_pause_us', 'peak_wal'), 0) for n in range(self.args.auto_stores)
+            n: dict.fromkeys(
+                (
+                    'rounds',
+                    'successes',
+                    'busy',
+                    'errors',
+                    'no_slot',
+                    'fork_pending',
+                    'checks',
+                    'slow',
+                    'max_pause_us',
+                    'peak_wal',
+                ),
+                0,
+            )
+            for n in range(self.args.auto_stores)
         }
         for s in self.last_stats.values():
             auto = s.get('auto')
@@ -664,7 +950,15 @@ class Soak:
                 continue
             st = stores[s['store']]
             st['rounds'] += auto.get('attempts', 0)
-            for key in ('successes', 'busy', 'errors', 'no_slot', 'fork_pending', 'checks', 'slow'):
+            for key in (
+                'successes',
+                'busy',
+                'errors',
+                'no_slot',
+                'fork_pending',
+                'checks',
+                'slow',
+            ):
                 st[key] += auto.get(key, 0)
             st['max_pause_us'] = max(st['max_pause_us'], auto.get('max_pause_us', 0))
             st['peak_wal'] = max(st['peak_wal'], auto.get('peak_wal', 0))
@@ -683,17 +977,69 @@ class Soak:
         return {
             'pops': sum(pops.values()),
             **pops,
-            **{key: self.ctotal(key) for key in ('pq_produced', 'pq_delivered', 'pq_duplicates', 'durable_calls', 'durable_false', 'durable_misses', 'durable_escapes', 'behind_calls', 'behind_timeouts', 'forks_behind', 'budget_overruns', 'stuck_forks', 'stuck_callers_timed_out', 'stuck_forks_completed', 'stuck_callers_hung', 'auto_writes')},
+            **{
+                key: self.ctotal(key)
+                for key in (
+                    'pq_produced',
+                    'pq_delivered',
+                    'pq_duplicates',
+                    'durable_calls',
+                    'durable_false',
+                    'durable_misses',
+                    'durable_escapes',
+                    'behind_calls',
+                    'behind_timeouts',
+                    'forks_behind',
+                    'budget_overruns',
+                    'stuck_forks',
+                    'stuck_callers_timed_out',
+                    'stuck_forks_completed',
+                    'stuck_callers_hung',
+                    'auto_writes',
+                )
+            },
             'durable_busy': durable['busy'],
             'durable_broken': durable['broken'],
             'durable_lost_deletes': durable['lost_deletes'],
             'durable_log_lines': sum(sum((s.get('log_lines') or {}).values()) for s in self.last_stats.values()),
-            'max_overrun_s': round(max((s.get('max_overrun', 0.0) for s in self.last_stats.values()), default=0.0), 3),
-            'fork_max_s': round(max((s.get('fork_max_s', 0.0) for s in self.last_stats.values()), default=0.0), 3),
-            'child_max_s': round(max((s.get('child_max_s', 0.0) for s in self.last_stats.values()), default=0.0), 3),
-            'stuck_caller_max_s': round(max((s.get('stuck_caller_max_s', 0.0) for s in self.last_stats.values()), default=0.0), 3),
-            'fork_timeouts_normal': sum((s.get('gate') or {}).get('fork_timeouts', 0) for s in self.last_stats.values() if s.get('role') != 'lanes'),
-            'fork_timeouts_lanes': sum((s.get('gate') or {}).get('fork_timeouts', 0) for s in self.last_stats.values() if s.get('role') == 'lanes'),
+            'max_overrun_s': round(
+                max(
+                    (s.get('max_overrun', 0.0) for s in self.last_stats.values()),
+                    default=0.0,
+                ),
+                3,
+            ),
+            'fork_max_s': round(
+                max(
+                    (s.get('fork_max_s', 0.0) for s in self.last_stats.values()),
+                    default=0.0,
+                ),
+                3,
+            ),
+            'child_max_s': round(
+                max(
+                    (s.get('child_max_s', 0.0) for s in self.last_stats.values()),
+                    default=0.0,
+                ),
+                3,
+            ),
+            'stuck_caller_max_s': round(
+                max(
+                    (s.get('stuck_caller_max_s', 0.0) for s in self.last_stats.values()),
+                    default=0.0,
+                ),
+                3,
+            ),
+            'fork_timeouts_normal': sum(
+                (s.get('gate') or {}).get('fork_timeouts', 0)
+                for s in self.last_stats.values()
+                if s.get('role') != 'lanes'
+            ),
+            'fork_timeouts_lanes': sum(
+                (s.get('gate') or {}).get('fork_timeouts', 0)
+                for s in self.last_stats.values()
+                if s.get('role') == 'lanes'
+            ),
             'auto_rounds': sum(st['rounds'] for st in auto),
             'auto_successes': sum(st['successes'] for st in auto),
             'auto_busy': sum(st['busy'] for st in auto),
@@ -722,27 +1068,61 @@ class Soak:
             window = max(QUIET_AFTER, QUIET_GAPS * (now - self.started) / value) if value else QUIET_AFTER
             if not state[2] and now - state[1] > window:
                 state[2] = True
-                self.event('lane-went-quiet', problem=True, counter=name, value=value, quiet_s=round(now - state[1]), detail=f'no movement for over {window:.0f}s')
+                self.event(
+                    'lane-went-quiet',
+                    problem=True,
+                    counter=name,
+                    value=value,
+                    quiet_s=round(now - state[1]),
+                    detail=f'no movement for over {window:.0f}s',
+                )
 
     def check_lanes(self) -> dict[str, Any]:
         """The end-of-run checks that span workers. A lane that silently stopped can't pass: each
         one's count must be non-zero. Returns what the report shows."""
         t = self.lane_totals()
-        for key in ('pops', 'durable_calls', 'durable_false', 'forks_behind', 'stuck_forks', 'pq_delivered'):
+        for key in (
+            'pops',
+            'durable_calls',
+            'durable_false',
+            'forks_behind',
+            'stuck_forks',
+            'pq_delivered',
+        ):
             if not t[key]:
-                self.event('lane-silent', problem=True, counter=key, detail='this count is zero, so its lane proved nothing')
+                self.event(
+                    'lane-silent',
+                    problem=True,
+                    counter=key,
+                    detail='this count is zero, so its lane proved nothing',
+                )
         # Each pop site separately only on a long run: at a low rate, a short one can miss a rare site.
         if self.elapsed_h() >= 1:
             for key in ('pops_chaos', 'pops_held', 'pops_fork', 'pops_pq'):
                 if not t[key]:
-                    self.event('lane-silent', problem=True, counter=key, detail='this count is zero, so its lane proved nothing')
+                    self.event(
+                        'lane-silent',
+                        problem=True,
+                        counter=key,
+                        detail='this count is zero, so its lane proved nothing',
+                    )
         if t['durable_broken']:
-            self.event('durable-broken', problem=True, count=t['durable_broken'], detail='a durable handle answered something other than a timeout as a miss: nothing in this soak should break a store')
+            self.event(
+                'durable-broken',
+                problem=True,
+                count=t['durable_broken'],
+                detail='a durable handle answered something other than a timeout as a miss: nothing in this soak should break a store',
+            )
         if t['stuck_forks'] != t['stuck_forks_completed']:
             # A worker killed mid-way, between the two counts, shows up here only if the gap is large.
             gap = t['stuck_forks'] - t['stuck_forks_completed']
             if gap > self.counts['side_kills'] + self.counts['side_restarts']:
-                self.event('stuck-forks-unfinished', problem=True, started=t['stuck_forks'], completed=t['stuck_forks_completed'])
+                self.event(
+                    'stuck-forks-unfinished',
+                    problem=True,
+                    started=t['stuck_forks'],
+                    completed=t['stuck_forks_completed'],
+                )
         logged = {'busy': 0, 'broken': 0, 'lost_deletes': 0}
         for s in self.last_stats.values():
             for bucket, lines in (s.get('log_lines') or {}).items():
@@ -757,17 +1137,55 @@ class Soak:
             # Rounds that reached the WAL. One skipped for a full pool or a pending fork proves nothing.
             rounds = st['successes'] + st['busy']
             if not rounds:
-                self.event('lane-silent', problem=True, counter=f'auto_rounds[{store}]', detail='no forced checkpoint reached the WAL on this store')
+                self.event(
+                    'lane-silent',
+                    problem=True,
+                    counter=f'auto_rounds[{store}]',
+                    detail='no forced checkpoint reached the WAL on this store',
+                )
             elif rounds < need:
-                self.event('auto-too-few-rounds', problem=True, store=store, rounds=rounds, need=round(need))
+                self.event(
+                    'auto-too-few-rounds',
+                    problem=True,
+                    store=store,
+                    rounds=rounds,
+                    need=round(need),
+                )
             if st['errors']:
-                self.event('auto-checkpoint-errors', problem=True, store=store, errors=st['errors'])
+                self.event(
+                    'auto-checkpoint-errors',
+                    problem=True,
+                    store=store,
+                    errors=st['errors'],
+                )
             judged = st['successes'] + st['busy']
             # Several writers in several processes outrun the checkpoint: a documented limit (D-024).
             if st['writers'] == 1 and judged and st['successes'] / judged < AUTO_MIN_SUCCESS_RATE:
-                self.event('auto-low-success-rate', problem=True, store=store, successes=st['successes'], busy=st['busy'], threshold=AUTO_MIN_SUCCESS_RATE)
+                self.event(
+                    'auto-low-success-rate',
+                    problem=True,
+                    store=store,
+                    successes=st['successes'],
+                    busy=st['busy'],
+                    threshold=AUTO_MIN_SUCCESS_RATE,
+                )
         per_python = {
-            python: {key: self.ctotal(key, python) for key in ('pops_chaos', 'pops_held', 'pops_fork', 'pops_pq', 'pq_delivered', 'durable_calls', 'durable_false', 'forks_behind', 'stuck_forks', 'stuck_callers_timed_out', 'auto_writes')}
+            python: {
+                key: self.ctotal(key, python)
+                for key in (
+                    'pops_chaos',
+                    'pops_held',
+                    'pops_fork',
+                    'pops_pq',
+                    'pq_delivered',
+                    'durable_calls',
+                    'durable_false',
+                    'forks_behind',
+                    'stuck_forks',
+                    'stuck_callers_timed_out',
+                    'auto_writes',
+                )
+            }
             for python in sorted({s['python'] for s in self.last_stats.values() if s.get('python')})
         }
         by_op: dict[str, dict[str, int]] = {}
@@ -777,7 +1195,18 @@ class Soak:
                     if n:
                         by_op.setdefault(bucket, {}).setdefault(op, 0)
                         by_op[bucket][op] += n
-        return {'totals': t, 'durable_lines': logged, 'durable_by_op': by_op, 'auto': auto, 'per_python': per_python, 'pq': self.pq_result, 'auto_min_success_rate': AUTO_MIN_SUCCESS_RATE, 'auto_min_rounds': round(need), 'side_kills': self.counts['side_kills'], 'side_restarts': self.counts['side_restarts']}
+        return {
+            'totals': t,
+            'durable_lines': logged,
+            'durable_by_op': by_op,
+            'auto': auto,
+            'per_python': per_python,
+            'pq': self.pq_result,
+            'auto_min_success_rate': AUTO_MIN_SUCCESS_RATE,
+            'auto_min_rounds': round(need),
+            'side_kills': self.counts['side_kills'],
+            'side_restarts': self.counts['side_restarts'],
+        }
 
     def write_status(self, t: dict[str, Any], ops: int) -> None:
         remaining = max(0.0, self.ends - time.time()) / 3600
@@ -823,8 +1252,17 @@ class Soak:
         ]
 
     def run(self) -> int:
-        self.event('start', args=vars(self.args), pythons=self.pythons, dir=str(self.dir), cpus=os.cpu_count())
-        print(f'soak: {self.dir}\n  watch: tail -F {self.dir}/status.txt   report: open {self.dir}/report.html', flush=True)
+        self.event(
+            'start',
+            args=vars(self.args),
+            pythons=self.pythons,
+            dir=str(self.dir),
+            cpus=os.cpu_count(),
+        )
+        print(
+            f'soak: {self.dir}\n  watch: tail -F {self.dir}/status.txt   report: open {self.dir}/report.html',
+            flush=True,
+        )
         self.start_workers()
         stop = threading.Event()
         signal.signal(signal.SIGINT, lambda *_: stop.set())
@@ -869,39 +1307,78 @@ class Soak:
                 self.event('worker-bad-exit', problem=True, id=w.id, exit=w.proc.returncode)
         self.workers.clear()
         if not (self.dir / 'ledger' / DB_NAME).exists():
-            self.event('no-ledger', problem=True, detail='no worker ever opened the ledger cache')
+            self.event(
+                'no-ledger',
+                problem=True,
+                detail='no worker ever opened the ledger cache',
+            )
             from soak.report import build
 
             build(self.dir, final=True)
             return 1
         # Exact check for cleanly stopped workers: every incr that returned is stored, once each.
         conn = self.connect('ledger')
-        counters = {int(k.split(':')[1]): v for k, v in conn.execute("SELECT key, value FROM cache WHERE key LIKE 'ctr:%'")}
+        counters = {
+            int(k.split(':')[1]): v for k, v in conn.execute("SELECT key, value FROM cache WHERE key LIKE 'ctr:%'")
+        }
         winners = dict(conn.execute("SELECT key, value FROM cache WHERE key LIKE 'once:%'"))
         conn.close()
         for wid, acked in self.final_acked.items():
             if counters.get(wid, 0) != acked:
-                self.event('ledger-final-mismatch', problem=True, id=wid, stored=counters.get(wid), acknowledged=acked)
+                self.event(
+                    'ledger-final-mismatch',
+                    problem=True,
+                    id=wid,
+                    stored=counters.get(wid),
+                    acknowledged=acked,
+                )
         for slot, ids in self.once_winners.items():
             if len(ids) == 1 and slot in winners and winners[slot] not in ids:
-                self.event('add-winner-mismatch', problem=True, slot=slot, stored=winners[slot], reported=sorted(ids))
-        self.event('final-ledger', workers_checked=len(self.final_acked), slots_checked=len(self.once_winners))
+                self.event(
+                    'add-winner-mismatch',
+                    problem=True,
+                    slot=slot,
+                    stored=winners[slot],
+                    reported=sorted(ids),
+                )
+        self.event(
+            'final-ledger',
+            workers_checked=len(self.final_acked),
+            slots_checked=len(self.once_winners),
+        )
         self.verify_held()
         self.verify_pq()
         for name in ('chaos', 'ledger', *self.extra_stores()):
             self.check_db(name, deep=True, orphans=True)
         self.event('lanes', **self.check_lanes())
-        totals = {k: self.total(k) for k in ('ops', 'timeouts', 'forks_ok', 'forks_failed', 'reopens', 'once_tried', 'held_commits', 'held_rollbacks')}
+        totals = {
+            k: self.total(k)
+            for k in (
+                'ops',
+                'timeouts',
+                'forks_ok',
+                'forks_failed',
+                'reopens',
+                'once_tried',
+                'held_commits',
+                'held_rollbacks',
+            )
+        }
         self.event('finish', problems=self.problems, counts=self.counts, totals=totals)
         from soak.report import build
 
         build(self.dir, final=True)
         verdict = 'PASS' if self.problems == 0 else f'FAIL ({self.problems} problems)'
-        print(f'soak: {verdict}. Summary: {self.dir}/summary.md  report: {self.dir}/report.html', flush=True)
+        print(
+            f'soak: {verdict}. Summary: {self.dir}/summary.md  report: {self.dir}/report.html',
+            flush=True,
+        )
         return 0 if self.problems == 0 else 1
 
 
-def assign_lost_to_kills(lost: list[str], kills: list[float], ticks_per_s: int, per_kill: int, window: float) -> list[str]:
+def assign_lost_to_kills(
+    lost: list[str], kills: list[float], ticks_per_s: int, per_kill: int, window: float
+) -> list[str]:
     """The tokens no kill can explain. A kill takes at most `per_kill` tokens (a consumer per thread, each
     between its pop and its add), each produced at most `window` seconds before it. Oldest token first,
     to the earliest kill it can have, which excuses as many as any assignment can."""
@@ -948,7 +1425,12 @@ WORKER_FIELDS = [
 
 def last_python_is_free_threaded(pythons: str) -> bool:
     last = str(Path(pythons.split(',')[-1]).absolute())
-    probe = subprocess.run([last, '-c', 'import sys; print(sys._is_gil_enabled())'], capture_output=True, text=True, timeout=60)
+    probe = subprocess.run(
+        [last, '-c', 'import sys; print(sys._is_gil_enabled())'],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     return probe.stdout.strip() == 'False'
 
 
@@ -956,24 +1438,75 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--hours', type=float, default=0.0)
     parser.add_argument('--minutes', type=float, default=0.0)
-    parser.add_argument('--pythons', required=True, help='Comma-separated interpreters; workers alternate between them.')
-    parser.add_argument('--procs', type=int, default=max(4, (os.cpu_count() or 8) // 2), help='Worker processes (default: half the CPUs).')
+    parser.add_argument(
+        '--pythons',
+        required=True,
+        help='Comma-separated interpreters; workers alternate between them.',
+    )
+    parser.add_argument(
+        '--procs',
+        type=int,
+        default=max(4, (os.cpu_count() or 8) // 2),
+        help='Worker processes (default: half the CPUs).',
+    )
     parser.add_argument('--threads', type=int, default=4, help='Threads per worker.')
-    parser.add_argument('--interval', type=float, default=60.0, help='Seconds between checks and data rows.')
-    parser.add_argument('--mix', type=int, default=0, help='One write per this many operations (default: 99:1 and 1,000:1, alternating by thread).')
-    parser.add_argument('--rate', type=float, default=0.0, help='Total cache operations per second across all workers (default: flat out).')
-    parser.add_argument('--chaos-every', type=float, default=60.0, help='Upper bound on seconds between chaos actions.')
-    parser.add_argument('--stall-after', type=float, default=STALL_AFTER, help='Seconds without progress before a worker counts as stalled.')
-    parser.add_argument('--lanes', type=int, default=4, help='Extra processes for the durable, fork-behind and stuck-fork lanes, on top of --procs.')
-    parser.add_argument('--auto-stores', type=int, default=2, help="Stores with wal_checkpoint='auto': each adds its writers and a reader process, on top of --procs.")
-    parser.add_argument('--auto-writers', type=int, default=1, help='Writers per auto store. Over 1 is the documented limit: it is reported, and its success rate does not fail the run.')
+    parser.add_argument(
+        '--interval',
+        type=float,
+        default=60.0,
+        help='Seconds between checks and data rows.',
+    )
+    parser.add_argument(
+        '--mix',
+        type=int,
+        default=0,
+        help='One write per this many operations (default: 99:1 and 1,000:1, alternating by thread).',
+    )
+    parser.add_argument(
+        '--rate',
+        type=float,
+        default=0.0,
+        help='Total cache operations per second across all workers (default: flat out).',
+    )
+    parser.add_argument(
+        '--chaos-every',
+        type=float,
+        default=60.0,
+        help='Upper bound on seconds between chaos actions.',
+    )
+    parser.add_argument(
+        '--stall-after',
+        type=float,
+        default=STALL_AFTER,
+        help='Seconds without progress before a worker counts as stalled.',
+    )
+    parser.add_argument(
+        '--lanes',
+        type=int,
+        default=4,
+        help='Extra processes for the durable, fork-behind and stuck-fork lanes, on top of --procs.',
+    )
+    parser.add_argument(
+        '--auto-stores',
+        type=int,
+        default=2,
+        help="Stores with wal_checkpoint='auto': each adds its writers and a reader process, on top of --procs.",
+    )
+    parser.add_argument(
+        '--auto-writers',
+        type=int,
+        default=1,
+        help='Writers per auto store. Over 1 is the documented limit: it is reported, and its success rate does not fail the run.',
+    )
     parser.add_argument('--seed', type=int, default=int(time.time()) % 100_000)
     parser.add_argument('--out', default=str(REPO / 'soak-results'))
     args = parser.parse_args()
     if not args.hours and not args.minutes:
         parser.error('give --hours and/or --minutes')
     if args.auto_stores and not last_python_is_free_threaded(args.pythons):
-        parser.error('the last of --pythons must be free-threaded: only readers truly in parallel force the auto group\'s checkpoints (or use --auto-stores 0, which fails its zero-count checks)')
+        parser.error(
+            "the last of --pythons must be free-threaded: only readers truly in parallel force the auto group's checkpoints (or use --auto-stores 0, which fails its zero-count checks)"
+        )
     try:
         from tests.proctitle import set_title
 

@@ -13,8 +13,8 @@ import threading
 from pathlib import Path
 
 import pytest
-
 from diskcache_oxide import Cache
+
 from tests.unit.fork_timeout_scenarios import SCENARIOS, fds_inside
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -26,7 +26,13 @@ def test_stuck_fork_scenario(scenario: str, tmp_path: Path) -> None:
     if scenario in GIL_ONLY and not sys._is_gil_enabled():
         pytest.skip('only a GIL build can see a wait that stays attached this way')
     proc = subprocess.run(
-        [sys.executable, '-m', 'tests.unit.fork_timeout_scenarios', scenario, str(tmp_path / 's')],
+        [
+            sys.executable,
+            '-m',
+            'tests.unit.fork_timeout_scenarios',
+            scenario,
+            str(tmp_path / 's'),
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

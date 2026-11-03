@@ -19,8 +19,9 @@ among the settings, the handle a lookup returns doesn't raise for an outage eith
 keep a cache failure out of a request: the registry covers opening, and `durable` everything after.
 
 **Switches.** `disable(name)` makes later lookups return `NullCache(invalidate=real)`: reads miss and
-writes are dropped, but deletes and clears still reach the real cache, so nothing stale is served
-once it's turned back on. Switches change later lookups only. Code that already holds the real
+writes are dropped, but deletes and clears still reach the real cache, so entries invalidated by
+removal aren't served stale once it's turned back on. Invalidation by writing is dropped like any
+other write: an overwriting `set` or a version-bump `incr` while it's off leaves the old value. Switches change later lookups only. Code that already holds the real
 `Cache` keeps it, so set them at startup, before handing caches out.
 
 **What stays in the app:** reading settings files and environment variables, mapping the app's own
@@ -82,12 +83,14 @@ def _check_settings(settings: dict[str, Any]) -> None:
         # from `Cache` here, not as a TypeError logged on every decode failure.
         try:
             signature = inspect.signature(report)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return  # No signature to check (some builtins).
         try:
             signature.bind('name', 'key', Exception())
         except TypeError:
-            raise TypeError(f'a Caches on_decode_error is called as (name, key, exc); {report!r} does not take those') from None
+            raise TypeError(
+                f'a Caches on_decode_error is called as (name, key, exc); {report!r} does not take those'
+            ) from None
 
 
 class Caches[N: str = str]:
@@ -145,7 +148,13 @@ class Caches[N: str = str]:
 
     # -- registration ----------------------------------------------------------------------------
 
-    def register(self, name: N, *, directory: str | os.PathLike[str] | None = None, **settings: Any) -> None:
+    def register(
+        self,
+        name: N,
+        *,
+        directory: str | os.PathLike[str] | None = None,
+        **settings: Any,
+    ) -> None:
         """Register a cache. Nothing opens until its first lookup.
 
         Args:
@@ -172,6 +181,7 @@ class Caches[N: str = str]:
             path = os.path.join(self._base_dir, name)
         else:
             path = os.path.abspath(os.fspath(directory))
+
         def same(a: str, b: str) -> bool:
             # normcase too: on a case-insensitive filesystem 'General' and 'general' are one store.
             return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
@@ -221,7 +231,9 @@ class Caches[N: str = str]:
             real = self._open(name)
         except _OPEN_ERRORS as exc:
             null = NullCache()
-            retry = min(self._retry_open_after, _RETRY_AFTER_BUSY) if isinstance(exc, Timeout) else self._retry_open_after
+            retry = (
+                min(self._retry_open_after, _RETRY_AFTER_BUSY) if isinstance(exc, Timeout) else self._retry_open_after
+            )
             self._failed[name] = (self._monotonic() + retry, null)
             self._report_open_error(name, exc, retry)
             return null
@@ -264,9 +276,21 @@ class Caches[N: str = str]:
         if self._on_open_error is None:
             path = self._specs[name][0]
             if isinstance(exc, Timeout):
-                log.warning('cache %r at %s is busy; using a NullCache, retrying in %g s: %s', name, path, retry, exc)
+                log.warning(
+                    'cache %r at %s is busy; using a NullCache, retrying in %g s: %s',
+                    name,
+                    path,
+                    retry,
+                    exc,
+                )
             else:
-                log.error('could not open cache %r at %s; using a NullCache, retrying in %g s', name, path, retry, exc_info=exc)
+                log.error(
+                    'could not open cache %r at %s; using a NullCache, retrying in %g s',
+                    name,
+                    path,
+                    retry,
+                    exc_info=exc,
+                )
             return
         try:
             self._on_open_error(name, exc)
@@ -353,6 +377,10 @@ class Caches[N: str = str]:
         return self
 
     def __exit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None, /
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+        /,
     ) -> None:
         self.close_all()

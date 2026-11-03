@@ -87,7 +87,9 @@ def test_incr_default_none_on_present_key_works(cache: Any) -> None:
     assert cache.decr('k', default=None) == 5
 
 
-def test_incr_default_none_on_missing_key_raises_and_creates_nothing(cache: Any) -> None:
+def test_incr_default_none_on_missing_key_raises_and_creates_nothing(
+    cache: Any,
+) -> None:
     cache.set('other', 1)
     with pytest.raises(KeyError):
         cache.incr('k', default=None)

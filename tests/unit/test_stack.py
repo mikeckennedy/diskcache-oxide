@@ -17,7 +17,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 @pytest.mark.parametrize('scenario', sorted(SCENARIOS))
 def test_scenario(scenario: str, tmp_path: Path) -> None:
     proc = subprocess.run(
-        [sys.executable, '-m', 'tests.unit.stack_scenarios', scenario, str(tmp_path / 's')],
+        [
+            sys.executable,
+            '-m',
+            'tests.unit.stack_scenarios',
+            scenario,
+            str(tmp_path / 's'),
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

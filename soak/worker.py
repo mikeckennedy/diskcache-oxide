@@ -163,7 +163,13 @@ def make_value(key: str, rng: random.Random, expire_at: float | None) -> Any:
     roll = rng.random()
     if roll < 0.90:
         body = 'x' * rng.randrange(10, 400)
-        return {'key': key, 'crc': zlib.crc32(body.encode()), 'body': body, 'exp': expire_at, 'n': rng.randrange(1 << 40)}
+        return {
+            'key': key,
+            'crc': zlib.crc32(body.encode()),
+            'body': body,
+            'exp': expire_at,
+            'n': rng.randrange(1 << 40),
+        }
     size = rng.randrange(1_024, 8_192) if roll < 0.99 else rng.randrange(64 * 1024, 512 * 1024)
     payload = rng.randbytes(size)
     header = json.dumps({'key': key, 'crc': zlib.crc32(payload), 'exp': expire_at}).encode()
@@ -202,7 +208,15 @@ def check_value(key: str, value: Any, now: float) -> str | None:
 
 
 class Worker:
-    def __init__(self, run_dir: Path, worker_id: int, threads: int, seed: int, every: int = 0, thread_rate: float = 0.0) -> None:
+    def __init__(
+        self,
+        run_dir: Path,
+        worker_id: int,
+        threads: int,
+        seed: int,
+        every: int = 0,
+        thread_rate: float = 0.0,
+    ) -> None:
         # every: one write per this many ops (0 alternates the 99:1 and 1,000:1 mixes by thread).
         # thread_rate: ops per second per thread (0 runs flat out).
         self.every = every
@@ -385,7 +399,9 @@ class Worker:
                             popped = self.ledger.pop(key)
                             pops += 1  # Counted after the transaction: see the note above.
                             if (got := held_version(key, popped)) != self.held.get(key, 0):
-                                found.append(f'{key} popped {got} inside a transaction, last committed {self.held.get(key, 0)}')
+                                found.append(
+                                    f'{key} popped {got} inside a transaction, last committed {self.held.get(key, 0)}'
+                                )
                         else:
                             self.ledger.delete(key)
                         # Nested operations see the transaction's own writes.
@@ -414,7 +430,9 @@ class Worker:
                 outcome = 'committed' if seen == planned else 'rolled back'
             expected = planned if outcome == 'committed' else before
             if seen != expected:
-                self.problem(f'held transaction {outcome}, but its keys read {seen}: expected {expected} (before {before})')
+                self.problem(
+                    f'held transaction {outcome}, but its keys read {seen}: expected {expected} (before {before})'
+                )
             with self.lock:
                 self.c['pops_held'] += pops
                 if outcome == 'committed':
@@ -474,7 +492,9 @@ class Worker:
                     self.timeouts += 1
         if not first:
             self.count('pq_duplicates')
-            self.problem(f'duplicate delivery: {slot} gave {token} to worker {self.id}, which another pop had already delivered')
+            self.problem(
+                f'duplicate delivery: {slot} gave {token} to worker {self.id}, which another pop had already delivered'
+            )
 
     def record(self, op: str, ns: int) -> None:
         with self.lock:
@@ -693,11 +713,22 @@ class DurableLog(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         text = str(record.msg)
-        bucket = 'lost_deletes' if 'lost invalidations' in text else 'busy' if ' busy' in text else 'broken' if ' failing' in text else ''
+        bucket = (
+            'lost_deletes'
+            if 'lost invalidations' in text
+            else 'busy'
+            if ' busy' in text
+            else 'broken'
+            if ' failing' in text
+            else ''
+        )
         if not bucket:
             return  # A decode report, or anything else: not what this checks.
         now = time.monotonic()
-        where = (str(record.args[0]) if isinstance(record.args, tuple) and record.args else '', bucket)
+        where = (
+            str(record.args[0]) if isinstance(record.args, tuple) and record.args else '',
+            bucket,
+        )
         last = self.last.get(where)
         self.last[where] = now
         self.lines[bucket] += 1
@@ -705,7 +736,9 @@ class DurableLog(logging.Handler):
         if bucket == 'broken' or sum(self.lines.values()) <= self.KEEP:
             print(record.getMessage(), file=sys.stderr, flush=True)
         if last is not None and now - last < LOG_MIN_GAP and not self.closing:
-            self.worker.problem(f'durable log: two {bucket} lines for one store {now - last:.1f}s apart, under the 60 s limit')
+            self.worker.problem(
+                f'durable log: two {bucket} lines for one store {now - last:.1f}s apart, under the 60 s limit'
+            )
 
 
 class LaneWorker(Worker):
@@ -734,7 +767,7 @@ class LaneWorker(Worker):
         logger.propagate = False
 
     def lane_threads(self) -> list[threading.Thread]:
-        spawn = lambda target, *args: threading.Thread(target=target, args=args, daemon=True)  # noqa: E731
+        spawn = lambda target, *args: threading.Thread(target=target, args=args, daemon=True)
         return [
             *(spawn(self.behind_main, n) for n in range(2)),
             *(spawn(self.durable_main, n) for n in range(2)),
@@ -757,14 +790,18 @@ class LaneWorker(Worker):
                 self.max_overrun = max(self.max_overrun, over)
             if over > OVERRUN_ALLOWANCE:
                 self.count('budget_overruns')
-                self.problem(f'{what} took {over + budget:.2f}s against a budget of {budget}s (allowance {OVERRUN_ALLOWANCE}s)')
+                self.problem(
+                    f'{what} took {over + budget:.2f}s against a budget of {budget}s (allowance {OVERRUN_ALLOWANCE}s)'
+                )
 
     def child_work(self) -> None:
         rng = random.Random()
         key = 'b:fork-child'
         try:
             self.behind.set(key, make_value(key, rng, None))
-            if (value := self.behind.get(key)) is not None and (wrong := check_value(key, value, time.time())) is not None:
+            if (value := self.behind.get(key)) is not None and (
+                wrong := check_value(key, value, time.time())
+            ) is not None:
                 raise AssertionError(wrong)
         except Timeout:
             pass  # A budget of 1 s can run out beside a peer. The hung-child check covers a real hang.
@@ -790,7 +827,11 @@ class LaneWorker(Worker):
                     value = self.timed('behind get', BEHIND_TIMEOUT, lambda: self.behind.get(key))
                 elif roll < 0.9:
                     payload = make_value(key, rng, None)
-                    self.timed('behind set', BEHIND_TIMEOUT, lambda: self.behind.set(key, payload))
+                    self.timed(
+                        'behind set',
+                        BEHIND_TIMEOUT,
+                        lambda: self.behind.set(key, payload),
+                    )
                     value = None
                 else:
                     value = self.timed('behind pop', BEHIND_TIMEOUT, lambda: self.behind.pop(key))
@@ -904,7 +945,9 @@ class LaneWorker(Worker):
         thread.join(STUCK_CALLER_LIMIT)
         if not box:
             self.count('stuck_callers_hung')
-            self.problem(f'{call} behind a stuck fork had not returned after {STUCK_CALLER_LIMIT}s (timeout {STUCK_TIMEOUT}s): the wedge')
+            self.problem(
+                f'{call} behind a stuck fork had not returned after {STUCK_CALLER_LIMIT}s (timeout {STUCK_TIMEOUT}s): the wedge'
+            )
             return
         result, took = box[0]
         with self.lock:
@@ -952,7 +995,9 @@ class LaneWorker(Worker):
 
     def durable_main(self, n: int) -> None:
         rng = random.Random(self.seed * 1_000 + 50 + n)
-        acked: dict[str, int] = {}  # key -> the last version acknowledged (0: not there). Only this thread writes these keys.
+        acked: dict[
+            str, int
+        ] = {}  # key -> the last version acknowledged (0: not there). Only this thread writes these keys.
         self.durable_acked[n] = acked
         self.counted[n] = 0
         interval = 1.0 / LANE_CALLS_PER_S
@@ -982,7 +1027,9 @@ class LaneWorker(Worker):
             """A call answered as a failure changed nothing: the read-back is what was acknowledged."""
             self.count('durable_false')
             if (got := self.truth_version(key)) not in (want, None):
-                self.problem(f'durable {after} returned a failure for {key}, but it reads version {got}, not the previous {want}')
+                self.problem(
+                    f'durable {after} returned a failure for {key}, but it reads version {got}, not the previous {want}'
+                )
 
         if roll < 0.40:
             got = self.durable_call('get', lambda: d.get(key, _MISS))
@@ -1003,7 +1050,10 @@ class LaneWorker(Worker):
             if got is True:
                 acked[key] = version
                 self.count('durable_set_ok')
-                if rng.random() < 0.1 and (read := self.truth_version(key)) not in (version, None):
+                if rng.random() < 0.1 and (read := self.truth_version(key)) not in (
+                    version,
+                    None,
+                ):
                     self.problem(f'durable set of {key} returned True, but it reads {read}, not {version}')
             elif got is False:
                 self.counted[n] += 1
@@ -1047,7 +1097,10 @@ class LaneWorker(Worker):
     def bugs_still_raise(self) -> None:
         """A bug isn't an outage: these raise whatever the store is doing, before it's reached."""
         self.count('durable_bug_checks')
-        for what, work in (('a non-str key to set', lambda: self.durable.set(123, 'v')), ('a non-str key to get', lambda: self.durable.get(123))):  # ty: ignore[arg-type]
+        for what, work in (
+            ('a non-str key to set', lambda: self.durable.set(123, 'v')),
+            ('a non-str key to get', lambda: self.durable.get(123)),
+        ):  # ty: ignore[arg-type]
             try:
                 work()
             except TypeError:
@@ -1066,15 +1119,29 @@ class LaneWorker(Worker):
         counted = stats['busy']['set'] + stats['broken']['set']
         answered = sum(self.counted.values())
         if counted != answered:
-            self.problem(f'final check: {answered} durable set calls returned False, but the handle counted {counted} failures')
+            self.problem(
+                f'final check: {answered} durable set calls returned False, but the handle counted {counted} failures'
+            )
 
     def extra_stats(self) -> dict[str, Any]:
         lines = dict(self.log.lines)
-        return {'durable': self.durable._durable_stats(), 'log_lines': lines, 'max_overrun': self.max_overrun, 'stuck_caller_max_s': self.stuck_caller_max_s}
+        return {
+            'durable': self.durable._durable_stats(),
+            'log_lines': lines,
+            'max_overrun': self.max_overrun,
+            'stuck_caller_max_s': self.stuck_caller_max_s,
+        }
 
     def close_all(self) -> None:
         self.log.closing = True
-        for cache in (self.durable, self.truth, self.hog, self.behind, self.stuck_held, self.stuck_call):
+        for cache in (
+            self.durable,
+            self.truth,
+            self.hog,
+            self.behind,
+            self.stuck_held,
+            self.stuck_call,
+        ):
             cache.close()
         super().close_all()
 
@@ -1095,12 +1162,26 @@ def durable_value(key: str, version: int, rng: random.Random) -> Any:
 class AutoWorker(Worker):
     """One side of an auto store: its writer (one process, one thread) or a reader process."""
 
-    def __init__(self, run_dir: Path, worker_id: int, seed: int, role: str, store: int, stores: int) -> None:
+    def __init__(
+        self,
+        run_dir: Path,
+        worker_id: int,
+        seed: int,
+        role: str,
+        store: int,
+        stores: int,
+    ) -> None:
         super().__init__(run_dir, worker_id, 0, seed)
         self.role = role
         self.store = store
         self.phase = AUTO_PERIOD * store / max(1, stores)  # Staggered, so stores burst in turn.
-        self.auto = Cache(run_dir / f'auto-{store}', timeout=30.0, size_limit=2**34, wal_size_limit=AUTO_WAL_LIMIT, wal_checkpoint='auto')
+        self.auto = Cache(
+            run_dir / f'auto-{store}',
+            timeout=30.0,
+            size_limit=2**34,
+            wal_size_limit=AUTO_WAL_LIMIT,
+            wal_checkpoint='auto',
+        )
         self.wal_path = run_dir / f'auto-{store}' / 'diskcache-oxide.sqlite-wal'
         self.peak_wal = 0
 
@@ -1109,8 +1190,13 @@ class AutoWorker(Worker):
 
     def lane_threads(self) -> list[threading.Thread]:
         if self.role == 'auto-reader':
-            return [threading.Thread(target=self.reader_main, args=(n,), daemon=True) for n in range(AUTO_READER_THREADS)]
-        return [threading.Thread(target=self.writer_main, daemon=True), threading.Thread(target=self.forks_main, daemon=True)]
+            return [
+                threading.Thread(target=self.reader_main, args=(n,), daemon=True) for n in range(AUTO_READER_THREADS)
+            ]
+        return [
+            threading.Thread(target=self.writer_main, daemon=True),
+            threading.Thread(target=self.forks_main, daemon=True),
+        ]
 
     def child_work(self) -> None:
         key = 'a:fork-child'
@@ -1191,7 +1277,14 @@ class AutoWorker(Worker):
     def extra_stats(self) -> dict[str, Any]:
         if self.role != 'auto-writer':
             return {'store': self.store}
-        return {'store': self.store, 'auto': {**wal_stats(self.auto), 'peak_wal': self.peak_wal, 'limit': AUTO_WAL_LIMIT}}
+        return {
+            'store': self.store,
+            'auto': {
+                **wal_stats(self.auto),
+                'peak_wal': self.peak_wal,
+                'limit': AUTO_WAL_LIMIT,
+            },
+        }
 
     def close_all(self) -> None:
         self.auto.close()
@@ -1254,7 +1347,9 @@ def verify_held(run_dir: Path) -> list[str]:
         txs = manifests.get(wid, {})
         count = ledger.get(f'hctr:{wid}', 0)
         if sorted(txs) != list(range(1, count + 1)):
-            problems.append(f'worker {wid}: hctr is {count}, but it has {len(txs)} manifests (highest {max(txs, default=0)})')
+            problems.append(
+                f'worker {wid}: hctr is {count}, but it has {len(txs)} manifests (highest {max(txs, default=0)})'
+            )
         last: dict[str, tuple[int, int]] = {}
         for tx in sorted(txs):
             for key, version in txs[tx].items():
@@ -1265,7 +1360,11 @@ def verify_held(run_dir: Path) -> list[str]:
             want = (0, 0) if version == 0 else (version, tx)
             if found != want:
                 problems.append(f'{key} is {found} (version, transaction); its last commit, {tx}, wrote {want}')
-        problems.extend(f'{key} is {found}, but no committed transaction wrote it' for key, found in sorted(got.items()) if key not in last)
+        problems.extend(
+            f'{key} is {found}, but no committed transaction wrote it'
+            for key, found in sorted(got.items())
+            if key not in last
+        )
     ledger.close()
     return problems
 
@@ -1303,8 +1402,13 @@ def summarize(samples: list[int]) -> dict[str, float] | None:
     if not samples:
         return None
     ordered = sorted(samples)
-    pick = lambda q: ordered[min(len(ordered) - 1, int(q * len(ordered)))] / 1_000  # noqa: E731
-    return {'n': len(ordered), 'p50_us': pick(0.50), 'p99_us': pick(0.99), 'max_us': ordered[-1] / 1_000}
+    pick = lambda q: ordered[min(len(ordered) - 1, int(q * len(ordered)))] / 1_000
+    return {
+        'n': len(ordered),
+        'p50_us': pick(0.50),
+        'p99_us': pick(0.99),
+        'max_us': ordered[-1] / 1_000,
+    }
 
 
 def maint(run_dir: Path, op: str) -> int:

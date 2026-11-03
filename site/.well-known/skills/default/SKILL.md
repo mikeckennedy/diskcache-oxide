@@ -255,6 +255,7 @@ cache = Cache('/var/cache/my-app-oxide')
 import os
 from diskcache_oxide import Cache, CacheLike, NullCache
 
+
 def get_cache(path: str) -> CacheLike:
     if os.getenv('DISABLE_CACHE'):
         return NullCache(path)
@@ -271,8 +272,8 @@ Because `add()` always succeeds on a `NullCache`, don't rely on `add()` for job 
 real_cache = Cache('/var/cache/my-app')
 null = NullCache(invalidate=real_cache)
 
-null.delete('user:42')               # deleted from real_cache
-assert null.get('user:42') is None   # reads stay disabled
+null.delete('user:42')  # deleted from real_cache
+assert null.get('user:42') is None  # reads stay disabled
 ```
 
 ## Key gotchas

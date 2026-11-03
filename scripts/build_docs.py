@@ -206,7 +206,11 @@ def _stub_extension() -> griffe.Extension:
                 )
                 docstring = next((o.docstring for o in overloads if o.docstring), None)
                 func = griffe.Function(
-                    name, lineno=first.lineno, endlineno=first.endlineno, parameters=params, docstring=docstring
+                    name,
+                    lineno=first.lineno,
+                    endlineno=first.endlineno,
+                    parameters=params,
+                    docstring=docstring,
                 )
                 func.returns = ' | '.join(dict.fromkeys(str(o.returns) for o in overloads))
                 cls.set_member(name, func)

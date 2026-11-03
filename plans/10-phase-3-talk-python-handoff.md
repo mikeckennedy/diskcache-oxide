@@ -97,14 +97,21 @@ Then on the branch:
 
    ```python
    # _save_snapshot (:195-205)
-   def doc(x): return to_doc(x, include_id=True) if x is not None else None
-   home_cache.set(SNAPSHOT_KEY, {
-       'latest_episode': doc(self.latest_episode),
-       'latest_guests': [doc(g) for g in self.latest_guests],
-       'reviews': [doc(r) for r in self.reviews],
-       'upcoming_episodes': [doc(e) for e in self.upcoming_episodes],
-       'upcoming_guest_lookup': {k: doc(g) for k, g in lookup.items()},
-   }, expire=SNAPSHOT_TTL_SECONDS)
+   def doc(x):
+       return to_doc(x, include_id=True) if x is not None else None
+
+
+   home_cache.set(
+       SNAPSHOT_KEY,
+       {
+           'latest_episode': doc(self.latest_episode),
+           'latest_guests': [doc(g) for g in self.latest_guests],
+           'reviews': [doc(r) for r in self.reviews],
+           'upcoming_episodes': [doc(e) for e in self.upcoming_episodes],
+           'upcoming_guest_lookup': {k: doc(g) for k, g in lookup.items()},
+       },
+       expire=SNAPSHOT_TTL_SECONDS,
+   )
 
    # _restore_snapshot
    self.latest_episode = from_doc(Episode, snapshot.get('latest_episode'))

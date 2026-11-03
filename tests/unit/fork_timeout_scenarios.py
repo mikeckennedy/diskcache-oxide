@@ -195,7 +195,10 @@ def every_public_call(directory: Path) -> None:
             raised += 1
         raises_timeout('Cache(new)', lambda: Cache(directory / 'new', timeout=TIMEOUT))
         raises_timeout('Cache(open)', lambda: Cache(directory / 'open-already', timeout=TIMEOUT))
-        raises_timeout('Cache(open, size_limit)', lambda: Cache(directory / 'open-already', timeout=TIMEOUT, size_limit=2**24))
+        raises_timeout(
+            'Cache(open, size_limit)',
+            lambda: Cache(directory / 'open-already', timeout=TIMEOUT, size_limit=2**24),
+        )
         raised += 3
         raises_timeout('a closed handle reused', lambda: closed.get('k'))
         raised += 1
@@ -223,7 +226,9 @@ def every_public_call(directory: Path) -> None:
         assert c.get(key) == 1, f'{key} changed behind the fork'
     for key in ('new', 'new-big', 'new-add'):
         assert key not in c, f'{key} was written behind the fork'
-    value_files = [p for p in (directory / 'calls').rglob('*') if p.is_file() and not p.name.startswith('diskcache-oxide')]
+    value_files = [
+        p for p in (directory / 'calls').rglob('*') if p.is_file() and not p.name.startswith('diskcache-oxide')
+    ]
     assert not value_files, f'a timed-out spilled write left {value_files}'
 
 
@@ -293,6 +298,7 @@ def fds_inside(directory: Path) -> int:
 def swollen(directory: Path, timeout: float) -> Any:
     """A cache whose WAL is past its trim size, left by a burst under a peer's open snapshot."""
     from diskcache_oxide import Cache
+
     from tests.conformance.proc_workers import SqlitePeer
 
     limit = 1 << 20
@@ -467,7 +473,10 @@ def ticker_gap(directory: Path) -> None:
                 worst[what] = max(gaps, default=0.0)
             assert isinstance(result, Timeout), f'{what}: {result!r}'
             assert took >= timeout * 0.95, f'{what}: {took:.3f} s'
-    print(f'worst ticker gaps: { {k: round(v * 1e3, 1) for k, v in worst.items()} } ms', file=sys.stderr)
+    print(
+        f'worst ticker gaps: { {k: round(v * 1e3, 1) for k, v in worst.items()} } ms',
+        file=sys.stderr,
+    )
     for what, gap in worst.items():
         assert gap < MAX_TICK_GAP, f'{what}: the interpreter stalled for {gap * 1e3:.0f} ms during the wait'
 
@@ -672,8 +681,9 @@ def futures_unimportable(directory: Path) -> None:
 def caller_holding_the_logging_lock(directory: Path) -> None:
     """A thread calling the cache while it holds `logging`'s module lock, behind a fork: `Timeout` at
     its bound, and the fork then completes. The inversion the hook order costs, and why it's bounded."""
-    from diskcache_oxide import Timeout
     import logging
+
+    from diskcache_oxide import Timeout
 
     other = filled(directory, 'other')
     fork = StuckFork(directory)
@@ -733,7 +743,10 @@ def caches_first_lookup(directory: Path) -> None:
     plain.register('a')
     reports: list[tuple[str, Exception]] = []
     custom: Caches[str] = Caches(
-        directory / 'custom', timeout=TIMEOUT, on_open_error=lambda name, exc: reports.append((name, exc)), _monotonic=clock
+        directory / 'custom',
+        timeout=TIMEOUT,
+        on_open_error=lambda name, exc: reports.append((name, exc)),
+        _monotonic=clock,
     )
     custom.register('b')
 

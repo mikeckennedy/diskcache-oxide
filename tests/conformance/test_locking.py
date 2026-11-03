@@ -76,7 +76,11 @@ WRITE_OPS: dict[str, Callable[[Any], Any]] = {
 
 @pytest.mark.parametrize('op', WRITE_OPS.values(), ids=WRITE_OPS.keys())
 def test_write_times_out_under_write_lock(
-    prepared: Any, cache_dir: Path, backend: Backend, fake_clock: FakeClock, op: Callable[[Any], Any]
+    prepared: Any,
+    cache_dir: Path,
+    backend: Backend,
+    fake_clock: FakeClock,
+    op: Callable[[Any], Any],
 ) -> None:
     # An expired row is present, so expire() (and the sweep in set) has real work that needs the lock.
     _add_expired_row(prepared, fake_clock)
@@ -119,7 +123,12 @@ READ_OPS: dict[str, tuple[Callable[[Any], Any], Any]] = {
 
 @pytest.mark.parametrize('op, expected', READ_OPS.values(), ids=READ_OPS.keys())
 def test_reads_never_write(
-    prepared: Any, cache_dir: Path, backend: Backend, fake_clock: FakeClock, op: Callable[[Any], Any], expected: Any
+    prepared: Any,
+    cache_dir: Path,
+    backend: Backend,
+    fake_clock: FakeClock,
+    op: Callable[[Any], Any],
+    expected: Any,
 ) -> None:
     if expected is BIG:
         expected = big_value(backend)
@@ -223,7 +232,13 @@ def _writes_during(cache: Any, backend: Backend, directory: Path, op: str, count
     return (landed, removed) if landed else None
 
 
-def _chunked(cache: Any, backend: Backend, directory: Path, op: str, populate: Callable[[int], None]) -> tuple[int, int, int]:
+def _chunked(
+    cache: Any,
+    backend: Backend,
+    directory: Path,
+    op: str,
+    populate: Callable[[int], None],
+) -> tuple[int, int, int]:
     count = CHUNK_KEYS
     for _ in range(CHUNK_ATTEMPTS):
         cache.clear()
@@ -237,7 +252,9 @@ def _chunked(cache: Any, backend: Backend, directory: Path, op: str, populate: C
 
 
 @pytest.mark.timeout(60)
-def test_clear_releases_write_lock_between_chunks(make_cache: Callable[..., Any], cache_dir: Path, backend: Backend) -> None:
+def test_clear_releases_write_lock_between_chunks(
+    make_cache: Callable[..., Any], cache_dir: Path, backend: Backend
+) -> None:
     cache = make_cache(cache_dir, timeout=0.001)
     count, landed, removed = _chunked(cache, backend, cache_dir, 'clear', lambda n: _populate(cache, n))
 
@@ -248,14 +265,23 @@ def test_clear_releases_write_lock_between_chunks(make_cache: Callable[..., Any]
 
 @pytest.mark.timeout(60)
 def test_expire_releases_write_lock_between_chunks(
-    make_cache: Callable[..., Any], cache_dir: Path, backend: Backend, fake_clock: FakeClock
+    make_cache: Callable[..., Any],
+    cache_dir: Path,
+    backend: Backend,
+    fake_clock: FakeClock,
 ) -> None:
     # Populate under a frozen clock ten seconds in the past, so no set sweeps the others. The
     # spawned process uses real time, where every entry is already expired. Expire times are kept
     # distinct: with identical expire times diskcache's expire() only removes 100 rows per call.
     fake_clock.advance(-10)
     cache = make_cache(cache_dir, timeout=0.001)
-    count, landed, removed = _chunked(cache, backend, cache_dir, 'expire', lambda n: _populate(cache, n, expire=lambda i: 0.001 + i * 1e-5))
+    count, landed, removed = _chunked(
+        cache,
+        backend,
+        cache_dir,
+        'expire',
+        lambda n: _populate(cache, n, expire=lambda i: 0.001 + i * 1e-5),
+    )
 
     assert landed >= 1, 'no write committed while expire() was running'
     # The writer's sets run under the frozen fake clock, where nothing has expired, so they sweep

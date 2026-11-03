@@ -102,12 +102,23 @@ def reads_on_a_small_stack_keep_the_row(directory: Path) -> None:
                         results['plain get'] = 'RecursionError'
 
             on_a_small_thread(work)
-            print(serializer, name, sorted(k for k, v in results.items() if v in ('default', 'RecursionError')))
+            print(
+                serializer,
+                name,
+                sorted(k for k, v in results.items() if v in ('default', 'RecursionError')),
+            )
             # Never compared on the small thread: `==` on a deep value needs the stack too.
             assert results['durable get'] in ('default', value), (serializer, name)
             if results['durable pop'] == 'default':
-                assert plain.get('k') == value, (serializer, name, 'a pop that failed removed the row')
-                assert results['plain get'] in ('RecursionError', value), (serializer, name)
+                assert plain.get('k') == value, (
+                    serializer,
+                    name,
+                    'a pop that failed removed the row',
+                )
+                assert results['plain get'] in ('RecursionError', value), (
+                    serializer,
+                    name,
+                )
             else:
                 assert results['durable pop'] == value, (serializer, name)
                 assert plain.get('k', 'gone') == 'gone', (serializer, name)
@@ -133,7 +144,11 @@ def writes_on_a_small_stack_store_or_raise(directory: Path) -> None:
 
                 on_a_small_thread(work)
                 assert results['small'] is True, (serializer, name)
-                assert results['deep'] in (True, 'RecursionError'), (serializer, name, results['deep'])
+                assert results['deep'] in (True, 'RecursionError'), (
+                    serializer,
+                    name,
+                    results['deep'],
+                )
                 if results['deep'] is True:
                     assert cache.get('deep') == value, (serializer, name)
                 else:
@@ -188,7 +203,11 @@ def every_stack_position_survives(directory: Path) -> None:
     assert outcomes['RecursionError'] > 0, "the walk never reached the guard, so it didn't test it"
     assert outcomes['value'] > 0
     for serializer, name, value, _mode, _payload, cache in cases:
-        assert cache.get(name) == value, (serializer, name, 'a failed read removed the row')
+        assert cache.get(name) == value, (
+            serializer,
+            name,
+            'a failed read removed the row',
+        )
     for cache in {id(case[5]): case[5] for case in cases}.values():
         cache.close()
 

@@ -13,7 +13,7 @@ Almost every Python web app ends up needing a cache that all of its worker proce
 ```python
 from diskcache_oxide import Cache
 
-cache = Cache('/var/cache/my-app')   # every worker opens the same directory
+cache = Cache('/var/cache/my-app')  # every worker opens the same directory
 
 cache.set('episodes:popular', episodes, expire=300)
 episodes = cache.get('episodes:popular')

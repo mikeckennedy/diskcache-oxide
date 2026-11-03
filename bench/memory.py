@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from diskcache_oxide import Cache, _core
+
 from tests.proctitle import set_title
 
 KEYS = 50_000
@@ -70,12 +71,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--threads', default='1,4,8,16,32')
     parser.add_argument('--seconds', type=float, default=2.0)
-    parser.add_argument('--opt', action='append', default=[], metavar='NAME=VALUE', help='Cache option, e.g. sqlite_cache_size=512.')
+    parser.add_argument(
+        '--opt',
+        action='append',
+        default=[],
+        metavar='NAME=VALUE',
+        help='Cache option, e.g. sqlite_cache_size=512.',
+    )
     parser.add_argument('--out', type=Path, help='Also write the results as JSON.')
     args = parser.parse_args()
     set_title('bench-memory')
     if not instrumented():
-        print('this build has SQLite memory statistics off; build .venv-mem (scripts/check.sh) to measure memory', file=sys.stderr)
+        print(
+            'this build has SQLite memory statistics off; build .venv-mem (scripts/check.sh) to measure memory',
+            file=sys.stderr,
+        )
         return 2
     opts: dict[str, Any] = {name: json.loads(value) for name, _, value in (o.partition('=') for o in args.opt)}
     pages = opts.get('sqlite_cache_size', DEFAULT_PAGES)
@@ -94,11 +104,24 @@ def main() -> int:
             _core._sqlite_memory(reset=True)
             ops = storm(cache, threads, args.seconds)
             used, high = _core._sqlite_memory()
-            rows.append({'threads': threads, 'high_water': high, 'held_after': used, 'ops_per_sec_informational': ops})
+            rows.append(
+                {
+                    'threads': threads,
+                    'high_water': high,
+                    'held_after': used,
+                    'ops_per_sec_informational': ops,
+                }
+            )
             print(f'{threads:8d} {high / 2**20:15.2f} {used / 2**20:15.2f} {ops:22,.0f}')
         cache.close()
     if args.out:
-        result = {'python': sys.version, 'opts': opts, 'budget': budget, 'baseline': baseline, 'rows': rows}
+        result = {
+            'python': sys.version,
+            'opts': opts,
+            'budget': budget,
+            'baseline': baseline,
+            'rows': rows,
+        }
         args.out.write_text(json.dumps(result, indent=2) + '\n')
     return 0
 

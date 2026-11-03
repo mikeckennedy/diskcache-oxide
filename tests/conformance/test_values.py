@@ -13,7 +13,15 @@ from typing import Any
 
 import pytest
 
-from tests.conformance.value_cases import CASES, DISKCACHE_QUIRKS, Color, HomepageSnapshot, Point, Priority, exact_equal
+from tests.conformance.value_cases import (
+    CASES,
+    DISKCACHE_QUIRKS,
+    Color,
+    HomepageSnapshot,
+    Point,
+    Priority,
+    exact_equal,
+)
 
 _LA = dt.datetime(2026, 10, 27, 13, 45, tzinfo=zoneinfo.ZoneInfo('America/Los_Angeles'))
 
@@ -26,10 +34,24 @@ def _roundtrip_params() -> list[Any]:
             # TBD cases are marked too: if Phase 1 makes one round-trip, strict xfail flags the table for an update.
             # A TypeError case must fail with exactly that; a TBD case may fail any way until Phase 1 decides.
             raises = TypeError if oxide_default == 'TypeError' else None
-            marks.append(pytest.mark.diverges(backend='oxide', ref='D-001', reason=f'{case_id}: {oxide_default} without pickle', raises=raises))
+            marks.append(
+                pytest.mark.diverges(
+                    backend='oxide',
+                    ref='D-001',
+                    reason=f'{case_id}: {oxide_default} without pickle',
+                    raises=raises,
+                )
+            )
         if case_id in DISKCACHE_QUIRKS:
             ref, description = DISKCACHE_QUIRKS[case_id]
-            marks.append(pytest.mark.diverges(backend='diskcache', ref=ref, reason=description, raises=AssertionError))
+            marks.append(
+                pytest.mark.diverges(
+                    backend='diskcache',
+                    ref=ref,
+                    reason=description,
+                    raises=AssertionError,
+                )
+            )
         params.append(pytest.param(value, id=case_id, marks=marks))
     return params
 
@@ -40,7 +62,13 @@ def _oxide_params(column: int, outcome: str) -> list[Any]:
         if case[column] == outcome:
             params.append(pytest.param(case[1], id=case[0]))
         elif case[column] == 'TBD':
-            params.append(pytest.param(case[1], id=case[0], marks=pytest.mark.skip(reason='outcome is TBD until Phase 1')))
+            params.append(
+                pytest.param(
+                    case[1],
+                    id=case[0],
+                    marks=pytest.mark.skip(reason='outcome is TBD until Phase 1'),
+                )
+            )
     return params
 
 
@@ -104,7 +132,12 @@ def test_value_roundtrips_across_reopen(make_cache: Callable[..., Any], cache_di
     assert exact_equal(reader.get('k'), value)
 
 
-@pytest.mark.diverges(backend='oxide', ref='D-008', reason='oxide round-trips a top-level NaN', raises=AssertionError)
+@pytest.mark.diverges(
+    backend='oxide',
+    ref='D-008',
+    reason='oxide round-trips a top-level NaN',
+    raises=AssertionError,
+)
 def test_diskcache_top_level_nan_reads_back_as_none(cache: Any) -> None:
     # Surprising: the NaN is stored (set is True, the key exists) but reads back as None, ignoring the default.
     assert cache.set('k', math.nan) is True
@@ -150,7 +183,9 @@ def test_oxide_pickle_true_roundtrips(make_cache: Callable[..., Any], cache_dir:
 
 
 @pytest.mark.backend_only('oxide')
-def test_oxide_pickle_false_handle_refuses_to_unpickle(make_cache: Callable[..., Any], cache_dir: Path, backend: Any) -> None:
+def test_oxide_pickle_false_handle_refuses_to_unpickle(
+    make_cache: Callable[..., Any], cache_dir: Path, backend: Any
+) -> None:
     # A pickle=True peer may store pickled rows; a pickle=False handle must never run pickle on them,
     # and must leave the row alone rather than destroying the peer's data.
     writer = make_cache(cache_dir, pickle=True)
@@ -167,7 +202,9 @@ def test_oxide_pickle_false_handle_refuses_to_unpickle(make_cache: Callable[...,
 
 
 @pytest.mark.backend_only('oxide')
-def test_oxide_pickle_false_pop_refuses_and_keeps_the_row(make_cache: Callable[..., Any], cache_dir: Path, backend: Any) -> None:
+def test_oxide_pickle_false_pop_refuses_and_keeps_the_row(
+    make_cache: Callable[..., Any], cache_dir: Path, backend: Any
+) -> None:
     # A pickle=False handle's pop once raised UnsafeValueError with the peer's row already gone
     # (found by the architect's plan-08 review). The refusal has to come before any delete.
     writer = make_cache(cache_dir, pickle=True)

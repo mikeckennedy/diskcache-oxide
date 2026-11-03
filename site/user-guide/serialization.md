@@ -8,7 +8,7 @@ What goes into the cache should come out as exactly what you put in, it should b
 Each cache picks a structured format with `serializer=`:
 
 ``` python
-cache = Cache('/var/cache/my-app')                       # msgpack, the default
+cache = Cache('/var/cache/my-app')  # msgpack, the default
 readable = Cache('/var/cache/my-app-json', serializer='json')
 ```
 
@@ -37,13 +37,16 @@ diskcache-oxide's encoder, written in Rust, notices anything its format would ch
 ``` python
 import datetime
 
-cache.set('record', {
-    'created': datetime.datetime.now(datetime.UTC),
-    'point': (37.77, -122.42),
-    'ids': {101, 102},
-    'big': 2**128,
-    'by_id': {1: 'one', 2: 'two'},
-})
+cache.set(
+    'record',
+    {
+        'created': datetime.datetime.now(datetime.UTC),
+        'point': (37.77, -122.42),
+        'ids': {101, 102},
+        'big': 2**128,
+        'by_id': {1: 'one', 2: 'two'},
+    },
+)
 
 record = cache.get('record')
 assert isinstance(record['point'], tuple)

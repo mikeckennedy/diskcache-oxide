@@ -7,9 +7,8 @@ import inspect
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import diskcache_oxide
+import pytest
 from diskcache_oxide import _core
 
 STUB = ast.parse((Path(diskcache_oxide.__file__).parent / '_core.pyi').read_text())
@@ -58,9 +57,16 @@ def _signature(node: Function) -> list[tuple[str, inspect._ParameterKind, object
     defaults: list[ast.expr | None] = [None] * (len(positional) - len(args.defaults)) + list(args.defaults)
     params: list[tuple[str, inspect._ParameterKind, object]] = []
     for index, (arg, default) in enumerate(zip(positional, defaults, strict=True)):
-        kind = inspect.Parameter.POSITIONAL_ONLY if index < len(args.posonlyargs) else inspect.Parameter.POSITIONAL_OR_KEYWORD
+        kind = (
+            inspect.Parameter.POSITIONAL_ONLY
+            if index < len(args.posonlyargs)
+            else inspect.Parameter.POSITIONAL_OR_KEYWORD
+        )
         params.append((arg.arg, kind, default))
-    params.extend((arg.arg, inspect.Parameter.KEYWORD_ONLY, default) for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True))
+    params.extend(
+        (arg.arg, inspect.Parameter.KEYWORD_ONLY, default)
+        for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True)
+    )
     return [p for p in params if p[0] not in ('self', 'cls')]
 
 
@@ -74,7 +80,9 @@ def _check_defaults(where: str, stub: Function, runtime: inspect.Signature) -> N
             assert param.default is inspect.Parameter.empty, f'{where_param}: the stub has no default'
             continue
         assert param.default is not inspect.Parameter.empty, f'{where_param}: the runtime has no default'
-        value = ast.literal_eval(default) if not (isinstance(default, ast.Constant) and default.value is Ellipsis) else ...
+        value = (
+            ast.literal_eval(default) if not (isinstance(default, ast.Constant) and default.value is Ellipsis) else ...
+        )
         if value is not ...:
             assert param.default == value, where_param
 
@@ -102,7 +110,11 @@ def test_exception_bases_match(name: str) -> None:
 
 
 def test_the_constructor_matches() -> None:
-    _check_defaults('Cache', _members(CLASSES['Cache'])['__new__'][0], inspect.signature(_core.Cache))
+    _check_defaults(
+        'Cache',
+        _members(CLASSES['Cache'])['__new__'][0],
+        inspect.signature(_core.Cache),
+    )
 
 
 CACHE_MEMBERS = _members(CLASSES['Cache'])
@@ -117,7 +129,14 @@ def test_every_stubbed_member_exists(name: str) -> None:
 RUNTIME_ONLY = {'__traverse__', '__clear__'}
 
 
-@pytest.mark.parametrize('name', sorted(n for n, m in vars(_core.Cache).items() if callable(m) or isinstance(m, property) or inspect.isgetsetdescriptor(m)))
+@pytest.mark.parametrize(
+    'name',
+    sorted(
+        n
+        for n, m in vars(_core.Cache).items()
+        if callable(m) or isinstance(m, property) or inspect.isgetsetdescriptor(m)
+    ),
+)
 def test_every_public_member_is_stubbed(name: str) -> None:
     public = not name.startswith('_') or name.startswith('__') and name not in RUNTIME_ONLY
     # Whatever `object` already declares (`__repr__`, `__new__`, ...) needs no stub line.
@@ -126,7 +145,14 @@ def test_every_public_member_is_stubbed(name: str) -> None:
     assert name in CACHE_MEMBERS, f'Cache.{name} is in the module but not the stub'
 
 
-@pytest.mark.parametrize('name', sorted(n for n, defs in CACHE_MEMBERS.items() if not n.startswith('__') and not _is_property(defs[0]) and not n.startswith('_')))
+@pytest.mark.parametrize(
+    'name',
+    sorted(
+        n
+        for n, defs in CACHE_MEMBERS.items()
+        if not n.startswith('__') and not _is_property(defs[0]) and not n.startswith('_')
+    ),
+)
 def test_method_signatures_match(name: str) -> None:
     runtime = inspect.signature(getattr(_core.Cache, name))
     for definition in CACHE_MEMBERS[name]:

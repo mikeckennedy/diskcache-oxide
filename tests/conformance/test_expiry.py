@@ -139,7 +139,11 @@ def test_expire_true_means_one_second(cache: Any, fake_clock: FakeClock) -> None
 @pytest.mark.backend_only('oxide')
 @pytest.mark.parametrize('flag', [True, False])
 def test_oxide_rejects_bool_expire(cache: Any, flag: bool) -> None:
-    for call in (lambda: cache.set('k', 'v', expire=flag), lambda: cache.add('k', 'v', expire=flag), lambda: cache.touch('k', expire=flag)):
+    for call in (
+        lambda: cache.set('k', 'v', expire=flag),
+        lambda: cache.add('k', 'v', expire=flag),
+        lambda: cache.touch('k', expire=flag),
+    ):
         with pytest.raises(TypeError):
             call()
     assert 'k' not in cache

@@ -26,7 +26,13 @@ from typing import Any
 from tests.proctitle import set_title
 
 TOLERANCE = 1.05
-LATENCY = ('get_hit_small', 'get_miss', 'get_hit_small_dict', 'set_small', 'get_random_wide')
+LATENCY = (
+    'get_hit_small',
+    'get_miss',
+    'get_hit_small_dict',
+    'set_small',
+    'get_random_wide',
+)
 THROUGHPUT = ('threads_99to1', 'threads_1000to1')
 # Stricter ceilings for some latency workloads, as a ratio to diskcache (no extra tolerance). They
 # replace Phase 2's absolute targets, which don't carry over between machines (architect's Phase 2
@@ -43,7 +49,15 @@ VARIANTS: dict[str, list[str]] = {
 
 def run_once(variant: str, out: Path) -> dict[str, Any]:
     only = [arg for name in (*LATENCY, *THROUGHPUT) for arg in ('--only', name)]
-    cmd = [sys.executable, '-m', 'bench.baseline', *VARIANTS[variant], *only, '--out', str(out)]
+    cmd = [
+        sys.executable,
+        '-m',
+        'bench.baseline',
+        *VARIANTS[variant],
+        *only,
+        '--out',
+        str(out),
+    ]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
     return json.loads(out.read_text())['results']
 
@@ -65,7 +79,9 @@ def main() -> None:
         return statistics.median(s[workload][field] for s in samples[variant])
 
     build = 'free-threaded' if sysconfig.get_config_var('Py_GIL_DISABLED') else 'GIL'
-    print(f'\nPython {sys.version.split()[0]} ({build}), {args.rounds} interleaved rounds, tolerance {TOLERANCE:.2f}x\n')
+    print(
+        f'\nPython {sys.version.split()[0]} ({build}), {args.rounds} interleaved rounds, tolerance {TOLERANCE:.2f}x\n'
+    )
     print(f'{"workload":28} {"variant":14} {"p50 us / ops":>14} {"vs diskcache":>13}  verdict')
 
     passed: dict[str, bool] = {v: True for v in VARIANTS if v != 'diskcache'}

@@ -27,14 +27,21 @@ import tempfile
 from diskcache_oxide import Cache
 
 cache = Cache(tempfile.mkdtemp())
-for key in ['user:42:profile', 'user:42:sidebar', 'user:420:profile', 'episode:512:page']:
+for key in [
+    'user:42:profile',
+    'user:42:sidebar',
+    'user:420:profile',
+    'episode:512:page',
+]:
     cache.set(key, '...', expire=3600)
+
 
 def invalidate_prefix(prefix: str) -> int:
     removed = 0
     for key in cache.iterkeys(prefix=prefix):
         removed += cache.delete(key)
     return removed
+
 
 print(invalidate_prefix('user:42:'), 'removed')
 print(sorted(cache))
@@ -56,19 +63,23 @@ Instead of deleting anything, keep a generation number per group and put it in e
 ``` python
 import time
 
+
 def generation(user_id: int) -> int:
     key = f'gen:user:{user_id}'
     gen = cache.get(key)
     if gen is None:
-        cache.add(key, time.time_ns())   # if several workers race, one value wins
+        cache.add(key, time.time_ns())  # if several workers race, one value wins
         gen = cache.get(key)
     return gen
+
 
 def user_key(user_id: int, name: str) -> str:
     return f'user:{user_id}:g{generation(user_id)}:{name}'
 
+
 def invalidate_user(user_id: int) -> None:
     cache.set(f'gen:user:{user_id}', time.time_ns())
+
 
 cache.set(user_key(7, 'profile'), {'name': 'Sam'}, expire=3600)
 print(cache.get(user_key(7, 'profile')))

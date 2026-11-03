@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from diskcache_oxide import Cache, Caches, CacheStats, FormatMismatchError, NullCache
 
 
@@ -35,8 +34,13 @@ def base(tmp_path: Path) -> Path:
 def _future_format(directory: Path) -> None:
     """Leaves a database at `directory` stamped with a format version from the future."""
     Cache(directory).close()
-    script = 'import sqlite3, sys\ncon = sqlite3.connect(sys.argv[1])\ncon.execute("PRAGMA user_version = 999")\ncon.close()'
-    subprocess.run([sys.executable, '-c', script, str(directory / 'diskcache-oxide.sqlite')], check=True)
+    script = (
+        'import sqlite3, sys\ncon = sqlite3.connect(sys.argv[1])\ncon.execute("PRAGMA user_version = 999")\ncon.close()'
+    )
+    subprocess.run(
+        [sys.executable, '-c', script, str(directory / 'diskcache-oxide.sqlite')],
+        check=True,
+    )
 
 
 # -- registration and lookup ----------------------------------------------------------------------
@@ -203,7 +207,11 @@ def test_close_all_during_a_lookup_never_leaves_an_untracked_handle(base: Path) 
 def test_a_cache_that_cant_open_is_a_null_cache_and_is_retried(base: Path) -> None:
     clock = Clock()
     reports: list[tuple[str, Exception]] = []
-    caches = Caches(base, on_open_error=lambda name, exc: reports.append((name, exc)), _monotonic=clock)
+    caches = Caches(
+        base,
+        on_open_error=lambda name, exc: reports.append((name, exc)),
+        _monotonic=clock,
+    )
     caches.register('a')
     base.mkdir()
     (base / 'a').write_text('a file where the directory should be')
@@ -226,7 +234,9 @@ def test_a_cache_that_cant_open_is_a_null_cache_and_is_retried(base: Path) -> No
     caches.close_all()
 
 
-def test_a_future_format_is_a_null_cache_reported_by_the_default_logger(base: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_a_future_format_is_a_null_cache_reported_by_the_default_logger(
+    base: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     _future_format(base / 'a')
     caches = Caches(base)
     caches.register('a')
@@ -269,7 +279,10 @@ def test_a_registry_decode_reporter_learns_which_cache(base: Path) -> None:
     caches.register('a')
     caches['a'].set('k', {'x': 1})
     script = 'import sqlite3, sys\ncon = sqlite3.connect(sys.argv[1])\ncon.execute("UPDATE cache SET value = X\'c1\'")\ncon.commit()'
-    subprocess.run([sys.executable, '-c', script, str(base / 'a' / 'diskcache-oxide.sqlite')], check=True)
+    subprocess.run(
+        [sys.executable, '-c', script, str(base / 'a' / 'diskcache-oxide.sqlite')],
+        check=True,
+    )
     assert caches['a'].get('k') is None
     [(name, key, _)] = calls
     assert (name, key) == ('a', 'k')

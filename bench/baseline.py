@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import gc
-import gzip
 import json
 import os
 import platform
@@ -44,7 +43,12 @@ BATCH = 1_000
 def page_entry(size: int = 450 * 1024) -> dict[str, Any]:
     """The shape Talk Python's rendered_cache stores for show pages and RSS feeds."""
     body = random.Random(42).randbytes(size)  # Incompressible, so the stored size is ~size.
-    return {'content_gz': body, 'created': '2026-10-27T12:00:00+00:00', 'etag': 'abc123', 'version': 2}
+    return {
+        'content_gz': body,
+        'created': '2026-10-27T12:00:00+00:00',
+        'etag': 'abc123',
+        'version': 2,
+    }
 
 
 def time_batched(op: Callable[[int], Any], n_batches: int) -> float:
@@ -101,7 +105,10 @@ def measure(op: Callable[[int], Any], *, n_batches: int, n_samples: int, warmup:
     finally:
         gc.enable()
 
-    return {'p50_us': statistics.median(p50s) / 1_000, 'p99_us': statistics.median(p99s) / 1_000}
+    return {
+        'p50_us': statistics.median(p50s) / 1_000,
+        'p99_us': statistics.median(p99s) / 1_000,
+    }
 
 
 def measure_once(op: Callable[[], Any]) -> dict[str, float]:
@@ -124,6 +131,7 @@ def populate(cache: Any, count: int) -> None:
     transact = getattr(cache, 'transact', None)
     chunk = 10_000
     for start in range(0, count, chunk):
+
         def write_chunk() -> None:
             for i in range(start, min(start + chunk, count)):
                 prefix = 'h' if i % 4 else 'd'
@@ -143,11 +151,18 @@ def populate(cache: Any, count: int) -> None:
 WIDE_KEYS = 100_000
 
 
-def random_wide_gets(backend: Backend, directory: Path, opts: dict[str, Any], n_batches: int, n_samples: int) -> dict[str, float]:
+def random_wide_gets(
+    backend: Backend,
+    directory: Path,
+    opts: dict[str, Any],
+    n_batches: int,
+    n_samples: int,
+) -> dict[str, float]:
     cache = backend.make_cache(directory, timeout=10.0, size_limit=2**34, **opts)
     transact = getattr(cache, 'transact', None)
     body = 'x' * 1_000
     for start in range(0, WIDE_KEYS, 10_000):
+
         def write_chunk() -> None:
             for i in range(start, start + 10_000):
                 cache.set(f'w:{i}', {'id': i, 'body': body})
@@ -159,7 +174,12 @@ def random_wide_gets(backend: Backend, directory: Path, opts: dict[str, Any], n_
             write_chunk()
     rng = random.Random(11)
     keys = [f'w:{rng.randrange(WIDE_KEYS)}' for _ in range(65_536)]
-    result = measure(lambda i: cache.get(keys[i & 65_535]), n_batches=n_batches // 4 or 1, n_samples=n_samples, warmup=5_000)
+    result = measure(
+        lambda i: cache.get(keys[i & 65_535]),
+        n_batches=n_batches // 4 or 1,
+        n_samples=n_samples,
+        warmup=5_000,
+    )
     cache.close()
     return result
 
@@ -173,7 +193,14 @@ def mcp_result() -> dict[str, Any]:
         'tool': 'search_episodes',
         'ok': True,
         'count': 3,
-        'results': [{'id': 500 + n, 'title': f'Episode {500 + n}: Python news', 'score': 0.9 - n / 10} for n in range(3)],
+        'results': [
+            {
+                'id': 500 + n,
+                'title': f'Episode {500 + n}: Python news',
+                'score': 0.9 - n / 10,
+            }
+            for n in range(3)
+        ],
     }
 
 
@@ -192,7 +219,12 @@ WORKLOADS = (
 )
 
 
-def run(backend: Backend, quick: bool, only: set[str] | None = None, opts: dict[str, Any] | None = None) -> dict[str, Any]:
+def run(
+    backend: Backend,
+    quick: bool,
+    only: set[str] | None = None,
+    opts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Run the selected workloads (all by default); `opts` are passed to every make_cache call."""
     global LOOP_OVERHEAD_NS
     LOOP_OVERHEAD_NS = loop_overhead_ns()
@@ -211,17 +243,33 @@ def run(backend: Backend, quick: bool, only: set[str] | None = None, opts: dict[
         small = 'x' * 100
         cache.set('small', small)
         if want('get_hit_small'):
-            results['get_hit_small'] = measure(lambda i: cache.get('small'), n_batches=n_batches, n_samples=n_samples, warmup=5_000)
+            results['get_hit_small'] = measure(
+                lambda i: cache.get('small'),
+                n_batches=n_batches,
+                n_samples=n_samples,
+                warmup=5_000,
+            )
         if want('get_hit_small_dict'):
             cache.set('small_dict', mcp_result())
             results['get_hit_small_dict'] = measure(
-                lambda i: cache.get('small_dict'), n_batches=n_batches, n_samples=n_samples, warmup=5_000
+                lambda i: cache.get('small_dict'),
+                n_batches=n_batches,
+                n_samples=n_samples,
+                warmup=5_000,
             )
         if want('get_miss'):
-            results['get_miss'] = measure(lambda i: cache.get('missing'), n_batches=n_batches, n_samples=n_samples, warmup=5_000)
+            results['get_miss'] = measure(
+                lambda i: cache.get('missing'),
+                n_batches=n_batches,
+                n_samples=n_samples,
+                warmup=5_000,
+            )
         if want('set_small'):
             results['set_small'] = measure(
-                lambda i: cache.set(f'small:{i % 1_000}', small), n_batches=n_batches // 4 or 1, n_samples=n_samples // 4, warmup=1_000
+                lambda i: cache.set(f'small:{i % 1_000}', small),
+                n_batches=n_batches // 4 or 1,
+                n_samples=n_samples // 4,
+                warmup=1_000,
             )
 
         if want('get_random_wide'):
@@ -232,11 +280,17 @@ def run(backend: Backend, quick: bool, only: set[str] | None = None, opts: dict[
             cache.set('page', entry, expire=3600)
             if want('get_page_entry_450k'):
                 results['get_page_entry_450k'] = measure(
-                    lambda i: cache.get('page'), n_batches=0, n_samples=200 if quick else 1_000, warmup=50
+                    lambda i: cache.get('page'),
+                    n_batches=0,
+                    n_samples=200 if quick else 1_000,
+                    warmup=50,
                 )
             if want('set_page_entry_450k'):
                 results['set_page_entry_450k'] = measure(
-                    lambda i: cache.set(f'page:{i % 50}', entry, expire=3600), n_batches=0, n_samples=200 if quick else 1_000, warmup=50
+                    lambda i: cache.set(f'page:{i % 50}', entry, expire=3600),
+                    n_batches=0,
+                    n_samples=200 if quick else 1_000,
+                    warmup=50,
                 )
 
         def rate_limit_bump(i: int) -> None:
@@ -245,7 +299,12 @@ def run(backend: Backend, quick: bool, only: set[str] | None = None, opts: dict[
             cache.incr(key)
 
         if want('add_incr_counter'):
-            results['add_incr_counter'] = measure(rate_limit_bump, n_batches=n_batches // 4 or 1, n_samples=n_samples // 4, warmup=1_000)
+            results['add_incr_counter'] = measure(
+                rate_limit_bump,
+                n_batches=n_batches // 4 or 1,
+                n_samples=n_samples // 4,
+                warmup=1_000,
+            )
         for name, every in MIXES.items():
             if want(name):
                 results[name] = threaded_throughput(cache, seconds=0.5 if quick else 1.5, every=every)
@@ -255,7 +314,9 @@ def run(backend: Backend, quick: bool, only: set[str] | None = None, opts: dict[
             scan_cache = backend.make_cache(Path(tmp) / f'scan-{size}', timeout=10.0, size_limit=2**32)
             populate(scan_cache, size)
             label = f'{size // 1_000}k'
-            results[f'iterkeys_prefix_scan_{label}'] = measure_once(lambda: [k for k in scan_cache.iterkeys() if k.startswith('d:')])
+            results[f'iterkeys_prefix_scan_{label}'] = measure_once(
+                lambda: [k for k in scan_cache.iterkeys() if k.startswith('d:')]
+            )
             results[f'len_{label}'] = measure_once(lambda: len(scan_cache))
             results[f'volume_{label}'] = measure_once(lambda: scan_cache.volume())
             scan_cache.close()
@@ -320,7 +381,7 @@ def power_source() -> str:
         return 'unknown'
     try:
         out = subprocess.run(['pmset', '-g', 'batt'], capture_output=True, text=True, timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return 'unknown'
     return 'ac' if 'AC Power' in out else 'battery' if 'Battery Power' in out else 'unknown'
 
@@ -329,7 +390,7 @@ def metadata(backend: Backend, machine: str, quick: bool) -> dict[str, Any]:
     gil_disabled = bool(sysconfig.get_config_var('Py_GIL_DISABLED'))
     return {
         'backend': backend.name,
-        'backend_version': getattr(backend, '_module').__version__ if hasattr(getattr(backend, '_module'), '__version__') else None,
+        'backend_version': backend._module.__version__ if hasattr(backend._module, '__version__') else None,
         'python': platform.python_version() + ('t' if gil_disabled else ''),
         'gil_enabled_at_runtime': sys._is_gil_enabled() if hasattr(sys, '_is_gil_enabled') else True,
         'machine': machine,
@@ -347,11 +408,26 @@ def metadata(backend: Backend, machine: str, quick: bool) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--backend', default='diskcache', choices=sorted(BACKENDS))
-    parser.add_argument('--machine', default=platform.node().split('.')[0] or 'unknown', help='Label for the results file.')
+    parser.add_argument(
+        '--machine',
+        default=platform.node().split('.')[0] or 'unknown',
+        help='Label for the results file.',
+    )
     parser.add_argument('--quick', action='store_true', help='Smaller run for smoke-testing the script.')
     parser.add_argument('--out', type=Path, help='Override the output path.')
-    parser.add_argument('--only', action='append', choices=WORKLOADS, help='Run only these workloads (repeatable).')
-    parser.add_argument('--opt', action='append', default=[], metavar='NAME=VALUE', help='Extra cache option, e.g. spike_detach=true.')
+    parser.add_argument(
+        '--only',
+        action='append',
+        choices=WORKLOADS,
+        help='Run only these workloads (repeatable).',
+    )
+    parser.add_argument(
+        '--opt',
+        action='append',
+        default=[],
+        metavar='NAME=VALUE',
+        help='Extra cache option, e.g. spike_detach=true.',
+    )
     args = parser.parse_args()
 
     set_title(f'bench[{args.backend}]')
@@ -364,7 +440,10 @@ def main() -> None:
     meta['opts'] = opts
     results = run(backend, args.quick, set(args.only) if args.only else None, opts)
 
-    out = args.out or RESULTS_DIR / f'{meta["backend"]}-{meta["python"]}-{meta["machine"]}{"-quick" if args.quick else ""}.json'
+    out = (
+        args.out
+        or RESULTS_DIR / f'{meta["backend"]}-{meta["python"]}-{meta["machine"]}{"-quick" if args.quick else ""}.json'
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({'meta': meta, 'results': results}, indent=2) + '\n')
     print(json.dumps(results, indent=2))

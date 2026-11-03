@@ -19,7 +19,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from diskcache_oxide import Cache, Caches, CorruptValueError, NullCache, Timeout, UnsafeValueError, _core
+from diskcache_oxide import (
+    Cache,
+    Caches,
+    CorruptValueError,
+    NullCache,
+    Timeout,
+    UnsafeValueError,
+    _core,
+)
 
 from tests.conformance.proc_workers import SqlitePeer
 from tests.unit.durable_scenarios import SCENARIOS
@@ -371,7 +379,9 @@ def test_a_value_file_it_cant_create_drops_the_set(directory: Path) -> None:
 # -- pop ------------------------------------------------------------------------------------------------
 
 
-def test_a_pop_whose_delete_fails_returns_the_default_and_the_value_stays(directory: Path) -> None:
+def test_a_pop_whose_delete_fails_returns_the_default_and_the_value_stays(
+    directory: Path,
+) -> None:
     """Returning the decoded value here could deliver it twice, once to this caller and once to whoever
     pops it after the failure."""
     cache = Cache(directory, timeout=SHORT, durable=True)
@@ -384,9 +394,16 @@ def test_a_pop_whose_delete_fails_returns_the_default_and_the_value_stays(direct
     cache.close()
 
 
-def test_a_failed_delete_of_an_unreadable_value_is_a_miss_and_the_row_stays(directory: Path) -> None:
+def test_a_failed_delete_of_an_unreadable_value_is_a_miss_and_the_row_stays(
+    directory: Path,
+) -> None:
     seen: list[str] = []
-    cache = Cache(directory, timeout=SHORT, durable=True, on_decode_error=lambda key, exc: seen.append(key))
+    cache = Cache(
+        directory,
+        timeout=SHORT,
+        durable=True,
+        on_decode_error=lambda key, exc: seen.append(key),
+    )
     cache.set('k', {'a': 1})
     _sql(directory, "UPDATE cache SET value = X'c1' WHERE key = 'k'")
     with peer_holding_the_write_lock(directory):
@@ -399,7 +416,9 @@ def test_a_failed_delete_of_an_unreadable_value_is_a_miss_and_the_row_stays(dire
     cache.close()
 
 
-def test_an_explicit_raise_gets_the_decode_error_when_the_delete_fails(directory: Path) -> None:
+def test_an_explicit_raise_gets_the_decode_error_when_the_delete_fails(
+    directory: Path,
+) -> None:
     cache = Cache(directory, timeout=SHORT, durable=True, on_decode_error='raise')
     cache.set('k', {'a': 1})
     _sql(directory, "UPDATE cache SET value = X'c1' WHERE key = 'k'")
@@ -471,7 +490,11 @@ def test_an_explicit_on_decode_error_wins_over_durable(directory: Path, tmp_path
         raising.get('k')
     raising.close()
     seen: list[str] = []
-    reporting = _corrupted(tmp_path / 'report', durable=True, on_decode_error=lambda key, exc: seen.append(key))
+    reporting = _corrupted(
+        tmp_path / 'report',
+        durable=True,
+        on_decode_error=lambda key, exc: seen.append(key),
+    )
     assert reporting.get('k') is None
     assert seen == ['k']
     reporting.close()
@@ -486,8 +509,19 @@ def test_a_bad_on_decode_error_still_raises(directory: Path) -> None:
 
 # -- pickle hooks ---------------------------------------------------------------------------------------
 
-OUTAGES = [Timeout('nested'), TimeoutError('nested'), OSError('disk'), ConnectionError('gone'), RecursionError()]
-ALWAYS_RAISED = [MemoryError(), KeyboardInterrupt(), SystemExit(), UnsafeValueError('from a hook')]
+OUTAGES = [
+    Timeout('nested'),
+    TimeoutError('nested'),
+    OSError('disk'),
+    ConnectionError('gone'),
+    RecursionError(),
+]
+ALWAYS_RAISED = [
+    MemoryError(),
+    KeyboardInterrupt(),
+    SystemExit(),
+    UnsafeValueError('from a hook'),
+]
 
 
 def _raising(error: BaseException) -> Callable[[], None]:
@@ -500,7 +534,10 @@ def _raising(error: BaseException) -> Callable[[], None]:
 @pytest.mark.parametrize('spilled', [False, True], ids=['inline', 'spilled'])
 @pytest.mark.parametrize('error', OUTAGES, ids=lambda e: type(e).__name__)
 def test_an_outage_from_a_hook_is_a_miss_with_the_row_kept_reported_once(
-    directory: Path, caplog: pytest.LogCaptureFixture, error: BaseException, spilled: bool
+    directory: Path,
+    caplog: pytest.LogCaptureFixture,
+    error: BaseException,
+    spilled: bool,
 ) -> None:
     cache = Cache(directory, pickle=True, durable=True)
     cache.set('k', Hooked('x' * (BIG if spilled else 1)))
@@ -536,7 +573,12 @@ def test_what_a_hook_raises_that_is_never_a_miss(directory: Path, error: BaseExc
 
 def test_a_callable_policy_hears_about_a_hook_outage_once(directory: Path) -> None:
     seen: list[tuple[str, type]] = []
-    cache = Cache(directory, pickle=True, durable=True, on_decode_error=lambda key, exc: seen.append((key, type(exc))))
+    cache = Cache(
+        directory,
+        pickle=True,
+        durable=True,
+        on_decode_error=lambda key, exc: seen.append((key, type(exc))),
+    )
     cache.set('k', Hooked('kept'))
     Hooked.hook = _raising(Timeout('nested'))
     assert cache.get('k') is None
@@ -605,12 +647,17 @@ def test_a_timeout_from_the_callers_clock_raises(directory: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    'error', [Timeout('from a __reduce__'), OSError('from a __reduce__')], ids=lambda e: type(e).__name__
+    'error',
+    [Timeout('from a __reduce__'), OSError('from a __reduce__')],
+    ids=lambda e: type(e).__name__,
 )
 def test_an_error_from_the_callers_pickle_hook_during_a_write_raises(directory: Path, error: BaseException) -> None:
     RaisesOnPickle.error = error
     cache = Cache(directory, pickle=True, durable=True)
-    for call in (lambda: cache.set('k', RaisesOnPickle()), lambda: cache.add('k', RaisesOnPickle())):
+    for call in (
+        lambda: cache.set('k', RaisesOnPickle()),
+        lambda: cache.add('k', RaisesOnPickle()),
+    ):
         with pytest.raises(type(error), match='from a __reduce__'):
             call()
     assert _total(cache._durable_stats(), 'busy') == 0
@@ -663,7 +710,10 @@ def test_a_pickle_on_a_handle_without_pickle_still_raises(directory: Path) -> No
 
 def test_misuse_of_a_hold_still_raises(directory: Path) -> None:
     cache = Cache(directory, durable=True)
-    with cache._hold_write_transaction(), pytest.raises(RuntimeError, match='already holds'):
+    with (
+        cache._hold_write_transaction(),
+        pytest.raises(RuntimeError, match='already holds'),
+    ):
         with cache._hold_write_transaction():
             pass
     cache.close()
@@ -691,7 +741,11 @@ def test_admin_calls_raise_behind_the_peer(directory: Path) -> None:
     cache.set('k', 1, expire=-1)
     cache.set('other', 1)
     with peer_holding_the_write_lock(directory):
-        for call in (lambda: cache.clear(), lambda: cache.expire(), lambda: cache.cull()):
+        for call in (
+            lambda: cache.clear(),
+            lambda: cache.expire(),
+            lambda: cache.cull(),
+        ):
             with pytest.raises(Timeout):
                 call()
     cache.close()
@@ -700,7 +754,7 @@ def test_admin_calls_raise_behind_the_peer(directory: Path) -> None:
 def test_the_constructor_raises(tmp_path: Path) -> None:
     path = tmp_path / 'file'
     path.write_text('not a directory')
-    with pytest.raises(OSError):  # noqa: PT011
+    with pytest.raises(OSError):
         Cache(path, durable=True)
 
 
@@ -739,7 +793,9 @@ def test_failures_inside_a_held_transaction_raise(directory: Path) -> None:
     cache.close()
 
 
-def test_an_outage_from_a_hook_inside_a_held_transaction_raises(directory: Path) -> None:
+def test_an_outage_from_a_hook_inside_a_held_transaction_raises(
+    directory: Path,
+) -> None:
     cache = Cache(directory, pickle=True, durable=True)
     cache.set('k', Hooked('kept'))
     Hooked.hook = _raising(OSError('disk'))
@@ -810,7 +866,10 @@ def test_the_first_failure_logs_at_once_and_the_rest_are_counted(
     clock = FakeClock()
     cache = Cache(directory, timeout=0.001, durable=True, clock=clock)
     cache.set('k', 1)
-    with peer_holding_the_write_lock(directory), caplog.at_level(logging.WARNING, logger=LOGGER):
+    with (
+        peer_holding_the_write_lock(directory),
+        caplog.at_level(logging.WARNING, logger=LOGGER),
+    ):
         assert cache.set('k', 2) is False
         [first] = _messages(caplog)
         assert first.levelno == logging.WARNING
@@ -878,7 +937,10 @@ def test_a_clock_that_jumps_back_cant_silence_the_log(directory: Path, caplog: p
     clock = FakeClock()
     cache = Cache(directory, timeout=0.001, durable=True, clock=clock)
     cache.set('k', 1)
-    with peer_holding_the_write_lock(directory), caplog.at_level(logging.WARNING, logger=LOGGER):
+    with (
+        peer_holding_the_write_lock(directory),
+        caplog.at_level(logging.WARNING, logger=LOGGER),
+    ):
         cache.set('k', 2)
         clock.now -= 3600.0
         cache.set('k', 2)
@@ -890,7 +952,10 @@ def test_the_limit_is_per_handle(directory: Path, caplog: pytest.LogCaptureFixtu
     one = Cache(directory, timeout=0.001, durable=True)
     two = Cache(directory, timeout=0.001, durable=True)
     one.set('k', 1)
-    with peer_holding_the_write_lock(directory), caplog.at_level(logging.WARNING, logger=LOGGER):
+    with (
+        peer_holding_the_write_lock(directory),
+        caplog.at_level(logging.WARNING, logger=LOGGER),
+    ):
         one.set('k', 2)
         two.set('k', 2)
     assert len(_messages(caplog)) == 2
@@ -912,7 +977,10 @@ def test_a_storm_on_many_threads_logs_once_and_counts_everything(
         for _ in range(each):
             assert cache.set('k', 2) is False
 
-    with peer_holding_the_write_lock(directory), caplog.at_level(logging.WARNING, logger=LOGGER):
+    with (
+        peer_holding_the_write_lock(directory),
+        caplog.at_level(logging.WARNING, logger=LOGGER),
+    ):
         workers = [threading.Thread(target=storm, daemon=True) for _ in range(threads)]
         for worker in workers:
             worker.start()
@@ -925,7 +993,9 @@ def test_a_storm_on_many_threads_logs_once_and_counts_everything(
 
 
 @pytest.mark.filterwarnings('ignore::pytest.PytestUnraisableExceptionWarning')
-def test_a_logging_handler_that_fails_doesnt_take_the_call_down(directory: Path) -> None:
+def test_a_logging_handler_that_fails_doesnt_take_the_call_down(
+    directory: Path,
+) -> None:
     class Failing(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:
             raise ValueError('handler failed')
@@ -970,7 +1040,12 @@ def test_what_a_logging_handler_raises_that_must_be_seen(directory: Path, error:
 
 @pytest.mark.parametrize(
     ('error', 'bucket'),
-    [(Timeout('nested'), 'busy'), (TimeoutError('nested'), 'busy'), (OSError('disk'), 'broken'), (RecursionError(), 'broken')],
+    [
+        (Timeout('nested'), 'busy'),
+        (TimeoutError('nested'), 'busy'),
+        (OSError('disk'), 'broken'),
+        (RecursionError(), 'broken'),
+    ],
     ids=lambda v: type(v).__name__ if isinstance(v, BaseException) else v,
 )
 def test_a_hook_outage_is_counted_with_no_line_of_its_own(
@@ -1010,7 +1085,10 @@ def test_a_hook_outage_reaches_the_next_line(directory: Path, caplog: pytest.Log
     clock = FakeClock()
     cache = Cache(directory, timeout=0.001, pickle=True, durable=True, clock=clock)
     cache.set('k', Hooked('kept'))
-    with peer_holding_the_write_lock(directory), caplog.at_level(logging.WARNING, logger=LOGGER):
+    with (
+        peer_holding_the_write_lock(directory),
+        caplog.at_level(logging.WARNING, logger=LOGGER),
+    ):
         cache.set('other', 1)
         Hooked.hook = _raising(Timeout('nested'))
         cache.get('k')
@@ -1027,7 +1105,10 @@ def test_a_nan_from_the_clock_cant_silence_the_log(directory: Path, caplog: pyte
     clock = FakeClock()
     cache = Cache(directory, timeout=0.001, durable=True, clock=clock)
     cache.set('k', 1)
-    with peer_holding_the_write_lock(directory), caplog.at_level(logging.WARNING, logger=LOGGER):
+    with (
+        peer_holding_the_write_lock(directory),
+        caplog.at_level(logging.WARNING, logger=LOGGER),
+    ):
         clock.now = float('nan')
         cache.set('k', 2)
         clock.now = 1_000_000.0
@@ -1039,13 +1120,18 @@ def test_a_nan_from_the_clock_cant_silence_the_log(directory: Path, caplog: pyte
 
 
 @NOT_AS_ROOT
-def test_a_stale_reading_from_a_call_that_waited_isnt_a_clock_jump(directory: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_a_stale_reading_from_a_call_that_waited_isnt_a_clock_jump(
+    directory: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     clock = FakeClock()
     # These failures come from a value file, so they're immediate whatever the handle's timeout is. It
     # only sets how old a reading can be.
     cache = Cache(directory, timeout=30.0, durable=True, clock=clock)
     cache.set('k', b'x' * BIG)
-    with unreadable(_value_file(directory)), caplog.at_level(logging.WARNING, logger=LOGGER):
+    with (
+        unreadable(_value_file(directory)),
+        caplog.at_level(logging.WARNING, logger=LOGGER),
+    ):
         cache.get('k')
         assert len(_messages(caplog)) == 1
         clock.now -= 89.0  # Inside LOG_EVERY + timeout.
@@ -1062,7 +1148,10 @@ def test_close_logs_what_the_limit_left_out(directory: Path, caplog: pytest.LogC
     clock = FakeClock()
     cache = Cache(directory, timeout=0.001, durable=True, clock=clock)
     cache.set('k', 1)
-    with peer_holding_the_write_lock(directory), caplog.at_level(logging.WARNING, logger=LOGGER):
+    with (
+        peer_holding_the_write_lock(directory),
+        caplog.at_level(logging.WARNING, logger=LOGGER),
+    ):
         for _ in range(4):
             cache.delete('k')
             cache.set('k', 2)
@@ -1081,7 +1170,10 @@ def test_close_logs_what_the_limit_left_out(directory: Path, caplog: pytest.LogC
 def test_close_logs_nothing_when_nothing_was_left_out(directory: Path, caplog: pytest.LogCaptureFixture) -> None:
     durable = Cache(directory, timeout=0.001, durable=True)
     durable.set('k', 1)
-    with peer_holding_the_write_lock(directory), caplog.at_level(logging.WARNING, logger=LOGGER):
+    with (
+        peer_holding_the_write_lock(directory),
+        caplog.at_level(logging.WARNING, logger=LOGGER),
+    ):
         durable.set('k', 2)
         caplog.clear()
         durable.close()
@@ -1089,7 +1181,9 @@ def test_close_logs_nothing_when_nothing_was_left_out(directory: Path, caplog: p
     assert not _messages(caplog)
 
 
-def test_a_logging_handler_that_reads_the_cache_cant_undo_close(directory: Path) -> None:
+def test_a_logging_handler_that_reads_the_cache_cant_undo_close(
+    directory: Path,
+) -> None:
     """D-018: once `close()` returns, this handle holds nothing, even if the flush ran a handler that
     used it."""
     cache = Cache(directory, timeout=0.001, durable=True)
@@ -1115,7 +1209,11 @@ def test_a_logging_handler_that_reads_the_cache_cant_undo_close(directory: Path)
 
 
 @pytest.mark.filterwarnings('ignore::pytest.PytestUnraisableExceptionWarning')
-@pytest.mark.parametrize('error', [ValueError('handler failed'), MemoryError(), KeyboardInterrupt()], ids=lambda e: type(e).__name__)
+@pytest.mark.parametrize(
+    'error',
+    [ValueError('handler failed'), MemoryError(), KeyboardInterrupt()],
+    ids=lambda e: type(e).__name__,
+)
 def test_a_failing_handler_cant_make_close_raise(directory: Path, error: BaseException) -> None:
     class Failing(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:
@@ -1138,7 +1236,7 @@ def test_a_failing_handler_cant_make_close_raise(directory: Path, error: BaseExc
         logger.removeHandler(handler)
 
 
-OXIDE_FIRST = '''
+OXIDE_FIRST = """
 import sys
 assert 'logging' not in sys.modules, 'this needs diskcache_oxide to come first'
 import diskcache_oxide
@@ -1165,10 +1263,12 @@ with StuckFork(directory):
 cache.close()
 sys.stdout.flush()
 os._exit(0)
-'''
+"""
 
 
-def test_a_first_log_line_behind_a_stuck_fork_with_diskcache_oxide_imported_first(tmp_path: Path) -> None:
+def test_a_first_log_line_behind_a_stuck_fork_with_diskcache_oxide_imported_first(
+    tmp_path: Path,
+) -> None:
     """`logging` isn't imported until `_core` does it, so `_core`'s fork hook runs before `logging`'s,
     and logging's module lock isn't held while the fork waits (plan 09, step 1b)."""
     proc = subprocess.run(
@@ -1242,7 +1342,13 @@ def test_caches_refuses_a_durable_that_isnt_a_bool(tmp_path: Path) -> None:
 @pytest.mark.parametrize('scenario', sorted(SCENARIOS))
 def test_scenario(scenario: str, tmp_path: Path) -> None:
     proc = subprocess.run(
-        [sys.executable, '-m', 'tests.unit.durable_scenarios', scenario, str(tmp_path / 's')],
+        [
+            sys.executable,
+            '-m',
+            'tests.unit.durable_scenarios',
+            scenario,
+            str(tmp_path / 's'),
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

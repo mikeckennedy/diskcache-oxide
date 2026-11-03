@@ -52,7 +52,12 @@ def fill_until_gone(cache: Any, clock: FakeClock, start: int, victim: str, *, ma
 
 
 @pytest.fixture
-def limited(make_cache: Callable[..., Any], cache_dir: Path, empty_volume: int, fake_clock: FakeClock) -> Any:
+def limited(
+    make_cache: Callable[..., Any],
+    cache_dir: Path,
+    empty_volume: int,
+    fake_clock: FakeClock,
+) -> Any:
     return make_cache(cache_dir, size_limit=empty_volume + ROOM)
 
 
@@ -148,7 +153,10 @@ def _fill_mixed(cache: Any, clock: FakeClock, *, expiring: bool) -> None:
 
 
 def test_expired_entries_are_culled_before_older_live_ones(
-    make_cache: Callable[..., Any], tmp_path: Path, empty_volume: int, fake_clock: FakeClock
+    make_cache: Callable[..., Any],
+    tmp_path: Path,
+    empty_volume: int,
+    fake_clock: FakeClock,
 ) -> None:
     size_limit = empty_volume + ROOM
     big = value(255, 3 * VALUE_SIZE)  # 18 + 3 slots: over the limit by at least a slot
@@ -175,7 +183,9 @@ def test_expired_entries_are_culled_before_older_live_ones(
 
 
 @pytest.mark.requires('cull_limit')
-def test_set_sweeps_expired_entries_without_size_pressure(make_cache: Callable[..., Any], cache_dir: Path, fake_clock: FakeClock) -> None:
+def test_set_sweeps_expired_entries_without_size_pressure(
+    make_cache: Callable[..., Any], cache_dir: Path, fake_clock: FakeClock
+) -> None:
     # Surprising but observed: with no size_limit pressure at all, a set still removes expired
     # entries, at most cull_limit of them per set.
     cache = make_cache(cache_dir)
@@ -194,8 +204,18 @@ def test_set_sweeps_expired_entries_without_size_pressure(make_cache: Callable[.
     assert sorted(cache) == ['new', 'newer']
 
 
-@pytest.mark.diverges(backend='oxide', ref='D-005', reason='oxide refuses a size_limit under 1 MiB with ValueError', raises=ValueError)
-def test_size_limit_below_empty_volume_wipes_everything(make_cache: Callable[..., Any], cache_dir: Path, empty_volume: int, fake_clock: FakeClock) -> None:
+@pytest.mark.diverges(
+    backend='oxide',
+    ref='D-005',
+    reason='oxide refuses a size_limit under 1 MiB with ValueError',
+    raises=ValueError,
+)
+def test_size_limit_below_empty_volume_wipes_everything(
+    make_cache: Callable[..., Any],
+    cache_dir: Path,
+    empty_volume: int,
+    fake_clock: FakeClock,
+) -> None:
     cache = make_cache(cache_dir, size_limit=empty_volume // 2)
     fake_clock.advance(1)
     # set reports success, yet the value it just stored is culled along with everything else.

@@ -59,21 +59,37 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         for mark in item.iter_markers('diverges'):
             ref = mark.kwargs.get('ref')
             if ref not in known:
-                raise pytest.UsageError(f'{item.nodeid}: divergence {ref!r} is not documented in {DIVERGENCES_FILE.name}')
+                raise pytest.UsageError(
+                    f'{item.nodeid}: divergence {ref!r} is not documented in {DIVERGENCES_FILE.name}'
+                )
             if mark.kwargs.get('backend') == backend.name:
                 item.add_marker(
-                    pytest.mark.xfail(strict=True, raises=mark.kwargs.get('raises'), reason=f'{ref}: {mark.kwargs.get("reason", "")}')
+                    pytest.mark.xfail(
+                        strict=True,
+                        raises=mark.kwargs.get('raises'),
+                        reason=f'{ref}: {mark.kwargs.get("reason", "")}',
+                    )
                 )
 
         for mark in item.iter_markers('covers'):
             if mark.args[0] not in known:
-                raise pytest.UsageError(f'{item.nodeid}: divergence {mark.args[0]!r} is not documented in {DIVERGENCES_FILE.name}')
+                raise pytest.UsageError(
+                    f'{item.nodeid}: divergence {mark.args[0]!r} is not documented in {DIVERGENCES_FILE.name}'
+                )
             only = [m.args for m in item.iter_markers('backend_only')]
             if not only or any('diskcache' in names for names in only):
-                raise pytest.UsageError(f'{item.nodeid}: covers({mark.args[0]!r}) needs a backend_only(...) that excludes diskcache')
+                raise pytest.UsageError(
+                    f'{item.nodeid}: covers({mark.args[0]!r}) needs a backend_only(...) that excludes diskcache'
+                )
 
         if backend.name == 'community' and (ref := community_difference(item.nodeid)) is not None:
-            item.add_marker(pytest.mark.xfail(strict=True, raises=AssertionError, reason=f'{ref}: known community fork difference'))
+            item.add_marker(
+                pytest.mark.xfail(
+                    strict=True,
+                    raises=AssertionError,
+                    reason=f'{ref}: known community fork difference',
+                )
+            )
 
         for mark in item.iter_markers('backend_only'):
             if backend.name not in mark.args:
@@ -84,7 +100,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             if feature not in FEATURE_PHASES:
                 raise pytest.UsageError(f'{item.nodeid}: requires({feature!r}) is not in backends.FEATURE_PHASES')
             if not backend.supports(feature):
-                item.add_marker(pytest.mark.skip(reason=f'{_NOT_YET_PREFIX}{feature} (Phase {FEATURE_PHASES[feature]})'))
+                item.add_marker(
+                    pytest.mark.skip(reason=f'{_NOT_YET_PREFIX}{feature} (Phase {FEATURE_PHASES[feature]})')
+                )
 
 
 def _expected_skip(reason: str) -> bool:
@@ -115,7 +133,11 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
     if not_yet:
         terminalreporter.write_sep('=', f'{len(not_yet)} test(s) skipped as not yet supported by this backend')
     if _unexpected_skips and terminalreporter.config.stash[_backend_key].name == 'oxide':
-        terminalreporter.write_sep('=', f'{len(_unexpected_skips)} unexpected skip(s) on oxide (this fails the run)', red=True)
+        terminalreporter.write_sep(
+            '=',
+            f'{len(_unexpected_skips)} unexpected skip(s) on oxide (this fails the run)',
+            red=True,
+        )
         for line in _unexpected_skips:
             terminalreporter.write_line(line)
 

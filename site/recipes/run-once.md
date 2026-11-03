@@ -14,6 +14,7 @@ from diskcache_oxide import Cache
 
 cache = Cache('/var/cache/my-app')
 
+
 def hourly_cleanup() -> None:
     if not cache.add('job:hourly-cleanup', os.getpid(), expire=55 * 60):
         return  # another worker has it this hour
@@ -40,10 +41,12 @@ cache = Cache(tempfile.mkdtemp())
 winners = []
 start = threading.Barrier(8)
 
+
 def worker(n: int) -> None:
     start.wait()
     if cache.add('job:hourly-cleanup', n, expire=3300):
         winners.append(n)
+
 
 threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
 for t in threads:

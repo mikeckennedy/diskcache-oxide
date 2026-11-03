@@ -20,6 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from diskcache_oxide import Cache
+
 from tests.conformance.proc_workers import SqlitePeer
 from tests.proctitle import set_title
 
@@ -83,7 +84,10 @@ def d020(directory: Path) -> list[str]:
     cache.set('in-hold', 1)
 
     def grandchild() -> None:
-        fails_fast('grandchild write, fresh Cache', lambda: Cache(directory, timeout=TIMEOUT).set('grandchild', 1))
+        fails_fast(
+            'grandchild write, fresh Cache',
+            lambda: Cache(directory, timeout=TIMEOUT).set('grandchild', 1),
+        )
         assert Cache(directory, timeout=TIMEOUT).get('before') == 'parent'
         with Cache(other, timeout=TIMEOUT) as elsewhere:
             assert elsewhere.set('grandchild', 1) is True and elsewhere.get('grandchild') == 1
@@ -213,7 +217,10 @@ def two_forkers(directory: Path) -> list[str]:
         except BaseException as ex:
             errors.append(ex)
 
-    threads = [threading.Thread(target=hammer), *(threading.Thread(target=forker, args=(n,)) for n in range(2))]
+    threads = [
+        threading.Thread(target=hammer),
+        *(threading.Thread(target=forker, args=(n,)) for n in range(2)),
+    ]
     for t in threads[1:]:
         t.start()
     threads[0].start()

@@ -10,7 +10,21 @@ import pytest
 from tests.conformance.backends import Backend
 from tests.conformance.conftest import FakeClock
 
-UNUSUAL_KEYS = ['', 'é', 'ß', 'Z', 'a', 'aa', '10', '2', '中文', '\U0001f600', 'x' * 10_000, 'naïve', 'Ångström']
+UNUSUAL_KEYS = [
+    '',
+    'é',
+    'ß',
+    'Z',
+    'a',
+    'aa',
+    '10',
+    '2',
+    '中文',
+    '\U0001f600',
+    'x' * 10_000,
+    'naïve',
+    'Ångström',
+]
 
 
 def payload(size: int, seed: int) -> bytes:
@@ -69,7 +83,12 @@ def test_volume_grows_and_shrinks_with_large_values(cache: Any, cache_dir: Path,
     assert not backend.spill_files(cache_dir)
 
 
-@pytest.mark.diverges(backend='oxide', ref='D-013', reason='oxide deletes the orphaned row', raises=AssertionError)
+@pytest.mark.diverges(
+    backend='oxide',
+    ref='D-013',
+    reason='oxide deletes the orphaned row',
+    raises=AssertionError,
+)
 def test_deleted_spill_file_reads_as_a_miss(cache: Any, cache_dir: Path, backend: Backend) -> None:
     cache.set('small', 'v')
     cache.set('big', payload(2 * backend.spill_threshold, 2))
@@ -149,8 +168,14 @@ def test_prefix_scan(cache: Any) -> None:
     for k in keys:
         cache.set(k, 1)
 
-    assert [k for k in cache.iterkeys() if k.startswith('page:')] == ['page:/a', 'page:/b']
-    assert [k for k in cache.iterkeys() if k.startswith('rate:')] == ['rate:1', 'rate:2']
+    assert [k for k in cache.iterkeys() if k.startswith('page:')] == [
+        'page:/a',
+        'page:/b',
+    ]
+    assert [k for k in cache.iterkeys() if k.startswith('rate:')] == [
+        'rate:1',
+        'rate:2',
+    ]
     assert [k for k in cache.iterkeys() if k.startswith('nope')] == []
 
 
@@ -168,7 +193,12 @@ def test_large_bytes_round_trip(make_cache: Callable[..., Any], cache_dir: Path,
     assert make_cache(cache_dir).get('big') == data
 
 
-@pytest.mark.diverges(backend='oxide', ref='D-010', reason='oxide expire() removes every expired entry', raises=AssertionError)
+@pytest.mark.diverges(
+    backend='oxide',
+    ref='D-010',
+    reason='oxide expire() removes every expired entry',
+    raises=AssertionError,
+)
 def test_expire_stops_after_100_rows_that_share_one_expire_time(cache: Any, fake_clock: FakeClock) -> None:
     # Surprising: with a frozen clock every entry gets the same expire time, and one expire() call
     # removes only the first chunk of 100 of them.

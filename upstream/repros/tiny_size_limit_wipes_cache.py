@@ -4,7 +4,10 @@ import tempfile
 
 import diskcache
 
-with tempfile.TemporaryDirectory() as tmp, diskcache.Cache(tmp, size_limit=1_000) as cache:
+with (
+    tempfile.TemporaryDirectory() as tmp,
+    diskcache.Cache(tmp, size_limit=1_000) as cache,
+):
     print('empty volume:', cache.volume(), 'bytes; size_limit: 1000')
     print('set ->', cache.set('k', 'v'))
     print('get ->', cache.get('k'), '| len ->', len(cache))

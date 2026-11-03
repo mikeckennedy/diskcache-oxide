@@ -21,13 +21,13 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import diskcache_oxide
 import pytest
+from diskcache_oxide import CorruptValueError, UnsafeValueError
+from diskcache_oxide._core import _decode, _encode
 from hypothesis import given
 from hypothesis import strategies as st
 
-import diskcache_oxide
-from diskcache_oxide import CorruptValueError, UnsafeValueError
-from diskcache_oxide._core import _decode, _encode
 from tests.conformance.value_cases import CASES, exact_equal
 
 SERIALIZERS = ('msgpack', 'json')
@@ -89,7 +89,22 @@ def test_negative_zero_is_native_and_keeps_its_sign(serializer: str) -> None:
 
 
 @pytest.mark.parametrize('serializer', SERIALIZERS)
-@pytest.mark.parametrize('value', [2**63, -(2**63) - 1, 2**64, 2**64 + 1, -(2**200), True, False, math.nan, math.inf, -math.inf, None])
+@pytest.mark.parametrize(
+    'value',
+    [
+        2**63,
+        -(2**63) - 1,
+        2**64,
+        2**64 + 1,
+        -(2**200),
+        True,
+        False,
+        math.nan,
+        math.inf,
+        -math.inf,
+        None,
+    ],
+)
 def test_values_outside_native_range_use_the_serializer(serializer: str, value: Any) -> None:
     mode, payload = _encode(value, serializer)
     assert mode == STRUCTURED_MODE[serializer] and type(payload) is bytes
@@ -126,7 +141,12 @@ def test_plain_json_is_standard_json() -> None:
 def test_large_values_take_the_direct_write_path(serializer: str) -> None:
     body = random.Random(42).randbytes(450 * 1024)
     for value in (
-        {'content_gz': body, 'created': '2026-10-27T12:00:00+00:00', 'etag': 'abc123', 'version': 2},
+        {
+            'content_gz': body,
+            'created': '2026-10-27T12:00:00+00:00',
+            'etag': 'abc123',
+            'version': 2,
+        },
         [body, 'x' * 100_000, 3],
         (body,),
         {'nested': {'big': body}},
@@ -309,7 +329,13 @@ class SpyDict(dict):  # type: ignore[type-arg]
 @pytest.mark.parametrize('serializer', SERIALIZERS)
 def test_encoder_runs_no_user_code(serializer: str) -> None:
     Spy.calls.clear()
-    for value in (dt.datetime(2026, 1, 1, tzinfo=Spy()), SpyStr('k'), {'a': SpyStr('v')}, SpyDict(a=1), [SpyDict()]):
+    for value in (
+        dt.datetime(2026, 1, 1, tzinfo=Spy()),
+        SpyStr('k'),
+        {'a': SpyStr('v')},
+        SpyDict(a=1),
+        [SpyDict()],
+    ):
         with pytest.raises(TypeError):
             _encode(value, serializer)
     assert Spy.calls == []
@@ -333,7 +359,10 @@ def test_json_tag_spellings() -> None:
     assert enc(Decimal('1.10')) == b'{"$decimal":"1.10"}'
     assert enc(frozenset()) == b'{"$frozenset":[]}'
     la = zoneinfo.ZoneInfo('America/Los_Angeles')
-    assert enc(dt.datetime(2026, 11, 1, 1, 30, fold=1, tzinfo=la)) == b'{"$datetime":"2026-11-01T01:30:00-08:00[America/Los_Angeles][_fold=1]"}'
+    assert (
+        enc(dt.datetime(2026, 11, 1, 1, 30, fold=1, tzinfo=la))
+        == b'{"$datetime":"2026-11-01T01:30:00-08:00[America/Los_Angeles][_fold=1]"}'
+    )
     assert enc(dt.datetime(2026, 1, 1, fold=1)) == b'{"$datetime":"2026-01-01T00:00:00[_fold=1]"}'
 
 
@@ -343,7 +372,10 @@ def test_msgpack_tag_spellings() -> None:
     assert _encode([b'\x00']) == (MSGPACK, b'\x91\xc4\x01\x00')  # bytes are native bin
     assert _encode({1: 2}) == (MSGPACK, b'\x81\x01\x02')  # non-str keys are native
     # A UTC datetime is the standard timestamp extension (timestamp32 here).
-    assert _encode(dt.datetime(1970, 1, 1, 0, 0, 1, tzinfo=dt.UTC)) == (MSGPACK, b'\xd6\xff\x00\x00\x00\x01')
+    assert _encode(dt.datetime(1970, 1, 1, 0, 0, 1, tzinfo=dt.UTC)) == (
+        MSGPACK,
+        b'\xd6\xff\x00\x00\x00\x01',
+    )
 
 
 TAG_SHAPED = [
@@ -377,7 +409,11 @@ def test_zoneinfo_fold_survives(serializer: str) -> None:
         v = dt.datetime(2026, 11, 1, 1, 30, fold=fold, tzinfo=la)
         out = roundtrip(v, serializer)
         assert out.fold == fold and out.utcoffset() == v.utcoffset() and out.tzinfo is la
-        for other in (dt.datetime(2026, 1, 1, fold=fold), dt.datetime(2026, 1, 1, fold=fold, tzinfo=dt.UTC), dt.datetime(2026, 7, 1, fold=fold, tzinfo=la)):
+        for other in (
+            dt.datetime(2026, 1, 1, fold=fold),
+            dt.datetime(2026, 1, 1, fold=fold, tzinfo=dt.UTC),
+            dt.datetime(2026, 7, 1, fold=fold, tzinfo=la),
+        ):
             assert roundtrip(other, serializer).fold == fold
 
 
@@ -494,7 +530,13 @@ def test_decode_hook_checks_the_payload_type() -> None:
 
 # ---- Hypothesis ----
 
-fixed_tz = st.builds(dt.timezone, st.timedeltas(min_value=dt.timedelta(hours=-23, minutes=-59), max_value=dt.timedelta(hours=23, minutes=59)))
+fixed_tz = st.builds(
+    dt.timezone,
+    st.timedeltas(
+        min_value=dt.timedelta(hours=-23, minutes=-59),
+        max_value=dt.timedelta(hours=23, minutes=59),
+    ),
+)
 datetimes = st.one_of(
     st.datetimes(),
     st.datetimes(timezones=st.just(dt.UTC)),
@@ -513,7 +555,11 @@ hashable_scalars = st.one_of(
     st.dates(),
     st.decimals(allow_nan=False),  # Decimal('NaN') != itself, so exact_equal can't check it.
 )
-hashables = st.recursive(hashable_scalars, lambda c: st.one_of(st.tuples(c), st.tuples(c, c), st.frozensets(c, max_size=3)), max_leaves=6)
+hashables = st.recursive(
+    hashable_scalars,
+    lambda c: st.one_of(st.tuples(c), st.tuples(c, c), st.frozensets(c, max_size=3)),
+    max_leaves=6,
+)
 scalars = st.one_of(hashable_scalars, st.floats(allow_nan=True, allow_infinity=True))
 keys = st.one_of(st.text(max_size=8), st.text(max_size=8).map(lambda s: '$' + s))
 
@@ -608,7 +654,7 @@ def test_concurrent_mutation_never_corrupts(serializer: str) -> None:
             while time.monotonic() < deadline:
                 try:
                     mode, payload = _encode(shared, serializer)
-                except (RuntimeError, TypeError):
+                except RuntimeError, TypeError:
                     counts['refused'] += 1
                     continue
                 out = _decode(mode, payload)  # must never raise

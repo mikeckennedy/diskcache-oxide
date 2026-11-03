@@ -116,16 +116,16 @@ caches.register('general')
 caches.register('show_pages', size_limit=2 * GiB)
 caches.register('rate_limits', directory='/fast/rate_limits')
 
-general = caches['general']        # opened on first use, then the same object every time
-'general' in caches                # registered?
-list(caches)                       # names, in registration order
-caches.disable('show_pages')       # later lookups get NullCache(invalidate=real)
+general = caches['general']  # opened on first use, then the same object every time
+'general' in caches  # registered?
+list(caches)  # names, in registration order
+caches.disable('show_pages')  # later lookups get NullCache(invalidate=real)
 caches.enable('show_pages')
-caches.enabled('show_pages')       # bool
-caches.stats()                     # {name: CacheStats(...)} for an admin page
+caches.enabled('show_pages')  # bool
+caches.stats()  # {name: CacheStats(...)} for an admin page
 caches.clear('general', timeout=10.0)
-caches.expire_all(timeout=10.0)    # {name: count or None}
-caches.close_all()                 # also on `with Caches(...) as caches:` exit
+caches.expire_all(timeout=10.0)  # {name: count or None}
+caches.close_all()  # also on `with Caches(...) as caches:` exit
 ```
 
 **Construction and registration:**

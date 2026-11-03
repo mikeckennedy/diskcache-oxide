@@ -12,8 +12,8 @@ import time
 from pathlib import Path
 
 import pytest
-
 from diskcache_oxide import Cache, Timeout
+
 from tests.conformance.proc_workers import SqlitePeer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,7 +31,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 )
 def test_fork_scenario(scenario: str, tmp_path: Path) -> None:
     proc = subprocess.run(
-        [sys.executable, '-m', 'tests.unit.fork_scenarios', scenario, str(tmp_path / 'c')],
+        [
+            sys.executable,
+            '-m',
+            'tests.unit.fork_scenarios',
+            scenario,
+            str(tmp_path / 'c'),
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -73,7 +79,9 @@ def _writes_during_clear(cache: Cache, count: int) -> tuple[int, int, list[str]]
     return (removed[0], landed, written) if landed else None
 
 
-def test_clear_lets_same_process_writers_in_and_spares_their_writes(tmp_path: Path) -> None:
+def test_clear_lets_same_process_writers_in_and_spares_their_writes(
+    tmp_path: Path,
+) -> None:
     _clear_fairness(tmp_path)
 
 
@@ -151,7 +159,9 @@ def test_cull_finishes_promptly_while_threads_hammer_writes(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_waiting_for_another_processs_lock_lets_other_threads_run(tmp_path: Path) -> None:
+def test_waiting_for_another_processs_lock_lets_other_threads_run(
+    tmp_path: Path,
+) -> None:
     cache = Cache(tmp_path / 'c', timeout=5.0)
     cache.set('k', 'v')
     gaps: list[float] = []
@@ -245,7 +255,9 @@ assert CACHE.get('in-hold') == 2
 """
 
 
-def test_a_pickle_hook_that_reads_the_cache_works_inside_a_held_transaction(tmp_path: Path) -> None:
+def test_a_pickle_hook_that_reads_the_cache_works_inside_a_held_transaction(
+    tmp_path: Path,
+) -> None:
     # The unpickling ran while the transaction's connection was locked, and the hook's get locked
     # it again on the same thread: a self-deadlock with the write lock held.
     proc = subprocess.run(
@@ -292,11 +304,18 @@ assert CACHE.get('in-hold') == 1, 'the transaction ended on the other thread did
 """
 
 
-def test_a_held_transaction_ended_from_another_thread_mid_operation_waits_detached(tmp_path: Path) -> None:
+def test_a_held_transaction_ended_from_another_thread_mid_operation_waits_detached(
+    tmp_path: Path,
+) -> None:
     # Ending it waits for the operation running on the transaction's connection. That wait held
     # the interpreter, so on a GIL build the operation could never finish: a deadlock.
     proc = subprocess.run(
-        [sys.executable, '-c', ENDED_FROM_ANOTHER_THREAD_MID_OPERATION, str(tmp_path / 'c')],
+        [
+            sys.executable,
+            '-c',
+            ENDED_FROM_ANOTHER_THREAD_MID_OPERATION,
+            str(tmp_path / 'c'),
+        ],
         capture_output=True,
         text=True,
         timeout=30,
@@ -393,7 +412,9 @@ assert CACHE.get('k') == 'inside'
 """
 
 
-def test_an_earlier_after_fork_hook_cant_end_the_inherited_transaction(tmp_path: Path) -> None:
+def test_an_earlier_after_fork_hook_cant_end_the_inherited_transaction(
+    tmp_path: Path,
+) -> None:
     # Ending a transaction enters the gate on its own level. That entry skipped the child's early
     # reset, so in the child the parent's connection looked like the child's own, and an earlier
     # hook's __exit__ ran COMMIT on it (architect review of the review-07 fixes).
@@ -427,7 +448,9 @@ def _another_process_sees_shared_held(db: Path) -> bool:
     return subprocess.run([sys.executable, '-c', SHARED_LOCK_PROBE, str(db)], timeout=30).returncode == 0
 
 
-def test_reusing_a_closed_handle_keeps_this_processs_sqlite_locks(tmp_path: Path) -> None:
+def test_reusing_a_closed_handle_keeps_this_processs_sqlite_locks(
+    tmp_path: Path,
+) -> None:
     # Rejoining the store opened a plain file descriptor on the database and closed it again, and
     # closing any descriptor on a file drops every POSIX lock the process holds on it: here the
     # SHARED lock a WAL connection keeps, which stops another process's last close from
@@ -444,7 +467,9 @@ def test_reusing_a_closed_handle_keeps_this_processs_sqlite_locks(tmp_path: Path
     second.close()
 
 
-def test_clear_inside_a_held_transaction_doesnt_pause_for_a_writer_that_cant_get_in(tmp_path: Path) -> None:
+def test_clear_inside_a_held_transaction_doesnt_pause_for_a_writer_that_cant_get_in(
+    tmp_path: Path,
+) -> None:
     # Between chunks, clear() steps aside for a waiting writer. Inside a held transaction this
     # thread keeps the write lock, so the waiter can't get in: each pause (about 2 ms) was wasted,
     # 50 chunks here took over 100 ms, and every pause held up any pending fork.
@@ -481,17 +506,18 @@ class _ExitsTheHold:
             type(self).refused.append(str(e))
 
 
-def test_a_hold_exited_inside_its_own_operation_fails_its_with_statement(tmp_path: Path) -> None:
+def test_a_hold_exited_inside_its_own_operation_fails_its_with_statement(
+    tmp_path: Path,
+) -> None:
     # The early __exit__ is refused and the transaction rolls back when the get() returns. The with
     # statement's own __exit__ must then report that, not succeed with the writes gone.
     cache = Cache(tmp_path / 'c', pickle=True)
     cache.set('obj', _ExitsTheHold())
     hold = cache._hold_write_transaction()
     _ExitsTheHold.hold = hold
-    with pytest.raises(RuntimeError, match='rolled back'):
-        with hold:
-            cache.set('inside', 1)
-            cache.get('obj')
+    with pytest.raises(RuntimeError, match='rolled back'), hold:
+        cache.set('inside', 1)
+        cache.get('obj')
     assert len(_ExitsTheHold.refused) == 1, _ExitsTheHold.refused
     assert cache.get('inside') is None, 'nothing in the transaction may commit'
     assert cache.set('after', 1) is True  # The write lock was released.

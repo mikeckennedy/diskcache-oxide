@@ -21,7 +21,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-
 from diskcache_oxide import Cache, _core
 
 
@@ -66,6 +65,7 @@ def growth_while(work: Callable[[], object]) -> int:
 
 def populate_and_read(directory: Path, **options: int) -> Callable[[], Cache]:
     """Work for growth_while: open, fill and read back a cache, measured from before it opens."""
+
     def work() -> Cache:
         cache = populated(directory, **options)
         read_everything(cache)

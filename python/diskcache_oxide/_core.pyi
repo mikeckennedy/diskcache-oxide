@@ -1,29 +1,29 @@
 """Type stubs for the compiled `diskcache_oxide._core` extension (hand-written, checked by tests/unit/test_stubs.py)."""
 
 import os
-from types import TracebackType
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
+from types import TracebackType
 from typing import Any, Literal, Self, final, overload
 
 # PyO3 generates __all__ from everything the module adds, in the order it adds them.
 __all__ = [
-    '__version__',
     'BUNDLED_SQLITE_VERSION',
     '_DEBUG_BUILD',
-    'Timeout',
-    'UnsafeValueError',
+    'Cache',
     'CorruptValueError',
     'ForeignValueError',
-    'sqlite_version',
-    'sqlite_compile_options',
-    '_encode',
+    'FormatMismatchError',
+    'Timeout',
+    'UnsafeValueError',
+    '__version__',
     '_decode',
-    '_sqlite_memory',
+    '_encode',
     '_gate_stats',
     '_sqlite_error',
-    'FormatMismatchError',
-    'Cache',
+    '_sqlite_memory',
+    'sqlite_compile_options',
+    'sqlite_version',
 ]
 
 __version__: str
@@ -58,13 +58,14 @@ def _encode(value: object, serializer: str = 'msgpack', pickle: bool = False) ->
 
 def _gate_stats() -> dict[str, Any]:
     """Test hook: the fork gate's state and counters (pending, holders, parked, fork_timeouts, deferred)."""
+
 def _sqlite_error(code: int) -> BaseException:
     """Test hook: the exception a SQLite result code becomes, as a store call would raise it."""
 
 def _sqlite_memory(reset: bool = False) -> tuple[int, int]:
     """Test hook: the bundled SQLite's (bytes in use, high-water mark), optionally resetting the mark."""
 
-def _decode(mode: int, payload: bytes | int | float, allow_pickle: bool = False) -> object:
+def _decode(mode: int, payload: bytes | float, allow_pickle: bool = False) -> object:
     """Test hook: `_core._decode(mode, payload, allow_pickle=False)`, with the payload a `bytes`,
     `int` or `float` standing for a BLOB, INTEGER or REAL column."""
 
@@ -281,7 +282,7 @@ class Cache:
             Timeout: Another process held the write lock for longer than `timeout`.
         """
     # Defaults are delta=1, default=0; PyO3 reports them as `...` at runtime.
-    def incr(self, key: str, delta: int | float = ..., default: int | float | None = ...) -> int | float:
+    def incr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
         """Add `delta` to the number stored under `key`, atomically, and return the result.
 
         Atomic across threads and processes, so concurrent increments are never lost. The entry
@@ -304,7 +305,7 @@ class Cache:
             TypeError: The stored value isn't a number.
             Timeout: Another process held the write lock for longer than `timeout`.
         """
-    def decr(self, key: str, delta: int | float = ..., default: int | float | None = ...) -> int | float:
+    def decr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
         """Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 
         Returns:
@@ -422,5 +423,11 @@ class Cache:
         """
     def __enter__(self) -> Self:
         """Return the cache, for `with Cache(...) as cache:`."""
-    def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None, /) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+        /,
+    ) -> None:
         """Close the cache, as `close()` does."""

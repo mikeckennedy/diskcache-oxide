@@ -32,7 +32,9 @@ def test_every_community_difference_is_documented() -> None:
     section = _COMMUNITY_SECTION.search(DIVERGENCES_FILE.read_text())
     assert section, 'no "# Community fork differences" section in DIVERGENCES.md'
     documented = set(re.findall(r'D-\d{3}', section.group(1)))
-    assert set(KNOWN_COMMUNITY_DIFFERENCES.values()) - documented == set(), 'community differences missing from DIVERGENCES.md'
+    assert set(KNOWN_COMMUNITY_DIFFERENCES.values()) - documented == set(), (
+        'community differences missing from DIVERGENCES.md'
+    )
 
 
 def _param_ids(func: object) -> set[str]:

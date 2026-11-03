@@ -94,9 +94,11 @@ A sketch of the API (the name `caches` is decided; whether it's a module, `diskc
 caches = Caches('/var/cache/app', timeout=1.0, on_open_error=report)
 caches.register('general')
 caches.register('show_pages', size_limit=2 * GiB)
-general = caches['general']            # opened on first use, then reused
-caches.disable({'show_pages'})         # NullCache(invalidate=real)
-caches.stats(); caches.clear('general'); caches.close_all()
+general = caches['general']  # opened on first use, then reused
+caches.disable({'show_pages'})  # NullCache(invalidate=real)
+caches.stats()
+caches.clear('general')
+caches.close_all()
 ```
 
 Why the library is the better home:

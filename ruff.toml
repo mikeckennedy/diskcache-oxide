@@ -1,0 +1,49 @@
+# [ruff]
+line-length = 120
+format.quote-style = "single"
+
+# Enable Pyflakes `E` and `F` codes by default.
+lint.select = ["E", "F", "I"]
+# Plan 064 §4.11: DuckDB never loads in the web process (§5.3: the import alone holds about 40-50 MB for
+# the life of a process). A module-level `import duckdb` is refused everywhere but bin/ (one-off scripts).
+# jobs/ is held to it too: jobs/duckdb_settings.connect() imports it inside the function and the other job
+# modules import the type under TYPE_CHECKING only.
+lint.extend-select = ["TID253"]
+lint.flake8-tidy-imports.banned-module-level-imports = ["duckdb"]
+lint.ignore = []
+
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    ".env",
+    ".venv",
+    "venv",
+    "typings/**/*.pyi",
+]
+lint.per-file-ignores = { "talk_python_to_me_com/bin/**" = ["TID253"] }
+
+# Allow unused variables when underscore-prefixed.
+# dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+# Assume Python 3.13.
+target-version = "py313"
+
+#[tool.ruff.mccabe]
+## Unlike Flake8, default to a complexity level of 10.
+lint.mccabe.max-complexity = 10

@@ -67,7 +67,13 @@ def spill_min(backend: Backend) -> int:
 def integrity(db_path: Path) -> str:
     """PRAGMA integrity_check, run in a helper subprocess (see the module docstring)."""
     proc = subprocess.run(
-        [sys.executable, '-m', 'tests.conformance.proc_workers', 'integrity', str(db_path)],
+        [
+            sys.executable,
+            '-m',
+            'tests.conformance.proc_workers',
+            'integrity',
+            str(db_path),
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -84,7 +90,13 @@ class SqlitePeer:
     def __init__(self, db_path: Path) -> None:
         assert Path(db_path).is_file(), 'the cache has not created its database yet'
         self._proc = subprocess.Popen(
-            [sys.executable, '-m', 'tests.conformance.proc_workers', 'peer', str(db_path)],
+            [
+                sys.executable,
+                '-m',
+                'tests.conformance.proc_workers',
+                'peer',
+                str(db_path),
+            ],
             cwd=REPO_ROOT,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -100,7 +112,9 @@ class SqlitePeer:
         reply = self._proc.stdout.readline().strip()
         if not reply or reply.startswith('error'):
             self.close()
-            raise RuntimeError(f'peer {command!r} failed: {reply} {self._proc.stderr.read() if self._proc.stderr else ""}')
+            raise RuntimeError(
+                f'peer {command!r} failed: {reply} {self._proc.stderr.read() if self._proc.stderr else ""}'
+            )
         return reply
 
     def begin(self, mode: str) -> None:
@@ -139,7 +153,10 @@ def _peer_main(db_path: str) -> int:
         for line in sys.stdin:
             command = line.split()
             try:
-                if command[:1] == ['begin'] and command[1] in ('IMMEDIATE', 'EXCLUSIVE'):
+                if command[:1] == ['begin'] and command[1] in (
+                    'IMMEDIATE',
+                    'EXCLUSIVE',
+                ):
                     con.execute(f'BEGIN {command[1]}')
                     reply = 'locked'
                 elif command == ['begin', 'READ']:
@@ -205,7 +222,14 @@ def pop_many(backend_name: str, directory: str, barrier: Barrier, keys: list[str
 
 
 @titled('pop-producer')
-def pop_producer(backend_name: str, directory: str, barrier: Barrier, key: str, tokens: int, produced: Event) -> None:
+def pop_producer(
+    backend_name: str,
+    directory: str,
+    barrier: Barrier,
+    key: str,
+    tokens: int,
+    produced: Event,
+) -> None:
     with open_cache(backend_name, directory) as cache:
         barrier.wait(SYNC_TIMEOUT)
         for n in range(tokens):
@@ -215,7 +239,14 @@ def pop_producer(backend_name: str, directory: str, barrier: Barrier, key: str, 
 
 
 @titled('pop-consumer')
-def pop_consumer(backend_name: str, directory: str, barrier: Barrier, key: str, produced: Event, results: Any) -> None:
+def pop_consumer(
+    backend_name: str,
+    directory: str,
+    barrier: Barrier,
+    key: str,
+    produced: Event,
+    results: Any,
+) -> None:
     got = []
     with open_cache(backend_name, directory) as cache:
         barrier.wait(SYNC_TIMEOUT)
@@ -228,7 +259,13 @@ def pop_consumer(backend_name: str, directory: str, barrier: Barrier, key: str, 
 
 
 @titled('overlap-holder')
-def overlap_holder(backend_name: str, directory: str, barrier: Barrier, writer_done: Event, results: Any) -> None:
+def overlap_holder(
+    backend_name: str,
+    directory: str,
+    barrier: Barrier,
+    writer_done: Event,
+    results: Any,
+) -> None:
     """Process A: opens the cache and uses it, then stays open while B writes and exits."""
     with open_cache(backend_name, directory) as cache:
         cache.set('from-a', 'A')
@@ -262,7 +299,14 @@ def blob_ok(key: str, blob: Any, min_size: int) -> bool:
 
 
 @titled('spill-writer')
-def spill_writer(backend_name: str, directory: str, barrier: Barrier, writer: int, keys: list[str], ops: int) -> None:
+def spill_writer(
+    backend_name: str,
+    directory: str,
+    barrier: Barrier,
+    writer: int,
+    keys: list[str],
+    ops: int,
+) -> None:
     rng = random.Random(writer)
     min_size = spill_min(_backend(backend_name))
     with open_cache(backend_name, directory) as cache:
@@ -276,7 +320,14 @@ def spill_writer(backend_name: str, directory: str, barrier: Barrier, writer: in
 
 
 @titled('spill-reader')
-def spill_reader(backend_name: str, directory: str, barrier: Barrier, keys: list[str], writers_done: Event, results: Any) -> None:
+def spill_reader(
+    backend_name: str,
+    directory: str,
+    barrier: Barrier,
+    keys: list[str],
+    writers_done: Event,
+    results: Any,
+) -> None:
     """Reads every key in turn until the writers finish, then once more. Reports (hits, misses, torn)."""
     hits = misses = 0
     torn: list[str] = []
@@ -311,7 +362,14 @@ def overwrite_writer(backend_name: str, directory: str, barrier: Barrier, key: s
 
 
 @titled('overwrite-reader')
-def overwrite_reader(backend_name: str, directory: str, barrier: Barrier, key: str, writer_done: Event, results: Any) -> None:
+def overwrite_reader(
+    backend_name: str,
+    directory: str,
+    barrier: Barrier,
+    key: str,
+    writer_done: Event,
+    results: Any,
+) -> None:
     """Test A: reads one always-present key with a sentinel default until the writer finishes.
 
     Unlike spill_reader, a None, the default or an exception is a failure: the key is never deleted.
@@ -337,7 +395,9 @@ def overwrite_reader(backend_name: str, directory: str, barrier: Barrier, key: s
                 elif blob_ok(key, value, min_size):
                     hits += 1
                 else:
-                    failures.append(f'torn: {type(value).__name__} len={len(value) if isinstance(value, bytes) else "?"}')
+                    failures.append(
+                        f'torn: {type(value).__name__} len={len(value) if isinstance(value, bytes) else "?"}'
+                    )
             if last_pass:
                 break
     results.put((hits, len(failures), failures[:5]))
@@ -435,13 +495,18 @@ def _fork_children(cache: Any, backend: Backend, mode: str) -> tuple[list[int | 
     ctx = multiprocessing.get_context('fork')
     barrier = ctx.Barrier(FORK_CHILDREN + 1)
     if mode == 'os-fork':
-        pids = [_os_fork(lambda child=child: _fork_child_body(cache, barrier, child, size)) for child in range(FORK_CHILDREN)]
+        pids = [
+            _os_fork(lambda child=child: _fork_child_body(cache, barrier, child, size))
+            for child in range(FORK_CHILDREN)
+        ]
         barrier.wait(SYNC_TIMEOUT)
         for _ in range(FORK_OPS):
             cache.incr('counter')
         exit_codes = [_wait_or_kill(pid, SYNC_TIMEOUT) for pid in pids]
     else:
-        procs = [ctx.Process(target=_fork_child_entry, args=(cache, barrier, child, size)) for child in range(FORK_CHILDREN)]
+        procs = [
+            ctx.Process(target=_fork_child_entry, args=(cache, barrier, child, size)) for child in range(FORK_CHILDREN)
+        ]
         for p in procs:
             p.start()
         barrier.wait(SYNC_TIMEOUT)
@@ -554,7 +619,10 @@ def _fork_in_write_transaction(cache: Any, backend: Backend) -> tuple[list[int |
 
     if 'entered' in times:
         rel = {k: f'{v - times["entered"]:.3f}s' for k, v in times.items() if k != 'entered'}
-        print(f'timing (since the holder entered its transaction, HOLD_SECONDS={HOLD_SECONDS}): {rel}', file=sys.stderr)
+        print(
+            f'timing (since the holder entered its transaction, HOLD_SECONDS={HOLD_SECONDS}): {rel}',
+            file=sys.stderr,
+        )
     failures = [f'holder thread failed: {ex!r}' for ex in errors]
     if cache.get('busy') != 1:
         failures.append('the holder transaction did not commit')
@@ -719,12 +787,22 @@ ALL_FORK_MODES = (*FORK_MODES, *MULTI_CACHE_MODES)
 # The thread modes open the cache with a short timeout, so a child stuck behind a lock nobody will
 # release fails with the backend's Timeout in about a second instead of running into the deadline.
 THREAD_MODE_TIMEOUT = 1.0
-THREAD_MODES = frozenset({'fork-while-reading', 'fork-while-writing', 'fork-in-write-txn', 'two-caches-other-writing'})
+THREAD_MODES = frozenset(
+    {
+        'fork-while-reading',
+        'fork-while-writing',
+        'fork-in-write-txn',
+        'two-caches-other-writing',
+    }
+)
 
 
 def fork_check(backend_name: str, directory: str, mode: str) -> int:
     backend = _backend(backend_name)
-    cache = backend.make_cache(Path(directory), **({'timeout': THREAD_MODE_TIMEOUT} if mode in THREAD_MODES else {}))
+    cache = backend.make_cache(
+        Path(directory),
+        **({'timeout': THREAD_MODE_TIMEOUT} if mode in THREAD_MODES else {}),
+    )
     # Use the cache before forking so the parent holds an open connection.
     cache.set('before-fork', 'parent')
     cache.incr('counter', 0)
@@ -806,7 +884,13 @@ def _checkpoint_main(db_path: str) -> int:
 def checkpoint(db_path: Path) -> None:
     """Fold the WAL into the main database file, in a helper subprocess (see the module docstring)."""
     proc = subprocess.run(
-        [sys.executable, '-m', 'tests.conformance.proc_workers', 'checkpoint', str(db_path)],
+        [
+            sys.executable,
+            '-m',
+            'tests.conformance.proc_workers',
+            'checkpoint',
+            str(db_path),
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

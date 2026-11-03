@@ -46,8 +46,8 @@ diskcache gives each thread its own connection with a 32 MiB page cache plus a 6
 ``` python
 cache = Cache(
     '/var/cache/my-app',
-    max_connections=8,       # connections per database file, per process (default 8)
-    sqlite_cache_size=256,   # 4 KiB pages per connection: 1 MiB (default)
+    max_connections=8,  # connections per database file, per process (default 8)
+    sqlite_cache_size=256,  # 4 KiB pages per connection: 1 MiB (default)
 )
 ```
 
@@ -64,7 +64,7 @@ diskcache-oxide handles this in layers, from free and always on to explicit.
 ## Always on: `wal_size_limit`
 
 ``` python
-cache = Cache('/var/cache/my-app', wal_size_limit=64 * 1024 * 1024)   # the default
+cache = Cache('/var/cache/my-app', wal_size_limit=64 * 1024 * 1024)  # the default
 ```
 
 This tells SQLite to trim the log back to half the limit (32 MiB by default) whenever it resets, and scales how often SQLite checkpoints automatically. These are connection settings, so they never pause anything. At normal load they keep the log at a few MiB.
@@ -73,7 +73,7 @@ This tells SQLite to trim the log back to half the limit (32 MiB by default) whe
 ## On demand: [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint)
 
 ``` python
-cache.checkpoint()   # True if the log was reset and truncated
+cache.checkpoint()  # True if the log was reset and truncated
 ```
 
 [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) copies the log into the database and truncates it to zero. It waits briefly for in-flight reads, retrying up to the cache's [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout), and returns `False` instead of raising if other processes keep the database busy. Call it when a short pause suits your app: at shutdown, in a maintenance job, or after a large [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear).

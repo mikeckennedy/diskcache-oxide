@@ -168,7 +168,12 @@ def test_data_survives_reopen(make_cache: Callable[..., Any], cache_dir: Path) -
     assert make_cache(cache_dir).get('k') == 'v'
 
 
-@pytest.mark.diverges(backend='oxide', ref='D-009', reason='oxide Cache is always truthy', raises=AssertionError)
+@pytest.mark.diverges(
+    backend='oxide',
+    ref='D-009',
+    reason='oxide Cache is always truthy',
+    raises=AssertionError,
+)
 def test_bool_is_false_when_empty(cache: Any) -> None:
     # Truthiness comes from __len__, so an open, usable cache is falsy while empty.
     assert not cache
@@ -262,7 +267,12 @@ def test_timeout_is_an_exception(backend: Backend) -> None:
     assert issubclass(backend.timeout_error, Exception)
 
 
-@pytest.mark.diverges(backend='oxide', ref='D-007', reason='oxide Timeout also subclasses TimeoutError', raises=AssertionError)
+@pytest.mark.diverges(
+    backend='oxide',
+    ref='D-007',
+    reason='oxide Timeout also subclasses TimeoutError',
+    raises=AssertionError,
+)
 def test_timeout_bases_are_only_exception(backend: Backend) -> None:
     assert backend.timeout_error.__bases__ == (Exception,)
     assert not issubclass(backend.timeout_error, TimeoutError)
@@ -295,7 +305,12 @@ def _umask() -> int:
     return mask
 
 
-@pytest.mark.diverges(backend='oxide', ref='D-015', reason='oxide creates the cache directory owner-only', raises=AssertionError)
+@pytest.mark.diverges(
+    backend='oxide',
+    ref='D-015',
+    reason='oxide creates the cache directory owner-only',
+    raises=AssertionError,
+)
 def test_new_directory_follows_the_umask(make_cache: Callable[..., Any], tmp_path: Path) -> None:
     directory = tmp_path / 'parent' / 'cache'
     make_cache(directory).set('k', 'v')
@@ -333,7 +348,12 @@ def _main_db_snapshot(db: Path) -> tuple[str, int, int]:
     return hashlib.sha256(db.read_bytes()).hexdigest(), st.st_size, st.st_mtime_ns
 
 
-@pytest.mark.diverges(backend='diskcache', ref='D-019', reason='diskcache rewrites its Settings on open', raises=AssertionError)
+@pytest.mark.diverges(
+    backend='diskcache',
+    ref='D-019',
+    reason='diskcache rewrites its Settings on open',
+    raises=AssertionError,
+)
 def test_open_and_read_never_write(make_cache: Callable[..., Any], cache_dir: Path, backend: Backend) -> None:
     # Fixture: small values with no expiry, so no read has a legitimate reason to write.
     with make_cache(cache_dir) as writer:

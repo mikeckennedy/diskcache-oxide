@@ -70,7 +70,18 @@ cache.clear()                    # clears the real cache
 cache.iterkeys(prefix='user:')   # the real cache's keys, so list-then-delete still works
 ```
 
-When caching comes back on, nothing stale is waiting.
+When caching comes back on, nothing you invalidated by removing it is waiting.
+
+Only removals are forwarded, so invalidating by *writing* is lost while caching is off. Overwriting the stale value with a fresh `set`, or bumping a version key with `incr` so readers build a new key, does nothing, and the old value is served once caching is back on:
+
+```python
+cache = NullCache(invalidate=real)   # real holds 'user:42' = old_profile, and 'users:version' = 3
+
+cache.set('user:42', new_profile)    # dropped: real still has old_profile
+cache.incr('users:version')          # dropped: still 3, so readers keep reading the old keys
+```
+
+If your app invalidates that way, delete the entry instead (or as well), or `clear()` the real cache when you turn caching back on.
 
 ## `CacheLike`
 

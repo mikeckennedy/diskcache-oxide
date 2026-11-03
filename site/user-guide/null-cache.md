@@ -7,6 +7,7 @@ Sooner or later you need to turn caching off: in tests, in local development, or
 ``` python
 from diskcache_oxide import Cache, CacheLike, NullCache
 
+
 def make_cache(settings) -> CacheLike:
     if settings.cache_enabled:
         return Cache(settings.cache_dir)
@@ -64,12 +65,12 @@ Turning caching off creates a trap. While it's off, your app keeps changing data
 real = Cache('/var/cache/my-app')
 cache = NullCache(invalidate=real)
 
-cache.set('user:42', profile)    # not cached
-cache.get('user:42')             # None
-cache.delete('user:42')          # deleted from the real cache
-cache.pop('user:42')             # deleted from the real cache; returns the default
-cache.clear()                    # clears the real cache
-cache.iterkeys(prefix='user:')   # the real cache's keys, so list-then-delete still works
+cache.set('user:42', profile)  # not cached
+cache.get('user:42')  # None
+cache.delete('user:42')  # deleted from the real cache
+cache.pop('user:42')  # deleted from the real cache; returns the default
+cache.clear()  # clears the real cache
+cache.iterkeys(prefix='user:')  # the real cache's keys, so list-then-delete still works
 ```
 
 When caching comes back on, nothing stale is waiting.
@@ -81,6 +82,7 @@ When caching comes back on, nothing stale is waiting.
 
 ``` python
 from diskcache_oxide import CacheLike
+
 
 def load_user(user_id: str, cache: CacheLike) -> dict:
     if (user := cache.get(f'user:{user_id}')) is not None:

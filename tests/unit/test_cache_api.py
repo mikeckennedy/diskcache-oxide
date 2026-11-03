@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from diskcache_oxide import Cache, CacheLike, NullCache
 
 REPO = Path(__file__).resolve().parents[2]
@@ -19,7 +18,11 @@ PROPERTIES = {'directory', 'timeout', 'size_limit', 'cull_limit', 'enabled'}
 
 
 def protocol_methods() -> list[str]:
-    names = {n for n, v in vars(CacheLike).items() if callable(v) and (not n.startswith('_') or (n.startswith('__') and n.endswith('__')))}
+    names = {
+        n
+        for n, v in vars(CacheLike).items()
+        if callable(v) and (not n.startswith('_') or (n.startswith('__') and n.endswith('__')))
+    }
     return sorted(names - {'__init__', '__class_getitem__', '__subclasshook__', '__init_subclass__'} - PROPERTIES)
 
 
@@ -29,7 +32,9 @@ def params(func: object) -> list[tuple[str, inspect._ParameterKind]]:
 
 
 @pytest.mark.parametrize('name', protocol_methods())
-def test_every_protocol_method_has_the_same_parameters_on_both_classes(name: str) -> None:
+def test_every_protocol_method_has_the_same_parameters_on_both_classes(
+    name: str,
+) -> None:
     expected = params(getattr(CacheLike, name))
     assert params(getattr(NullCache, name)) == expected, f'NullCache.{name}'
     if name.startswith('__') and name not in {'__enter__', '__exit__'}:
@@ -57,7 +62,10 @@ def test_ty_sees_both_classes_as_cache_like(tmp_path: Path) -> None:
         'forwarding: CacheLike = NullCache(invalidate=real)\n'
     )
     result = subprocess.run(
-        [sys.executable, '-m', 'ty', 'check', '--python', sys.prefix, str(probe)], capture_output=True, text=True, cwd=REPO
+        [sys.executable, '-m', 'ty', 'check', '--python', sys.prefix, str(probe)],
+        capture_output=True,
+        text=True,
+        cwd=REPO,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -104,7 +112,9 @@ def test_pop_decodes_outside_any_write_transaction(tmp_path: Path, popped: str) 
         cache.close()
 
 
-def test_pop_inside_a_held_transaction_decodes_with_the_same_transaction_still_usable(tmp_path: Path) -> None:
+def test_pop_inside_a_held_transaction_decodes_with_the_same_transaction_still_usable(
+    tmp_path: Path,
+) -> None:
     # Inside your own held transaction the decode still runs while it's open; the write from
     # __setstate__ must join it, not wait for it.
     cache = Cache(tmp_path / 'c', timeout=2, pickle=True)
@@ -297,7 +307,14 @@ def test_maintenance_timeout_also_bounds_another_threads_write(tmp_path: Path, m
 @pytest.mark.parametrize('make', [lambda p: Cache(p), lambda p: NullCache(p)], ids=['Cache', 'NullCache'])
 def test_maintenance_timeout_is_validated(tmp_path: Path, make, method: str) -> None:  # type: ignore[no-untyped-def]
     cache = make(tmp_path / 'c')
-    bad_values = [(True, TypeError), ('1', TypeError), (-1, ValueError), (float('inf'), ValueError), (float('nan'), ValueError), (10**400, OverflowError)]
+    bad_values = [
+        (True, TypeError),
+        ('1', TypeError),
+        (-1, ValueError),
+        (float('inf'), ValueError),
+        (float('nan'), ValueError),
+        (10**400, OverflowError),
+    ]
     for bad, error in bad_values:
         with pytest.raises(error):
             getattr(cache, method)(timeout=bad)
@@ -323,7 +340,9 @@ def test_checkpoint_timeout_is_keyword_only(tmp_path: Path) -> None:
         cache.close()
 
 
-def test_null_cache_clear_passes_the_timeout_to_its_invalidate_cache(held_write_lock) -> None:  # type: ignore[no-untyped-def]
+def test_null_cache_clear_passes_the_timeout_to_its_invalidate_cache(
+    held_write_lock,
+) -> None:  # type: ignore[no-untyped-def]
     cache, peer = held_write_lock
     peer.begin('IMMEDIATE')
     started = time.monotonic()

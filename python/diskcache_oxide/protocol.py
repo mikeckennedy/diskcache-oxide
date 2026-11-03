@@ -58,10 +58,10 @@ class CacheLike(Protocol):
     def touch(self, key: str, expire: float | None = None) -> bool:
         """Change an existing entry's expiry. True if the entry existed."""
 
-    def incr(self, key: str, delta: int | float = 1, default: int | float | None = 0) -> int | float:
+    def incr(self, key: str, delta: float = 1, default: float | None = 0) -> int | float:
         """Add `delta` to the number under `key`, atomically, and return the result."""
 
-    def decr(self, key: str, delta: int | float = 1, default: int | float | None = 0) -> int | float:
+    def decr(self, key: str, delta: float = 1, default: float | None = 0) -> int | float:
         """Subtract `delta` from the number under `key`, atomically, and return the result."""
 
     def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
@@ -110,7 +110,11 @@ class CacheLike(Protocol):
         """Return the cache, for use in a `with` block."""
 
     def __exit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None, /
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+        /,
     ) -> None:
         """Close the cache."""
 

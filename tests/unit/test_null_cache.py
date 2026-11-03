@@ -6,7 +6,6 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-
 from diskcache_oxide.null import NullCache
 from diskcache_oxide.protocol import CacheLike
 
@@ -80,10 +79,28 @@ def test_maintenance_is_zero_and_it_is_falsy() -> None:
 
 
 def test_constructor_accepts_cache_arguments_and_reports_them() -> None:
-    cache = NullCache('/tmp/x', 5, size_limit=2 << 20, cull_limit=3, serializer='json', pickle=True, clock=lambda: 0.0, max_connections=2)
-    assert (cache.directory, cache.timeout, cache.size_limit, cache.cull_limit) == ('/tmp/x', 5.0, 2 << 20, 3)
+    cache = NullCache(
+        '/tmp/x',
+        5,
+        size_limit=2 << 20,
+        cull_limit=3,
+        serializer='json',
+        pickle=True,
+        clock=lambda: 0.0,
+        max_connections=2,
+    )
+    assert (cache.directory, cache.timeout, cache.size_limit, cache.cull_limit) == (
+        '/tmp/x',
+        5.0,
+        2 << 20,
+        3,
+    )
     defaults = NullCache()
-    assert (defaults.directory, defaults.size_limit, defaults.cull_limit) == (None, 2**30, 10)
+    assert (defaults.directory, defaults.size_limit, defaults.cull_limit) == (
+        None,
+        2**30,
+        10,
+    )
 
 
 def test_bad_argument_types_raise_like_a_real_cache() -> None:
@@ -107,7 +124,13 @@ def test_invalidate_forwards_removals_only() -> None:
     # Reads and writes stay null: nothing is forwarded for them.
     cache.set('k', 'v')
     assert cache.get('k') is None
-    assert real.calls == [('delete', 'k'), ('delete', 'p'), ('clear',), ('iterkeys', 'a:', False), ('delete', 'x')]
+    assert real.calls == [
+        ('delete', 'k'),
+        ('delete', 'p'),
+        ('clear',),
+        ('iterkeys', 'a:', False),
+        ('delete', 'x'),
+    ]
 
 
 def test_close_never_closes_the_forwarding_target() -> None:

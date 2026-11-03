@@ -14,8 +14,10 @@ It's falsy and its `enabled` is False, so `if cache:` reads as "caching is on".
 
 **`invalidate=`.** Passing `invalidate=real_cache` forwards the operations that *remove* data to
 that cache: `delete`, `pop` (as a delete), `clear`, and `iterkeys` (so enumerate-then-delete
-revocation still works). Invalidations then still land while caching is off, and nothing stale is
-served once it's switched back on. Everything else stays null.
+revocation still works). Invalidation by removal then still lands while caching is off. Everything
+else stays null, so invalidation that writes doesn't: a `set` that overwrites the stale value, or an
+`incr` that bumps a version key, is dropped, and the old value is served again once caching is back
+on.
 
 The constructor accepts the same arguments as `Cache` and ignores them, so switching between the
 two is a one-line change. Bad argument *types* still raise as they would on `Cache` (`bool`
@@ -83,8 +85,9 @@ class NullCache:
         directory: Accepted and ignored, like every other `Cache` argument, so switching between
             the two is a one-line change.
         invalidate: A real cache to forward removals to (`delete`, `pop`, `clear` and `iterkeys`),
-            so invalidations still land while caching is off and nothing stale is served once
-            it's back on.
+            so invalidation by removal still lands while caching is off. Writes aren't forwarded:
+            an overwriting `set` or a version-bump `incr` is dropped, and the old value is served
+            once caching is back on.
     """
 
     __slots__ = ('_cull_limit', '_directory', '_invalidate', '_size_limit', '_timeout')
@@ -217,7 +220,7 @@ class NullCache:
         _check_seconds('expire', expire)
         return False
 
-    def incr(self, key: str, delta: int | float = 1, default: int | float | None = 0) -> int | float:
+    def incr(self, key: str, delta: float = 1, default: float | None = 0) -> int | float:
         """Return `default + delta`, since every count starts again from `default`.
 
         Raises:
@@ -228,7 +231,7 @@ class NullCache:
             raise KeyError(key)
         return default + delta
 
-    def decr(self, key: str, delta: int | float = 1, default: int | float | None = 0) -> int | float:
+    def decr(self, key: str, delta: float = 1, default: float | None = 0) -> int | float:
         """Return `default - delta`. See `incr()`."""
         return self.incr(key, -delta, default)
 
@@ -282,14 +285,17 @@ class NullCache:
     def close(self, *, checkpoint: bool = True) -> None:
         """Do nothing. An `invalidate=` cache is never closed: it belongs to whoever created it."""
         # Never closes the `invalidate=` cache: it belongs to whoever created it.
-        pass
 
     def __enter__(self) -> Self:
         """Return the cache, for `with NullCache() as cache:`."""
         return self
 
     def __exit__(
-        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None, /
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+        /,
     ) -> None:
         """Do nothing, as `close()` does."""
         self.close()

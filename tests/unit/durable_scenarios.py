@@ -36,7 +36,6 @@ from tests.unit.fork_timeout_scenarios import (
     raises_timeout,
     run_hook,
     stats,
-    wait_until,
 )
 
 LOGGER = 'diskcache_oxide'
@@ -93,7 +92,11 @@ def every_row_behind_a_fork(directory: Path) -> None:
     with StuckFork(directory):
         answers('get', lambda: c.get('k', 'default'), 'default')
         answers('get None', lambda: c.get('k'), None)
-        answers('get(expire_time=True)', lambda: c.get('k', 'default', expire_time=True), ('default', None))
+        answers(
+            'get(expire_time=True)',
+            lambda: c.get('k', 'default', expire_time=True),
+            ('default', None),
+        )
         raises_key_error('[]', lambda: c['k'])
         answers('in', lambda: 'k' in c, False)
         answers('set small', lambda: c.set('k', SMALL_VALUE), False)

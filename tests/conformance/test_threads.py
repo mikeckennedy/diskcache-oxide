@@ -96,7 +96,9 @@ def test_racing_add_has_exactly_one_winner(layout: str, make_cache: Callable[...
 
 
 @LAYOUTS
-def test_racing_pop_gets_each_value_exactly_once(layout: str, make_cache: Callable[..., Any], cache_dir: Path, backend: Any) -> None:
+def test_racing_pop_gets_each_value_exactly_once(
+    layout: str, make_cache: Callable[..., Any], cache_dir: Path, backend: Any
+) -> None:
     caches = _caches(layout, make_cache, cache_dir)
     filler = 'x' * (2 * backend.spill_threshold)  # Every 20th value is in a value file.
     values = {f'pop-{i}': f'pop-{i}|' + (filler if i % 20 == 0 else '') for i in range(POP_KEYS)}
@@ -120,7 +122,9 @@ def test_racing_pop_gets_each_value_exactly_once(layout: str, make_cache: Callab
 if not sys._is_gil_enabled():
 
     @LAYOUTS
-    def test_consumers_racing_a_producer_never_get_a_value_twice(layout: str, make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    def test_consumers_racing_a_producer_never_get_a_value_twice(
+        layout: str, make_cache: Callable[..., Any], cache_dir: Path
+    ) -> None:
         # One producer and separate consumers, so several consumers read the same stored token and only
         # the delete can pick one of them. A thread that pops what it just set would prove nothing.
         caches = _caches(layout, make_cache, cache_dir)
@@ -167,7 +171,9 @@ def _check_mixed_value(key: str, value: Any) -> None:
 
 
 @LAYOUTS
-def test_mixed_get_set_delete_never_corrupts(layout: str, make_cache: Callable[..., Any], cache_dir: Path, backend: Backend) -> None:
+def test_mixed_get_set_delete_never_corrupts(
+    layout: str, make_cache: Callable[..., Any], cache_dir: Path, backend: Backend
+) -> None:
     caches = _caches(layout, make_cache, cache_dir)
     spill_size = 2 * backend.spill_threshold
     keys = [f'key-{i}' for i in range(MIXED_KEYS)]
@@ -280,13 +286,23 @@ def test_peak_fds_within_the_backend_budget(make_cache: Callable[..., Any], cach
     assert _peak_fds(make_cache, cache_dir) <= backend.fd_budget(FD_THREADS)
 
 
-@pytest.mark.diverges(backend='diskcache', ref='D-017', reason='diskcache keeps one connection per thread', raises=AssertionError)
+@pytest.mark.diverges(
+    backend='diskcache',
+    ref='D-017',
+    reason='diskcache keeps one connection per thread',
+    raises=AssertionError,
+)
 def test_peak_fds_bounded_by_the_pool(make_cache: Callable[..., Any], cache_dir: Path) -> None:
     peak = _peak_fds(make_cache, cache_dir)
     assert peak <= OXIDE_FD_BUDGET, f'{peak} fds open inside the cache directory with {FD_THREADS} threads'
 
 
-@pytest.mark.diverges(backend='diskcache', ref='D-018', reason="close() leaves other threads' connections open", raises=AssertionError)
+@pytest.mark.diverges(
+    backend='diskcache',
+    ref='D-018',
+    reason="close() leaves other threads' connections open",
+    raises=AssertionError,
+)
 def test_close_releases_every_fd(make_cache: Callable[..., Any], cache_dir: Path) -> None:
     cache = make_cache(cache_dir)
     cache.set('main', 0)
@@ -304,12 +320,27 @@ def test_close_releases_every_fd(make_cache: Callable[..., Any], cache_dir: Path
     assert remaining == 0, f'{remaining} fds still open inside the cache directory after close()'
 
 
-@pytest.mark.diverges(backend='diskcache', ref='D-018', reason='unclosed per-thread connections warn at finalization', raises=AssertionError)
+@pytest.mark.diverges(
+    backend='diskcache',
+    ref='D-018',
+    reason='unclosed per-thread connections warn at finalization',
+    raises=AssertionError,
+)
 def test_threads_then_close_emit_no_resource_warning(backend: Backend, cache_dir: Path) -> None:
     # In a subprocess: sqlite3 reports these from dealloc as unraisables, and catch_warnings is
     # context-local on 3.14t, so an in-process check can't see them.
     proc = subprocess.run(
-        [sys.executable, '-W', 'error::ResourceWarning', '-m', 'tests.conformance.proc_workers', 'threads-close', backend.name, str(cache_dir), str(FD_THREADS)],
+        [
+            sys.executable,
+            '-W',
+            'error::ResourceWarning',
+            '-m',
+            'tests.conformance.proc_workers',
+            'threads-close',
+            backend.name,
+            str(cache_dir),
+            str(FD_THREADS),
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

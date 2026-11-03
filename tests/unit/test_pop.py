@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from diskcache_oxide import Cache, CorruptValueError, ForeignValueError, Timeout
+
 from tests.conformance.proc_workers import SqlitePeer
 
 LOGGER = 'diskcache_oxide'
@@ -68,7 +68,9 @@ def _db(directory: Path) -> Path:
 
 def _sql(directory: Path, statement: str) -> None:
     """Runs one statement on the cache's database from another process, with the stdlib's SQLite."""
-    script = 'import sqlite3, sys\ncon = sqlite3.connect(sys.argv[1])\ncon.execute(sys.argv[2])\ncon.commit()\ncon.close()'
+    script = (
+        'import sqlite3, sys\ncon = sqlite3.connect(sys.argv[1])\ncon.execute(sys.argv[2])\ncon.commit()\ncon.close()'
+    )
     subprocess.run([sys.executable, '-c', script, str(_db(directory)), statement], check=True)
 
 
@@ -118,7 +120,17 @@ def test_a_spilled_foreign_value_keeps_its_row_and_file(directory: Path, policy:
     cache.close()
 
 
-@pytest.mark.parametrize('error', [Timeout('nested'), MemoryError(), RecursionError(), OSError('disk'), KeyboardInterrupt()], ids=lambda e: type(e).__name__)
+@pytest.mark.parametrize(
+    'error',
+    [
+        Timeout('nested'),
+        MemoryError(),
+        RecursionError(),
+        OSError('disk'),
+        KeyboardInterrupt(),
+    ],
+    ids=lambda e: type(e).__name__,
+)
 @POLICIES
 def test_a_hook_raising_a_transient_error_keeps_the_row(directory: Path, policy: Any, error: BaseException) -> None:
     cache = Cache(directory, pickle=True, on_decode_error=policy)
@@ -150,7 +162,9 @@ def test_an_unreadable_value_is_removed_then_raised_under_raise(directory: Path,
     assert not _value_files(directory)
 
 
-def test_an_unreadable_value_is_removed_and_reported_after_the_delete_under_miss(directory: Path) -> None:
+def test_an_unreadable_value_is_removed_and_reported_after_the_delete_under_miss(
+    directory: Path,
+) -> None:
     cache: Cache
     seen: list[tuple[str, bool]] = []
 
@@ -165,7 +179,9 @@ def test_an_unreadable_value_is_removed_and_reported_after_the_delete_under_miss
     cache.close()
 
 
-def test_the_miss_warning_says_the_unreadable_row_was_deleted(directory: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_the_miss_warning_says_the_unreadable_row_was_deleted(
+    directory: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     cache = Cache(directory, on_decode_error='miss')
     cache.set('k', {'a': 1})
     _sql(directory, "UPDATE cache SET value = X'c1' WHERE key = 'k'")
@@ -177,7 +193,9 @@ def test_the_miss_warning_says_the_unreadable_row_was_deleted(directory: Path, c
 
 
 @POLICIES
-def test_a_failed_delete_of_an_unreadable_value_raises_with_the_decode_error_as_its_cause(directory: Path, policy: Any) -> None:
+def test_a_failed_delete_of_an_unreadable_value_raises_with_the_decode_error_as_its_cause(
+    directory: Path, policy: Any
+) -> None:
     cache = Cache(directory, timeout=0.2, on_decode_error=policy)
     cache.set('k', {'a': 1})
     _sql(directory, "UPDATE cache SET value = X'c1' WHERE key = 'k'")
@@ -191,7 +209,9 @@ def test_a_failed_delete_of_an_unreadable_value_raises_with_the_decode_error_as_
     cache.close()
 
 
-def test_an_unreadable_value_a_peer_replaced_first_is_read_again(directory: Path) -> None:
+def test_an_unreadable_value_a_peer_replaced_first_is_read_again(
+    directory: Path,
+) -> None:
     # The delete is of the version that failed, so the peer's value isn't lost, and pop returns it.
     with Cache(directory, pickle=True) as writer:
         writer.set('k', Unpicklable())
@@ -236,7 +256,9 @@ def test_pop_losing_to_a_delete_is_a_miss(directory: Path) -> None:
     cache.close()
 
 
-def test_a_hook_that_always_overwrites_its_own_key_ends_in_the_fallback(directory: Path) -> None:
+def test_a_hook_that_always_overwrites_its_own_key_ends_in_the_fallback(
+    directory: Path,
+) -> None:
     cache = Cache(directory, pickle=True, timeout=10)
     cache.set('k', Hooked('first'))
     decoded: list[int] = []
@@ -320,7 +342,9 @@ def test_the_clock_is_read_once_however_many_times_pop_retries(directory: Path) 
 # -- one deadline for the whole call --------------------------------------------------------------
 
 
-def test_time_spent_in_a_hook_comes_out_of_the_timeout_for_the_delete(directory: Path) -> None:
+def test_time_spent_in_a_hook_comes_out_of_the_timeout_for_the_delete(
+    directory: Path,
+) -> None:
     timeout, hook = 2.0, 1.5
     cache = Cache(directory, timeout=timeout, pickle=True)
     cache.set('k', Hooked('kept'))
@@ -337,7 +361,9 @@ def test_time_spent_in_a_hook_comes_out_of_the_timeout_for_the_delete(directory:
     cache.close()
 
 
-def test_a_race_lost_after_the_deadline_times_out_with_the_row_kept(directory: Path) -> None:
+def test_a_race_lost_after_the_deadline_times_out_with_the_row_kept(
+    directory: Path,
+) -> None:
     # 8 attempts at a full timeout each would run this hook far more often.
     cache = Cache(directory, timeout=0.5, pickle=True)
     cache.set('k', Hooked('first'))
@@ -357,7 +383,9 @@ def test_a_race_lost_after_the_deadline_times_out_with_the_row_kept(directory: P
     cache.close()
 
 
-def test_a_foreign_value_survives_a_single_race_lost_after_the_deadline(directory: Path) -> None:
+def test_a_foreign_value_survives_a_single_race_lost_after_the_deadline(
+    directory: Path,
+) -> None:
     # Going to the fallback here would remove the row before decoding it, after just one lost race.
     cache = Cache(directory, timeout=0.05, pickle=True, on_decode_error='miss')
     cache.set('k', Hooked('first'))
@@ -374,7 +402,9 @@ def test_a_foreign_value_survives_a_single_race_lost_after_the_deadline(director
     cache.close()
 
 
-def test_pop_waits_for_the_write_lock_and_times_out_with_the_row_kept(directory: Path) -> None:
+def test_pop_waits_for_the_write_lock_and_times_out_with_the_row_kept(
+    directory: Path,
+) -> None:
     cache = Cache(directory, timeout=0.2)
     cache.set('k', 'v')
     with SqlitePeer(_db(directory)) as peer:
@@ -412,7 +442,9 @@ def test_pop_of_a_missing_key_never_waits_for_a_writer(directory: Path) -> None:
     cache.close()
 
 
-def test_a_hook_that_pops_its_own_key_recurses_to_recursion_error(directory: Path) -> None:
+def test_a_hook_that_pops_its_own_key_recurses_to_recursion_error(
+    directory: Path,
+) -> None:
     cache = Cache(directory, pickle=True)
     cache.set('k', Hooked('kept'))
     Hooked.hook = lambda: cache.pop('k')
@@ -431,7 +463,9 @@ def test_a_hook_that_pops_its_own_key_recurses_to_recursion_error(directory: Pat
 # -- value files ------------------------------------------------------------------------------------
 
 
-def test_popping_a_spilled_value_returns_it_and_removes_its_file(directory: Path) -> None:
+def test_popping_a_spilled_value_returns_it_and_removes_its_file(
+    directory: Path,
+) -> None:
     cache = Cache(directory)
     cache.set('k', b'x' * BIG)
     assert len(_value_files(directory)) == 1
@@ -450,7 +484,9 @@ def test_a_missing_value_file_is_a_miss_and_its_row_goes(directory: Path) -> Non
     cache.close()
 
 
-def test_under_contention_a_missing_value_file_is_a_miss_and_its_row_can_stay(directory: Path) -> None:
+def test_under_contention_a_missing_value_file_is_a_miss_and_its_row_can_stay(
+    directory: Path,
+) -> None:
     # As with get (D-013): the read doesn't wait to clean up. A later pop, or a write's cleanup, does.
     cache = Cache(directory, timeout=30)
     cache.set('k', b'x' * BIG)

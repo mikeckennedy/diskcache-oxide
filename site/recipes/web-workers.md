@@ -27,11 +27,13 @@ from diskcache_oxide import Cache
 
 cache = Cache('/var/cache/my-app', timeout=1.0)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
     cache.checkpoint()
     cache.close()
+
 
 app = FastAPI(lifespan=lifespan)
 ```
@@ -48,6 +50,7 @@ from diskcache_oxide import Cache
 
 app = Flask(__name__)
 cache = Cache('/var/cache/my-app', timeout=1.0)
+
 
 @atexit.register
 def close_cache() -> None:
@@ -67,6 +70,7 @@ Reads never wait for writers, so a [get](../reference/Cache.get.md#diskcache_oxi
 
 ``` python
 from diskcache_oxide import Timeout
+
 
 def cache_quietly(key: str, value: object, expire: float) -> None:
     try:
@@ -97,6 +101,7 @@ To run with caching off (local development, or chasing a stale-data bug in produ
 
 ``` python
 from diskcache_oxide import Cache, CacheLike, NullCache
+
 
 def make_cache(settings) -> CacheLike:
     real = Cache(settings.cache_dir, timeout=1.0)
