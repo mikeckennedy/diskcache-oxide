@@ -160,12 +160,19 @@ fn deferred_owners() -> Option<DeferredOwners> {
 }
 
 /// The child side of the fork hooks: a holder of [`DEFERRED_OWNERS`] that isn't this process is a
-/// thread the fork left behind, so the mutex stays locked for good here. Mark it lost.
+/// thread the fork left behind. If it was inside the mutex, the mutex stays locked for good here, so
+/// mark it lost. If it held only the stamp (just before taking the mutex, or just after letting go of
+/// it), the queue is whole and nobody is in there, so free it. While the stamp is foreign, nothing
+/// takes the mutex ([`deferred_owners`] gives up before it), so it can't change under the check.
 pub(crate) fn forget_inherited_owners() {
     let me = std::process::id();
-    let _ = DEFERRED_OWNERS_HOLDER.try_update(Ordering::AcqRel, Ordering::Acquire, |holder| {
-        (holder != 0 && holder != me && holder != OWNERS_LOST).then_some(OWNERS_LOST)
-    });
+    let holder = DEFERRED_OWNERS_HOLDER.load(Ordering::Acquire);
+    if holder == 0 || holder == me || holder == OWNERS_LOST {
+        return;
+    }
+    // The guard is a temporary, so a free mutex is let go again before the store.
+    let inside = matches!(DEFERRED_OWNERS.try_lock(), Err(TryLockError::WouldBlock));
+    DEFERRED_OWNERS_HOLDER.store(if inside { OWNERS_LOST } else { 0 }, Ordering::Release);
 }
 
 /// How a handle wants its store opened.
@@ -717,9 +724,10 @@ impl Store {
                 self.deferred_releases.fetch_add(1, Ordering::SeqCst);
                 match deferred_owners() {
                     Some(mut owners) => owners.push(Arc::clone(self)),
-                    // Only in a child forked while a thread was in there (or a holder stuck past
-                    // DEFERRED_OWNERS_PATIENCE): the store outlives its drain, which is the safe
-                    // direction, as it still releases. The leak is accepted there.
+                    // Only in a child forked while a thread was inside the mutex, where it then
+                    // happens to every later deferral in that child and its descendants, or after a
+                    // holder stuck past DEFERRED_OWNERS_PATIENCE. The store outlives its drain, which
+                    // is the safe direction, as it still releases: only its memory stays.
                     None => std::mem::forget(Arc::clone(self)),
                 }
             },

@@ -13,8 +13,8 @@ Paths: `LIB` = `~/github/mk/diskcache-oxide`. `APP` = `~/github/talk-python/talk
 | Plan 09 step 1: `pop` keeps values it can't read | Built and reviewed (`a79f895`; step 1b, timeouts behind a pending fork, `58508b8`) |
 | Plan 09 step 2: `Cache(durable=True)` | Built (`9751682`; step 2b, forced-checkpoint retries, `5b2ea85`). The deep review of `5b2ea85` found four bugs, all fixed (`08e00f2`, `81aa84d`, `ae48524`) |
 | Plan 09 step 3: `pop` in the soak kit, then a fresh 24-hour run | Done. The kit has the plan 09 lanes (`08e00f2`) |
-| 24-hour soak on the mini | **PASS on `ae48524`** (section 8). Since then: comments, docs, tests and formatting, plus the finding 3 follow-up to the deferred-owner lock, a path the soak didn't reach |
-| PGO wheels | Built into `LIB/dist/`, macOS arm64 only (section 4) |
+| 24-hour soak on the mini | **PASS on `ae48524`** (section 8). Since then: comments, docs, tests and formatting, plus the finding 3 follow-up to the deferred-owner lock and its child-hook refinement (a forked child frees a holder that held only the stamp), paths the soak didn't reach |
+| PGO wheels | Rebuilt 2026-11-04 on `07ed13d` plus the child-hook refinement into `LIB/dist/`, macOS arm64 only (section 4) |
 | Linux wheel | **Doesn't exist.** Production installs from a wheel, not PyPI (Michael). Version is still `0.0.0`. Blocks production, not local work |
 | Port plan | **Not written.** Section 6 has the raw material; it goes in `plans/` and gets the architect's review |
 
@@ -39,7 +39,7 @@ Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency wor
 3. **Done: add `pop` and durable lanes to the soak kit and soak 24 hours.** It passed on `ae48524` (section 8). Rule for any rerun: one soak at a time on the mini. Use `zsh -lc` over ssh, and see the memory note `soak-on-mini`.
 4. **Write the port plan** from section 6, settling section 7's decisions with Michael. The architect reviews it.
 5. **Port on the branch.** Run `./venv/bin/ty check`, `./venv/bin/ruff check --fix talk_python_to_me_com/`, `./venv/bin/ruff format talk_python_to_me_com/` and the tests, from `APP`. About 8,500 tests, serial, and `tests/test_type_check.py` fails on any `ty` diagnostic.
-6. **Before production:** the soak PASS on the final library commit, a Linux wheel (section 9), and the cold-cutover steps (section 7, items 1 and 2). Near the end, Michael runs a real test on `talk-python-htz`, on real Linux, as the near-final check (2026-10-30). That's where Linux performance gets measured.
+6. **Before production:** the soak PASS on the final library commit, a Linux wheel (section 9), and the cold-cutover steps (section 7, items 1 and 2). Near the end, Michael runs a real test on `talk-python-htz`, on real Linux, as the near-final check (2026-10-30). That's where Linux performance gets measured, including the fork cost at the worker's real size (section 11).
 
 Library changes during the port: Python-only changes such as `Caches` shouldn't need another soak. A change to `get_with`, `pop` or the locking does.
 
@@ -54,8 +54,8 @@ diskcache_oxide-0.0.0-cp315-cp315-macosx_11_0_arm64.whl     <- Talk Python's dev
 diskcache_oxide-0.0.0-cp315-cp315t-macosx_11_0_arm64.whl
 ```
 
-- **Contents:** library commit `9241763`, so plan 08 and not plan 09. `dist/` is git-ignored. Rebuild after plan 09.
-- **Verified:** each wheel is free of instrumentation, links the bundled SQLite with the shipped flags, and passes the full suite and conformance tests from a fresh venv (811 and 810 passed, 316 conformance).
+- **Contents:** the commit after `07ed13d`, with the child-hook refinement in `forget_inherited_owners` (rebuilt 2026-11-04 from its working tree), so plan 09, every deep-review fix and the refinement are in. `dist/` is git-ignored. Rebuild after any library change the perf test should see.
+- **Verified (2026-11-04):** each wheel is free of instrumentation (no `__llvm_profile` symbols), links the bundled SQLite 3.54.1 with the shipped flags, and passes the full suite and conformance tests from a fresh venv: 1098 passed on each, 320 conformance on the GIL builds and 322 on the free-threaded ones. The fresh venv needs `ty` too, for `test_ty_sees_both_classes_as_cache_like`.
 - **Rust only.** The bundled SQLite is C, built by the system compiler (Apple clang, LLVM 21), whose profile format doesn't match rustc's (LLVM 23), so it isn't profile-guided. Much of a cached `get` is SQLite and its `fcntl`, which limits what PGO can do.
 - **Measured benefit:**
 
@@ -215,7 +215,7 @@ What that does to callers:
 
 - **Last run: PASS.** `soak-results/20261031-230228` on the mini, commit `ae48524`, `--hours 24 --procs 7 --threads 4 --rate 180000`, with the plan 09 lanes. 0 problems, 0 stalls, 0 timeouts, no leak or drift flags. 494 kills, 140,999 forks with 0 failures. Worst RSS slope 0.10 MiB/h; get p99 86 µs in the first hour, 90 µs in the last.
 - **Plan 09 lanes:** exactly-once `pop`: 2,002,255 tokens, 0 duplicates, 1 lost and excused by a kill. `durable=True`: 113.5M calls, 385,261 answered as failures and checked, 0 exceptions escaped, 0 broken. 33.7M `pop` calls across all four sites. Forced checkpoints on the two one-writer auto stores: 287,594 of 287,608 rounds succeeded (5 busy, 9 stopped for a pending fork). Orphans: 3 files in the ledger store, expected from kills mid-write (Phase 6a's `check()` cleans them).
-- **What it vouches for:** the library through `ae48524`. Commits after it through `9458d00` change comments, docs, tests and formatting only. The finding 3 follow-up after that changes how a deferral behind a stuck fork takes the deferred-owner lock (it waits for a busy holder in its own process instead of leaking). The soak never reached that path (next point), so the core tests vouch for it, not the soak. Rerun the soak if `get_with`, `pop` or the gate's locking changes (section 3).
+- **What it vouches for:** the library through `ae48524`. Commits after it through `9458d00` change comments, docs, tests and formatting only. The finding 3 follow-up after that changes how a deferral behind a stuck fork takes the deferred-owner lock (it waits for a busy holder in its own process instead of leaking), and the commit after it narrows the child's after-fork hook so a holder that held only the stamp is freed rather than marked lost. The soak never reached that path (next point), so the core tests vouch for it, not the soak. Rerun the soak if `get_with`, `pop` or the gate's locking changes (section 3).
 - **What it doesn't cover:** the deep review's finding 3 (a deferred release that has to wait for a stuck fork) was almost certainly never reached. The longest stuck fork was 0.727 s against the 1 s release budget, and no counter records a deferral. The core tests in `store/fork_timeout.rs` cover it.
 - **Previous run:** `soak-results/20261030-102056` on `0f1b9b8`, before plan 09, was stopped and replaced by this one. A local copy is in `soak-results/mini-20261030-102056/`.
 - **Laptop jobs:** the problem watcher and report sync run on Michael's laptop and die if the Claude session restarts, as they did once. Restart them after a restart. They're not needed for the soak's correctness.
@@ -240,3 +240,27 @@ What that needs:
 - **Commits:** no `Co-Authored-By` or attribution lines.
 - **Type checking in the library:** `ty check` in `scripts/check.sh`, and `tests/unit/test_stubs.py` checks `_core.pyi` against the compiled module (what `mypy.stubtest` did). `ty` also found that `CacheLike`'s `__contains__` and friends allowed a keyword `key` where `Cache` doesn't; they're positional-only now.
 - **Where results come from (Michael, 2026-10-30):** run natively on the Mac by default. Production is Linux in Docker on real Linux. Every "Linux" result so far (the gates, the 6-hour soak, `linux-check.sh`) came from the OrbStack VM, so it shows the code works on Linux, not how it performs. Production performance claims need real Linux hardware. Don't run the VM checks routinely: only when a specific Linux behavior needs testing.
+
+## 11. The deep review's §6.11–13: its last open problems
+
+Settled with Michael on 2026-11-03, then tightened after the architect's review.
+
+**Fork cost at production scale: measured on `talk-python-htz`, as a production gate.**
+
+- **What's known:** forks have only been timed in small processes. Quiet on macOS, about 1.1-1.3 ms p50 (1,108 µs on 3.14, 1,334 µs on 3.14t). Beside load on Linux 3.15t, about 3 ms p50, 11-22 ms p99 and up to 320 ms at worst (plan 09), but those came from the OrbStack VM, so they show the shape, not production timing. A fork copies the parent's page tables, so it costs more in a large worker. Beside load it also waits for every call in flight (`begin_fork`), and every cache call in the process waits for the fork within its own `timeout`, a budget it shares with its SQLite busy wait (`Caches(timeout=1.0)` in the port).
+- **First, check whether it's moot.** Grep the app for `os.fork`, `multiprocessing` with the `fork` context, `ProcessPoolExecutor` and `preexec_fn`. Plain `subprocess` doesn't run the at-fork hooks, and 3.14's default multiprocessing start method on Linux is `forkserver`. Then count real forks for a day: the library keeps no fork counter (`_gate_stats()` has only `pending`, `holders`, `parked`, `fork_timeouts` and `deferred`), so register an `os.register_at_fork(after_in_parent=...)` hook that counts and logs them, inside each worker (after granian starts it), or it counts nothing. If no worker forks with a cache open, record that, and the gate doesn't apply.
+- **Otherwise, measure inside the production container**, not on the bare host, since memory cgroups and transparent huge pages change fork cost. Take `RssAnon` from a real worker's `/proc/<pid>/status` and its number of open caches, then run `python -m bench.fork_cost --rss-mib <RssAnon in MiB> --caches <n> --load-threads 4`. `--rss-mib` is a target the process grows to, and `--load-threads` times other threads' cache calls across the forks.
+- **The gate:** across the run, the worst fork, and the worst load-thread call around a fork, stay under 100 ms (a tenth of the 1 s timeout), and `_gate_stats()` shows `fork_timeouts == 0`. Record how often production forks too, since a rare 100 ms stall and a constant one aren't the same cost.
+- **What the bench doesn't model:** a child that lives and makes the parent pay real copy-on-write copies (its child exits at once), and the write faults the parent takes on its next requests as refcounts touch pages the fork write-protected.
+
+**The two historical unexplained failures.**
+
+- **The Linux 3.15t flake in `test_auto_mode_shrinks_the_wal_back_after_a_burst_with_readers_in_other_processes`: closed, explained and fixed.** It was a real defect, forced TRUNCATE checkpoints reporting busy beside readers in other processes, fixed by plan 09 step 2b's `truncate_tries`. The pinned test then passed 30 of 30 on all four Linux builds and the review approved it. Two caveats: those runs were in the OrbStack VM, so they count for correctness, not timing, and the GIL builds force few checkpoints there, so their 30 of 30 says little about the fix. The free-threaded builds carry the evidence.
+- **The unit failure committed with `8617f26` (2026-10-29, 3.14 GIL, `venv`).** The test's name wasn't kept, and 5 reruns right after passed. A repeat loop can't prove it's gone, only fail to reproduce it. The rule: the unit suite on the Mac, repeated for 3 hours in `venv` (3.14 GIL, where it failed) and then 1.5 hours in `.venv-ft` (3.14t), keeping the full output of any failure. With no failures, it's recorded as not reproduced and closed. With one, it gets a name and a fix.
+  - Result: not reproduced, closed (2026-11-04). `venv`: 173 runs from 22:57 to 01:59, all passing (838 passed, 1 skipped each), on the extension built at 22:43 from `07ed13d`. `.venv-ft`: 87 runs from 01:59 to 03:30, all passing (836 passed, 3 skipped each), on an extension rebuilt with the child-hook refinement. That's 260 runs of the suite with no failure. Some `venv` runs overlapped other work on the machine (core tests, bench smoke runs, `cargo doc`), which only added load.
+
+**The long-run memory slope: not a blocker, watched in production.**
+
+- The worst per-worker fit across both 24 h soaks is +0.35 MiB/h, 6x under the soak's 2 MiB/h leak flag (`RSS_LEAK_MIB_PER_H`, `soak/report.py`). But that flag is loose: a real 1 MiB/h leak, 24 MiB a day, would pass it.
+- The same role grew in both runs: the long-lived 3.14t worker 1 went 79.7 to 85.1 MiB on 2026-10-30 and 90.1 to 94.5 MiB on 2026-10-31, about +5 MiB a day each time, while the other three workers in the second run fell. That fits an allocator settling, but a linear fit over 24 h can't tell settling from slow growth, and nothing in the summaries shows it flattening.
+- If it's linear, it's bounded at about 8 MiB a day per worker. Watch worker RSS on htz over 7 days or more (moot if workers are recycled sooner).

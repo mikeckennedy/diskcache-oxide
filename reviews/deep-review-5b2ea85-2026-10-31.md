@@ -1,6 +1,6 @@
 # Deep review of `5b2ea85`
 
-**Follow-up:** The fixes were reviewed below under “Fix review.” Findings 1, 2 and 4 are addressed in the reviewed fixes; finding 3 is improved but remains open on the contention fallback. The original findings and evidence are preserved as history.
+**Follow-up:** The fixes were reviewed below under “Fix review.” Findings 1, 2 and 4 are addressed in the reviewed fixes; finding 3 was improved but left open on the contention fallback, and that remainder was fixed afterwards in `1d7d0b2` (see “Resolution of the remaining issue” at the end). The original findings and evidence are preserved as history.
 
 Reviewed 2026-10-31. Exact revision: `5b2ea8552b717c0542cfa287a82e533ad550e265`.
 
@@ -280,3 +280,14 @@ The immediate enter/leave pairing in `check_stack` is consistent with CPython 3.
 - Python regression result recorded below after completion.
 
 **Disposition:** The two tier-1 issues that blocked the original review are addressed. I would not label all four findings closed until the live-parent contention leak is resolved or explicitly accepted. This follow-up does not re-review unrelated maintenance/soak changes or replace the original Linux and final-soak deployment gates. Only this review document was edited.
+
+## Resolution of the remaining issue (2026-11-03)
+
+Added after the review by the project, not by the reviewer, and not yet confirmed by the reviewer. Fixed in `1d7d0b2`, “Fix the store leak beside a busy deferred-owner lock”, which follows the requested follow-up, with the child hook narrowed in the commit after it:
+
+- **Inherited lock told apart from a busy one.** The deferred-owner lock is now an atomic holder stamp (the holder's pid) taken before the mutex. A holder in the same process makes a deferrer wait for it, with bounded backoff (64 yields, then 100 µs sleeps, for up to 10 s), so ordinary contention no longer reaches `mem::forget`. The leak path is taken by a holder from another process (a child whose hook hasn't run yet), by one the child's after-fork hook has marked lost, and, as a last resort, by a holder in this process that stays descheduled for the whole 10 s (`DEFERRED_OWNERS_PATIENCE`). A holder only pushes or takes, so that last case means a stalled machine, not contention.
+- **The child leak, accepted narrowly.** In a child forked while a thread was inside the owners mutex, the queue can't be recovered, so every later deferral in that child and its descendants keeps its store's memory. The release itself still runs and its file descriptors still close; only the `Arc` stays. A child forked while a thread held only the stamp (between taking it and the mutex, or after letting go of the mutex) has a whole queue, so its after-fork hook frees the stamp instead of marking it lost. Documented at the call site.
+- **Bounded fork behavior kept.** No unconditional blocking acquisition was added.
+- **Tests** (`store/fork_timeout.rs`): `row_5_a_deferral_beside_a_busy_owners_lock_waits_and_leaks_nothing` (the live-parent contention case: strong count returns to 1), `row_5_a_deferral_with_the_owners_held_by_the_parent_process_does_not_wait`, `row_5_a_deferral_with_the_owners_lost_in_a_child_still_releases` and `row_5_the_child_hook_marks_only_an_inherited_holder_lost` (which covers both a holder inside the mutex and a stamp-only one). Three of them set the stamp by hand rather than really forking, so they vouch for the stamp logic, not for a real fork landing on a holder.
+
+With this, the project regards all four findings as closed, with two accepted residuals: a same-process holder stalled past 10 s, and the child case above. The 24-hour soak that passed on `ae48524` predates the change and never reached this path, so the core tests vouch for it.

@@ -517,16 +517,26 @@ fn row_5_a_deferral_beside_a_busy_owners_lock_waits_and_leaks_nothing() {
     only_owner(&store);
 }
 
-/// The child hook marks a holder from another process lost, and leaves free, own and lost alone.
+/// The child hook marks a holder from another process lost only if it was inside the mutex. One
+/// that held only the stamp is freed, and free, own and lost are left alone.
 #[test]
 fn row_5_the_child_hook_marks_only_an_inherited_holder_lost() {
     let _forks = one_global_fork_at_a_time();
     let me = std::process::id();
-    for (before, after) in [(0, 0), (me, me), (me + 1, OWNERS_LOST), (OWNERS_LOST, OWNERS_LOST)] {
+    let cases = [
+        (0, false, 0),
+        (me, false, me),
+        (me + 1, true, OWNERS_LOST),
+        (me + 1, false, 0),
+        (OWNERS_LOST, false, OWNERS_LOST),
+    ];
+    for (before, inside, after) in cases {
+        let guard = inside.then(|| DEFERRED_OWNERS.lock().unwrap_or_else(PoisonError::into_inner));
         DEFERRED_OWNERS_HOLDER.store(before, Ordering::Release);
         forget_inherited_owners();
+        drop(guard);
         let seen = DEFERRED_OWNERS_HOLDER.swap(0, Ordering::AcqRel);
-        assert_eq!(seen, after, "holder {before}");
+        assert_eq!(seen, after, "holder {before}, inside the mutex: {inside}");
     }
 }
 
