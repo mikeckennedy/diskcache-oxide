@@ -19,6 +19,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from diskcache_oxide import Cache, _core
@@ -48,7 +49,7 @@ KEYS = 20_000  # About 20 MB of rows: far more pages than any budget here.
 BODY = 'x' * 1_000
 
 
-def populated(directory: Path, **options: int) -> Cache:
+def populated(directory: Path, **options: Any) -> Cache:
     cache = Cache(directory, size_limit=2**34, **options)
     for i in range(KEYS):
         cache.set(f'k:{i}', {'id': i, 'body': BODY})
@@ -63,7 +64,7 @@ def growth_while(work: Callable[[], object]) -> int:
     return high - start
 
 
-def populate_and_read(directory: Path, **options: int) -> Callable[[], Cache]:
+def populate_and_read(directory: Path, **options: Any) -> Callable[[], Cache]:
     """Work for growth_while: open, fill and read back a cache, measured from before it opens."""
 
     def work() -> Cache:

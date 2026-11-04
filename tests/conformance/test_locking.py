@@ -13,7 +13,7 @@ tries to and swallows the failure) can't pass.
 
 import multiprocessing
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -32,7 +32,7 @@ CHUNK_ATTEMPTS = 3
 
 
 @contextmanager
-def held_lock(db_path: Path, mode: str) -> Iterator[SqlitePeer]:
+def held_lock(db_path: Path, mode: str) -> Generator[SqlitePeer]:
     with SqlitePeer(db_path) as peer:
         peer.begin(mode)
         yield peer

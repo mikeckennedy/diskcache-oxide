@@ -360,7 +360,7 @@ def test_a_failing_callable_is_logged_and_the_read_is_still_a_miss(
         assert cache.get('k') is None
     [record] = [r for r in caplog.records if r.name == LOGGER]
     assert record.levelno == logging.ERROR
-    assert record.exc_info is not None and isinstance(record.exc_info[1], RuntimeError)
+    assert isinstance(record.exc_info, tuple) and isinstance(record.exc_info[1], RuntimeError)
     cache.close()
 
 
@@ -418,7 +418,7 @@ def test_the_warning_carries_the_traceback(
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         cache.get('k')
     [record] = [r for r in caplog.records if r.name == LOGGER]
-    assert record.exc_info is not None and isinstance(record.exc_info[1], AttributeError)
+    assert isinstance(record.exc_info, tuple) and isinstance(record.exc_info[1], AttributeError)
     cache.close()
 
 

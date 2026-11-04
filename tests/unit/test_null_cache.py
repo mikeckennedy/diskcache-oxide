@@ -106,7 +106,7 @@ def test_constructor_accepts_cache_arguments_and_reports_them() -> None:
 def test_bad_argument_types_raise_like_a_real_cache() -> None:
     cache = NullCache()
     with pytest.raises(TypeError):
-        cache.set(1, 'v')  # type: ignore[arg-type]  # D-004
+        cache.set(1, 'v')  # ty: ignore[invalid-argument-type]  # D-004
     with pytest.raises(TypeError):
         cache.set('k', 'v', expire=True)  # D-014
     with pytest.raises(TypeError):
@@ -115,7 +115,7 @@ def test_bad_argument_types_raise_like_a_real_cache() -> None:
 
 def test_invalidate_forwards_removals_only() -> None:
     real = Recorder()
-    cache = NullCache(invalidate=real)  # type: ignore[arg-type]
+    cache = NullCache(invalidate=real)  # ty: ignore[invalid-argument-type]
     assert cache.delete('k') is True
     assert cache.pop('p', 'd') == 'd'
     assert cache.clear() == 7
@@ -141,7 +141,7 @@ def test_close_never_closes_the_forwarding_target() -> None:
             self.closed = True
 
     real = Closable()
-    NullCache(invalidate=real).close()  # type: ignore[arg-type]
+    NullCache(invalidate=real).close()  # ty: ignore[invalid-argument-type]
     assert real.closed is False
 
 

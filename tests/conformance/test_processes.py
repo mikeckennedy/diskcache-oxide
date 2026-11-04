@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +46,7 @@ def _join_all(procs: list[Any]) -> None:
 
 
 @contextlib.contextmanager
-def _reaped(done: Any, *groups: list[Any]) -> Iterator[None]:
+def _reaped(done: Any, *groups: list[Any]) -> Generator[None]:
     """Always set `done` and kill any process still running on the way out, however the body exits.
 
     Readers loop until `done` is set, so a writer that dies (and makes `_join_all` raise) must not

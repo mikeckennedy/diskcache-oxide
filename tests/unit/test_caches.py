@@ -243,7 +243,7 @@ def test_a_future_format_is_a_null_cache_reported_by_the_default_logger(
     with caplog.at_level(logging.ERROR, logger='diskcache_oxide'):
         assert isinstance(caches['a'], NullCache)
     [record] = [r for r in caplog.records if r.name == 'diskcache_oxide']
-    assert record.exc_info is not None and isinstance(record.exc_info[1], FormatMismatchError)
+    assert isinstance(record.exc_info, tuple) and isinstance(record.exc_info[1], FormatMismatchError)
     assert "'a'" in record.getMessage()
 
 

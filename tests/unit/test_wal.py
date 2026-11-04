@@ -23,15 +23,19 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from diskcache_oxide import Cache
+
+if TYPE_CHECKING:
+    import multiprocessing.synchronize
 
 LIMIT = 4 * 2**20
 WAL = 'diskcache-oxide.sqlite-wal'
 
 
-def _reader(directory: str, stop_at: float, ready: object) -> None:
+def _reader(directory: str, stop_at: float, ready: multiprocessing.synchronize.Event) -> None:
     from diskcache_oxide import Cache
 
     cache = Cache(directory)
@@ -45,7 +49,7 @@ def _reader(directory: str, stop_at: float, ready: object) -> None:
     threads = [threading.Thread(target=loop) for _ in range(4)]
     for t in threads:
         t.start()
-    ready.set()  # type: ignore[attr-defined]
+    ready.set()
     for t in threads:
         t.join()
 
@@ -190,13 +194,13 @@ def test_writes_inside_a_held_transaction_never_checkpoint(tmp_path: Path) -> No
 @pytest.mark.parametrize('bad', ['always', 'AUTO', '', None, True])
 def test_wal_checkpoint_is_validated(tmp_path: Path, bad: object) -> None:
     with pytest.raises((TypeError, ValueError)):
-        Cache(tmp_path / 'c', wal_checkpoint=bad)  # type: ignore[arg-type]
+        Cache(tmp_path / 'c', wal_checkpoint=bad)  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize('bad', [True, 0, -1, 1024, 2**20 - 1, 1.5, '64MiB'])
 def test_wal_size_limit_is_validated(tmp_path: Path, bad: object) -> None:
     with pytest.raises((TypeError, ValueError)):
-        Cache(tmp_path / 'c', wal_size_limit=bad)  # type: ignore[arg-type]
+        Cache(tmp_path / 'c', wal_size_limit=bad)  # ty: ignore[invalid-argument-type]
 
 
 def test_null_cache_accepts_and_ignores_wal_size_limit() -> None:

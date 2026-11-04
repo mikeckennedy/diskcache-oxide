@@ -392,7 +392,7 @@ class Worker:
             found: list[str] = []  # Problems seen inside the hold, reported after it for the same reason.
             try:
                 with self.ledger._hold_write_transaction():
-                    tx = self.ledger.incr(f'hctr:{self.id}')
+                    tx = int(self.ledger.incr(f'hctr:{self.id}'))
                     for key, version in planned.items():
                         if version:
                             assert self.ledger.set(key, held_value(key, version, tx, rng)) is True
@@ -1102,9 +1102,9 @@ class LaneWorker(Worker):
         """A bug isn't an outage: these raise whatever the store is doing, before it's reached."""
         self.count('durable_bug_checks')
         for what, work in (
-            ('a non-str key to set', lambda: self.durable.set(123, 'v')),
-            ('a non-str key to get', lambda: self.durable.get(123)),
-        ):  # ty: ignore[arg-type]
+            ('a non-str key to set', lambda: self.durable.set(123, 'v')),  # ty: ignore[invalid-argument-type]
+            ('a non-str key to get', lambda: self.durable.get(123)),  # ty: ignore[invalid-argument-type]
+        ):
             try:
                 work()
             except TypeError:

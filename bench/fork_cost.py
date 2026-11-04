@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 
 class Slow:
@@ -43,13 +44,13 @@ def open_fds() -> int:
     return len(os.listdir('/dev/fd'))
 
 
-def warm(cache: object, idle: int) -> None:
+def warm(cache: Any, idle: int) -> None:
     """Leaves `idle` connections in the pool: `idle` threads hold a lease at the same time."""
     barrier = threading.Barrier(idle)
 
     def read() -> None:
         barrier.wait()
-        cache.get('slow')  # type: ignore[attr-defined]
+        cache.get('slow')
 
     threads = [threading.Thread(target=read) for _ in range(idle)]
     for t in threads:

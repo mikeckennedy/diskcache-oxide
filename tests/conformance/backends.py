@@ -67,6 +67,8 @@ class Backend:
     # True when the backend reads time via `time.time()`, so the fake clock monkeypatches it;
     # False when the clock is passed in with `clock=`.
     patches_time_time: bool = False
+    # The imported backend package (diskcache, diskcache_oxide, ...).
+    _module: Any
 
     def make_cache(
         self,

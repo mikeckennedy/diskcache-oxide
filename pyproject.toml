@@ -31,6 +31,7 @@ dev = [
     "pytest-timeout>=2.3",
     "diskcache==5.6.3",
     "ty>=0.0.95",
+    "ruff>=0.17.3",
     # Names harness processes (dco-pytest[...], dco-spill-writer, ...); see tests/proctitle.py.
     "setproctitle>=1.3.8",
     "hypothesis>=6.140",
@@ -81,3 +82,9 @@ markers = [
     "requires(feature): skipped until the backend supports the feature",
     "slow: heavy stress tests, excluded by default (run with -m slow)",
 ]
+
+# Optional imports, each guarded or only used by a tool with its own dependency group: griffe and
+# great_docs come with the docs group (scripts/build_docs.py), and the soak worker falls back to
+# `resource` when psutil isn't installed.
+[tool.ty.analysis]
+allowed-unresolved-imports = ["griffe", "great_docs.**", "psutil"]

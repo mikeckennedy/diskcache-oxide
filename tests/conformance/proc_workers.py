@@ -799,10 +799,8 @@ THREAD_MODES = frozenset(
 
 def fork_check(backend_name: str, directory: str, mode: str) -> int:
     backend = _backend(backend_name)
-    cache = backend.make_cache(
-        Path(directory),
-        **({'timeout': THREAD_MODE_TIMEOUT} if mode in THREAD_MODES else {}),
-    )
+    options: dict[str, Any] = {'timeout': THREAD_MODE_TIMEOUT} if mode in THREAD_MODES else {}
+    cache = backend.make_cache(Path(directory), **options)
     # Use the cache before forking so the parent holds an open connection.
     cache.set('before-fork', 'parent')
     cache.incr('counter', 0)

@@ -24,6 +24,8 @@ from tests.conformance.value_cases import (
 )
 
 _LA = dt.datetime(2026, 10, 27, 13, 45, tzinfo=zoneinfo.ZoneInfo('America/Los_Angeles'))
+_LA_OFFSET = _LA.utcoffset()
+assert _LA_OFFSET is not None
 
 
 def _roundtrip_params() -> list[Any]:
@@ -93,9 +95,9 @@ def _oxide_params(column: int, outcome: str) -> list[Any]:
         (Priority.HIGH, 1),
         (Point(1, 2), (1, 2)),
         (collections.OrderedDict(a=1), {'a': 1}),
-        (collections.defaultdict(list, a=1), {'a': 1}),
-        (collections.defaultdict(list, a=1), collections.defaultdict(set, a=1)),
-        (_LA, _LA.astimezone(dt.timezone(_LA.utcoffset()))),
+        (collections.defaultdict(list, a=1), {'a': 1}),  # ty: ignore[invalid-argument-type]
+        (collections.defaultdict(list, a=1), collections.defaultdict(set, a=1)),  # ty: ignore[invalid-argument-type]
+        (_LA, _LA.astimezone(dt.timezone(_LA_OFFSET))),
     ],
 )
 def test_exact_equal_rejects_lookalikes(a: Any, b: Any) -> None:

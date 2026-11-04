@@ -30,7 +30,7 @@ POLICIES = pytest.mark.parametrize('policy', ['raise', 'miss'])
 class Hooked:
     """Unpickling it calls `Hooked.hook`, if one is set."""
 
-    hook: Callable[[], None] | None = None
+    hook: Callable[[], object] | None = None
 
     def __init__(self, payload: str = 'x') -> None:
         self.payload = payload
@@ -224,12 +224,12 @@ def test_an_unreadable_value_a_peer_replaced_first_is_read_again(
         peer.set('k', 'fresh')
         original(self, state)
 
-    Unpicklable.__setstate__ = replace_then_fail  # type: ignore[method-assign]
+    Unpicklable.__setstate__ = replace_then_fail
     try:
         cache = Cache(directory, pickle=True)
         assert cache.pop('k') == 'fresh'
     finally:
-        Unpicklable.__setstate__ = original  # type: ignore[method-assign]
+        Unpicklable.__setstate__ = original
     assert replaced == [True]
     assert not _stored(directory, 'k')
     cache.close()

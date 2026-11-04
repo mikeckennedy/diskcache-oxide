@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import pytest
@@ -492,7 +493,7 @@ def test_clear_inside_a_held_transaction_doesnt_pause_for_a_writer_that_cant_get
 class _ExitsTheHold:
     """Unpickling it ends the hold from inside the get() that decodes it, and swallows the error."""
 
-    hold: object = None
+    hold: AbstractContextManager[object] | None = None
     refused: list[str] = []
 
     def __init__(self) -> None:
@@ -501,7 +502,9 @@ class _ExitsTheHold:
     def __setstate__(self, state: dict[str, object]) -> None:
         self.__dict__.update(state)
         try:
-            type(self).hold.__exit__(None, None, None)  # type: ignore[attr-defined]
+            hold = type(self).hold
+            assert hold is not None
+            hold.__exit__(None, None, None)
         except RuntimeError as e:
             type(self).refused.append(str(e))
 

@@ -91,7 +91,7 @@ def analyze(run: Path) -> dict[str, Any]:
     hours = timeline[-1]['elapsed_h'] if timeline else 0.0
     warmup = max(0.25, hours * WARMUP_FRACTION) if hours > 1 else hours * WARMUP_FRACTION
 
-    leaks = []
+    leaks: list[dict[str, Any]] = []
     for wid in sorted({w['id'] for w in workers if w.get('long_lived')}):
         rows = [w for w in workers if w['id'] == wid and w['elapsed_h'] >= warmup]
         if not rows or rows[-1]['elapsed_h'] - rows[0]['elapsed_h'] < MIN_FIT_HOURS:
@@ -113,7 +113,7 @@ def analyze(run: Path) -> dict[str, Any]:
             }
         )
 
-    drift = {}
+    drift: dict[str, dict[str, Any]] = {}
     if hours >= 2:
         for col in ('get_p99_us', 'set_p99_us', 'get_p50_us', 'set_p50_us'):
             first = [t[col] for t in timeline if t['elapsed_h'] <= 1 and t.get(col)]

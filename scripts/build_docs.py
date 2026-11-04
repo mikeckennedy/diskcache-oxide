@@ -256,7 +256,7 @@ def main() -> int:
         kwargs['extensions'] = extensions
         _orig_init(self, *args, **kwargs)
 
-    GriffeLoader.__init__ = _safe_init  # type: ignore[method-assign]
+    GriffeLoader.__init__ = _safe_init
 
     from great_docs.cli import main as gd_main
 

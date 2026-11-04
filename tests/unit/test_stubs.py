@@ -50,13 +50,13 @@ def _is_property(node: Function) -> bool:
     return any(isinstance(d, ast.Name) and d.id == 'property' for d in node.decorator_list)
 
 
-def _signature(node: Function) -> list[tuple[str, inspect._ParameterKind, object]]:
+def _signature(node: Function) -> list[tuple[str, inspect._ParameterKind, ast.expr | None]]:
     """(name, kind, default) from a stub definition. `...` and non-literal defaults are `inspect._empty`-free
     markers."""
     args = node.args
     positional = [*args.posonlyargs, *args.args]
     defaults: list[ast.expr | None] = [None] * (len(positional) - len(args.defaults)) + list(args.defaults)
-    params: list[tuple[str, inspect._ParameterKind, object]] = []
+    params: list[tuple[str, inspect._ParameterKind, ast.expr | None]] = []
     for index, (arg, default) in enumerate(zip(positional, defaults, strict=True)):
         kind = (
             inspect.Parameter.POSITIONAL_ONLY

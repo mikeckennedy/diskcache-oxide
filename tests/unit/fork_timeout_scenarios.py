@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -430,7 +430,7 @@ def open_with_settings(directory: Path) -> None:
 
 
 @contextmanager
-def ticking() -> Iterator[list[float]]:
+def ticking() -> Generator[list[float]]:
     gaps: list[float] = []
     stop = threading.Event()
 
@@ -667,7 +667,7 @@ def hook_uses_logging_and_futures(directory: Path) -> None:
 
 def futures_unimportable(directory: Path) -> None:
     """A failed import can't stop the hooks registering: a fork still quiesces."""
-    sys.modules['concurrent.futures.thread'] = None  # type: ignore[assignment]
+    sys.modules['concurrent.futures.thread'] = None  # ty: ignore[invalid-assignment]
     import diskcache_oxide
     from diskcache_oxide import _core
 

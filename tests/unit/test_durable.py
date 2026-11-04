@@ -13,7 +13,7 @@ import os
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -93,7 +93,7 @@ def _value_file(directory: Path) -> Path:
 
 
 @contextmanager
-def peer_holding_the_write_lock(directory: Path) -> Iterator[None]:
+def peer_holding_the_write_lock(directory: Path) -> Generator[None]:
     with SqlitePeer(_db(directory)) as peer:
         peer.begin('IMMEDIATE')
         try:
@@ -103,7 +103,7 @@ def peer_holding_the_write_lock(directory: Path) -> Iterator[None]:
 
 
 @contextmanager
-def unreadable(path: Path) -> Iterator[None]:
+def unreadable(path: Path) -> Generator[None]:
     os.chmod(path, 0)
     try:
         yield
@@ -112,7 +112,7 @@ def unreadable(path: Path) -> Iterator[None]:
 
 
 @contextmanager
-def unwritable_directory(path: Path) -> Iterator[None]:
+def unwritable_directory(path: Path) -> Generator[None]:
     """A value file can't be created under `path`. Its database files are already open."""
     mode = path.stat().st_mode
     for each in (path, *[p for p in path.rglob('*') if p.is_dir()]):
@@ -502,9 +502,9 @@ def test_an_explicit_on_decode_error_wins_over_durable(directory: Path, tmp_path
 
 def test_a_bad_on_decode_error_still_raises(directory: Path) -> None:
     with pytest.raises(ValueError, match='on_decode_error'):
-        Cache(directory, durable=True, on_decode_error='ignore')  # type: ignore[arg-type]
+        Cache(directory, durable=True, on_decode_error='ignore')  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError, match='on_decode_error'):
-        Cache(directory, durable=True, on_decode_error=1)  # type: ignore[arg-type]
+        Cache(directory, durable=True, on_decode_error=1)  # ty: ignore[invalid-argument-type]
 
 
 # -- pickle hooks ---------------------------------------------------------------------------------------
@@ -672,19 +672,19 @@ def test_bugs_still_raise(directory: Path) -> None:
     cache = Cache(directory, durable=True)
     cache.set('text', 'not a number')
     calls: list[tuple[type[BaseException], Callable[[], Any]]] = [
-        (TypeError, lambda: cache.get(1)),  # type: ignore[arg-type]
-        (TypeError, lambda: cache[1]),  # type: ignore[index]
+        (TypeError, lambda: cache.get(1)),  # ty: ignore[invalid-argument-type]
+        (TypeError, lambda: cache[1]),  # ty: ignore[invalid-argument-type]
         (TypeError, lambda: 1 in cache),
-        (TypeError, lambda: cache.set(1, 'v')),  # type: ignore[arg-type]
-        (TypeError, lambda: cache.delete(1)),  # type: ignore[arg-type]
-        (TypeError, lambda: cache.pop(1)),  # type: ignore[arg-type]
+        (TypeError, lambda: cache.set(1, 'v')),  # ty: ignore[invalid-argument-type]
+        (TypeError, lambda: cache.delete(1)),  # ty: ignore[invalid-argument-type]
+        (TypeError, lambda: cache.pop(1)),  # ty: ignore[invalid-argument-type]
         (TypeError, lambda: cache.set('k', object())),
         (TypeError, lambda: cache.add('k', object())),
         (TypeError, lambda: cache.set('k', 'v', expire=True)),
         (TypeError, lambda: cache.touch('k', expire=True)),
         (TypeError, lambda: cache.incr('text')),
         (TypeError, lambda: cache.decr('text')),
-        (TypeError, lambda: cache.incr('n', 'one')),  # type: ignore[arg-type]
+        (TypeError, lambda: cache.incr('n', 'one')),  # ty: ignore[invalid-argument-type]
         (OverflowError, lambda: cache.incr('big', 1, 2**63 - 1)),
         (OverflowError, lambda: cache.decr('big', -(2**63))),
         (ValueError, lambda: cache.clear(timeout=-1)),
@@ -1303,7 +1303,7 @@ def test_a_null_cache_accepts_durable_and_ignores_it() -> None:
 def test_a_null_cache_takes_on_decode_error_none() -> None:
     NullCache(on_decode_error=None)
     with pytest.raises(ValueError, match='on_decode_error'):
-        NullCache(on_decode_error='ignore')  # type: ignore[arg-type]
+        NullCache(on_decode_error='ignore')  # ty: ignore[invalid-argument-type]
 
 
 def test_caches_passes_durable_through(tmp_path: Path) -> None:

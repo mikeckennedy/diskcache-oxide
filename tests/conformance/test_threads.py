@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 import zlib
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
 
@@ -244,7 +244,7 @@ def _stable_fds_inside(directory: Path) -> int:
 
 
 @contextlib.contextmanager
-def _threads_held(cache: Any, threads: int) -> Iterator[None]:
+def _threads_held(cache: Any, threads: int) -> Generator[None]:
     """`threads` threads each do one get and one set on `cache`, then stay alive until the block exits."""
     ready = threading.Barrier(threads + 1)
     release = threading.Event()

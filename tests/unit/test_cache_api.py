@@ -6,7 +6,9 @@ import inspect
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from diskcache_oxide import Cache, CacheLike, NullCache
@@ -26,8 +28,8 @@ def protocol_methods() -> list[str]:
     return sorted(names - {'__init__', '__class_getitem__', '__subclasshook__', '__init_subclass__'} - PROPERTIES)
 
 
-def params(func: object) -> list[tuple[str, inspect._ParameterKind]]:
-    signature = inspect.signature(func)  # type: ignore[arg-type]
+def params(func: Callable[..., Any]) -> list[tuple[str, inspect._ParameterKind]]:
+    signature = inspect.signature(func)
     return [(p.name, p.kind) for p in signature.parameters.values() if p.name != 'self']
 
 
@@ -85,6 +87,8 @@ _REENTRANT: dict[str, Cache] = {}
 class _WritesOnUnpickle:
     """Unpickling it writes to the cache it was read from (roadmap Phase 2.5, item 7)."""
 
+    payload: str
+
     def __setstate__(self, state: dict[str, object]) -> None:
         self.__dict__.update(state)
         _REENTRANT['cache'].set('written-while-unpickling', 1)
@@ -99,7 +103,7 @@ def test_pop_decodes_outside_any_write_transaction(tmp_path: Path, popped: str) 
     _REENTRANT['cache'] = cache
     try:
         value = _WritesOnUnpickle()
-        value.payload = 'x' * (100 if popped == 'inline' else 100_000)  # type: ignore[attr-defined]
+        value.payload = 'x' * (100 if popped == 'inline' else 100_000)
         cache.set('k', value)
         started = time.monotonic()
         result = cache.pop('k')
@@ -121,7 +125,7 @@ def test_pop_inside_a_held_transaction_decodes_with_the_same_transaction_still_u
     _REENTRANT['cache'] = cache
     try:
         value = _WritesOnUnpickle()
-        value.payload = 'x'  # type: ignore[attr-defined]
+        value.payload = 'x'
         cache.set('k', value)
         started = time.monotonic()
         with cache._hold_write_transaction():
@@ -232,7 +236,7 @@ def test_held_maintenance_unlinks_value_files_only_once_it_commits(tmp_path: Pat
 
 
 @pytest.fixture
-def held_write_lock(tmp_path: Path):  # type: ignore[no-untyped-def]
+def held_write_lock(tmp_path: Path):
     """A cache with expired rows, and a peer process that can hold its write lock.
 
     The peer has to be another process: POSIX locks are per process, so a second SQLite library in
@@ -250,7 +254,7 @@ def held_write_lock(tmp_path: Path):  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.parametrize('method', ['clear', 'expire', 'cull'])
-def test_maintenance_takes_its_own_timeout(held_write_lock, method: str) -> None:  # type: ignore[no-untyped-def]
+def test_maintenance_takes_its_own_timeout(held_write_lock, method: str) -> None:
     cache, peer = held_write_lock
     peer.begin('IMMEDIATE')
     started = time.monotonic()
@@ -305,7 +309,7 @@ def test_maintenance_timeout_also_bounds_another_threads_write(tmp_path: Path, m
 
 @pytest.mark.parametrize('method', ['clear', 'expire', 'cull', 'checkpoint'])
 @pytest.mark.parametrize('make', [lambda p: Cache(p), lambda p: NullCache(p)], ids=['Cache', 'NullCache'])
-def test_maintenance_timeout_is_validated(tmp_path: Path, make, method: str) -> None:  # type: ignore[no-untyped-def]
+def test_maintenance_timeout_is_validated(tmp_path: Path, make, method: str) -> None:
     cache = make(tmp_path / 'c')
     bad_values = [
         (True, TypeError),
@@ -336,13 +340,13 @@ def test_checkpoint_timeout_is_keyword_only(tmp_path: Path) -> None:
     for make in (Cache, NullCache):
         cache = make(tmp_path / 'c')
         with pytest.raises(TypeError):
-            cache.checkpoint(0.5)  # type: ignore[misc]
+            cache.checkpoint(0.5)  # ty: ignore[too-many-positional-arguments]
         cache.close()
 
 
 def test_null_cache_clear_passes_the_timeout_to_its_invalidate_cache(
     held_write_lock,
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
     cache, peer = held_write_lock
     peer.begin('IMMEDIATE')
     started = time.monotonic()

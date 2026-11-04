@@ -84,8 +84,9 @@ def test_raw_and_native_modes(serializer: str, value: Any, mode: int, payload: A
 def test_negative_zero_is_native_and_keeps_its_sign(serializer: str) -> None:
     # The Rust test codec::tests::negative_zero_survives_real checks SQLite keeps the sign too.
     mode, payload = _encode(-0.0, serializer)
-    assert mode == NATIVE_FLOAT and math.copysign(1, payload) == -1
-    assert math.copysign(1, _decode(mode, payload)) == -1
+    assert mode == NATIVE_FLOAT and isinstance(payload, float) and math.copysign(1, payload) == -1
+    decoded = _decode(mode, payload)
+    assert isinstance(decoded, float) and math.copysign(1, decoded) == -1
 
 
 @pytest.mark.parametrize('serializer', SERIALIZERS)
@@ -133,7 +134,7 @@ def test_lone_surrogate_str_is_refused() -> None:
 def test_plain_json_is_standard_json() -> None:
     value = {'a': [1, 2.5, None, True, 'x'], 'b': {'c': 'd'}, 'n': -0.0}
     mode, payload = _encode(value, 'json')
-    assert mode == JSON
+    assert mode == JSON and isinstance(payload, bytes)
     assert json.loads(payload) == value
 
 
@@ -173,11 +174,11 @@ class MyBytes(bytes):
     pass
 
 
-class MyDict(dict):  # type: ignore[type-arg]
+class MyDict(dict):
     pass
 
 
-class MyList(list):  # type: ignore[type-arg]
+class MyList(list):
     pass
 
 
@@ -316,7 +317,7 @@ class SpyStr(str):
         return 0
 
 
-class SpyDict(dict):  # type: ignore[type-arg]
+class SpyDict(dict):
     def items(self) -> Any:
         Spy.calls.append('items')
         return super().items()
@@ -347,7 +348,7 @@ def test_encoder_runs_no_user_code(serializer: str) -> None:
 def test_json_tag_spellings() -> None:
     def enc(v: Any) -> bytes:
         mode, payload = _encode(v, 'json')
-        assert mode == JSON
+        assert mode == JSON and isinstance(payload, bytes)
         return payload
 
     assert enc({'$t': 1, 'x': 2}) == b'{"$esc":{"$t":1,"x":2}}'
@@ -523,7 +524,7 @@ def test_corrupt_keeps_the_python_cause() -> None:
 
 def test_decode_hook_checks_the_payload_type() -> None:
     with pytest.raises(TypeError):
-        _decode(RAW_STR, 'x')  # type: ignore[arg-type]
+        _decode(RAW_STR, 'x')  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError):
         _decode(NATIVE_INT, True)
 
