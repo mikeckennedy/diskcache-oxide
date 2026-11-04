@@ -778,6 +778,7 @@ pub fn end_fork_child() {
         return;
     }
     GENERATION.fetch_add(1, Ordering::AcqRel);
+    crate::store::forget_inherited_owners();
     crate::poison::poison_live_holds();
     match HELD_FORK.with(|held| held.borrow_mut().take()) {
         Some(guard) => guard.end_child(),

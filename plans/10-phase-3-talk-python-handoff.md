@@ -1,6 +1,6 @@
 # Phase 3 handoff: moving Talk Python to diskcache-oxide
 
-Where things stand on 2026-10-30, and everything needed to pick up the port without the conversation that produced it. Read sections 1-3 to get oriented, and use the rest as reference while working.
+Where things stood on 2026-10-30, with the library's status (sections 1, 3 and 8) updated on 2026-11-03, and everything needed to pick up the port without the conversation that produced it. Read sections 1-3 to get oriented, and use the rest as reference while working.
 
 Paths: `LIB` = `~/github/mk/diskcache-oxide`. `APP` = `~/github/talk-python/talk-python-to-me/src/talk_python_to_me_com`. `PKG` = `APP/talk_python_to_me_com`. Line numbers were read on 2026-10-30 and will drift. The Talk Python branch is `diskcache-oxide-cache`, and **nothing has been changed on it yet**.
 
@@ -10,15 +10,15 @@ Paths: `LIB` = `~/github/mk/diskcache-oxide`. `APP` = `~/github/talk-python/talk
 |---|---|
 | Core `Cache`, thread-, process- and fork-safe | Done (Phases 2, 2.5). Gates are GO on macOS and Linux, 3.14 and 3.14t |
 | Plan 08: `on_decode_error`, `ForeignValueError`, per-call `timeout=`, `Caches` | Done, committed, architect-reviewed |
-| Plan 09 step 1: `pop` keeps values it can't read | Built and reviewed |
-| Plan 09 step 2: `Cache(durable=True)` | **Designed and reviewed, not built** |
-| Plan 09 step 3: `pop` in the soak kit, then a fresh 24-hour run | **Not started** |
-| 24-hour soak on the mini | Running on commit `0f1b9b8`, clean at 9.3 h. It's to be stopped and replaced (section 8) |
+| Plan 09 step 1: `pop` keeps values it can't read | Built and reviewed (`a79f895`; step 1b, timeouts behind a pending fork, `58508b8`) |
+| Plan 09 step 2: `Cache(durable=True)` | Built (`9751682`; step 2b, forced-checkpoint retries, `5b2ea85`). The deep review of `5b2ea85` found four bugs, all fixed (`08e00f2`, `81aa84d`, `ae48524`) |
+| Plan 09 step 3: `pop` in the soak kit, then a fresh 24-hour run | Done. The kit has the plan 09 lanes (`08e00f2`) |
+| 24-hour soak on the mini | **PASS on `ae48524`** (section 8). Since then: comments, docs, tests and formatting, plus the finding 3 follow-up to the deferred-owner lock, a path the soak didn't reach |
 | PGO wheels | Built into `LIB/dist/`, macOS arm64 only (section 4) |
 | Linux wheel | **Doesn't exist.** Production installs from a wheel, not PyPI (Michael). Version is still `0.0.0`. Blocks production, not local work |
 | Port plan | **Not written.** Section 6 has the raw material; it goes in `plans/` and gets the architect's review |
 
-Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency work), `plans/08` (what's built, with the reasoning), `plans/09` (what's next, including the review's required changes).
+Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency work), `plans/08` (what's built, with the reasoning), `plans/09` (built, including the review's required changes). `reviews/deep-review-5b2ea85-2026-10-31.md` has the deep review of plan 09 and the status of each finding.
 
 ## 2. Decisions Michael has made
 
@@ -28,15 +28,15 @@ Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency wor
 - **`pop` gets fixed** so it doesn't destroy a value it can't read.
 - **A failed open is retried every 10 s** (`retry_open_after=10.0`).
 - **Self-healing reads are a constructor option, and the registry is called `Caches`.** Purposes, the settings file, Sentry and logbook stay in the app.
-- **The soak restarts once plan 09 is built:** a fresh 24 hours on that commit, replacing the 6-8 hour re-soak. The mini is Michael's to give; it's currently dedicated to this.
+- **The soak restarts once plan 09 is built:** a fresh 24 hours on that commit, replacing the 6-8 hour re-soak. Done: it passed on `ae48524`. The mini is Michael's to give; it's currently dedicated to this.
 - **No pickle in Talk Python: msgpack only, and the app adjusts.** The two dataclass values become plain dicts (section 5, step 3). No cache opens with `pickle=True`.
 - **Use `ty`, never mypy,** in the library too.
 
 ## 3. What to do next, in order
 
 1. **Michael's perf test** (section 5), against the wheels already in `dist/`. It needs a small spike on the branch, because the app can't use the library unmodified.
-2. **Build plan 09** in the library, with the required changes in its review section. Steps 1 and 2 first, each reviewed by `the-rust-architect` and committed.
-3. **Add `pop` and durable lanes to the soak kit,** stop the current soak, start 24 hours on that commit. Rule: one soak at a time on the mini. Use `zsh -lc` over ssh, and see the memory note `soak-on-mini`.
+2. **Done: build plan 09** in the library, with the required changes in its review section. Steps 1, 1b, 2 and 2b are committed, and the deep review's four findings are fixed.
+3. **Done: add `pop` and durable lanes to the soak kit and soak 24 hours.** It passed on `ae48524` (section 8). Rule for any rerun: one soak at a time on the mini. Use `zsh -lc` over ssh, and see the memory note `soak-on-mini`.
 4. **Write the port plan** from section 6, settling section 7's decisions with Michael. The architect reviews it.
 5. **Port on the branch.** Run `./venv/bin/ty check`, `./venv/bin/ruff check --fix talk_python_to_me_com/`, `./venv/bin/ruff format talk_python_to_me_com/` and the tests, from `APP`. About 8,500 tests, serial, and `tests/test_type_check.py` fails on any `ty` diagnostic.
 6. **Before production:** the soak PASS on the final library commit, a Linux wheel (section 9), and the cold-cutover steps (section 7, items 1 and 2). Near the end, Michael runs a real test on `talk-python-htz`, on real Linux, as the near-final check (2026-10-30). That's where Linux performance gets measured.
@@ -208,14 +208,16 @@ What that does to callers:
 1. **Rate-limit settings don't survive the cutover. This is the biggest risk, and it's not about the API.** Rate Limit Config holds the layer modes, the manual allowlist and the denylist (`cache_service.py:281-290`, `rate_limit_config.py:100`). "All caches are cleared at deploy" (roadmap) silently reverts enforcement to report-only and drops both lists. **Recommendation:** export before the deploy and reseed after, as an explicit cutover step, and think about whether settings belong in a cache at all.
 2. **Cold-start load.** About 555 show pages share 4 regeneration slots (`show_page_cache_service.py:182-187` cites a stampede), RSS is source-of-truth in the cache, and the HTTP hash cache downloads hundreds of images per page when cold (`conftest.py:381-382`). **Recommendation:** an off-peak deploy, with a warm-up pass over the top pages.
 3. **Decided (Michael, 2026-10-30): no pickle, the app adjusts** (section 5, step 3). What to know: values were read from the code and only the homepage models were run through the codec, so anything missed shows up as a `TypeError` on `set`, which `durable=True` deliberately still raises. Everything else stored is primitives, and naive datetimes, dates, tuples, sets and non-`str` dict keys round-trip exactly (tested). `timedelta` and `time` are refused. Run a real-cache pass of the test suite to shake out any others.
-4. **Should the port wait for `durable=True`?** **Recommendation: yes.** Today's `DurableCache.get` swallows everything, and most `get` callers have no `try`. `on_decode_error='miss'` alone doesn't cover `Timeout`. Note that `DurableCache.set` doesn't swallow errors today (`durable_cache.py:254-256`), despite the comments at `rendered_cache.py:85` and `rss_service.py:198`, so durable is an upgrade there.
+4. **Should the port wait for `durable=True`?** **Settled: it's built** (`9751682`, 2026-10-31), so the port doesn't wait. The original recommendation was yes: Today's `DurableCache.get` swallows everything, and most `get` callers have no `try`. `on_decode_error='miss'` alone doesn't cover `Timeout`. Note that `DurableCache.set` doesn't swallow errors today (`durable_cache.py:254-256`), despite the comments at `rendered_cache.py:85` and `rss_service.py:198`, so durable is an upgrade there.
 5. **Where `expire_all()` runs.** Today it's synchronous on whichever request passes the hour. `scheduled_jobs_service.py` is Memberful-specific and off outside production or with `TALKPYTHON_SCHEDULED_JOBS=0`, so there's no home yet. Separately, `transcripts_admin.py:109,128` and `mcp_service.py:69` (from `infrastructure/mcp/protocol.py:150,210,236`, `views/mcp_views.py:206`) call `expire()` on the 1 s request handle, on the event loop.
 
 ## 8. The soak
 
-- **Current run:** `soak-results/20261030-102056` on the mini, commit `0f1b9b8`, `--hours 24 --procs 7 --threads 4 --rate 180000`. Clean at 9.3 h: about 170k ops/s, 0 timeouts, 0 stalls, 0 problems, 189/189 forks, 1 orphaned value file in chaos (expected from a kill mid-write; Phase 6a's `check()` cleans them). A local copy syncs to `soak-results/mini-20261030-102056/`.
-- **Why it doesn't vouch for the final code:** plans 08 and 09 change `get_with` and `pop` after that commit, and the soak worker never calls `pop`.
-- **Plan:** let it run while plan 09 is built, since it costs nothing and is the first long test of held transactions under chaos. Then stop it, keep its partial results, add the lanes (plan 09's review lists them), and run a fresh 24 hours.
+- **Last run: PASS.** `soak-results/20261031-230228` on the mini, commit `ae48524`, `--hours 24 --procs 7 --threads 4 --rate 180000`, with the plan 09 lanes. 0 problems, 0 stalls, 0 timeouts, no leak or drift flags. 494 kills, 140,999 forks with 0 failures. Worst RSS slope 0.10 MiB/h; get p99 86 µs in the first hour, 90 µs in the last.
+- **Plan 09 lanes:** exactly-once `pop`: 2,002,255 tokens, 0 duplicates, 1 lost and excused by a kill. `durable=True`: 113.5M calls, 385,261 answered as failures and checked, 0 exceptions escaped, 0 broken. 33.7M `pop` calls across all four sites. Forced checkpoints on the two one-writer auto stores: 287,594 of 287,608 rounds succeeded (5 busy, 9 stopped for a pending fork). Orphans: 3 files in the ledger store, expected from kills mid-write (Phase 6a's `check()` cleans them).
+- **What it vouches for:** the library through `ae48524`. Commits after it through `9458d00` change comments, docs, tests and formatting only. The finding 3 follow-up after that changes how a deferral behind a stuck fork takes the deferred-owner lock (it waits for a busy holder in its own process instead of leaking). The soak never reached that path (next point), so the core tests vouch for it, not the soak. Rerun the soak if `get_with`, `pop` or the gate's locking changes (section 3).
+- **What it doesn't cover:** the deep review's finding 3 (a deferred release that has to wait for a stuck fork) was almost certainly never reached. The longest stuck fork was 0.727 s against the 1 s release budget, and no counter records a deferral. The core tests in `store/fork_timeout.rs` cover it.
+- **Previous run:** `soak-results/20261030-102056` on `0f1b9b8`, before plan 09, was stopped and replaced by this one. A local copy is in `soak-results/mini-20261030-102056/`.
 - **Laptop jobs:** the problem watcher and report sync run on Michael's laptop and die if the Claude session restarts, as they did once. Restart them after a restart. They're not needed for the soak's correctness.
 
 ## 9. Getting it into production

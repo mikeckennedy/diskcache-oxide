@@ -7,23 +7,23 @@ from types import TracebackType
 from typing import Any, Literal, Self, final, overload
 
 # PyO3 generates __all__ from everything the module adds, in the order it adds them.
-__all__ = [
+__all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
+    '__version__',
     'BUNDLED_SQLITE_VERSION',
     '_DEBUG_BUILD',
-    'Cache',
-    'CorruptValueError',
-    'ForeignValueError',
-    'FormatMismatchError',
     'Timeout',
     'UnsafeValueError',
-    '__version__',
-    '_decode',
+    'CorruptValueError',
+    'ForeignValueError',
+    'sqlite_version',
+    'sqlite_compile_options',
     '_encode',
+    '_decode',
+    '_sqlite_memory',
     '_gate_stats',
     '_sqlite_error',
-    '_sqlite_memory',
-    'sqlite_compile_options',
-    'sqlite_version',
+    'FormatMismatchError',
+    'Cache',
 ]
 
 __version__: str

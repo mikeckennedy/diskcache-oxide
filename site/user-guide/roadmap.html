@@ -352,13 +352,13 @@ ul.task-list li input[type="checkbox"] {
 <li>Large values spilled to files, with readers that never see a spurious miss during an overwrite.</li>
 <li>msgpack (default) and JSON serializers with exact type tags; pickle only when you opt in.</li>
 <li>Thread-, process- and fork-safe, on GIL and free-threaded builds of 3.14 and 3.15.</li>
-<li>Bounded connections, memory and WAL size.</li>
+<li>Bounded connections and memory, and a target size for the write-ahead log.</li>
 <li><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, the <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> protocol, <code>py.typed</code>.</li>
 </ul>
 </section>
 <section id="now-concurrency-review-and-soak-phase-2.5" class="level2">
 <h2 class="anchored" data-anchor-id="now-concurrency-review-and-soak-phase-2.5">Now: concurrency review and soak (Phase 2.5)</h2>
-<p>The concurrency core is where serious bugs hide, so it gets its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> under load, checking for corruption, lost writes, leaks and latency drift. The soak has already paid for itself: it found the unbounded WAL growth that <code>wal_size_limit</code> and <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> now fix.</p>
+<p>The concurrency core is where serious bugs hide, so it gets its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> under load, checking for corruption, lost writes, leaks and latency drift. The soak has already paid for itself: it found the unbounded WAL growth that <code>wal_size_limit</code> and <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> now rein in. The limit is a target, not a bound: several processes writing flat out can still take the log well past it (see <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>).</p>
 </section>
 <section id="next" class="level2">
 <h2 class="anchored" data-anchor-id="next">Next</h2>

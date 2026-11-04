@@ -1,4 +1,5 @@
-//! Keeping the WAL bounded (`wal_size_limit`, D-024; plans/06-phase-2.5-concurrency-review.md, step 1).
+//! Keeping the WAL near its target size (`wal_size_limit`, D-024; plans/06-phase-2.5-concurrency-review.md,
+//! step 1).
 //!
 //! SQLite's automatic checkpoint is passive. It copies WAL frames into the database but never
 //! waits, and the WAL can only wrap back to its start when no reader still uses it. With readers in
@@ -6,8 +7,10 @@
 //! burst, and SQLite never shrinks it: the soak, and a 4-process reproduction, left WALs of
 //! 300 MiB to 1 GiB behind.
 //!
-//! Two settings and a forced checkpoint keep it bounded. Both settings are connection settings, so
-//! they write nothing (D-019):
+//! Two settings and a forced checkpoint pull it back toward the limit. The limit is a target, not a
+//! bound: sustained writes from several processes near flat out still outrun the checkpoints, taking
+//! the WAL to tens of times the limit (tests/DIVERGENCES.md, user_guide/storage-and-wal.qmd). Both
+//! settings are connection settings, so they write nothing (D-019):
 //! - `journal_size_limit` = half the limit: a WAL that resets normally is truncated back to it.
 //! - `wal_autocheckpoint`, scaled from the limit (at most SQLite's 1,000 pages), so that a healthy
 //!   WAL stays well under the trigger.

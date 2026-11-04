@@ -437,25 +437,97 @@ fn row_5_a_deferrer_with_no_fork_pending_releases_for_itself() {
     assert!(store.pin.lock().unwrap().is_none());
 }
 
-/// What a child sees if a fork landed on a thread inside the owners' mutex: locked for good. Nothing
-/// waits on it, and the release still happens. Only the store's memory stays.
+/// Sets the owners' holder for a test and puts it back after, even on a panic.
+struct HolderSetTo;
+
+impl HolderSetTo {
+    fn new(holder: u32) -> Self {
+        assert_eq!(DEFERRED_OWNERS_HOLDER.swap(holder, Ordering::AcqRel), 0, "someone held the owners");
+        Self
+    }
+}
+
+impl Drop for HolderSetTo {
+    fn drop(&mut self) {
+        DEFERRED_OWNERS_HOLDER.store(0, Ordering::Release);
+    }
+}
+
+/// What a child sees if a fork landed on a thread inside the owners' mutex: held for good, by a
+/// thread that's gone. Nothing waits on it, and the release still happens. Only the store's memory
+/// stays, which is the leak accepted in that child.
 #[test]
-fn row_5_a_deferral_with_the_owners_locked_for_good_still_releases() {
+fn row_5_a_deferral_with_the_owners_lost_in_a_child_still_releases() {
     let _forks = one_global_fork_at_a_time();
     let tmp = TempDir::new("fork-release-locked");
     let store = open_store(tmp.path());
     put(&store, "k");
-    let locked = DEFERRED_OWNERS.lock().unwrap();
+    let lost = HolderSetTo::new(OWNERS_LOST);
     let started = Instant::now();
     store.defer_release();
-    assert!(started.elapsed() < SLACK, "it waited on the mutex");
+    assert!(started.elapsed() < SLACK, "it waited on a holder that's gone");
     assert_eq!(store.deferred_releases.load(Ordering::SeqCst), 0);
     assert_eq!(store.handles(), 0);
     assert!(store.is_retired());
-    assert!(locked.iter().all(|owner| !Arc::ptr_eq(owner, &store)));
-    drop(locked);
+    drop(lost);
+    assert!(DEFERRED_OWNERS.lock().unwrap().iter().all(|owner| !Arc::ptr_eq(owner, &store)));
     assert_eq!(fds_inside(tmp.path()), 0);
-    assert_eq!(Arc::strong_count(&store), 2, "the fallback retains the store");
+    assert_eq!(Arc::strong_count(&store), 2, "the child's fallback retains the store");
+}
+
+/// The same before the child's hook has run: the holder is the parent's process id.
+#[test]
+fn row_5_a_deferral_with_the_owners_held_by_the_parent_process_does_not_wait() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-release-parent-held");
+    let store = open_store(tmp.path());
+    let _parent = HolderSetTo::new(std::process::id() + 1);
+    let started = Instant::now();
+    store.defer_release();
+    assert!(started.elapsed() < SLACK, "it waited on another process's holder");
+    assert!(store.is_retired());
+}
+
+/// The review's case: a thread in this process holds the owners far past the old 64 tries (here,
+/// descheduled for 50 ms). A deferral waits it out and queues its owner, so the drain gives the
+/// store back rather than leaking it.
+#[test]
+fn row_5_a_deferral_beside_a_busy_owners_lock_waits_and_leaks_nothing() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-release-busy");
+    let store = open_store(tmp.path());
+    put(&store, "k");
+    let hold = Duration::from_millis(50);
+    let (taken, wait_for_take) = mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let owners = deferred_owners().expect("free in this process");
+        taken.send(()).unwrap();
+        std::thread::sleep(hold);
+        drop(owners);
+    });
+    wait_for_take.recv().unwrap();
+    let started = Instant::now();
+    store.defer_release();
+    let took = started.elapsed();
+    holder.join().unwrap();
+    assert!(took >= hold / 2, "didn't wait for the holder: {took:?}");
+    assert!(took < hold + SLACK, "took {took:?}");
+    assert_eq!(store.deferred_releases.load(Ordering::SeqCst), 0);
+    assert!(store.is_retired());
+    only_owner(&store);
+}
+
+/// The child hook marks a holder from another process lost, and leaves free, own and lost alone.
+#[test]
+fn row_5_the_child_hook_marks_only_an_inherited_holder_lost() {
+    let _forks = one_global_fork_at_a_time();
+    let me = std::process::id();
+    for (before, after) in [(0, 0), (me, me), (me + 1, OWNERS_LOST), (OWNERS_LOST, OWNERS_LOST)] {
+        DEFERRED_OWNERS_HOLDER.store(before, Ordering::Release);
+        forget_inherited_owners();
+        let seen = DEFERRED_OWNERS_HOLDER.swap(0, Ordering::AcqRel);
+        assert_eq!(seen, after, "holder {before}");
+    }
 }
 
 #[test]

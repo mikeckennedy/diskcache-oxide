@@ -955,12 +955,12 @@ The same Rust core, served over HTTP to many clients: a Redis-style central cach
 - Large values spilled to files, with readers that never see a spurious miss during an overwrite.
 - msgpack (default) and JSON serializers with exact type tags; pickle only when you opt in.
 - Thread-, process- and fork-safe, on GIL and free-threaded builds of 3.14 and 3.15.
-- Bounded connections, memory and WAL size.
+- Bounded connections and memory, and a target size for the write-ahead log.
 - `NullCache`, the `CacheLike` protocol, `py.typed`.
 
 ### Now: concurrency review and soak (Phase 2.5)
 
-The concurrency core is where serious bugs hide, so it gets its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and `clear()` under load, checking for corruption, lost writes, leaks and latency drift. The soak has already paid for itself: it found the unbounded WAL growth that `wal_size_limit` and `checkpoint()` now fix.
+The concurrency core is where serious bugs hide, so it gets its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and `clear()` under load, checking for corruption, lost writes, leaks and latency drift. The soak has already paid for itself: it found the unbounded WAL growth that `wal_size_limit` and `checkpoint()` now rein in. The limit is a target, not a bound: several processes writing flat out can still take the log well past it (see [Storage and WAL](storage-and-wal.md)).
 
 ### Next
 
