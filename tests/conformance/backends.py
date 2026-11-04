@@ -136,7 +136,8 @@ class DiskcacheBackend(Backend):
         self.timeout_error = self._module.Timeout
         if self._module.__version__ != self.expected_version:
             raise ImportError(
-                f'the conformance suite expects {self.module_name} {self.expected_version}, found {self._module.__version__}'
+                f'the conformance suite expects {self.module_name} {self.expected_version}, found '
+                f'{self._module.__version__}'
             )
 
     def make_cache(

@@ -21,7 +21,8 @@ keep a cache failure out of a request: the registry covers opening, and `durable
 **Switches.** `disable(name)` makes later lookups return `NullCache(invalidate=real)`: reads miss and
 writes are dropped, but deletes and clears still reach the real cache, so entries invalidated by
 removal aren't served stale once it's turned back on. Invalidation by writing is dropped like any
-other write: an overwriting `set` or a version-bump `incr` while it's off leaves the old value. Switches change later lookups only. Code that already holds the real
+other write: an overwriting `set` or a version-bump `incr` while it's off leaves the old value. Switches change later
+lookups only. Code that already holds the real
 `Cache` keeps it, so set them at startup, before handing caches out.
 
 **What stays in the app:** reading settings files and environment variables, mapping the app's own

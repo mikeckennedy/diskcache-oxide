@@ -42,7 +42,8 @@ class CorruptValueError(ValueError):
     """A stored value couldn't be decoded: an unknown mode, or bytes that don't parse."""
 
 class ForeignValueError(CorruptValueError):
-    """A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote it), or a time zone missing from this host."""
+    """A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote
+    it), or a time zone missing from this host."""
 
 class FormatMismatchError(RuntimeError):
     """The cache directory holds a database in a format this version doesn't support."""
@@ -100,7 +101,8 @@ class Cache:
             `close()`. `'auto'` also checkpoints after writes once the log is over
             `wal_size_limit`.
         on_decode_error: What a read does with a stored value it can't decode. `'raise'` (the
-            default, unless `durable=True`, where it's `'miss'`) raises. `'miss'` treats it as a miss, logs a warning on the `diskcache_oxide`
+            default, unless `durable=True`, where it's `'miss'`) raises. `'miss'` treats it as a miss, logs a warning
+            on the `diskcache_oxide`
             logger, and deletes the row if no build could ever read it (a class removed since it
             was pickled, malformed bytes). A row another version or host might read
             (`ForeignValueError`) is left in place. A callable does the same as `'miss'`, but is
@@ -397,21 +399,27 @@ class Cache:
                 costs nothing extra.
         """
     def _wal_stats(self) -> dict[str, int]:
-        """Test hook: forced WAL checkpoint counters (checks, attempts, successes, busy, errors, no_slot, fork_pending, max_pause_us, max_passive_us, max_truncate_us, slow, last_wal_bytes)."""
+        """Test hook: forced WAL checkpoint counters (checks, attempts, successes, busy, errors, no_slot, fork_pending,
+        max_pause_us, max_passive_us, max_truncate_us, slow, last_wal_bytes)."""
     def _durable_stats(self) -> dict[str, dict[str, int]]:
-        """Test hook: every failure `durable=True` has swallowed on this handle, by bucket (busy, broken, lost_deletes) and then by operation. Empty on a handle that isn't durable."""
+        """Test hook: every failure `durable=True` has swallowed on this handle, by bucket (busy, broken, lost_deletes)
+        and then by operation. Empty on a handle that isn't durable."""
     def _handle_count(self) -> int:
         """Test hook: how many open handles this cache's store counts, deferred releases included."""
     def _hold_write_transaction(self) -> AbstractContextManager[None]:
         """Test hook until transact() lands: holds a write transaction until the block exits."""
     def __getitem__(self, key: str, /) -> Any:
-        """`cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under `durable=True`."""
+        """`cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under
+        `durable=True`."""
     def __setitem__(self, key: str, value: Any, /) -> None:
-        """`cache[key] = value`: store a value that never expires, like `set()`. Under `durable=True` a failed write is dropped."""
+        """`cache[key] = value`: store a value that never expires, like `set()`. Under `durable=True` a failed write is
+        dropped."""
     def __delitem__(self, key: str, /) -> None:
-        """`del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired, or the delete failed under `durable=True`."""
+        """`del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired, or the delete failed
+        under `durable=True`."""
     def __contains__(self, key: object, /) -> bool:
-        """`key in cache`: True if the key holds a live (unexpired) value. False if the check failed under `durable=True`."""
+        """`key in cache`: True if the key holds a live (unexpired) value. False if the check failed under
+        `durable=True`."""
     def __len__(self) -> int:
         """The number of entries, including expired entries not yet removed."""
     def __bool__(self) -> bool:

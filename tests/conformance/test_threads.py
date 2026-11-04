@@ -1,7 +1,8 @@
 """Thread safety. Most meaningful on 3.14t (free-threaded), where the threads really run in parallel.
 
 Each data-integrity scenario runs twice: every thread sharing one Cache object, and one Cache per
-thread on the same directory. The fd scenarios (Test D) use one shared Cache. Counts were calibrated on 3.14t (16 threads x 1000 ops is about 0.5 s per scenario).
+thread on the same directory. The fd scenarios (Test D) use one shared Cache. Counts were calibrated on 3.14t (16
+threads x 1000 ops is about 0.5 s per scenario).
 """
 
 from __future__ import annotations

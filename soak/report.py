@@ -191,8 +191,13 @@ def chart(
     y0, y1 = (tf(min(ys)), tf(max(ys))) if log else (min(0.0, min(ys)), max(ys))
     if y1 == y0:
         y1 = y0 + 1
-    px = lambda x: left + (x - x0) / (x1 - x0) * (w - left - right)
-    py = lambda y: top + (1 - (tf(y) - y0) / (y1 - y0)) * (h - top - bottom)
+
+    def px(x):
+        return left + (x - x0) / (x1 - x0) * (w - left - right)
+
+    def py(y):
+        return top + (1 - (tf(y) - y0) / (y1 - y0)) * (h - top - bottom)
+
     parts = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="{html.escape(title)}">']
     for i in range(5):
         frac = i / 4
@@ -207,7 +212,8 @@ def chart(
         color = COLORS[n % len(COLORS)]
         path = ' '.join(f'{px(x):.1f},{py(y):.1f}' for x, y in pts)
         parts.append(
-            f'<polyline fill="none" stroke="{color}" stroke-width="1.6" points="{path}"><title>{html.escape(name)}</title></polyline>'
+            f'<polyline fill="none" stroke="{color}" stroke-width="1.6" points="{path}"><title>{html.escape(name)}'
+            f'</title></polyline>'
         )
     parts.append('</svg>')
     legend = ''.join(
@@ -215,7 +221,10 @@ def chart(
         for n, k in enumerate(sorted(series))
     )
     suffix = f' ({unit})' if unit else ''
-    return f'<figure><figcaption>{html.escape(title)}{suffix}{" · log scale" if log else ""}</figcaption>{"".join(parts)}<div class="legend">{legend}</div></figure>'
+    return (
+        f'<figure><figcaption>{html.escape(title)}{suffix}{" · log scale" if log else ""}</figcaption>{"".join(parts)}'
+        f'<div class="legend">{legend}</div></figure>'
+    )
 
 
 def fmt(v: float) -> str:
@@ -413,16 +422,19 @@ def verdict_lines(a: dict[str, Any]) -> list[str]:
     for lk in a['leaks']:
         if lk['rss_flag']:
             lines.append(
-                f'worker {lk["id"]} ({lk["python"]}): RSS grows {lk["rss_slope"]:.2f} MiB/h ({lk["rss_start"]} → {lk["rss_end"]} MiB)'
+                f'worker {lk["id"]} ({lk["python"]}): RSS grows {lk["rss_slope"]:.2f} MiB/h ({lk["rss_start"]} → '
+                f'{lk["rss_end"]} MiB)'
             )
         if lk['fds_flag']:
             lines.append(
-                f'worker {lk["id"]} ({lk["python"]}): open fds grow {lk["fds_slope"]:.2f}/h ({lk["fds_start"]} → {lk["fds_end"]})'
+                f'worker {lk["id"]} ({lk["python"]}): open fds grow {lk["fds_slope"]:.2f}/h ({lk["fds_start"]} → '
+                f'{lk["fds_end"]})'
             )
     for name, d in a['drift'].items():
         if d['flag']:
             lines.append(
-                f'{name} drifted {d["ratio"]:.1f}× (first hour {d["first_hour"]:.0f} µs, last hour {d["last_hour"]:.0f} µs)'
+                f'{name} drifted {d["ratio"]:.1f}× (first hour {d["first_hour"]:.0f} µs, last hour {d["last_hour"]:.0f}'
+                f' µs)'
             )
     if a['wal_max'] > WAL_WARN_BYTES:
         lines.append(f'a WAL file reached {a["wal_max"] / 2**20:.0f} MiB (checkpoints starved?)')
@@ -436,14 +448,29 @@ def lane_lines(a: dict[str, Any]) -> list[str]:
         return []
     t, pq = lanes['totals'], lanes.get('pq') or {}
     lines = [
-        f'pop: {t["pops"]:,} calls (chaos {t["pops_chaos"]:,}, held {t["pops_held"]:,}, fork {t["pops_fork"]:,}, exactly-once {t["pops_pq"]:,}). Locked-fallback hits: not observable, no counter reaches Python.',
-        f'exactly-once: {pq.get("produced", 0):,} tokens recorded, {pq.get("delivered", 0):,} delivered, {pq.get("duplicates", 0)} duplicates, {pq.get("queued", 0)} still queued, {pq.get("lost", 0)} lost ({pq.get("lost_excused_by_kills", 0)} excused by a kill, allowance {pq.get("kill_allowance", 0)}), {pq.get("unrecorded", 0)} with no record (a kill between add and record).',
-        f'durable: {t["durable_calls"]:,} calls, {t["durable_false"]:,} answered as failures with the read-back checked, {t["durable_misses"]:,} misses on a key that was there, {t["durable_escapes"]} exceptions escaped. Swallowed: busy {t["durable_busy"]:,}, broken {t["durable_broken"]}, lost deletes {t["durable_lost_deletes"]:,}. Log lines by bucket: {lanes.get("durable_lines")}. `_durable_stats()` by operation: {lanes.get("durable_by_op")}.',
-        f'forks behind traffic: {t["forks_behind"]:,} forks over {t["behind_calls"]:,} budgeted calls, {t["behind_timeouts"]:,} timed out, worst overrun {t["max_overrun_s"]} s, {t["budget_overruns"]} over the allowance. Longest os.fork(): {t["fork_max_s"]} s, longest forked child: {t["child_max_s"]} s.',
-        f'fork_timeouts: {t["fork_timeouts_normal"]} in the normal lanes (must be 0), {t["fork_timeouts_lanes"]} in the lanes with small timeouts.',
-        f'stuck forks: {t["stuck_forks"]} (callers timed out {t["stuck_callers_timed_out"]}, finished after the level went {t["stuck_forks_completed"]}, callers hung {t["stuck_callers_hung"]}, longest caller {t["stuck_caller_max_s"]} s).',
-        f'peak 1-minute load: {max((row.get("load_1m") or 0 for row in a["timeline"]), default=0)} on {a["start"].get("cpus")} CPUs.',
-        f'side chaos on the lanes and auto group: {lanes.get("side_kills")} kills, {lanes.get("side_restarts")} restarts.',
+        f'pop: {t["pops"]:,} calls (chaos {t["pops_chaos"]:,}, held {t["pops_held"]:,}, fork {t["pops_fork"]:,}, '
+        f'exactly-once {t["pops_pq"]:,}). Locked-fallback hits: not observable, no counter reaches Python.',
+        f'exactly-once: {pq.get("produced", 0):,} tokens recorded, {pq.get("delivered", 0):,} delivered, '
+        f'{pq.get("duplicates", 0)} duplicates, {pq.get("queued", 0)} still queued, {pq.get("lost", 0)} lost '
+        f'({pq.get("lost_excused_by_kills", 0)} excused by a kill, allowance {pq.get("kill_allowance", 0)}), '
+        f'{pq.get("unrecorded", 0)} with no record (a kill between add and record).',
+        f'durable: {t["durable_calls"]:,} calls, {t["durable_false"]:,} answered as failures with the read-back '
+        f'checked, {t["durable_misses"]:,} misses on a key that was there, {t["durable_escapes"]} exceptions escaped. '
+        f'Swallowed: busy {t["durable_busy"]:,}, broken {t["durable_broken"]}, lost deletes '
+        f'{t["durable_lost_deletes"]:,}. Log lines by bucket: {lanes.get("durable_lines")}. `_durable_stats()` by '
+        f'operation: {lanes.get("durable_by_op")}.',
+        f'forks behind traffic: {t["forks_behind"]:,} forks over {t["behind_calls"]:,} budgeted calls, '
+        f'{t["behind_timeouts"]:,} timed out, worst overrun {t["max_overrun_s"]} s, {t["budget_overruns"]} over the '
+        f'allowance. Longest os.fork(): {t["fork_max_s"]} s, longest forked child: {t["child_max_s"]} s.',
+        f'fork_timeouts: {t["fork_timeouts_normal"]} in the normal lanes (must be 0), {t["fork_timeouts_lanes"]} in '
+        f'the lanes with small timeouts.',
+        f'stuck forks: {t["stuck_forks"]} (callers timed out {t["stuck_callers_timed_out"]}, finished after the level '
+        f'went {t["stuck_forks_completed"]}, callers hung {t["stuck_callers_hung"]}, longest caller '
+        f'{t["stuck_caller_max_s"]} s).',
+        f'peak 1-minute load: {max((row.get("load_1m") or 0 for row in a["timeline"]), default=0)} on '
+        f'{a["start"].get("cpus")} CPUs.',
+        f'side chaos on the lanes and auto group: {lanes.get("side_kills")} kills, {lanes.get("side_restarts")} '
+        f'restarts.',
     ]
     return lines
 
@@ -481,7 +508,10 @@ AUTO_HEADER = [
     'success rate',
     'worst pause (ms)',
 ]
-PAUSE_CAVEAT = 'Pauses (`wal_ckpt_max_pause_us` and this table) now sum every TRUNCATE try in a round (plan 09, step 2b), so they are not comparable with soaks before commit 5b2ea85, which timed one try.'
+PAUSE_CAVEAT = (
+    'Pauses (`wal_ckpt_max_pause_us` and this table) now sum every TRUNCATE try in a round (plan 09, step 2b), so they '
+    'are not comparable with soaks before commit 5b2ea85, which timed one try.'
+)
 
 
 def render_summary(a: dict[str, Any]) -> str:
@@ -502,7 +532,8 @@ def render_summary(a: dict[str, Any]) -> str:
         rs = '?' if lk['rss_slope'] is None else f'{lk["rss_slope"]:.2f}'
         fs = '?' if lk['fds_slope'] is None else f'{lk["fds_slope"]:.2f}'
         out.append(
-            f'| {lk["id"]} | {lk["python"]} | {lk["rss_start"]} → {lk["rss_end"]} | {rs} | {lk["fds_start"]} → {lk["fds_end"]} | {fs} |'
+            f'| {lk["id"]} | {lk["python"]} | {lk["rss_start"]} → {lk["rss_end"]} | {rs} | {lk["fds_start"]} → '
+            f'{lk["fds_end"]} | {fs} |'
         )
     out += [
         '',
@@ -543,7 +574,9 @@ def render_summary(a: dict[str, Any]) -> str:
         limit = a['lanes'].get('auto_min_success_rate', 0)
         out += [
             '',
-            f'The run fails under {limit:.0%} on a one-writer store, or with under {a["lanes"].get("auto_min_rounds", 0)} rounds on a store. Several writers in several processes are a documented limit, reported and not judged. {PAUSE_CAVEAT}',
+            f'The run fails under {limit:.0%} on a one-writer store, or with under '
+            f'{a["lanes"].get("auto_min_rounds", 0)} rounds on a store. Several writers in several processes are a '
+            f'documented limit, reported and not judged. {PAUSE_CAVEAT}',
         ]
         out += ['', '### By interpreter', '']
         per_python = a['lanes'].get('per_python') or {}
@@ -569,18 +602,28 @@ def render_summary(a: dict[str, Any]) -> str:
 
 CSS = """
 :root{--bg:#ffffff;--fg:#1f2937;--muted:#6b7280;--grid:#e5e7eb;--card:#f9fafb;--ok:#15803d;--bad:#b91c1c;--warn:#b45309}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f1115;--fg:#e5e7eb;--muted:#9ca3af;--grid:#2a2f3a;--card:#171a21;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24}}
+@media (prefers-color-scheme:dark){
+:root:not([data-theme=light]){--bg:#0f1115;--fg:#e5e7eb;--muted:#9ca3af;--grid:#2a2f3a;--card:#171a21;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24}
+}
 :root[data-theme=dark]{--bg:#0f1115;--fg:#e5e7eb;--muted:#9ca3af;--grid:#2a2f3a;--card:#171a21;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24}
-body{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,system-ui,sans-serif;margin:0 auto;max-width:1500px;padding:16px}
+body{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,system-ui,sans-serif;
+margin:0 auto;max-width:1500px;padding:16px}
 h1{font-size:20px;margin:4px 0}.muted{color:var(--muted)}
 .verdict{font-weight:700}.PASS{color:var(--ok)}.FAIL{color:var(--bad)}.WARN{color:var(--warn)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,640px),1fr));gap:12px}
 figure{background:var(--card);border-radius:8px;margin:0;padding:10px}figcaption{font-weight:600;margin-bottom:4px}
 svg{width:100%;height:auto}svg .grid{stroke:var(--grid)}svg .tick{fill:var(--muted);font-size:11px}
-.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--muted)}.legend i{display:inline-block;width:10px;height:3px;margin-right:4px;vertical-align:middle}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:3px;margin-right:4px;vertical-align:middle}
 table{border-collapse:collapse;margin:8px 0}td,th{border-bottom:1px solid var(--grid);padding:3px 8px;text-align:left}
 ul{margin:4px 0 12px 18px;padding:0}.empty{color:var(--muted)}
 """
+
+
+def event_detail(event: dict[str, Any]) -> str:
+    """A problem event's fields beyond the time, kind and elapsed hours, as JSON cut to 300 characters."""
+    fields = {k: v for k, v in event.items() if k not in ('time', 'kind', 'problem', 'elapsed_h')}
+    return json.dumps(fields, default=str)[:300]
 
 
 def render_html(a: dict[str, Any], charts: list[str], final: bool) -> str:
@@ -600,7 +643,8 @@ def render_html(a: dict[str, Any], charts: list[str], final: bool) -> str:
     verdict = ''.join(f'<li>{html.escape(line)}</li>' for line in verdict_lines(a))
     leak_rows = ''.join(
         f'<tr><td>{lk["id"]}</td><td>{html.escape(str(lk["python"]))}</td><td>{lk["rss_start"]} → {lk["rss_end"]}</td>'
-        f'<td>{"?" if lk["rss_slope"] is None else f"{lk['rss_slope']:.2f}"}</td><td>{lk["fds_start"]} → {lk["fds_end"]}</td>'
+        f'<td>{"?" if lk["rss_slope"] is None else f"{lk['rss_slope']:.2f}"}</td><td>{lk["fds_start"]} → '
+        f'{lk["fds_end"]}</td>'
         f'<td>{"?" if lk["fds_slope"] is None else f"{lk['fds_slope']:.2f}"}</td></tr>'
         for lk in a['leaks']
     )
@@ -613,13 +657,13 @@ def render_html(a: dict[str, Any], charts: list[str], final: bool) -> str:
     )
     recent = (
         ''.join(
-            f'<li>{e["elapsed_h"]:.2f} h <code>{html.escape(e["kind"])}</code> '
-            f'{html.escape(json.dumps({k: v for k, v in e.items() if k not in ("time", "kind", "problem", "elapsed_h")}, default=str)[:300])}</li>'
+            f'<li>{e["elapsed_h"]:.2f} h <code>{html.escape(e["kind"])}</code> {html.escape(event_detail(e))}</li>'
             for e in a['problems'][-20:]
         )
         or '<li>none</li>'
     )
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{refresh}
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport"
+content="width=device-width, initial-scale=1">{refresh}
 <title>Soak Report</title><style>{CSS}</style></head><body>
 <h1>diskcache-oxide soak: <span class="verdict {a['verdict']}">{a['verdict']}</span></h1>
 <p class="muted">{a['hours']:.2f} h, {state}. Args: {html.escape(json.dumps(a['start'].get('args', {})))}</p>

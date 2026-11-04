@@ -121,10 +121,12 @@ def main() -> None:
 
     build = 'free-threaded' if not sys._is_gil_enabled() else 'GIL'
     print(
-        f'Python {sys.version.split()[0]} ({build}), {args.caches} cache(s), {args.idle} idle connection(s) each, {args.forks} forks'
+        f'Python {sys.version.split()[0]} ({build}), {args.caches} cache(s), {args.idle} idle connection(s) each, '
+        f'{args.forks} forks'
     )
     print(
-        f'warming added {extra} connection(s) in all (expected {args.caches * max(args.idle - 1, 0)}); WAL before the first fork: {wal / 2**20:.1f} MiB'
+        f'warming added {extra} connection(s) in all (expected {args.caches * max(args.idle - 1, 0)}); WAL before the '
+        f'first fork: {wal / 2**20:.1f} MiB'
     )
     print(row('fork (parent side)', fork_us))
     print(row('first get after the fork', get_us))

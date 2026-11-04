@@ -88,7 +88,8 @@ def loop_overhead_ns() -> float:
 
 
 def measure(op: Callable[[int], Any], *, n_batches: int, n_samples: int, warmup: int) -> dict[str, float]:
-    """Median-of-TRIALS p50 (batched, harness overhead subtracted) and p99 (per-call, timer overhead included), in microseconds."""
+    """Median-of-TRIALS p50 (batched, harness overhead subtracted) and p99 (per-call, timer overhead included), in
+    microseconds."""
     for i in range(warmup):
         op(i)
 

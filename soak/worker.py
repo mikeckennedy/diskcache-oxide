@@ -41,7 +41,8 @@ wrong key is caught on every read.
 The worker writes its counters to stats/<worker>.json every few seconds (atomically), and its
 problems to the same file, for the orchestrator to collect. SIGUSR1 asks for a fork test (fork
 while the threads run; the child must read and write both caches and exit within a deadline).
-SIGUSR2 dumps every thread's traceback to stderr (for stall diagnosis). SIGTERM stops it cleanly. It then verifies every owned key, and its final stats carry the exact
+SIGUSR2 dumps every thread's traceback to stderr (for stall diagnosis). SIGTERM stops it cleanly. It then verifies
+every owned key, and its final stats carry the exact
 acknowledged counter value for the end-of-run check.
 """
 
@@ -767,7 +768,9 @@ class LaneWorker(Worker):
         logger.propagate = False
 
     def lane_threads(self) -> list[threading.Thread]:
-        spawn = lambda target, *args: threading.Thread(target=target, args=args, daemon=True)
+        def spawn(target, *args):
+            return threading.Thread(target=target, args=args, daemon=True)
+
         return [
             *(spawn(self.behind_main, n) for n in range(2)),
             *(spawn(self.durable_main, n) for n in range(2)),
@@ -946,7 +949,8 @@ class LaneWorker(Worker):
         if not box:
             self.count('stuck_callers_hung')
             self.problem(
-                f'{call} behind a stuck fork had not returned after {STUCK_CALLER_LIMIT}s (timeout {STUCK_TIMEOUT}s): the wedge'
+                f'{call} behind a stuck fork had not returned after {STUCK_CALLER_LIMIT}s (timeout {STUCK_TIMEOUT}s): '
+                f'the wedge'
             )
             return
         result, took = box[0]
@@ -1402,7 +1406,10 @@ def summarize(samples: list[int]) -> dict[str, float] | None:
     if not samples:
         return None
     ordered = sorted(samples)
-    pick = lambda q: ordered[min(len(ordered) - 1, int(q * len(ordered)))] / 1_000
+
+    def pick(q):
+        return ordered[min(len(ordered) - 1, int(q * len(ordered)))] / 1_000
+
     return {
         'n': len(ordered),
         'p50_us': pick(0.50),

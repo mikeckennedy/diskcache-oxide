@@ -528,7 +528,8 @@ class Soak:
                 'pq-lost',
                 problem=True,
                 token=token,
-                detail=f'recorded, then neither delivered nor queued, with no kill left to excuse it (at most {threads} per kill, within {PQ_KILL_WINDOW:.0f}s after it)',
+                detail=f'recorded, then neither delivered nor queued, with no kill left to excuse it (at most '
+                f'{threads} per kill, within {PQ_KILL_WINDOW:.0f}s after it)',
             )
         excused = len(lost) - len(unexcused)
         allowance = len(self.kill_times) * threads
@@ -846,7 +847,10 @@ class Soak:
             )
         self._prev_ops = {w.id: w.stats.get('ops', 0) for w in live}
         self._prev_time = now
-        median = lambda xs: sorted(xs)[len(xs) // 2] if xs else None
+
+        def median(xs):
+            return sorted(xs)[len(xs) // 2] if xs else None
+
         trow = {
             'time': round(now, 3),
             'elapsed_h': round(self.elapsed_h(), 4),
@@ -1111,7 +1115,8 @@ class Soak:
                 'durable-broken',
                 problem=True,
                 count=t['durable_broken'],
-                detail='a durable handle answered something other than a timeout as a miss: nothing in this soak should break a store',
+                detail='a durable handle answered something other than a timeout as a miss: nothing in this soak '
+                'should break a store',
             )
         if t['stuck_forks'] != t['stuck_forks_completed']:
             # A worker killed mid-way, between the two counts, shows up here only if the gap is large.
@@ -1211,29 +1216,46 @@ class Soak:
     def write_status(self, t: dict[str, Any], ops: int) -> None:
         remaining = max(0.0, self.ends - time.time()) / 3600
         lines = [
-            f'diskcache-oxide soak  {time.strftime("%Y-%m-%d %H:%M:%S")}  elapsed {self.elapsed_h():.2f} h, {remaining:.2f} h to go',
+            f'diskcache-oxide soak  {time.strftime("%Y-%m-%d %H:%M:%S")}  elapsed {self.elapsed_h():.2f} h, '
+            f'{remaining:.2f} h to go',
             f'verdict so far: {"OK" if self.problems == 0 else f"{self.problems} PROBLEM(S), see events.jsonl"}',
-            f'workers {t["workers"]}  ops/s {t["ops_per_s"]:,}  get p50/p99 {t["get_p50_us"]}/{t["get_p99_us"]} us  set p50/p99 {t["set_p50_us"]}/{t["set_p99_us"]} us',
-            f'rss total {t["rss_total_mib"]} MiB  fds total {t["fds_total"]}  timeouts {t["timeouts_total"]}  stalls {t["stalls"]}',
-            f'kills {t["kills"]}  restarts {t["restarts"]}  respawns {self.counts["respawns"]}  forks ok/failed {t["forks_ok"]}/{t["forks_failed"]}  maintenance calls {t["maint_calls"]}',
-            f'chaos: {t["chaos_rows"]} rows, db {mib(t["chaos_db_bytes"])} MiB, wal {mib(t["chaos_wal_bytes"])} MiB, {t["chaos_value_files"]} value files, orphans {t["chaos_orphans"]}',
-            f'ledger: {t["ledger_rows"]} rows, db {mib(t["ledger_db_bytes"])} MiB, wal {mib(t["ledger_wal_bytes"])} MiB, {t["ledger_value_files"]} value files, orphans {t["ledger_orphans"]}',
+            f'workers {t["workers"]}  ops/s {t["ops_per_s"]:,}  get p50/p99 {t["get_p50_us"]}/{t["get_p99_us"]} us  '
+            f'set p50/p99 {t["set_p50_us"]}/{t["set_p99_us"]} us',
+            f'rss total {t["rss_total_mib"]} MiB  fds total {t["fds_total"]}  timeouts {t["timeouts_total"]}  stalls '
+            f'{t["stalls"]}',
+            f'kills {t["kills"]}  restarts {t["restarts"]}  respawns {self.counts["respawns"]}  forks ok/failed '
+            f'{t["forks_ok"]}/{t["forks_failed"]}  maintenance calls {t["maint_calls"]}',
+            f'chaos: {t["chaos_rows"]} rows, db {mib(t["chaos_db_bytes"])} MiB, wal {mib(t["chaos_wal_bytes"])} MiB, '
+            f'{t["chaos_value_files"]} value files, orphans {t["chaos_orphans"]}',
+            f'ledger: {t["ledger_rows"]} rows, db {mib(t["ledger_db_bytes"])} MiB, wal {mib(t["ledger_wal_bytes"])} '
+            f'MiB, {t["ledger_value_files"]} value files, orphans {t["ledger_orphans"]}',
             f'held transactions: {t["held_commits"]} committed, {t["held_rollbacks"]} rolled back',
-            f'pop: {t["pops"]:,} calls (chaos {t["pops_chaos"]:,}, held {t["pops_held"]:,}, fork {t["pops_fork"]:,}, exactly-once {t["pops_pq"]:,})',
-            f'exactly-once: {t["pq_produced"]:,} produced, {t["pq_delivered"]:,} delivered, {t["pq_duplicates"]} duplicates',
-            f'durable: {t["durable_calls"]:,} calls, {t["durable_false"]:,} answered as failures, swallowed busy {t["durable_busy"]:,} broken {t["durable_broken"]} lost deletes {t["durable_lost_deletes"]:,}, {t["durable_log_lines"]} log lines, {t["durable_escapes"]} escaped',
-            f'forks behind traffic: {t["forks_behind"]:,} over {t["behind_calls"]:,} calls, {t["behind_timeouts"]:,} timed out, worst overrun {t["max_overrun_s"]} s, {t["budget_overruns"]} over budget, longest fork {t["fork_max_s"]} s, longest child {t["child_max_s"]} s',
-            f'fork_timeouts: normal lanes {t["fork_timeouts_normal"]}, lanes {t["fork_timeouts_lanes"]}.  stuck forks: {t["stuck_forks"]} (callers timed out {t["stuck_callers_timed_out"]}, finished after {t["stuck_forks_completed"]}, callers hung {t["stuck_callers_hung"]}, longest caller {t["stuck_caller_max_s"]} s)',
+            f'pop: {t["pops"]:,} calls (chaos {t["pops_chaos"]:,}, held {t["pops_held"]:,}, fork {t["pops_fork"]:,}, '
+            f'exactly-once {t["pops_pq"]:,})',
+            f'exactly-once: {t["pq_produced"]:,} produced, {t["pq_delivered"]:,} delivered, {t["pq_duplicates"]} '
+            f'duplicates',
+            f'durable: {t["durable_calls"]:,} calls, {t["durable_false"]:,} answered as failures, swallowed busy '
+            f'{t["durable_busy"]:,} broken {t["durable_broken"]} lost deletes {t["durable_lost_deletes"]:,}, '
+            f'{t["durable_log_lines"]} log lines, {t["durable_escapes"]} escaped',
+            f'forks behind traffic: {t["forks_behind"]:,} over {t["behind_calls"]:,} calls, {t["behind_timeouts"]:,} '
+            f'timed out, worst overrun {t["max_overrun_s"]} s, {t["budget_overruns"]} over budget, longest fork '
+            f'{t["fork_max_s"]} s, longest child {t["child_max_s"]} s',
+            f'fork_timeouts: normal lanes {t["fork_timeouts_normal"]}, lanes {t["fork_timeouts_lanes"]}.  stuck '
+            f'forks: {t["stuck_forks"]} (callers timed out {t["stuck_callers_timed_out"]}, finished after '
+            f'{t["stuck_forks_completed"]}, callers hung {t["stuck_callers_hung"]}, longest caller '
+            f'{t["stuck_caller_max_s"]} s)',
             f'load {t["load_1m"]} on {os.cpu_count()} CPUs',
             *self.auto_status(),
-            f'side chaos on the lanes and auto group: {self.counts["side_kills"]} kills, {self.counts["side_restarts"]} restarts',
+            f'side chaos on the lanes and auto group: {self.counts["side_kills"]} kills, '
+            f'{self.counts["side_restarts"]} restarts',
             '',
             f'{"id":>4} {"python":>9} {"long":>4} {"rss MiB":>8} {"fds":>5} {"ops":>12} {"tmo":>5} {"probs":>5}',
         ]
         for w in sorted(self.workers.values(), key=lambda w: w.id):
             s = w.stats
             lines.append(
-                f'{w.id:>4} {s.get("python", "?"):>9} {"yes" if w.long_lived else "":>4} {s.get("rss", 0) / 2**20:8.1f} '
+                f'{w.id:>4} {s.get("python", "?"):>9} {"yes" if w.long_lived else "":>4} {s.get("rss", 0) / 2**20:8.1f}'
+                f' '
                 f'{s.get("fds", 0):>5} {s.get("ops", 0):>12,} {s.get("timeouts", 0):>5} {s.get("problem_count", 0):>5}'
                 + ('  STALLED' if w.stalled else '')
             )
@@ -1247,7 +1269,9 @@ class Soak:
 
     def auto_status(self) -> list[str]:
         return [
-            f'auto store {n}: {st["rounds"]:,} forced rounds, {st["successes"]:,} ok, {st["busy"]} busy, {st["fork_pending"]} fork_pending, success rate {st["success_rate"]}, peak WAL {mib(st["peak_wal"])} MiB of {mib(st.get("limit"))}, {st["writers"]} writer(s)'
+            f'auto store {n}: {st["rounds"]:,} forced rounds, {st["successes"]:,} ok, {st["busy"]} busy, '
+            f'{st["fork_pending"]} fork_pending, success rate {st["success_rate"]}, peak WAL {mib(st["peak_wal"])} MiB '
+            f'of {mib(st.get("limit"))}, {st["writers"]} writer(s)'
             for n, st in self.auto_summary().items()
         ]
 
@@ -1419,7 +1443,8 @@ TIMELINE_FIELDS = [
 ]  # fmt: skip
 WORKER_FIELDS = [
     'time', 'elapsed_h', 'id', 'python', 'long_lived', 'rss_mib', 'fds', 'ops', 'timeouts', 'problems', 'forks_ok',
-    'forks_failed', 'get_p50_us', 'get_p99_us', 'set_p50_us', 'set_p99_us', 'stalled', 'get_max_us', 'set_max_us', 'role',
+    'forks_failed', 'get_p50_us', 'get_p99_us', 'set_p50_us', 'set_p99_us', 'stalled', 'get_max_us', 'set_max_us',
+    'role',
 ]  # fmt: skip
 
 
@@ -1496,7 +1521,8 @@ def main() -> int:
         '--auto-writers',
         type=int,
         default=1,
-        help='Writers per auto store. Over 1 is the documented limit: it is reported, and its success rate does not fail the run.',
+        help='Writers per auto store. Over 1 is the documented limit: it is reported, and its success rate does not '
+        'fail the run.',
     )
     parser.add_argument('--seed', type=int, default=int(time.time()) % 100_000)
     parser.add_argument('--out', default=str(REPO / 'soak-results'))
@@ -1505,7 +1531,8 @@ def main() -> int:
         parser.error('give --hours and/or --minutes')
     if args.auto_stores and not last_python_is_free_threaded(args.pythons):
         parser.error(
-            "the last of --pythons must be free-threaded: only readers truly in parallel force the auto group's checkpoints (or use --auto-stores 0, which fails its zero-count checks)"
+            "the last of --pythons must be free-threaded: only readers truly in parallel force the auto group's "
+            'checkpoints (or use --auto-stores 0, which fails its zero-count checks)'
         )
     try:
         from tests.proctitle import set_title

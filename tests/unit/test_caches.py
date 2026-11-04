@@ -278,7 +278,10 @@ def test_a_registry_decode_reporter_learns_which_cache(base: Path) -> None:
     caches = Caches(base, on_decode_error=lambda name, key, exc: calls.append((name, key, exc)))
     caches.register('a')
     caches['a'].set('k', {'x': 1})
-    script = 'import sqlite3, sys\ncon = sqlite3.connect(sys.argv[1])\ncon.execute("UPDATE cache SET value = X\'c1\'")\ncon.commit()'
+    script = (
+        'import sqlite3, sys\ncon = sqlite3.connect(sys.argv[1])\ncon.execute("UPDATE cache SET value = '
+        "X'c1'\")\ncon.commit()"
+    )
     subprocess.run(
         [sys.executable, '-c', script, str(base / 'a' / 'diskcache-oxide.sqlite')],
         check=True,

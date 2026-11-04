@@ -7,7 +7,8 @@ Usage (from the repo root, on AC power):
 Each round runs bench.baseline in a fresh process for diskcache, then for each oxide variant,
 alternating (ABAB...), so drift in machine state hits every backend equally. The verdict uses the
 median p50 across rounds. Oxide passes a latency workload if its median p50 <= diskcache's x
-TOLERANCE (or its stricter TARGETS ratio), and each threaded workload (99:1 and 1,000:1, at 1/2/4/8 threads) if its median
+TOLERANCE (or its stricter TARGETS ratio), and each threaded workload (99:1 and 1,000:1, at 1/2/4/8 threads) if its
+median
 throughput >= diskcache's / TOLERANCE.
 """
 

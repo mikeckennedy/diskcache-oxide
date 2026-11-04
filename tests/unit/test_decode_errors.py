@@ -478,7 +478,8 @@ def test_a_time_zone_this_host_lacks_is_foreign(directory: Path) -> None:
     )
     _sql(
         directory,
-        "UPDATE cache SET value = CAST(replace(CAST(value AS TEXT), 'America/Los_Angeles', 'Mars/Olympus') AS BLOB) WHERE key = 'k'",
+        "UPDATE cache SET value = CAST(replace(CAST(value AS TEXT), 'America/Los_Angeles', 'Mars/Olympus') AS BLOB) "
+        "WHERE key = 'k'",
     )
     assert cache.get('k') is None
     assert _stored(directory, 'k')

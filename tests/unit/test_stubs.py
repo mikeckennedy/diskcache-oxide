@@ -51,7 +51,8 @@ def _is_property(node: Function) -> bool:
 
 
 def _signature(node: Function) -> list[tuple[str, inspect._ParameterKind, object]]:
-    """(name, kind, default) from a stub definition. `...` and non-literal defaults are `inspect._empty`-free markers."""
+    """(name, kind, default) from a stub definition. `...` and non-literal defaults are `inspect._empty`-free
+    markers."""
     args = node.args
     positional = [*args.posonlyargs, *args.args]
     defaults: list[ast.expr | None] = [None] * (len(positional) - len(args.defaults)) + list(args.defaults)
