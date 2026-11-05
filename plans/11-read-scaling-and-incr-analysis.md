@@ -61,7 +61,7 @@ Stock's `incr` on a live key is `UPDATE Cache SET store_time = ?, value = ? WHER
 ### Options, ranked
 
 1. **An in-place fast path for `incr` on a live, inline row.** One `UPDATE cache SET value = ?, store_time = ?, store_seq = ? WHERE rowid = ?`, with `store_seq` still bumped (the optimistic `get_with` and `pop` paths rely on versions, D-013), skipping the upsert's subqueries, and skipping `adjust_totals` and `cull` when the stored size is unchanged. Keep the general path for misses, expired rows, file-backed rows and size changes. Correctness cost: small, but it's a second write path for one operation, so the conformance suite's `incr` cases and the version tests must cover both.
-2. **Find the commit gap.** The same two pages cost oxide about 2.8 µs more to write. Ruled out: SQLite's `assert()`s, since the amalgamation defines `NDEBUG` itself whenever `SQLITE_DEBUG` is off (`sqlite3.c`, `#if !defined(NDEBUG) && !defined(SQLITE_DEBUG)`). Still to rule out, in order: the cc crate's optimization flags for the C build, and SQLite 3.54.1 against 3.53.1, by building once against 3.53.1.
+2. **Find the commit gap.** (Closed 2026-11-05 by plan 12 step 2: no build-level cause, and the gap didn't reproduce after the in-place `incr`.) The same two pages cost oxide about 2.8 µs more to write. Ruled out: SQLite's `assert()`s, since the amalgamation defines `NDEBUG` itself whenever `SQLITE_DEBUG` is off (`sqlite3.c`, `#if !defined(NDEBUG) && !defined(SQLITE_DEBUG)`). Still to rule out, in order: the cc crate's optimization flags for the C build, and SQLite 3.54.1 against 3.53.1, by building once against 3.53.1.
 
 ## 4. For Talk Python, without waiting on the library
 
