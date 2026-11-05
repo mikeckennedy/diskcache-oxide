@@ -176,7 +176,7 @@ Findings that seed Phase 4 (2026-10-28, 04-design.md section 7):
 
 ### Phase 5: `AsyncCache`
 
-Start with a Python wrapper that runs calls in an executor; it can't touch the sync path by construction. Move it to a Rust-side pool only if benchmarks justify the change. The docs will say plainly that async `get` of small values is slower than the sync call, and that async mainly helps with large values.
+Start with a Python wrapper that runs calls in an executor; it can't touch the sync path by construction. It includes `async with cache.transact_async() as tx:` (Michael, 2026-11-05, plan 12 step 3): a transaction belongs to a thread, and every coroutine on a loop shares one, so the async form must wait for the write lock without blocking the event loop and must keep other coroutines' operations out of the transaction. Move it to a Rust-side pool only if benchmarks justify the change. The docs will say plainly that async `get` of small values is slower than the sync call, and that async mainly helps with large values.
 
 ### Phase 6+: Parity, adoption-driven (several phases)
 
