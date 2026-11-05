@@ -1,0 +1,130 @@
+# Plan 13: FanoutCache
+
+The build design for step 6 of `plans/12-performance-work.md` (roadmap Phase 6c). Michael's confirmed decisions (roadmap 6c, 2026-10-28, and below, 2026-11-05) and step 6's bullets are taken as settled; this plan makes them concrete. **Why:** SQLite serializes every read on one file through that file's shared-memory mutex (plan 11, section 2: 79% + 14% of waits in `unixShmLock`), so four threads reach 1.5M reads/s on one file and 3.4M on four files (Linux). Once shipped, the hash and the layout below are permanent.
+
+**Decisions (Michael, 2026-11-05):** `CacheLike` stays without `transact`, and a `TransactionalCacheLike` subtype carries it (M1); the default connection budget is 8 in total, one per shard (M2); inside `transact(key)`, reads and writes on another shard raise `ValueError` (M3); `xxhash-rust` with only its `xxh3` feature is approved (M4). Also settled: 1 to 256 shards, `%03d` shard names, a total `size_limit` of at least shards × 1 MiB, a public `shard_of(key)`, and the stock features omitted until 6a/6d (section 4).
+
+**Review:** an independent architect review: PASS with required changes, all applied below (2026-11-05).
+
+## 1. Layout and format
+
+```
+<root>/                          0700 (D-015)
+  diskcache-oxide-fanout          the manifest, 0600
+  000/diskcache-oxide.sqlite      shard 0: an ordinary format-1 database
+  001/ ...                        through NNN, zero-padded to 3 digits
+```
+
+- **Shard directories are `%03d`, as in stock.** A stock FanoutCache directory and an oxide one can share a root without misreading each other, because the database filenames differ (D-002). `shards` is 1 to 256.
+- **The manifest** is exactly these bytes (four ASCII lines, each ending in `\n`, no trailing whitespace), compared against the canonical rendering for its parsed `shards` value; anything else is `FormatMismatchError`. Openers read at most 4 KiB of it, so a huge or hostile file can't cost memory.
+  ```
+  diskcache-oxide fanout
+  format = 1
+  shards = 8
+  hash = xxh3-64 seed=0 range=mulhi
+  ```
+  The `hash` line is the hash identity. A future scheme gets a new identity string and a new `format`, never a change in place, matching the store's rule (`schema.rs:1-5`).
+- **Atomic creation, no replace.** `ensure_directory(root)` (`open.rs:62`), then write the manifest to `diskcache-oxide-fanout.tmp-<pid>-<nonce>` opened with `O_EXCL` and mode 0600, `fsync` it, then `std::fs::hard_link` it to the final name and unlink the temporary file. `link(2)` fails with `EEXIST` if another creator won, which `rename` can't do (it replaces). The loser reads the winner's manifest and validates it like any opener. `fsync` the root directory after the link and **before any shard is created**, so a crash can never leave shards with no manifest. A leftover `.tmp-<pid>-<nonce>` file from a crash is ignored by openers (documented; safe to delete).
+- **Filesystems without hard links** (FAT/exFAT, SMB, some FUSE) fail `link` with `EPERM` or `ENOTSUP`. There's no fallback, since WAL mode refuses those filesystems anyway (`open.rs:137-147`): the error names the limit ("this filesystem doesn't support hard links, which FanoutCache needs to create its manifest safely"), and the user guide says so.
+- **`shards=None`** (the default) reads the stored count, or creates 8 if there's no manifest. An explicit `shards=` that differs from the manifest raises `ValueError` naming both numbers. Changing the count means a new directory.
+- **Each shard knows who it is.** A new shard database gets a `settings` row `('fanout', '<index>/<count>/<hash identity>')` written inside `create_if_new`'s `BEGIN IMMEDIATE` (`open.rs:151`), so racing creators agree. The row is never rewritten. Add `OpenOptions.role: Role { Plain, Shard { index, count } }` (`store.rs:99`).
+  - **`prepare`** (`open.rs:99`) reads the row on every open (a read, so D-019 holds), parses it into a `Role`, and refuses a mismatch with `ValueError`: a plain `Cache` on a shard, or a FanoutCache shard with the wrong index or count (a copied or renamed directory).
+  - **A missing row under `Role::Shard` is refused, never adopted.** `create_if_new` writes the row only when `user_version == 0` (`open.rs:156-158`), so a shard directory a plain `Cache` created first has no row; a FanoutCache must not claim that database.
+  - **The store remembers its role.** `prepare` runs only on `open_until`'s slow path (`store.rs:389-396`); the fast path looks up a live store and joins it with no `prepare` (`store.rs:377-381`). So the parsed `Role` is stored on `Store` at creation, and `join` (`store.rs:537`) compares the opener's role with it **before** the `requested == Requested::default()` early return (`store.rs:543`). On a mismatch, `join` releases the handle it was given and returns the error.
+- **Coexisting with a plain `Cache`:** each side checks for the other's marker **before** writing its own, then again after. A plain `Cache` `stat`s for the manifest before `open::connect` creates `diskcache-oxide.sqlite`, so a typo like `Cache(fanout_root)` raises without leaving a database that would break the root for good. A FanoutCache `stat`s for `diskcache-oxide.sqlite` before writing its manifest and again after the `link`. Of two racing creators at least one raises. A directory left with both raises from then on, and neither ever deletes anything.
+
+## 2. The shard hash
+
+`shard = ((xxh3_64_with_seed(input, 0) as u128 * shards as u128) >> 64) as usize`, where `input` is one byte, the key's `key_type` (`KEY_TYPE_STR = 1`, `schema.rs:23`), followed by the key's canonical bytes: UTF-8 for `str`. The 6a key types define their canonical bytes as the bytes they store, and the tag byte keeps types disjoint (`1` the string and `1` the int never collide by construction), so 6a needs no new format. Use streaming `Xxh3::with_seed(0)` over the tag then the bytes, which equals the one-shot hash of the concatenation, so nothing allocates. The multiply-high range uses every bit and has no division.
+
+- **Dependency:** `xxhash-rust` with only the `xxh3` feature (approved, M4), through `cargo-deny`. Never `std::hash::DefaultHasher` (its algorithm isn't promised) or Python's `hash()` (randomized per process).
+- **Golden vectors, forever:** a table in `crates/diskcache-oxide-core/src/fanout.rs` tests of raw hashes and shard indexes at 1, 2, 7, 8, 64 and 256 shards for: `""`, `"a"`, a 16-byte key, keys of 128, 240 and 241 bytes (xxh3's size-class edges), `"\0"`, non-BMP text, and 1,000 keys sharing a 60-byte prefix (also asserting every shard of 8 gets 10-15%). Check the empty input against xxHash's own published sanity value, so a crate bug can't become the format. The same table runs from Python through `FanoutCache.shard_of(key)`. A changed vector is a format break, never a test update.
+- **Cross-check (test-only):** against the Python `xxhash` binding (a test dependency only) over inputs of length 0 to 2048, and streaming against one-shot on the same inputs.
+
+## 3. Rust, not Python
+
+**FanoutCache is a Rust pyclass owning N `Arc<Store>`s.** A Python wrapper over N `Cache`s would add a Python frame plus a second extension call to every operation (about 150-300 ns on a ~1 µs `get`, 15-30% of the gain we're building it for), and couldn't share one reporter or one deadline across shards.
+
+- **13c first extracts a `Handle`** from `Cache` (`cache.rs:37-52`): the per-handle config (`timeout`, codec, `pickle`, `clock`, `on_decode_error`, `failures`, `reported`) in a `HandleConfig` embedded by value (not an `Arc`), with `__traverse__` still visiting `clock` and `on_decode_error` (`cache.rs:225`), and the method bodies (`attempt`, `store_failed`, `lookup`, `read_row`, `pop_value`, `add_number`, `cache.rs:534-833`) taking `&Store` explicitly. `Cache` becomes one store plus that config; `FanoutCache` is `Box<[ShardHandle]>` (store plus its own `closed` flag) plus the same config. No behavior change, measured.
+- **The decode-report set is keyed by `(shard, Version)`.** `Version` is `{id, store_seq}` (`ops.rs:71-74`), which repeats across shards, so a plain shared set (`first_report`, `cache.rs:752`) would hide another shard's bad value.
+- **Connection budget (M2):** `max_connections` is the FanoutCache's total, default **8, one per shard** at the default 8 shards, so D-023's memory bound (about `8 × sqlite_cache_size`) is unchanged. It's split per shard as `cap / N`, with the first `cap % N` shards getting one more, and must be at least `shards` (`ValueError`); so a FanoutCache with more than 8 shards needs an explicit `max_connections`, or defaults to `shards` (one each). Per-shard slots keep each shard's `Slots` atomic local (`store.rs:720`), which is the point. A hot shard then has one connection; raise `max_connections` if a measurement says so.
+- **fd budget** (D-017): `2 × cap + 2 × shards` (each shard adds its `-shm` and its pin).
+- **One budget for open and close.** `Store::open` makes its own deadline (`store.rs:366`), so expose `Store::open_until(options, deadline)` and open every shard under the constructor's one `timeout`; if shard k fails, release shards 0..k-1 before raising. `release_handle` has a fixed 1 s budget per store (`store.rs:276, 604-613`) and `checkpoint_on_close(budget)` is per store, so add a core call that releases every shard under one `GATE.enter_shared_until` guard (`release_under` takes a guard, `store.rs:616`), with one checkpoint budget for the whole close. `Drop` uses the same call.
+- **Fork:** the gate, registry and generations are process-wide (`store.rs:63`), so N stores need tests (section 6), not a new protocol.
+- **`durable` and `on_decode_error`:** one `Failures` for the handle, reported under the root directory, so an outage across 8 shards logs once per bucket, not 8 times.
+
+## 4. Semantics
+
+- **Routed to one shard:** `get`, `set`, `add`, `incr`, `decr`, `delete`, `pop`, `touch`, `in`, `[]`, `[]=`, `del`. Key validation (D-004) runs before hashing. Failures follow `durable` exactly as on `Cache` (D-028).
+- **Fanned out, one deadline for the whole call** (D-027's "one budget", not `timeout × N`): `len`, `volume` (sum; any failure raises, as admin calls do under D-028), `clear`, `expire`, `cull`, `checkpoint` (True only if every shard reset; a real error raises after trying all), `close` (every shard; never raises; D-027's ~2 s / 1 s bounds are for the whole close, section 3).
+- **One-deadline maintenance needs new core APIs.** Today `clear`/`expire`/`cull(timeout)` give each chunk the full timeout (`cache.rs:396`, `maintenance.rs:77-175`). 13e adds core variants taking a `deadline: Instant`, which `Cache` can also use. The deadline bounds waiting, not work: a chunk already running finishes, and a shard reached after the deadline still gets one attempt with zero wait (so a FanoutCache with idle shards still clears them all at a short timeout).
+- **Partial failure:** shards are handled in order, a failing shard doesn't stop the others, and `py.check_signals()` runs between shards. If any failed, the call raises the first failure's own exception type (so `except Timeout` still works) with two attributes, documented in the stubs and the guide: `.removed` (the total removed across all shards) and `.failed_shards` (a tuple of indexes), plus an `add_note` naming them.
+- **Properties:** `directory` is the root; `size_limit` is the sum of the shards' stored limits; `shards` is the count. `size_limit=` is split `floor(total / N)` per shard; each shard must still reach `MIN_SIZE_LIMIT` (D-005), so the total must be at least N MiB. **With `size_limit` unset, a new shard gets `DEFAULT_SIZE_LIMIT / N`**, not the store default (`open.rs:162`), which would give 1 GiB each (8 GiB in total); a test pins the 1 GiB total. Culling is per shard.
+- **`__iter__`:** shard 0 to N-1, each in its insertion order, through the existing paged `keys_page` (`maintenance.rs:131`).
+- **`iterkeys(prefix=, reverse=)`:** a k-way merge. A `FanoutKeyIterator` keeps one cursor and one page buffer per shard and a `BinaryHeap` of shard heads; refilling a shard's buffer leases a connection for one page and returns it, so nothing is held between yields. Refill pages are smaller than a single `Cache`'s (N buffers are live at once, and the first `next()` fills all of them). It keeps `KeyIterator`'s `try_lock` rule (D-025, `cache.rs:873-881`). SQLite's `BINARY` collation is byte order, which equals Rust's `String` order and Python's code-point order on UTF-8, so the merge agrees with a single `Cache`. A test pins this.
+- **`transact(*, key, retry=False)`, last (13k):** `key` is keyword-only and required, so the spelling is `cache.transact(key='total')`. That keeps it compatible with `TransactionalCacheLike`'s positional `retry` on `NullCache` (below). a Step 3 `Transaction` on the key's shard store, with Step 3's reentrancy, `TransactionBusy` and `TransactionAborted` unchanged. It hands back the FanoutCache, as D-029 hands back the cache. On a durable FanoutCache it raises, as Step 3 decides for `Cache` (`tests/DIVERGENCES.md:236`).
+  - **Other shards are refused (M3).** Inside the block, any routed operation on this thread, read or write, whose key lives in another shard raises `ValueError` (naming both shards), and so does a nested `transact(other_key)` on another shard; same-shard nesting passes through.
+  - **Across handles.** A second FanoutCache handle on the same root shares the transaction (D-029: it's per store), so a per-handle count would miss it. The fast-path test is one relaxed load of a **process-wide** count of open transactions; only when it's nonzero does the call check `held_by_this_thread()` (`store.rs:1134`) on this handle's other shards.
+  - `shard_of(key)` lets callers check co-location.
+- **Not provided** (until 6a/6d): `cache()`, `deque()`, `index()`, `stats`, `evict`, `check`, tag indexes, `__reversed__`, pickling.
+
+**Divergence entries** (numbers assigned at landing, after Step 3's D-029 to D-031):
+
+- *FanoutCache persists its shard count* (stock records nothing: a different `shards=` silently reroutes keys and breaks `add`/`incr` atomicity across processes).
+- *Shards are chosen by XXH3, not adler32*, so `__iter__` order differs from stock's, and oxide's iteration is shard by shard with no insertion-order guarantee.
+- *Timeout follows `durable`* (stock swallows `Timeout` on single-key calls, returning False/default/None, swallows `sqlite3.OperationalError` in `get`, and `[]` retries forever).
+- *`transact(key)` covers one shard and refuses other shards' keys, reads included* (stock's `transact()` takes every shard's lock in order, `fanout.py:70-100`, and requires `retry=True`).
+- *Fanned-out removals share one timeout and report partial progress* (stock retries each shard forever, `fanout.py` `_remove`).
+- *`size_limit` is floored per shard and each shard is at least 1 MiB* (stock divides as a float, with no minimum).
+- *`max_connections` is a total, at least `shards`* (stock opens a connection per thread per shard).
+- *A plain `Cache` refuses a FanoutCache root or shard.*
+
+## 5. Typing surface
+
+`_core.pyi`: `class FanoutCache` with `__init__(directory, timeout=None, *, shards: int | None = None, max_connections=None, ...the Cache options...)`, the methods above, `shards`, `shard_of`, `transact`, the partial-failure attributes, and `FanoutKeyIterator`. Export from `__init__.py`.
+
+**`CacheLike` and `transact` (M1):** `CacheLike` stays the shared surface without `transact`. Step 3 adds `TransactionalCacheLike(CacheLike)` with `transact(self, retry: bool = False)`, which `Cache` and `NullCache` satisfy (plan 12, Step 3). FanoutCache satisfies `CacheLike` but not `TransactionalCacheLike`, since its `transact` takes a key; `CacheLike`'s `__iter__` docstring becomes "every key once; `Cache` yields them in insertion order". `NullCache.transact(self, retry=False, *, key=None)` also accepts the keyword-only `key`, so a switched-off FanoutCache from `Caches` serves `transact(key=...)` too, and `NullCache` still satisfies `TransactionalCacheLike`.
+
+`Caches.register(name, shards=8, ...)` opens a FanoutCache (`caches.py:251-257`; add `shards` to `_check_settings`; widen `_opened` to `Cache | FanoutCache`). User guide: a "FanoutCache" page (when to choose it, the trade-offs from roadmap 6c, the one-connection-per-shard default, `shard_of` and co-locating keys for `transact`, the hard-link requirement, leftover `.tmp-*` files), plus `switching-from-diskcache.qmd`.
+
+## 6. Tests
+
+- **Conformance:** `Backend.make_fanout_cache(directory, shards=, ...)` in `tests/conformance/backends.py` (stock: `diskcache.FanoutCache(directory, shards, timeout, size_limit=...)`), `requires('fanout')`, added to `OXIDE_SUPPORTED_FEATURES` by name (as Step 3 does with `'transact'`, without bumping `OXIDE_PHASE`). `test_fanout.py`: routed round-trips, `add`/`incr` atomicity across processes, `len`/`volume`/`clear`/`expire` sums, `__iter__` and `iterkeys` as sets and sorted lists, `size_limit` culling per shard, many shards with few keys. Stock's swallowing and iteration order are divergences, never compared.
+- **Format:** the golden vectors (both languages) and the `xxhash` cross-check, the manifest byte-for-byte, non-canonical and oversized manifests refused, shard directory names, the `settings` row, the plain-`Cache` refusals both ways (including `Cache(fanout_root)` leaving no database), a renamed shard refused, a lost manifest (shards present, manifest deleted, recreated with another count) refused by the shard rows, a shard database created by a plain `Cache` refused, a stray `.tmp-*` file ignored, the 1 GiB default total.
+- **Shard identity through the fast path (13b):** with a FanoutCache open, a plain `Cache` on a shard directory (which joins the live store without `prepare`) raises `ValueError`, and the store's handle count is unchanged afterwards.
+- **Creation race:** 16 processes from a barrier creating one root with the same and with different `shards=` (one count wins; the rest open it or raise `ValueError`; never two manifests, never a replaced one), and a plain `Cache` racing a FanoutCache (at least one raises).
+- **Open and close budgets:** a shard that fails to open releases the earlier ones; a close behind a stuck fork returns within the whole-close bound, not N times it.
+- **Fork:** `fork_scenarios.py` cases with 8 stores: a fork while threads write to different shards (the child writes every shard) in 13d; a fork mid-`iterkeys` merge, and close-after-fork leaving no fds (D-018 across shards), in 13g.
+- **fd budget:** 64 threads, peak fds within `2 × cap + 2 × shards`, and zero after `close()`.
+- **Benchmark** `bench/fanout.py`: the 99:1 get:set mix, uniform and Zipf keys, 1/2/4/8 threads on 3.14 and 3.14t and 1/2/4/8 processes, comparing oxide `Cache`, oxide `FanoutCache(8)` at the default budget and at `max_connections=16`, stock `Cache` and stock `FanoutCache(8)`, on the Mac and in the Linux VM.
+
+## 7. Build order
+
+Each is one commit through `scripts/check.sh` on all four interpreters.
+
+- **13a, hash and manifest** (core `fanout.rs`, no Python): hash, manifest create/read/validate, golden vectors and cross-check, threaded creation race, the hard-link error.
+- **13b, shard identity:** `Role` on `OpenOptions` and `Store`, the `settings` row, the `prepare` check, the `join` check before its early return, both plain-`Cache` refusals in the safe order. Run `scripts/model-check.sh` since it touches the open path.
+- **13c, extract `Handle`:** pure refactor; whole suite plus a `bench/baseline.py` get/set/incr comparison within noise. **Sequencing:** 13c rewrites the same `cache.rs` code Step 3 turns from `WriteHold` into `Transaction` (`cache.rs:487, 903-947`), so it lands after Step 3's 3c and 3e (preferred), or entirely before 3c starts, never concurrently. 13a and 13b don't touch `cache.rs` and can go first.
+- **13d, `FanoutCache` with routed ops:** `open_until` and the release-all close, constructor, budget split, the default `size_limit` split, properties, `shard_of`, `len`/`volume`, `close`, stubs, conformance adapter and the routed conformance tests, the process creation race, the basic 8-store fork scenario.
+- **13e, fan-out maintenance:** the core `deadline` variants, `clear`/`expire`/`cull`/`checkpoint`, partial-failure reporting.
+- **13f, iterators:** shard-by-shard `__iter__`, the merged `iterkeys`, the ordering test.
+- **13g, fork, fd and divergence entries:** the remaining fork scenarios and the fd test, the entries in `tests/DIVERGENCES.md`, a FanoutCache worker in `soak/worker.py`. A fresh 24-hour soak before production.
+- **13h, `Caches`, `NullCache`, `CacheLike`.**
+- **13i, the benchmark**, with results added to plan 12's step 7 page.
+- **13j, the user guide.**
+- **13k, `transact(key)`**, only after Step 3 has shipped: the shard-scoped transaction, the process-wide count, the other-shard refusal (reads and writes, across handles), nesting tests, a durable handle raising, its divergence entry. `model-check.sh` and a fresh soak.
+
+## 8. Risks
+
+- **The format is forever.** Golden vectors land in 13a, before any release, and are never "updated". No `DefaultHasher`, no Python `hash()`, no `h % n` substituted later.
+- **Never `rename` the manifest into place**; it replaces a winner's file. `link` or nothing, and the root is `fsync`ed before any shard exists.
+- **The identity check must run on both open paths:** `prepare` on the slow path and the stored `Role` in `join` on the fast one, before `join`'s early return. A missing row under `Role::Shard` is a refusal, never an adoption.
+- **Check before you write your marker.** A plain `Cache` that creates its database before looking for the manifest breaks the root for good.
+- **One deadline per call, including open and close.** A fanned-out call that gives each shard a fresh `timeout` waits `N × timeout` behind a stuck fork; maintenance needs the core `deadline` variants, not a loop over today's `timeout` APIs.
+- **The decode-report set is per `(shard, Version)`**, or one shard's report silences another's.
+- **The default `size_limit` is divided too**, or a default FanoutCache may use 8 GiB.
+- **The merge must hold no connection, and no lock while attached, between yields** (D-025), and must agree with SQLite's byte ordering.
+- **Don't let the transaction guard cost every call:** one relaxed load of the process-wide count on the fast path, nothing more, and never a per-handle count (a second handle shares the transaction).
+- **Don't drift the budget:** each shard's `max_connections` is computed once at open; `fetch_max` from other handles still applies per shard (`store.rs:537`).
+- **Keep D-019:** the new reads (`stat` for the markers, the `settings` row) never write.
+- **Don't build 13c beside Step 3:** both rewrite `cache.rs`'s transaction code.
