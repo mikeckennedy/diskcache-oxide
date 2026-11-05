@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, OptionalExtension};
 
+#[cfg(test)]
+use crate::rows::UPDATE_NUMBER_SQL;
 use crate::rows::{NewRow, Removed, RowWriter, Stored};
 use crate::schema::{KEY_TYPE_STR, MODE_INT, MODE_REAL};
 use crate::spill::{self, PendingFile};
@@ -415,6 +417,8 @@ impl Store {
     /// - A live native number keeps its expiry; the update counts as a store (new `store_seq`).
     /// - A missing or expired key starts from `default` and gets **no expiry** (diskcache's pinned
     ///   behavior), or fails with [`Error::KeyMissing`] when `default` is `None`.
+    /// - An in-place update of a live counter runs no expired-row sweep or cull (a deliberate change,
+    ///   matching diskcache's in-place `UPDATE`); a miss or expired key takes the full write path.
     /// - Any other stored value fails with [`Error::NotNumeric`]; a 64-bit overflow with
     ///   [`Error::Overflow`]. Both leave the value unchanged.
     pub fn incr(
@@ -426,6 +430,15 @@ impl Store {
         now: f64,
     ) -> Result<Number> {
         self.write_files(timeout, LockPriority::Normal, |writer, tx| {
+            // The fast path: a live number is updated in place, with no prelude, totals or cull.
+            if let Some(row) = incr_row(tx, key, timeout)?
+                && row.expire_time.is_none_or(|at| at > now)
+            {
+                let next = number_from(row.mode, row.int, row.real)?.checked_add(delta)?;
+                let value = next.value();
+                writer.update_number_in_place(row.id, value.mode(), value.stored(), now)?;
+                return Ok(Changed::unchanged(next));
+            }
             let before = prelude(tx, key, now, timeout)?;
             let (current, expire) = match &before.live {
                 Some(row) => (number_of(row)?, row.expire_time),
@@ -437,6 +450,25 @@ impl Store {
             Ok(Changed::removing(next, removed))
         })
     }
+}
+
+/// The stored row for `key` (live or not) as `incr` needs it, or `None` if there is none.
+const INCR_SQL: &str = "SELECT id, mode, value, expire_time FROM cache WHERE key_type = ?1 AND key = ?2";
+
+fn incr_row(tx: &Connection, key: &str, timeout: Duration) -> Result<Option<IncrRow>> {
+    tx.prepare_cached(INCR_SQL)
+        .and_then(|mut stmt| {
+            stmt.query_row((KEY_TYPE_STR, key), |r| {
+                let (int, real) = match r.get_ref(2)? {
+                    ValueRef::Integer(n) => (Some(n), None),
+                    ValueRef::Real(x) => (None, Some(x)),
+                    _ => (None, None),
+                };
+                Ok(IncrRow { id: r.get(0)?, mode: r.get(1)?, int, real, expire_time: r.get(3)? })
+            })
+            .optional()
+        })
+        .map_err(|e| Error::from_sqlite(e, timeout))
 }
 
 /// Stores `value` (pointing the row at `pending`'s value file if it was spilled), given the stored
@@ -650,6 +682,15 @@ struct LiveRow {
     expire_time: Option<f64>,
 }
 
+/// The row `incr` found, live or not (the caller checks `expire_time`).
+struct IncrRow {
+    id: i64,
+    mode: i64,
+    int: Option<i64>,
+    real: Option<f64>,
+    expire_time: Option<f64>,
+}
+
 fn live_row(tx: &Connection, key: &str, now: f64, timeout: Duration) -> Result<Option<LiveRow>> {
     tx.prepare_cached(
         "SELECT mode, value, expire_time FROM cache
@@ -671,7 +712,11 @@ fn live_row(tx: &Connection, key: &str, now: f64, timeout: Duration) -> Result<O
 }
 
 fn number_of(row: &LiveRow) -> Result<Number> {
-    match (row.mode, row.int, row.real) {
+    number_from(row.mode, row.int, row.real)
+}
+
+fn number_from(mode: i64, int: Option<i64>, real: Option<f64>) -> Result<Number> {
+    match (mode, int, real) {
         (MODE_INT, Some(n), _) => Ok(Number::Int(n)),
         (MODE_REAL, _, Some(x)) => Ok(Number::Real(x)),
         _ => Err(Error::NotNumeric),
@@ -994,21 +1039,161 @@ mod tests {
         assert_eq!(s.incr(T, "f", Number::Int(1), None, NOW).unwrap(), Number::Real(3.5));
     }
 
+    fn seq_of(s: &Store, key: &str) -> i64 {
+        s.read(T, |c| {
+            c.query_row("SELECT store_seq FROM cache WHERE key = ?1", [key], |r| r.get(0))
+                .map_err(|e| Error::from_sqlite(e, T))
+        })
+        .unwrap()
+    }
+
     #[test]
     fn incr_counts_as_a_store() {
         let tmp = TempDir::new("ops-incr-seq");
         let s = store(tmp.path(), Requested::default());
         s.set(T, "c", Value::Int(0), None, NOW).unwrap();
-        let seq = |s: &Store| -> i64 {
+        let before = seq_of(&s, "c");
+        s.incr(T, "c", Number::Int(1), None, NOW).unwrap();
+        assert!(seq_of(&s, "c") > before);
+    }
+
+    #[test]
+    fn in_place_incr_versions_strictly_increase_and_never_repeat_after_a_delete() {
+        let tmp = TempDir::new("ops-incr-inplace-seq");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "c", Value::Int(0), None, NOW).unwrap();
+        s.set(T, "d", Value::Int(0), None, NOW).unwrap();
+        let mut last = seq_of(&s, "d");
+        s.incr(T, "c", Number::Int(1), None, NOW).unwrap();
+        assert!(seq_of(&s, "c") > last, "newer than every other row");
+        last = seq_of(&s, "c");
+        // Deleting the newest row raises the floor; the next incr must not reuse any number.
+        assert!(s.delete(T, "c", NOW).unwrap());
+        s.set(T, "c", Value::Int(0), None, NOW).unwrap();
+        let before = seq_of(&s, "c");
+        assert!(before > last);
+        assert!(s.delete(T, "d", NOW).unwrap());
+        s.incr(T, "c", Number::Int(1), None, NOW).unwrap();
+        assert!(seq_of(&s, "c") > before, "a delete of an older row can't make the version repeat");
+        let top = seq_of(&s, "c");
+        assert!(s.delete(T, "c", NOW).unwrap());
+        s.set(T, "e", Value::Int(0), None, NOW).unwrap();
+        s.incr(T, "e", Number::Int(1), None, NOW).unwrap();
+        assert!(seq_of(&s, "e") > top, "never a number the deleted row held");
+    }
+
+    #[test]
+    fn an_incr_made_during_a_clear_survives_it() {
+        let tmp = TempDir::new("ops-incr-inplace-clear");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "old", Value::Int(0), None, NOW).unwrap();
+        s.set(T, "c", Value::Int(0), None, NOW).unwrap();
+        // Delete a newest row first, so the snapshot comes from the floor (`next_seq`), not MAX.
+        s.set(T, "newest", Value::Int(0), None, NOW).unwrap();
+        assert!(s.delete(T, "newest", NOW).unwrap());
+        let snapshot = s.seq_snapshot(T).unwrap();
+        s.incr(T, "c", Number::Int(1), None, NOW).unwrap();
+        // One chunk of clear(), as it runs after taking `snapshot`. A real `clear()` takes its own,
+        // later snapshot, so it can't be interleaved with an incr without a hook.
+        let removed: i64 = s
+            .write_files(T, LockPriority::Normal, |_, conn| {
+                let n = conn
+                    .execute("DELETE FROM cache WHERE store_seq < ?1", [snapshot])
+                    .map_err(|e| Error::from_sqlite(e, T))?;
+                Ok(Changed::unchanged(i64::try_from(n).unwrap()))
+            })
+            .unwrap();
+        assert_eq!(removed, 1, "only the row that wasn't incremented");
+        assert_eq!(get(&s, "c", NOW).unwrap().0, b"1");
+    }
+
+    #[test]
+    fn in_place_incr_after_the_newest_row_is_deleted_takes_a_fresh_version() {
+        let tmp = TempDir::new("ops-incr-inplace-floor");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "c", Value::Int(0), None, NOW).unwrap();
+        s.set(T, "newest", Value::Int(0), None, NOW).unwrap();
+        let gone = seq_of(&s, "newest");
+        assert!(s.delete(T, "newest", NOW).unwrap());
+        s.incr(T, "c", Number::Int(1), None, NOW).unwrap();
+        assert!(seq_of(&s, "c") > gone, "the deleted row's number is never handed out again");
+    }
+
+    #[test]
+    fn a_rolled_back_in_place_incr_restores_the_value_and_the_version() {
+        let tmp = TempDir::new("ops-incr-inplace-rollback");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "c", Value::Int(5), None, NOW).unwrap();
+        let (seq, v) = (seq_of(&s, "c"), version(&s, "c"));
+        let held = s.begin_hold(T).unwrap();
+        assert_eq!(s.incr(T, "c", Number::Int(1), None, NOW).unwrap(), Number::Int(6));
+        assert!(seq_of(&s, "c") > seq);
+        held.finish(false).unwrap();
+        assert_eq!(get(&s, "c", NOW).unwrap().0, b"5");
+        assert_eq!(seq_of(&s, "c"), seq);
+        assert_eq!(version(&s, "c"), v);
+    }
+
+    #[test]
+    fn a_stale_version_cannot_delete_an_incremented_value() {
+        let tmp = TempDir::new("ops-incr-inplace-stale");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "c", Value::Int(0), None, NOW).unwrap();
+        let stale = version(&s, "c").unwrap();
+        s.incr(T, "c", Number::Int(1), None, NOW).unwrap();
+        assert_eq!(delete_nowait(&s, stale), VersionDelete::Gone);
+        assert!(!s.delete_version(T, stale).unwrap());
+        assert_eq!(get(&s, "c", NOW).unwrap().0, b"1");
+        let fresh = version(&s, "c").unwrap();
+        assert_ne!(fresh, stale);
+        assert_eq!(delete_nowait(&s, fresh), VersionDelete::Removed);
+    }
+
+    #[test]
+    fn in_place_incr_changes_the_mode_for_int_plus_real_and_keeps_the_expiry() {
+        let tmp = TempDir::new("ops-incr-inplace-mode");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "c", Value::Int(1), Some(60.0), NOW).unwrap();
+        let mode = |s: &Store| -> i64 {
             s.read(T, |c| {
-                c.query_row("SELECT store_seq FROM cache WHERE key = 'c'", [], |r| r.get(0))
+                c.query_row("SELECT mode FROM cache WHERE key = 'c'", [], |r| r.get(0))
                     .map_err(|e| Error::from_sqlite(e, T))
             })
             .unwrap()
         };
-        let before = seq(&s);
-        s.incr(T, "c", Number::Int(1), None, NOW).unwrap();
-        assert!(seq(&s) > before);
+        assert_eq!(mode(&s), MODE_INT);
+        assert_eq!(s.incr(T, "c", Number::Real(0.5), None, NOW + 1.0).unwrap(), Number::Real(1.5));
+        assert_eq!(mode(&s), MODE_REAL);
+        assert_eq!(get(&s, "c", NOW + 1.0).unwrap().1, Some(NOW + 60.0), "expiry kept");
+        assert_eq!(s.incr(T, "c", Number::Int(1), None, NOW + 2.0).unwrap(), Number::Real(2.5));
+        assert_eq!(mode(&s), MODE_REAL);
+    }
+
+    #[test]
+    fn in_place_incr_runs_no_sweep_and_no_cull_and_leaves_totals_alone() {
+        let tmp = TempDir::new("ops-incr-inplace-nosweep");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "c", Value::Int(0), None, NOW).unwrap();
+        for i in 0..5 {
+            s.set(T, &format!("e{i}"), text("v"), Some(1.0), NOW).unwrap();
+        }
+        let totals = |s: &Store| -> (i64, i64, i64) {
+            s.read(T, |c| {
+                c.query_row("SELECT count, size, next_seq FROM totals WHERE only = 1", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })
+                .map_err(|e| Error::from_sqlite(e, T))
+            })
+            .unwrap()
+        };
+        let before = totals(&s);
+        // The five rows are long expired; a slow-path incr would sweep them.
+        s.incr(T, "c", Number::Int(1), None, NOW + 100.0).unwrap();
+        assert_eq!(len(&s), 6, "no sweep");
+        assert_eq!(totals(&s), before, "totals not written");
+        // A miss still takes the full path, which sweeps.
+        s.incr(T, "new", Number::Int(1), Some(Number::Int(0)), NOW + 100.0).unwrap();
+        assert_eq!(len(&s), 2);
     }
 
     #[test]
@@ -1207,6 +1392,7 @@ mod reprepare_guard {
             let now = 1.0 + f64::from(i);
             store.set(timeout, &key, Value::Bytes { mode: 1, data: b"v" }, Some(1_000.0), now).unwrap();
             store.get_with(timeout, &key, now, |_| false, |_, _| Ok(())).unwrap();
+            store.incr(timeout, "n", Number::Int(1), Some(Number::Int(0)), now).unwrap();
         }
         let reprepares = store
             .read(timeout, |conn| {
@@ -1214,9 +1400,9 @@ mod reprepare_guard {
                     let stmt = conn.prepare_cached(sql).map_err(|e| Error::from_sqlite(e, timeout))?;
                     Ok(stmt.get_status(StatementStatus::RePrepare))
                 };
-                Ok((count(PRELUDE_SQL)?, count(LOOKUP_SQL)?))
+                Ok((count(PRELUDE_SQL)?, count(LOOKUP_SQL)?, count(INCR_SQL)?, count(UPDATE_NUMBER_SQL)?))
             })
             .unwrap();
-        assert_eq!(reprepares, (0, 0), "(prelude, lookup) were recompiled");
+        assert_eq!(reprepares, (0, 0, 0, 0), "(prelude, lookup, incr, update) were recompiled");
     }
 }

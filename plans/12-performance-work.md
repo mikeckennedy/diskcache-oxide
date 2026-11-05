@@ -112,3 +112,4 @@ Rerun Talk Python's benchmark (`APP/temp/cache_bench/`) at one and four threads,
 ## Progress
 
 - 2026-11-05: plan written; the-rust-architect review: PASS with required changes, all applied (step 1's version source and `mode`, step 3's real prerequisites and Python-side reentrancy and retry, step 4's no-`await` rule, step 5 moved after step 6, step 6's diskcache differences).
+- 2026-11-05: step 1 done. `incr` on a live number is one in-place `UPDATE` (`rows.rs` `UPDATE_NUMBER_SQL`), about 24 to 15.5-20 µs on the Mac, at or below stock's 18-20 µs in the same session. Architect: PASS after its required test fixes (a mutation that drops the version floor is now caught by two tests). `scripts/check.sh` passes on all four interpreters. Needs a fresh soak before production.

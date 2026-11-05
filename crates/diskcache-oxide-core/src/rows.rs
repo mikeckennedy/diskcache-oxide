@@ -42,6 +42,12 @@ impl ToSql for Stored<'_> {
     }
 }
 
+/// The in-place update of a number's row (see [`RowWriter::update_number_in_place`]).
+pub(crate) const UPDATE_NUMBER_SQL: &str = "UPDATE cache SET mode = ?1, value = ?2, store_time = ?3,
+         store_seq = MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1,
+                         (SELECT next_seq FROM totals WHERE only = 1))
+     WHERE id = ?4";
+
 /// A row to store under `key`.
 #[derive(Debug, Clone, Copy)]
 pub struct NewRow<'a> {
@@ -127,6 +133,20 @@ impl<'t> RowWriter<'t> {
         };
         self.adjust_totals(count, size)?;
         Ok((seq, replaced))
+    }
+
+    /// Overwrites the live inline number in row `id` with `value`, as a new store (a new
+    /// `store_seq`, `store_time` = `now`). `expire_time`, `size` and `filename` are kept, and
+    /// `totals` is not written (an inline number changes neither the count nor the size). The
+    /// version comes from the same expression as [`RowWriter::upsert_after`], never from
+    /// `totals.next_seq` alone, which is only a floor. Fails if the row isn't there.
+    pub fn update_number_in_place(&self, id: i64, mode: i64, value: Stored<'_>, now: f64) -> Result<()> {
+        let changed = self
+            .tx
+            .prepare_cached(UPDATE_NUMBER_SQL)
+            .and_then(|mut stmt| stmt.execute((mode, value, now, id)))
+            .map_err(|e| self.sqlite(e))?;
+        if changed == 1 { Ok(()) } else { Err(self.sqlite(rusqlite::Error::StatementChangedRows(changed))) }
     }
 
     /// Deletes `key`. Returns the removed version, or `None` if the key wasn't stored.

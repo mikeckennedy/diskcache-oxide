@@ -141,7 +141,7 @@ impl Store {
     }
 
     /// The next `store_seq` to be handed out: every row stored before now has a smaller one.
-    fn seq_snapshot(&self, timeout: Duration) -> Result<i64> {
+    pub(crate) fn seq_snapshot(&self, timeout: Duration) -> Result<i64> {
         self.read(timeout, |conn| {
             conn.prepare_cached(
                 "SELECT MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1, next_seq) FROM totals WHERE only = 1",
