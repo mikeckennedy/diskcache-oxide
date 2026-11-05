@@ -106,7 +106,7 @@ pub fn prepare(conn: &mut Connection, requested: Requested, timeout: Duration) -
     if version == 0 {
         create_if_new(conn, requested, timeout)?;
     } else if version != FORMAT_VERSION {
-        return Err(Error::FormatMismatch { found: version, expected: FORMAT_VERSION });
+        return Err(Error::FormatMismatch { found: version, expected: FORMAT_VERSION, path: None });
     }
 
     let stored = read_limits(conn, timeout)?;
@@ -168,7 +168,7 @@ fn create_if_new(conn: &mut Connection, requested: Requested, timeout: Duration)
             tx.commit().map_err(sqlite)
         }
         FORMAT_VERSION => Ok(()),
-        found => Err(Error::FormatMismatch { found, expected: FORMAT_VERSION }),
+        found => Err(Error::FormatMismatch { found, expected: FORMAT_VERSION, path: None }),
     }
 }
 
@@ -275,7 +275,7 @@ mod tests {
         let before = data_version(&peer);
         let mut conn = connect(tmp.path(), T).unwrap();
         let err = prepare(&mut conn, Requested { size_limit: Some(9 << 20), cull_limit: None }, T).unwrap_err();
-        assert!(matches!(err, Error::FormatMismatch { found: 2, expected: 1 }), "{err:?}");
+        assert!(matches!(err, Error::FormatMismatch { found: 2, expected: 1, .. }), "{err:?}");
         assert_eq!(data_version(&peer), before);
     }
 

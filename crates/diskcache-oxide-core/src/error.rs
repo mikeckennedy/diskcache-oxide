@@ -44,8 +44,16 @@ pub enum Error {
     Sqlite(#[source] rusqlite::Error),
 
     /// The database was written by a format version this build doesn't know.
-    #[error("cache format version {found} is not supported (this build uses version {expected})")]
-    FormatMismatch { found: i64, expected: i64 },
+    /// `path` names the file that declared it when that isn't the database itself (a `FanoutCache`
+    /// manifest).
+    #[error("cache format version {found} is not supported (this build uses version {expected}){}", path_note(.path.as_ref()))]
+    FormatMismatch { found: i64, expected: i64, path: Option<PathBuf> },
+
+    /// A `FanoutCache` root's manifest isn't the exact bytes this build writes (plan 13, section 1):
+    /// missing lines, extra whitespace, a shard count out of range, an oversized file. Python
+    /// `FormatMismatchError`.
+    #[error("invalid fan-out manifest {path}: {reason}")]
+    ManifestInvalid { path: PathBuf, reason: String },
 
     /// SQLite refused WAL mode, e.g. on a network filesystem.
     #[error("the cache requires WAL journal mode, but SQLite is using {mode:?}")]
@@ -110,6 +118,11 @@ pub enum Error {
     TransactionAborted,
 }
 
+/// The " (in <path>)" suffix of a [`Error::FormatMismatch`] that came from a file other than the database.
+fn path_note(path: Option<&PathBuf>) -> String {
+    path.map_or_else(String::new, |p| format!(" (in {})", p.display()))
+}
+
 impl Error {
     /// Classifies a rusqlite error: busy or locked becomes [`Error::Timeout`] (SQLite only reports
     /// them once the busy handler has waited out `timeout`), `SQLITE_FULL` [`Error::DiskFull`], the
@@ -148,6 +161,7 @@ impl Error {
             // Only an open reports the first three, and the constructor always raises. The rest are
             // bugs in the caller, or would break its transaction's atomicity.
             Self::FormatMismatch { .. }
+            | Self::ManifestInvalid { .. }
             | Self::NotWal { .. }
             | Self::InvalidSetting(_)
             | Self::Closed
@@ -225,7 +239,8 @@ mod tests {
         let raised = [
             sqlite(ffi::SQLITE_NOMEM),
             Error::Io { path: PathBuf::from("x"), source: std::io::ErrorKind::OutOfMemory.into() },
-            Error::FormatMismatch { found: 2, expected: 1 },
+            Error::FormatMismatch { found: 2, expected: 1, path: None },
+            Error::ManifestInvalid { path: PathBuf::from("x"), reason: "y".into() },
             Error::NotWal { mode: "delete".into() },
             Error::Closed,
             Error::KeyMissing,

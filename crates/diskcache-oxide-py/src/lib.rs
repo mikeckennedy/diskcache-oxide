@@ -92,7 +92,7 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
         | Error::NoTransaction
         | Error::EndInsideOperation
         | Error::TransactionAborted => PyRuntimeError::new_err(message),
-        Error::FormatMismatch { .. } => FormatMismatchError::new_err(message),
+        Error::FormatMismatch { .. } | Error::ManifestInvalid { .. } => FormatMismatchError::new_err(message),
         Error::InvalidSetting(_) => PyValueError::new_err(message),
         Error::KeyMissing => pyo3::exceptions::PyKeyError::new_err(message),
         Error::NotNumeric => PyTypeError::new_err(message),

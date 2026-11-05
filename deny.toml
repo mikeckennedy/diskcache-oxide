@@ -27,6 +27,11 @@ allow = [
 ]
 confidence-threshold = 0.9
 
+# Scoped to the one crate that needs it: xxhash-rust (the fan-out shard hash, plan 13) is Boost-licensed.
+[[licenses.exceptions]]
+crate = "xxhash-rust"
+allow = ["BSL-1.0"]
+
 [licenses.private]
 # Our own crates are `publish = false`; only third-party licenses matter.
 ignore = true

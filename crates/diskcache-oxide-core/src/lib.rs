@@ -7,6 +7,7 @@
 #![deny(unsafe_code)]
 
 mod error;
+pub mod fanout;
 pub mod gate;
 pub mod genlock;
 pub mod lockwait;

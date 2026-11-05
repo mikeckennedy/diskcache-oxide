@@ -10,13 +10,13 @@ The build design for step 6 of `plans/12-performance-work.md` (roadmap Phase 6c)
 
 ```
 <root>/                          0700 (D-015)
-  diskcache-oxide-fanout          the manifest, 0600
+  diskcache-oxide-fanout          the manifest, 0644 minus the umask
   000/diskcache-oxide.sqlite      shard 0: an ordinary format-1 database
   001/ ...                        through NNN, zero-padded to 3 digits
 ```
 
 - **Shard directories are `%03d`, as in stock.** A stock FanoutCache directory and an oxide one can share a root without misreading each other, because the database filenames differ (D-002). `shards` is 1 to 256.
-- **The manifest** is exactly these bytes (four ASCII lines, each ending in `\n`, no trailing whitespace), compared against the canonical rendering for its parsed `shards` value; anything else is `FormatMismatchError`. Openers read at most 4 KiB of it, so a huge or hostile file can't cost memory.
+- **The manifest** is exactly these bytes (four ASCII lines, each ending in `\n`, no trailing whitespace), compared against the canonical rendering for its parsed `shards` value; anything else is `FormatMismatchError`. Lines 1 (`diskcache-oxide fanout`) and 2 (`format = N`) are frozen in every format, so a future format reads as a format mismatch naming the manifest, never as "invalid". Openers read at most 4 KiB of it, so a huge or hostile file can't cost memory.
   ```
   diskcache-oxide fanout
   format = 1
@@ -24,7 +24,7 @@ The build design for step 6 of `plans/12-performance-work.md` (roadmap Phase 6c)
   hash = xxh3-64 seed=0 range=mulhi
   ```
   The `hash` line is the hash identity. A future scheme gets a new identity string and a new `format`, never a change in place, matching the store's rule (`schema.rs:1-5`).
-- **Atomic creation, no replace.** `ensure_directory(root)` (`open.rs:62`), then write the manifest to `diskcache-oxide-fanout.tmp-<pid>-<nonce>` opened with `O_EXCL` and mode 0600, `fsync` it, then `std::fs::hard_link` it to the final name and unlink the temporary file. `link(2)` fails with `EEXIST` if another creator won, which `rename` can't do (it replaces). The loser reads the winner's manifest and validates it like any opener. `fsync` the root directory after the link and **before any shard is created**, so a crash can never leave shards with no manifest. A leftover `.tmp-<pid>-<nonce>` file from a crash is ignored by openers (documented; safe to delete).
+- **Atomic creation, no replace.** `ensure_directory(root)` (`open.rs:62`), then write the manifest to `diskcache-oxide-fanout.tmp-<pid>-<nonce>` opened with `O_EXCL` and mode 0644 (masked by the umask, like the databases and spill files; only directories are forced private, D-015; the hard link makes this inode the manifest, so it must carry the final mode), `fsync` it, then `std::fs::hard_link` it to the final name and unlink the temporary file. `link(2)` fails with `EEXIST` if another creator won, which `rename` can't do (it replaces). The loser reads the winner's manifest and validates it like any opener. `fsync` the root directory after the link and **before any shard is created**, so a crash can never leave shards with no manifest. A leftover `.tmp-<pid>-<nonce>` file from a crash is ignored by openers (documented; safe to delete).
 - **Filesystems without hard links** (FAT/exFAT, SMB, some FUSE) fail `link` with `EPERM` or `ENOTSUP`. There's no fallback, since WAL mode refuses those filesystems anyway (`open.rs:137-147`): the error names the limit ("this filesystem doesn't support hard links, which FanoutCache needs to create its manifest safely"), and the user guide says so.
 - **`shards=None`** (the default) reads the stored count, or creates 8 if there's no manifest. An explicit `shards=` that differs from the manifest raises `ValueError` naming both numbers. Changing the count means a new directory.
 - **Each shard knows who it is.** A new shard database gets a `settings` row `('fanout', '<index>/<count>/<hash identity>')` written inside `create_if_new`'s `BEGIN IMMEDIATE` (`open.rs:151`), so racing creators agree. The row is never rewritten. Add `OpenOptions.role: Role { Plain, Shard { index, count } }` (`store.rs:99`).
@@ -130,3 +130,7 @@ Each is one commit through `scripts/check.sh` on all four interpreters.
 - **Don't build 13c beside Step 3:** both rewrite `cache.rs`'s transaction code.
 
 Note (2026-11-05, from plan 12 step 3d): `Caches.__getitem__` and its helpers are typed `TransactionalCacheLike`, which is accurate while a lookup can only return a `Cache` or a `NullCache`. When `Caches` can register a FanoutCache, widen that annotation (a union, or back to `CacheLike`) and keep `caches[name].transact()` type-checking for the plain-cache case.
+
+## Progress
+
+- 2026-11-05: 13a done. `fanout.rs`: XXH3-64 seed 0 over the key-type byte and the key, multiply-high to the shard, pinned by golden vectors that a second reviewer recomputed independently with Python's `xxhash`; the manifest is created by an `O_EXCL` temp file and a hard link, mode 0644 under the umask so group-shared roots work, with a clear error where hard links aren't supported (including macOS's `ENOTSUP`); its first two lines are frozen in every format. `xxhash-rust` is allowed under BSL-1.0 for that crate only. `scripts/check.sh` passes on all four interpreters.

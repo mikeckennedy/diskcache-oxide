@@ -24,6 +24,8 @@ serde = "1.0.229"
 # float_roundtrip is required: without it about 1 in 1,500 random floats decode one ULP off (Spike 3).
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 thiserror = "2"
+# The fan-out shard hash (plan 13). Only the xxh3 feature: the hash is on-disk format, so nothing else is needed.
+xxhash-rust = { version = "0.8.19", default-features = false, features = ["xxh3"] }
 # The model checker for the gate and the write lock, only under `--cfg shuttle` (scripts/model-check.sh).
 shuttle = "0.9.9"
 
