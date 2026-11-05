@@ -29,6 +29,12 @@ create_exception!(
 );
 create_exception!(
     diskcache_oxide,
+    TransactionBusy,
+    Timeout,
+    "A thread holding one cache's transaction couldn't begin another's because another thread holds its write lock."
+);
+create_exception!(
+    diskcache_oxide,
     UnsafeValueError,
     PyTypeError,
     "A pickle=False cache read a value that was stored with pickle."
@@ -72,7 +78,8 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
         return PyMemoryError::new_err(message);
     }
     match error {
-        Error::Timeout { .. } | Error::WriteLockBusyInTransaction => Timeout::new_err(message),
+        Error::Timeout { .. } => Timeout::new_err(message),
+        Error::WriteLockBusyInTransaction => TransactionBusy::new_err(message),
         Error::DiskFull { .. } => PyOSError::new_err((libc::ENOSPC, message)),
         Error::SqliteIo { errno: Some(errno), .. } => PyOSError::new_err((errno, message)),
         Error::Io { source, .. } => match source.raw_os_error() {
@@ -276,6 +283,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Lets benchmarks refuse to measure an unoptimized build.
     m.add("_DEBUG_BUILD", cfg!(debug_assertions))?;
     m.add("Timeout", py.get_type::<Timeout>())?;
+    m.add("TransactionBusy", py.get_type::<TransactionBusy>())?;
     m.add("UnsafeValueError", py.get_type::<UnsafeValueError>())?;
     m.add("CorruptValueError", py.get_type::<CorruptValueError>())?;
     m.add("ForeignValueError", py.get_type::<ForeignValueError>())?;

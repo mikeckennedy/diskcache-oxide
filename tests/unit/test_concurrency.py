@@ -13,7 +13,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 
 import pytest
-from diskcache_oxide import Cache, Timeout
+from diskcache_oxide import Cache, Timeout, TransactionBusy
 
 from tests.conformance.proc_workers import SqlitePeer
 
@@ -488,6 +488,38 @@ def test_clear_inside_a_held_transaction_doesnt_pause_for_a_writer_that_cant_get
     assert took < 0.06, f'clear() of 50 chunks took {took * 1000:.0f} ms inside the transaction'
     assert cache.get('w') == 1
     cache.close()
+
+
+def test_beginning_a_second_caches_transaction_behind_another_threads_write_lock_raises_transaction_busy(
+    tmp_path: Path,
+) -> None:
+    # This thread holds A's transaction; B's write lock is held by another thread, which could be
+    # waiting on a lock this thread holds, so waiting would risk a deadlock: the refusal is at once.
+    a = Cache(tmp_path / 'a', timeout=10)
+    b = Cache(tmp_path / 'b', timeout=10)
+    holding, release = threading.Event(), threading.Event()
+
+    def hold_b() -> None:
+        with b._hold_write_transaction():
+            holding.set()
+            release.wait(10)
+
+    holder = threading.Thread(target=hold_b)
+    holder.start()
+    try:
+        assert holding.wait(10)
+        with a._hold_write_transaction():
+            started = time.monotonic()
+            with pytest.raises(TransactionBusy) as raised:
+                with b._hold_write_transaction():
+                    pass
+            assert time.monotonic() - started < 1, 'the refusal waited'
+            assert isinstance(raised.value, Timeout)
+    finally:
+        release.set()
+        holder.join(10)
+        a.close()
+        b.close()
 
 
 class _ExitsTheHold:

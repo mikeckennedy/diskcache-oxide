@@ -12,6 +12,7 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     'BUNDLED_SQLITE_VERSION',
     '_DEBUG_BUILD',
     'Timeout',
+    'TransactionBusy',
     'UnsafeValueError',
     'CorruptValueError',
     'ForeignValueError',
@@ -34,6 +35,10 @@ _DEBUG_BUILD: bool
 
 class Timeout(TimeoutError):
     """A lock stayed held, or a fork stayed pending, for longer than the cache's timeout."""
+
+class TransactionBusy(Timeout):
+    """A thread holding one cache's transaction couldn't begin another's, because another thread holds its write
+    lock. It fails at once rather than waiting, since the holder could be waiting on a lock this thread holds."""
 
 class UnsafeValueError(TypeError):
     """A pickle=False cache read a value that was stored with pickle."""
