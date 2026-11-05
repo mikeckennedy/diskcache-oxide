@@ -24,10 +24,10 @@ Atomic across threads and processes, so concurrent increments are never lost. Th
 `key: str`  
 The key.
 
-`delta: int | float = …`  
+`delta: float = …`  
 The amount to add (default 1).
 
-`default: int | float | None = …`  
+`default: float | None = …`  
 The starting value for a missing or expired key (default 0). Pass None to raise `KeyError` instead.
 
 

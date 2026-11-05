@@ -240,7 +240,7 @@ What that needs:
 ## 10. Rules of the road
 
 - **Workflow:** every plan goes in `plans/`, and `the-rust-architect` reviews each plan and each step. Small steps, committed and pushed as they land, on `main` in the library. Don't push the Talk Python branch without Michael's say-so.
-- **Library checks:** `scripts/check.sh` (`--slow` before a soak) must pass on all four interpreters. Note `uv sync` removes the `docs` group, so `make docs` needs `UV_PROJECT_ENVIRONMENT=venv uv sync --locked --group docs` first. The docs site in `site/` is committed; regenerate it when the guide or API changes.
+- **Library checks:** `scripts/check.sh` (`--slow` before a soak) must pass on all four interpreters. Note `uv sync` removes the `docs` group, so `make docs` needs `UV_PROJECT_ENVIRONMENT=venv uv sync --locked --group docs` first. The docs site in `site/` is committed; regenerate it when the guide or API changes. After `make docs`, run `venv/bin/ruff format .`: ruff formats the Python code blocks in `site/**/*.md`, and `scripts/check.sh` fails on freshly built pages otherwise.
 - **Testing with a second process:** a stdlib `sqlite3` connection in the test process can't stand in for one, since POSIX locks are per process. Use `tests/conformance/proc_workers.SqlitePeer`. A peer holding the write lock doesn't make `get` or `in` fail either.
 - **Markdown:** never hard-wrap prose.
 - **Commits:** no `Co-Authored-By` or attribution lines.

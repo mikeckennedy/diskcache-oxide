@@ -27,12 +27,7 @@ import tempfile
 from diskcache_oxide import Cache
 
 cache = Cache(tempfile.mkdtemp())
-for key in [
-    'user:42:profile',
-    'user:42:sidebar',
-    'user:420:profile',
-    'episode:512:page',
-]:
+for key in ['user:42:profile', 'user:42:sidebar', 'user:420:profile', 'episode:512:page']:
     cache.set(key, '...', expire=3600)
 
 

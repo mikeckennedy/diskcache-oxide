@@ -86,6 +86,16 @@ WAL, the usual case, costs one `stat`. Close never fails because of the checkpoi
 Behind a pending fork it waits at most 1 s for that checkpoint and 1 s for the release, then
 returns and leaves the release for the end of the fork (D-027).
 
+transact(self, /, retry=False)
+
+A context manager holding a write transaction: `with cache.transact() as tx:`. On the
+thread that enters it, every call on this store (through any handle) inside the block runs
+in the transaction, which commits when the block exits and rolls back if it raises. Entered
+on a thread that already holds one on this store, it passes through: the inner exit
+doesn't commit. `retry=True` retries a `Timeout` (never `TransactionBusy`) until it begins.
+`retry` is a strict `bool`, as `expire` and `timeout` refuse one (D-014): `retry=1` raises
+`TypeError`.
+
 __getitem__(self, key, /)
 
 Return self[key].
@@ -138,8 +148,9 @@ Args:
     directory: Accepted and ignored, like every other `Cache` argument, so switching between
         the two is a one-line change.
     invalidate: A real cache to forward removals to (`delete`, `pop`, `clear` and `iterkeys`),
-        so invalidations still land while caching is off and nothing stale is served once
-        it's back on.
+        so invalidation by removal still lands while caching is off. Writes aren't forwarded:
+        an overwriting `set` or a version-bump `incr` is dropped, and the old value is served
+        once caching is back on.
 
 CacheLike(*args, **kwargs)
 
@@ -147,6 +158,13 @@ What application code can rely on from a `Cache` or a `NullCache`.
 
 `Cache` and `NullCache` both satisfy it, so a factory can return either and callers never need
 to check which one they got. A test keeps the three signatures identical.
+
+TransactionalCacheLike(*args, **kwargs)
+
+A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have.
+
+On a `Cache`, `with cache.transact() as tx:` runs the block's calls on this thread in one write
+transaction; `tx` is the cache. On a `NullCache` it's a no-op that yields the `NullCache`.
 
 
 ## NullCache Methods
@@ -229,14 +247,14 @@ touch(self, key: 'str', expire: 'float | None' = None) -> 'bool'
 
 Always False: the key never exists.
 
-incr(self, key: 'str', delta: 'int | float' = 1, default: 'int | float | None' = 0) -> 'int | float'
+incr(self, key: 'str', delta: 'float' = 1, default: 'float | None' = 0) -> 'int | float'
 
 Return `default + delta`, since every count starts again from `default`.
 
 Raises:
     KeyError: `default` is None.
 
-decr(self, key: 'str', delta: 'int | float' = 1, default: 'int | float | None' = 0) -> 'int | float'
+decr(self, key: 'str', delta: 'float' = 1, default: 'float | None' = 0) -> 'int | float'
 
 Return `default - delta`. See `incr()`.
 
@@ -259,6 +277,21 @@ clear(self, *, timeout: 'float | None' = None) -> 'int'
 iterkeys(self, *, prefix: 'str | None' = None, reverse: 'bool' = False) -> 'Iterator[str]'
 
 Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works.
+
+transact(self, retry: 'bool' = False, *, key: 'str | None' = None) -> 'AbstractContextManager[Self]'
+
+A no-op context manager that yields this `NullCache`.
+
+It never opens a transaction on an `invalidate=` cache: removals forwarded inside the block
+land at once, and an exception in the block doesn't undo them.
+
+Args:
+    retry: Accepted for `Cache.transact()`'s signature; it must be a `bool`.
+    key: Accepted so a switched-off sharded cache's `transact(key=...)` works too; it must be
+        a `str` or None.
+
+Raises:
+    TypeError: `retry` isn't a `bool`, or `key` isn't a `str` or None.
 
 expire(self, *, timeout: 'float | None' = None) -> 'int'
 
@@ -330,11 +363,11 @@ touch(self, key: 'str', expire: 'float | None' = None) -> 'bool'
 
 Change an existing entry's expiry. True if the entry existed.
 
-incr(self, key: 'str', delta: 'int | float' = 1, default: 'int | float | None' = 0) -> 'int | float'
+incr(self, key: 'str', delta: 'float' = 1, default: 'float | None' = 0) -> 'int | float'
 
 Add `delta` to the number under `key`, atomically, and return the result.
 
-decr(self, key: 'str', delta: 'int | float' = 1, default: 'int | float | None' = 0) -> 'int | float'
+decr(self, key: 'str', delta: 'float' = 1, default: 'float | None' = 0) -> 'int | float'
 
 Subtract `delta` from the number under `key`, atomically, and return the result.
 
@@ -468,7 +501,7 @@ directory(self, name: 'N') -> 'str'
 
 Where the named cache lives.
 
-__getitem__(self, name: 'N') -> 'CacheLike'
+__getitem__(self, name: 'N') -> 'TransactionalCacheLike'
 
 The named cache: opened on first use, then the same object every time.
 
@@ -530,6 +563,10 @@ Exceptions raised by cache operations.
 Timeout
 
 A lock stayed held, or a fork stayed pending, for longer than the cache's timeout.
+
+TransactionBusy
+
+A thread holding one cache's transaction couldn't begin another's because another thread holds its write lock.
 
 UnsafeValueError
 
@@ -667,6 +704,8 @@ cache.decr('page_views', 2)       # 4
 
 `incr()` on a missing key starts from `default` (0). Pass `default=None` to get a `KeyError` instead. A key holding a non-number raises `TypeError`.
 
+To make several calls atomic together, group them with `with cache.transact() as tx:`. See [Transactions](transactions.qmd).
+
 ## List keys
 
 ```python
@@ -740,6 +779,7 @@ It covers `get`, `cache[key]` (which raises `KeyError`) and `pop`. A row that st
 | An unreadable value (malformed bytes, a failing unpickle) | deletes that version, then raises | deletes that version, returns the default and reports | the same as `'miss'` |
 | An unreadable value, and that delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default and reports both, row kept |
 | `Timeout`, an I/O error or `RecursionError` from a pickle hook | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
+| `RecursionError` from a value too deep for this thread's stack | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
 | `MemoryError` or a `BaseException` from a pickle hook | raises, row kept | raises, row kept | raises, row kept |
 | The value decoded, and the delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default, never the value, row kept |
 
@@ -781,7 +821,7 @@ These always raise:
 - **Bugs.** A non-`str` key, a value that can't be stored without pickle, a non-numeric `incr`, an `incr` past 64 bits, `UnsafeValueError`, and misusing a transaction.
 - **`MemoryError` and `KeyboardInterrupt`.** That includes SQLite running out of memory.
 - **Admin calls.** `clear`, `expire`, `cull`, `checkpoint`, `len`, `volume` and iteration, because their callers need the truth, and most have their own `timeout=`. `checkpoint` still returns `False` when it's only busy.
-- **The constructor, and starting a transaction.** Use [`Caches`](caches.qmd) if opening shouldn't raise: it gives you a `NullCache` until the cache can open.
+- **The constructor, and starting a [transaction](transactions.qmd).** Use [`Caches`](caches.qmd) if opening shouldn't raise: it gives you a `NullCache` until the cache can open.
 - **Anything inside a transaction you hold on this cache.** A dropped write there would break the transaction's atomicity.
 - **Errors from your own code**, other than the pickle hooks on a read described above. A `clock=` function that raises, or a pickle hook on a write, raises as usual, even if what it raises is a `Timeout`.
 
@@ -865,7 +905,8 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | `size_limit` | Anything (tiny values silently empty the cache) | At least 1 MiB |
 | `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
 | `disk=`, `eviction_policy=` | Supported | Not supported (eviction policies are coming) |
-| `transact()`, tags, `memoize`, `FanoutCache` | Supported | Coming in later phases |
+| `transact()` | `tx` is `None` | `tx` is the cache; see [`transact()`](#transact) below |
+| Tags, `memoize`, `FanoutCache` | Supported | Coming in later phases |
 
 ## Values: no pickle unless you ask
 
@@ -889,6 +930,18 @@ A cache opened without `pickle=True` never unpickles. If it finds a pickled valu
 ## String keys
 
 Only `str` keys are accepted today; anything else raises `TypeError`. Keys are already stored with a type tag, so other key types can be added in Phase 6a without changing the file format. In the meantime, build string keys yourself (`f'user:{user_id}'`).
+
+## `transact()`
+
+`with cache.transact():` works as it does in diskcache: the block's calls on the entering thread commit together on exit and roll back on an exception, a nested block joins the outer one, its exit commits nothing, and an exception caught inside the outer block keeps the inner writes. What differs (details in [Transactions](transactions.qmd)):
+
+- **`tx` is the cache** instead of `None`, and a second `Cache` handle on the same directory joins the transaction instead of waiting for it (D-029).
+- **A transaction on a second cache whose write lock another thread holds** raises `TransactionBusy`, a `Timeout` subclass, at once, and `retry=True` retries only `Timeout`, never `TransactionBusy`. diskcache waits, and its `retry=True` loops on any `OperationalError` (D-030).
+- **Another thread may end it.** Its commit or rollback runs within the transaction's `timeout`, and the owner's own exit then raises `RuntimeError` unless it committed (D-031). The object `transact()` returns can be entered once.
+- **A block that didn't commit raises at its exit** with `RuntimeError`, for example after a write inside it failed on a full disk.
+- **`durable=True`**, which diskcache doesn't have, still raises when a transaction can't begin and for any failure inside one (D-028).
+- **Forking inside your own transaction** poisons the child's copy, whose writes raise `RuntimeError` at once, instead of stalling for the timeout (D-020).
+- **It belongs to a thread, not an asyncio task**, as in diskcache: don't `await` inside the block.
 
 ## Truthiness
 
@@ -957,10 +1010,11 @@ The same Rust core, served over HTTP to many clients: a Redis-style central cach
 - Thread-, process- and fork-safe, on GIL and free-threaded builds of 3.14 and 3.15.
 - Bounded connections and memory, and a target size for the write-ahead log.
 - `NullCache`, the `CacheLike` protocol, `py.typed`.
+- [`transact()`](transactions.qmd), ahead of the rest of Phase 6, with `TransactionBusy` and the `TransactionalCacheLike` protocol.
 
 ### Now: concurrency review and soak (Phase 2.5)
 
-The concurrency core is where serious bugs hide, so it gets its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and `clear()` under load, checking for corruption, lost writes, leaks and latency drift. The soak has already paid for itself: it found the unbounded WAL growth that `wal_size_limit` and `checkpoint()` now rein in. The limit is a target, not a bound: several processes writing flat out can still take the log well past it (see [Storage and WAL](storage-and-wal.md)).
+The concurrency core is where serious bugs hide, so it gets its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and `clear()` under load, checking for corruption, lost writes, leaks and latency drift. The soak has already paid for itself: it found the unbounded WAL growth that `wal_size_limit` and `checkpoint()` now rein in. The limit is a target, not a bound: several processes writing flat out can still take the log well past it (see [Storage and WAL](storage-and-wal.qmd)).
 
 ### Next
 
@@ -968,9 +1022,9 @@ The concurrency core is where serious bugs hide, so it gets its own phase before
 |---|---|
 | **3. Production** | diskcache-oxide replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers. First release to PyPI after that. |
 | **4. Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
-| **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one. |
+| **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. |
 | **6a. Cache options** | More eviction policies (LRU, LFU, none), tags and `evict(tag)`, statistics, `memoize`, `peek`/`pull`/`push`, `check()`, `retry=`, and non-`str` keys. |
-| **6b. `transact()`** | Multi-operation transactions. |
+| **6b. `transact()`** | Multi-operation transactions. Done early: see [Transactions](transactions.qmd). |
 | **6c. `FanoutCache`** | Sharding across several databases, so writers stop queueing on one write lock. A strong candidate for the recommended default in threaded apps. |
 | **6d. `Deque` and `Index`** | diskcache's persistent collections. |
 | **6e. Recipes** | `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, and stampede-proof `memoize`. |
@@ -1151,7 +1205,18 @@ cache.clear()                    # clears the real cache
 cache.iterkeys(prefix='user:')   # the real cache's keys, so list-then-delete still works
 ```
 
-When caching comes back on, nothing stale is waiting.
+When caching comes back on, nothing you invalidated by removing it is waiting.
+
+Only removals are forwarded, so invalidating by *writing* is lost while caching is off. Overwriting the stale value with a fresh `set`, or bumping a version key with `incr` so readers build a new key, does nothing, and the old value is served once caching is back on:
+
+```python
+cache = NullCache(invalidate=real)   # real holds 'user:42' = old_profile, and 'users:version' = 3
+
+cache.set('user:42', new_profile)    # dropped: real still has old_profile
+cache.incr('users:version')          # dropped: still 3, so readers keep reading the old keys
+```
+
+If your app invalidates that way, delete the entry instead (or as well), or `clear()` the real cache when you turn caching back on.
 
 ## `CacheLike`
 
@@ -1169,6 +1234,14 @@ def load_user(user_id: str, cache: CacheLike) -> dict:
 ```
 
 A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `CacheLike` keep identical public signatures, so they can't drift apart.
+
+## `transact()` and `TransactionalCacheLike`
+
+`NullCache.transact()` is a no-op context manager that yields the `NullCache`, so code written as `with cache.transact() as tx:` runs unchanged with caching off. There's nothing to commit or roll back. It accepts `retry=` as `Cache.transact()` does, and a keyword-only `key=`, which it ignores.
+
+With `invalidate=`, it never opens a transaction on the real cache: a switched-off cache must never take a write lock or raise `Timeout`. So removals forwarded inside the block land at once, and an exception in the block doesn't undo them.
+
+`CacheLike` has no `transact()`. To accept either class and call it, annotate with `TransactionalCacheLike`, which adds it. See [Transactions](transactions.qmd#typing-transactionalcachelike).
 
 
 ### Caches: named caches
@@ -1224,7 +1297,7 @@ caches.enable('pages')
 caches.enabled('pages')   # False while it's off
 ```
 
-While a cache is disabled, its lookups return `NullCache(invalidate=real)`: reads miss and writes are dropped, but `delete` and `clear` still reach the real cache, so nothing stale is served when it comes back on. Switches only change later lookups. Code that already holds the real `Cache` keeps using it, so set them at startup, before you hand caches out.
+While a cache is disabled, its lookups return `NullCache(invalidate=real)`: reads miss and writes are dropped, but `delete` and `clear` still reach the real cache, so entries you invalidate by removing them aren't served stale when it comes back on. Invalidating by writing doesn't survive: an overwriting `set` or a version-bump `incr` is dropped like any other write, and the old value is served again (see [Keep invalidating while caching is off](null-cache.qmd#keep-invalidating-while-caching-is-off-invalidate)). Switches only change later lookups. Code that already holds the real `Cache` keeps using it, so set them at startup, before you hand caches out.
 
 If your app has its own names for what it caches (Talk Python calls them purposes), map them onto registered caches in your own code. It's a few lines:
 
@@ -1278,6 +1351,102 @@ The library's self-healing read is safer than the wrapper's in three ways:
 - **It doesn't hide outages.** The wrapper catches every exception, so a lock `Timeout` also became a silent miss. In the library, `Timeout`, I/O errors and `MemoryError` still raise by default, and so does reading a pickled value from a cache without `pickle=True`, which is a configuration mistake. `durable=True` is how you choose a miss for an outage, and it counts each one and logs them, at most once a minute, rather than staying silent; `MemoryError` and that mistake raise regardless.
 
 What stays in the app: reading its settings file and environment variables (pass the result as `base_dir`), its purposes and their on/off flags, descriptions for the admin page, and wiring the reporting functions to Sentry or logbook.
+
+
+### Transactions
+
+Every write is already its own transaction, atomic across every thread and process using the directory. `transact()` groups several calls into one: they all commit together when the block exits, or none of them do.
+
+```python
+with cache.transact() as tx:
+    tx.incr('requests')
+    tx.incr(f'requests:{path}')
+    tx.set('last_request', now)
+```
+
+That's also faster. Each commit costs a disk sync, so grouping writes pays for one instead of several: three counter bumps measured 79 µs one by one and 48 µs in one transaction.
+
+## What the block does
+
+- **Commit on exit, roll back on an exception.** If the block raises, none of its writes are kept, and the exception carries on as usual.
+- **`tx` is the cache itself.** On the thread that entered the block, every call on that cache directory inside it runs in the transaction, whether you call it on `tx`, on `cache`, or on another `Cache` handle for the same directory. diskcache's `transact()` yields `None`, so code written for it keeps working.
+- **The block reads its own writes.** Other threads and processes see nothing until it commits, and their writes to this directory wait for it, up to their own `timeout`. Keep blocks short.
+- **Nesting joins the outer block.** A `transact()` inside another one on the same directory, on the same thread, joins the outer transaction instead of starting its own. As in diskcache, the inner block's exit commits nothing, and an exception you catch inside the outer block doesn't undo the inner block's writes. Only the outer block's exit commits.
+
+```python
+with cache.transact():
+    cache.set('a', 1)
+    try:
+        with cache.transact():
+            cache.set('b', 2)
+            raise ValueError
+    except ValueError:
+        pass
+# Both 'a' and 'b' are committed: the inner block had no savepoint of its own.
+```
+
+The object `transact()` returns is used once: entering it a second time, or while another thread is entering it, raises `RuntimeError`.
+
+## Beginning one: `timeout` and `retry=`
+
+Beginning a transaction takes the directory's write lock, and waits for it up to the cache's `timeout`, then raises `Timeout`, as a write does. With `retry=True` it keeps trying instead. Each attempt waits up to `timeout` with the interpreter released, and `Ctrl-C` is checked between attempts, so a `KeyboardInterrupt` gets through within one `timeout`.
+
+```python
+with cache.transact(retry=True) as tx:
+    ...
+```
+
+### Two caches at once: `TransactionBusy`
+
+Inside one cache's transaction, beginning a transaction on a second cache takes that cache's write lock if it's free. If another thread holds it, `transact()` raises `TransactionBusy` at once instead of waiting: that thread could be waiting for the lock you hold, and then neither would ever finish. `TransactionBusy` is a subclass of `Timeout`, so existing handlers still catch it, and `retry=True` never retries it, since trying again while you still hold the first lock can't help.
+
+To use two caches in one block, always nest them in the same order everywhere in your app, and if `TransactionBusy` reaches you, leave the outer block and try the whole thing again.
+
+## When a block doesn't commit
+
+A `with` block never exits cleanly when its writes are gone. Its exit raises `RuntimeError` ("the write transaction was rolled back ...") when the transaction didn't commit:
+
+- an operation inside it failed in a way that left the transaction unusable (a full disk, an I/O error). Later writes in the block fail at once, and nothing in it commits;
+- it was ended from another thread, which rolled it back (below);
+- it was ended from inside one of its own operations, such as a pickle hook that calls the block's `__exit__`. That raises `RuntimeError` where it's called, and the transaction rolls back when that operation returns.
+
+A commit that can't finish raises too: a busy or failed `COMMIT` raises `Timeout` or an `OSError`, and nothing is kept.
+
+### Ending it from another thread
+
+diskcache says a transaction "may not be shared between threads". In diskcache-oxide, any thread may call the transaction's `__exit__`, to commit (no exception) or roll back the owner's transaction. The rules:
+
+- While the owner is inside one of its own operations (decoding a value, say), a rollback is left to that operation, and happens when it returns. A commit waits for it, up to the cache's `timeout`. A commit that can't run by then raises `Timeout` and rolls back.
+- The owner's own exit afterwards raises `RuntimeError` unless the transaction committed.
+- An owner's exit that comes while the other thread is still committing waits for the outcome, up to the cache's `timeout`, and reports it. Past that, it raises `Timeout` ("whether it committed is unknown"). An exit with an exception passing doesn't wait.
+- Writes the owner makes after another thread ended the transaction run on their own, outside it.
+
+## `durable=True`
+
+On a [`durable=True`](getting-started.qmd#a-cache-that-cant-take-a-request-down) cache, beginning a transaction still raises, and so does any failure inside the block: dropping one write and committing the rest would break the transaction's atomicity. Only calls outside a transaction are answered as misses.
+
+## A transaction belongs to a thread, not a task
+
+The calls that join a transaction are the ones made on the thread that entered the block. In asyncio, every task on a loop runs on that same thread. So if you `await` inside the block, another coroutine that runs meanwhile and writes to the same cache joins your transaction, and rolls back with it if your block raises. Don't `await` inside a `transact()` block. An `async with cache.transact_async()` form is planned for `AsyncCache` (Phase 5), where waiting for the write lock won't block the event loop.
+
+## Transactions and forks
+
+A fork waits for every transaction other threads hold, with no timeout, so the child never inherits half of one (D-012). A long transaction holds up every fork in the process while it's open, and calls behind that fork time out (see [How long a call waits for a fork](concurrency-and-forks.qmd#how-long-a-call-waits-for-a-fork)). Forking from inside your own transaction can't be waited for: the child's copy is poisoned and raises `RuntimeError` (see [Forking from inside your own transaction](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction)).
+
+## Typing: `TransactionalCacheLike`
+
+`Cache` and [`NullCache`](null-cache.qmd) both have `transact()`. Annotate with `TransactionalCacheLike` to accept either and call it:
+
+```python
+from diskcache_oxide import TransactionalCacheLike
+
+def count(cache: TransactionalCacheLike, path: str) -> None:
+    with cache.transact() as tx:
+        tx.incr('requests')
+        tx.incr(f'requests:{path}')
+```
+
+On a `NullCache`, `transact()` is a no-op that yields the `NullCache`. `CacheLike` itself has no `transact()`, so a cache whose transactions need more than `retry=` (a sharded cache's `transact(key=...)`) can still be a `CacheLike`. A [`Caches`](caches.qmd) lookup is a `TransactionalCacheLike`, so `caches['general'].transact()` type-checks, and a disabled cache's `transact()` is the `NullCache` one.
 
 
 ### Concurrency and forks
@@ -1334,7 +1503,7 @@ The only connections a child can still inherit are the ones the forking thread i
 
 A fork counts against `timeout`. A cache call behind a pending fork waits for it through the call's own `timeout` and then raises `Timeout`, so `timeout` has to exceed the work in flight, plus the fork, plus the interpreter hand-off. A fork takes about a millisecond in a quiet small process, but tens to hundreds of milliseconds beside busy threads on a GIL build (the forking thread has to get the interpreter back), longer in a large process, and it waits for work in flight such as a forced checkpoint. A `timeout` under that sees `Timeout` during ordinary forks, and a loop on `timeout=0` adds to the problem by being one of those busy threads.
 
-Code that holds a transaction or runs inside a pickle hook, and waits for another thread's cache call, can keep a fork from finishing: the fork waits for that code, and the other thread waits for the fork. That other thread's call now raises `Timeout`, and the fork finishes once your code lets go. Until it does, `os.fork()` doesn't return, a second `os.fork()` queues behind it, and every thread with no transaction or hook of its own gets `Timeout` on every `Cache` in the process, after using up its whole `timeout` (60 seconds by default). Other processes aren't affected. If the code never reacts (a hook that retries forever, or one blocked on something that isn't a cache call), the fork stays stuck. A hook stuck in C code that holds the GIL stops everything, as it would without a cache.
+A fork waits for every [transaction](transactions.qmd) another thread holds, with no timeout of its own, so a long transaction delays every fork in the process. Code that holds a transaction or runs inside a pickle hook, and waits for another thread's cache call, can keep a fork from finishing: the fork waits for that code, and the other thread waits for the fork. That other thread's call now raises `Timeout`, and the fork finishes once your code lets go. Until it does, `os.fork()` doesn't return, a second `os.fork()` queues behind it, and every thread with no transaction or hook of its own gets `Timeout` on every `Cache` in the process, after using up its whole `timeout` (60 seconds by default). Other processes aren't affected. If the code never reacts (a hook that retries forever, or one blocked on something that isn't a cache call), the fork stays stuck. A hook stuck in C code that holds the GIL stops everything, as it would without a cache.
 
 Two calls don't raise. `checkpoint()` returns `False` when a fork keeps it from running. `close()` takes at most about 2 seconds behind a stuck fork, 1 for the checkpoint and 1 for the release, and `del` about 1, whatever `timeout` is. An ordinary fork ends well inside that, so `close()` waits it out as usual. If the fork outlasts it, `close()` returns anyway and the connections close when the fork ends.
 
@@ -1344,7 +1513,7 @@ With [`durable=True`](getting-started.qmd#a-cache-that-cant-take-a-request-down)
 
 ### Forking from inside your own transaction
 
-CPython won't let a library refuse a fork, so the barrier can't wait for a transaction held by the very thread that is forking. Once `transact()` arrives (Phase 6b), the child's copy of that transaction is poisoned: anything done inside it raises `RuntimeError` and nothing commits, and the child's writes to that database raise `RuntimeError` straight away instead of stalling for a minute. The parent gets a `RuntimeWarning`. A clear error at the call site beats a mysterious 60-second hang in a fresh worker.
+CPython won't let a library refuse a fork, so the barrier can't wait for a [transaction](transactions.qmd) held by the very thread that is forking. The child's copy of that transaction is poisoned: anything done inside it raises `RuntimeError` and nothing commits, and the child's writes to that database raise `RuntimeError` straight away instead of stalling for a minute. A `transact()` in the child doesn't join the inherited transaction either: it raises `RuntimeError` too. The parent's block carries on and commits as usual, and the parent gets a `RuntimeWarning`. A clear error at the call site beats a mysterious 60-second hang in a fresh worker.
 
 ## Free-threaded performance today
 
@@ -1554,6 +1723,9 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-026 | `pop` of a value it can't read | Row is deleted, then the decode fails | Decodes first, so the row stays unless no build could read it |
 | D-027 | A call behind a pending fork | Never waits: there's no fork barrier | Waits within its `timeout`, then raises `Timeout` |
 | D-028 | An outage on a single-key call | `Cache` raises; `FanoutCache` answers `Timeout` alone as a miss | Raises by default; `durable=True` answers it as a miss or `False`, and reports it |
+| D-029 | `with cache.transact() as tx:` | `tx` is `None`; a second handle's `transact()` inside waits out the timeout | `tx` is the cache; every handle on the directory joins the outer transaction |
+| D-030 | A transaction on a second, busy cache | Waits for the timeout; `retry=True` loops on any `OperationalError` | `TransactionBusy` at once; `retry=True` retries only `Timeout` |
+| D-031 | Ending a transaction on another thread | "May not be shared between threads" | Allowed, within its `timeout`; the owner's exit raises unless it committed |
 
 ## Safety
 
@@ -1601,7 +1773,21 @@ When a process forks while another of its threads is in a write transaction, dis
 
 ### D-020: forking inside your own transaction
 
-CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide, the child's copy of the transaction is poisoned and its writes to that database raise `RuntimeError` immediately, and the parent gets a `RuntimeWarning`. This becomes reachable when `transact()` arrives in Phase 6b.
+CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide, the child's copy of the transaction is poisoned and its writes to that database raise `RuntimeError` immediately, and the parent gets a `RuntimeWarning`.
+
+## Transactions
+
+### D-029: `tx` is the cache, and every handle shares it
+
+diskcache's `with cache.transact() as tx:` binds `tx` to `None`, and a second `Cache` on the same directory has its own connection, so its `transact()` inside the first one's block waits for the write lock until it times out. In diskcache-oxide `tx` is the cache itself, and on the thread that entered the block every call on that directory runs in the transaction, through any handle: a `transact()` on a second handle joins the outer one instead of waiting. Other threads' calls never join it. See [Transactions](transactions.qmd).
+
+### D-030: `TransactionBusy`, and what `retry=True` retries
+
+Inside one cache's transaction, diskcache's `transact()` on a second cache waits for its write lock until it times out, and `retry=True` loops on any `sqlite3.OperationalError`. When another thread holds that lock, diskcache-oxide raises `TransactionBusy`, a `Timeout` subclass, at once: that thread could be waiting for a lock this one holds, and no timeout setting fixes that. `retry=True` retries a plain `Timeout` and never `TransactionBusy`, and checks for `Ctrl-C` between attempts.
+
+### D-031: a transaction can end on another thread
+
+diskcache says a transaction "may not be shared between threads". In diskcache-oxide any thread may commit or roll back the owner's transaction through its `__exit__`, within the transaction's `timeout`. A commit that can't run in time raises `Timeout` and rolls back, and the owner's own exit afterwards raises `RuntimeError` unless the transaction committed, so a `with` block never exits cleanly when its writes are gone. An owner's exit during another thread's commit waits for the outcome.
 
 ## Resources
 
@@ -1631,7 +1817,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-007:** `Timeout` subclasses `TimeoutError`, so `except TimeoutError` catches it too.
 - **D-009:** `bool(Cache)` is always True and `bool(NullCache)` is False, so `if cache:` means "caching is on".
 - **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
-- **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. See [A cache that can't take a request down](getting-started.qmd#a-cache-that-cant-take-a-request-down).
+- **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.qmd#a-cache-that-cant-take-a-request-down).
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ## diskcache-community

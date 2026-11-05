@@ -85,6 +85,8 @@ cache.decr('page_views', 2)       # 4
 
 `incr()` on a missing key starts from `default` (0). Pass `default=None` to get a `KeyError` instead. A key holding a non-number raises `TypeError`.
 
+To make several calls atomic together, group them with `with cache.transact() as tx:`. See [Transactions](transactions.qmd).
+
 ## List keys
 
 ```python
@@ -200,7 +202,7 @@ These always raise:
 - **Bugs.** A non-`str` key, a value that can't be stored without pickle, a non-numeric `incr`, an `incr` past 64 bits, `UnsafeValueError`, and misusing a transaction.
 - **`MemoryError` and `KeyboardInterrupt`.** That includes SQLite running out of memory.
 - **Admin calls.** `clear`, `expire`, `cull`, `checkpoint`, `len`, `volume` and iteration, because their callers need the truth, and most have their own `timeout=`. `checkpoint` still returns `False` when it's only busy.
-- **The constructor, and starting a transaction.** Use [`Caches`](caches.qmd) if opening shouldn't raise: it gives you a `NullCache` until the cache can open.
+- **The constructor, and starting a [transaction](transactions.qmd).** Use [`Caches`](caches.qmd) if opening shouldn't raise: it gives you a `NullCache` until the cache can open.
 - **Anything inside a transaction you hold on this cache.** A dropped write there would break the transaction's atomicity.
 - **Errors from your own code**, other than the pickle hooks on a read described above. A `clock=` function that raises, or a pickle hook on a write, raises as usual, even if what it raises is a `Timeout`.
 

@@ -45,6 +45,7 @@ The same Rust core, served over HTTP to many clients: a Redis-style central cach
 - Thread-, process- and fork-safe, on GIL and free-threaded builds of 3.14 and 3.15.
 - Bounded connections and memory, and a target size for the write-ahead log.
 - [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), the [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) protocol, `py.typed`.
+- [`transact()`](transactions.md), ahead of the rest of Phase 6, with [TransactionBusy](../reference/TransactionBusy.md#diskcache_oxide.TransactionBusy) and the [TransactionalCacheLike](../reference/TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike) protocol.
 
 
 ## Now: concurrency review and soak (Phase 2.5)
@@ -58,9 +59,9 @@ The concurrency core is where serious bugs hide, so it gets its own phase before
 |----|----|
 | **3. Production** | diskcache-oxide replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers. First release to PyPI after that. |
 | **4. Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
-| **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one. |
+| **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. |
 | **6a. Cache options** | More eviction policies (LRU, LFU, none), tags and `evict(tag)`, statistics, `memoize`, `peek`/`pull`/`push`, `check()`, `retry=`, and non-`str` keys. |
-| **6b. `transact()`** | Multi-operation transactions. |
+| **6b. [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact)** | Multi-operation transactions. Done early: see [Transactions](transactions.md). |
 | **6c. `FanoutCache`** | Sharding across several databases, so writers stop queueing on one write lock. A strong candidate for the recommended default in threaded apps. |
 | **6d. `Deque` and `Index`** | diskcache's persistent collections. |
 | **6e. Recipes** | `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, and stampede-proof `memoize`. |

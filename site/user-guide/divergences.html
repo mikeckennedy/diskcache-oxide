@@ -3,7 +3,7 @@
 <link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html">
 
 <meta charset="utf-8">
-<meta name="generator" content="quarto-1.10.20">
+<meta name="generator" content="quarto-1.11.9">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
@@ -41,14 +41,15 @@ ul.task-list li input[type="checkbox"] {
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="../site_libs/quarto-html/scrollable-regions/scrollable-regions.js" type="module"></script>
 <script src="../site_libs/quarto-html/popper.min.js"></script>
 <script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
 <script src="../site_libs/quarto-html/anchor.min.js"></script>
 <link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
-<link href="../site_libs/quarto-html/quarto-syntax-highlighting-17888a1159294d3eb470f19f6f52f5a5.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-63b5708e65d6cd79cd7618c58d0c21e7.css" rel="stylesheet" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-24f143a4d927ff4703881c50cf2b77ac.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-4c995cf1e5ce428d9c201124d003f5da.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
 <script id="quarto-search-options" type="application/json">{
   "location": "navbar",
   "copy-button": false,
@@ -100,11 +101,11 @@ ul.task-list li input[type="checkbox"] {
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
-<body class="nav-sidebar floating nav-fixed quarto-light">
+<body class="nav-sidebar floating nav-fixed quarto-light"><a id="quarto-skip-link" class="visually-hidden-focusable" href="#quarto-document-content">Skip to main content</a>
 
 <div id="quarto-search-results"></div>
   <header id="quarto-header" class="headroom fixed-top">
-    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark" aria-label="Site">
       <div class="navbar-container container-fluid">
       <div class="navbar-brand-container mx-auto">
     <a href="../index.html" class="navbar-brand navbar-brand-logo">
@@ -115,8 +116,7 @@ ul.task-list li input[type="checkbox"] {
     <span class="navbar-title">diskcache-oxide</span>
     </a>
   </div>
-            <div id="quarto-search" class=""></div>
-          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
   <span class="navbar-toggler-icon"></span>
 </button>
           <div class="collapse navbar-collapse" id="navbarCollapse">
@@ -144,15 +144,16 @@ ul.task-list li input[type="checkbox"] {
           </div> <!-- /navcollapse -->
             <div class="quarto-navbar-tools">
 </div>
+            <div id="quarto-search" class=""></div>
       </div> <!-- /container-fluid -->
     </nav>
-  <nav class="quarto-secondary-nav">
+  <nav class="quarto-secondary-nav" aria-label="Toolbar">
     <div class="container-fluid d-flex">
       <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
         <i class="bi bi-layout-text-sidebar-reverse"></i>
       </button>
         <h1 class="quarto-secondary-nav-title no-breadcrumbs">Divergences from python-diskcache</h1>
-        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        <a class="flex-grow-1" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
         </a>
     </div>
   </nav>
@@ -160,15 +161,15 @@ ul.task-list li input[type="checkbox"] {
 <!-- content -->
 <div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
 <!-- sidebar -->
-  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto" aria-label="Section">
     <div class="sidebar-menu-container"> 
     <ul class="list-unstyled mt-1">
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
-            <a class="sidebar-item-text sidebar-link text-start">
- <span class="menu-text">Get started</span></a>
-</div>
-      <ul id="quarto-sidebar-section-1" class="list-unstyled sidebar-section depth1 show">  
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" aria-controls="quarto-sidebar-section-1" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-1-label">Get started</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-1" aria-labelledby="quarto-sidebar-section-1-label" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/getting-started.html" class="sidebar-item-text sidebar-link">
@@ -191,10 +192,10 @@ ul.task-list li input[type="checkbox"] {
   </li>
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
-            <a class="sidebar-item-text sidebar-link text-start">
- <span class="menu-text">Core Features</span></a>
-</div>
-      <ul id="quarto-sidebar-section-2" class="list-unstyled sidebar-section depth1 show">  
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" aria-controls="quarto-sidebar-section-2" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-2-label">Core Features</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-2" aria-labelledby="quarto-sidebar-section-2-label" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/serialization.html" class="sidebar-item-text sidebar-link">
@@ -215,6 +216,12 @@ ul.task-list li input[type="checkbox"] {
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Transactions</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Concurrency and forks</span></a>
   </div>
@@ -229,10 +236,10 @@ ul.task-list li input[type="checkbox"] {
   </li>
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
-            <a class="sidebar-item-text sidebar-link text-start">
- <span class="menu-text">Background &amp; Reference</span></a>
-</div>
-      <ul id="quarto-sidebar-section-3" class="list-unstyled sidebar-section depth1 show">  
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" aria-controls="quarto-sidebar-section-3" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-3-label">Background &amp; Reference</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-3" aria-labelledby="quarto-sidebar-section-3-label" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../user-guide/performance.html" class="sidebar-item-text sidebar-link">
@@ -253,7 +260,7 @@ ul.task-list li input[type="checkbox"] {
 <div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
 <!-- margin-sidebar -->
     <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
-        <nav id="TOC" role="doc-toc" class="toc-active">
+        <nav id="TOC" role="doc-toc" aria-labelledby="toc-title" class="toc-active">
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
@@ -277,6 +284,12 @@ ul.task-list li input[type="checkbox"] {
   <li><a href="#d-012-forks-while-another-thread-writes" id="toc-d-012-forks-while-another-thread-writes" class="nav-link" data-scroll-target="#d-012-forks-while-another-thread-writes">D-012: forks while another thread writes</a></li>
   <li><a href="#d-020-forking-inside-your-own-transaction" id="toc-d-020-forking-inside-your-own-transaction" class="nav-link" data-scroll-target="#d-020-forking-inside-your-own-transaction">D-020: forking inside your own transaction</a></li>
   </ul></li>
+  <li><a href="#transactions" id="toc-transactions" class="nav-link" data-scroll-target="#transactions">Transactions</a>
+  <ul class="collapse">
+  <li><a href="#d-029-tx-is-the-cache-and-every-handle-shares-it" id="toc-d-029-tx-is-the-cache-and-every-handle-shares-it" class="nav-link" data-scroll-target="#d-029-tx-is-the-cache-and-every-handle-shares-it">D-029: <code>tx</code> is the cache, and every handle shares it</a></li>
+  <li><a href="#d-030-transactionbusy-and-what-retrytrue-retries" id="toc-d-030-transactionbusy-and-what-retrytrue-retries" class="nav-link" data-scroll-target="#d-030-transactionbusy-and-what-retrytrue-retries">D-030: <a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a>, and what <code>retry=True</code> retries</a></li>
+  <li><a href="#d-031-a-transaction-can-end-on-another-thread" id="toc-d-031-a-transaction-can-end-on-another-thread" class="nav-link" data-scroll-target="#d-031-a-transaction-can-end-on-another-thread">D-031: a transaction can end on another thread</a></li>
+  </ul></li>
   <li><a href="#resources" id="toc-resources" class="nav-link" data-scroll-target="#resources">Resources</a>
   <ul class="collapse">
   <li><a href="#d-017-and-d-018-bounded-connections" id="toc-d-017-and-d-018-bounded-connections" class="nav-link" data-scroll-target="#d-017-and-d-018-bounded-connections">D-017 and D-018: bounded connections</a></li>
@@ -290,7 +303,7 @@ ul.task-list li input[type="checkbox"] {
 </nav>
     </div>
 <!-- main -->
-<main class="content" id="quarto-document-content">
+<main class="content" id="quarto-document-content" tabindex="-1">
 
 <header id="title-block-header" class="quarto-title-block default">
 <div class="quarto-title">
@@ -493,6 +506,24 @@ ul.task-list li input[type="checkbox"] {
 <td><a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> raises; <code>FanoutCache</code> answers <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> alone as a miss</td>
 <td>Raises by default; <code>durable=True</code> answers it as a miss or <code>False</code>, and reports it</td>
 </tr>
+<tr class="odd">
+<td>D-029</td>
+<td><code>with cache.transact() as tx:</code></td>
+<td><code>tx</code> is <code>None</code>; a second handle’s <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> inside waits out the timeout</td>
+<td><code>tx</code> is the cache; every handle on the directory joins the outer transaction</td>
+</tr>
+<tr class="even">
+<td>D-030</td>
+<td>A transaction on a second, busy cache</td>
+<td>Waits for the timeout; <code>retry=True</code> loops on any <code>OperationalError</code></td>
+<td><a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a> at once; <code>retry=True</code> retries only <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
+</tr>
+<tr class="odd">
+<td>D-031</td>
+<td>Ending a transaction on another thread</td>
+<td>“May not be shared between threads”</td>
+<td>Allowed, within its <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>; the owner’s exit raises unless it committed</td>
+</tr>
 </tbody>
 </table>
 </section>
@@ -543,7 +574,22 @@ ul.task-list li input[type="checkbox"] {
 </section>
 <section id="d-020-forking-inside-your-own-transaction" class="level2">
 <h2 class="anchored" data-anchor-id="d-020-forking-inside-your-own-transaction">D-020: forking inside your own transaction</h2>
-<p>CPython won’t let a library stop a fork, and a transaction held by the forking thread itself can’t be waited for. In diskcache the child stalls behind it. In diskcache-oxide, the child’s copy of the transaction is poisoned and its writes to that database raise <code>RuntimeError</code> immediately, and the parent gets a <code>RuntimeWarning</code>. This becomes reachable when <code>transact()</code> arrives in Phase 6b.</p>
+<p>CPython won’t let a library stop a fork, and a transaction held by the forking thread itself can’t be waited for. In diskcache the child stalls behind it. In diskcache-oxide, the child’s copy of the transaction is poisoned and its writes to that database raise <code>RuntimeError</code> immediately, and the parent gets a <code>RuntimeWarning</code>.</p>
+</section>
+</section>
+<section id="transactions" class="level1">
+<h1>Transactions</h1>
+<section id="d-029-tx-is-the-cache-and-every-handle-shares-it" class="level2">
+<h2 class="anchored" data-anchor-id="d-029-tx-is-the-cache-and-every-handle-shares-it">D-029: <code>tx</code> is the cache, and every handle shares it</h2>
+<p>diskcache’s <code>with cache.transact() as tx:</code> binds <code>tx</code> to <code>None</code>, and a second <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> on the same directory has its own connection, so its <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> inside the first one’s block waits for the write lock until it times out. In diskcache-oxide <code>tx</code> is the cache itself, and on the thread that entered the block every call on that directory runs in the transaction, through any handle: a <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> on a second handle joins the outer one instead of waiting. Other threads’ calls never join it. See <a href="../user-guide/transactions.html">Transactions</a>.</p>
+</section>
+<section id="d-030-transactionbusy-and-what-retrytrue-retries" class="level2">
+<h2 class="anchored" data-anchor-id="d-030-transactionbusy-and-what-retrytrue-retries">D-030: <a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a>, and what <code>retry=True</code> retries</h2>
+<p>Inside one cache’s transaction, diskcache’s <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> on a second cache waits for its write lock until it times out, and <code>retry=True</code> loops on any <code>sqlite3.OperationalError</code>. When another thread holds that lock, diskcache-oxide raises <a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a>, a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> subclass, at once: that thread could be waiting for a lock this one holds, and no timeout setting fixes that. <code>retry=True</code> retries a plain <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> and never <a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a>, and checks for <code>Ctrl-C</code> between attempts.</p>
+</section>
+<section id="d-031-a-transaction-can-end-on-another-thread" class="level2">
+<h2 class="anchored" data-anchor-id="d-031-a-transaction-can-end-on-another-thread">D-031: a transaction can end on another thread</h2>
+<p>diskcache says a transaction “may not be shared between threads”. In diskcache-oxide any thread may commit or roll back the owner’s transaction through its <a href="../reference/Cache.__exit__.html#diskcache_oxide.Cache.__exit__" class="gdls-link gdls-code">__exit__</a>, within the transaction’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>. A commit that can’t run in time raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> and rolls back, and the owner’s own exit afterwards raises <code>RuntimeError</code> unless the transaction committed, so a <code>with</code> block never exits cleanly when its writes are gone. An owner’s exit during another thread’s commit waits for the outcome.</p>
 </section>
 </section>
 <section id="resources" class="level1">
@@ -576,7 +622,7 @@ ul.task-list li input[type="checkbox"] {
 <li><strong>D-007:</strong> <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> subclasses <code>TimeoutError</code>, so <code>except TimeoutError</code> catches it too.</li>
 <li><strong>D-009:</strong> <code>bool(Cache)</code> is always True and <code>bool(NullCache)</code> is False, so <code>if cache:</code> means “caching is on”.</li>
 <li><strong>D-022:</strong> there’s no <code>disk=</code> (a Python <code>Disk</code> class would put Python code on every read and write) and no <code>eviction_policy=</code> until Phase 6a adds the other policies.</li>
-<li><strong>D-028:</strong> <code>Cache(..., durable=True)</code> has no counterpart in diskcache. It answers an outage on a single-key call as a miss or <code>False</code>, and it can drop writes. See <a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">A cache that can’t take a request down</a>.</li>
+<li><strong>D-028:</strong> <code>Cache(..., durable=True)</code> has no counterpart in diskcache. It answers an outage on a single-key call as a miss or <code>False</code>, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See <a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">A cache that can’t take a request down</a>.</li>
 <li><strong>D-025:</strong> <code>iter(cache)</code> and <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> return a native iterator, not a generator. Two threads calling <code>next()</code> on the same one at once get <code>ValueError</code> at once, as with a shared generator.</li>
 </ul>
 </section>
@@ -604,7 +650,8 @@ ul.task-list li input[type="checkbox"] {
           return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
       }
       // Inspect non-navigation links and adorn them if external
-     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      window.quartoDecorateExternalLinks = function (root) {
+     var links = (root || window.document).querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
       for (var i=0; i<links.length; i++) {
         const link = links[i];
         if (!isInternal(link.href)) {
@@ -613,8 +660,69 @@ ul.task-list li input[type="checkbox"] {
           if (link.dataset.originalHref !== undefined) {
             link.href = link.dataset.originalHref;
           }
+          if (!link.classList.contains('no-external-icon')) {
+          }
         }
       }
+      };
+      window.quartoDecorateExternalLinks(window.document);
+    // Esc closes the popup (WCAG 1.4.13) and focus leaving both trigger and
+    // popup closes it (WCAG 2.4.11); tippy handles neither for interactive popups.
+    const hideOnEscAndFocusOut = {
+      name: 'hideOnEscAndFocusOut',
+      defaultValue: true,
+      fn(instance) {
+        const dismiss = () => {
+          // A show scheduled by the trigger delay would otherwise reopen it
+          instance.clearDelayTimeouts();
+          instance.hide();
+        };
+        const onKeyDown = (event) => {
+          if (event.key !== 'Escape') {
+            return;
+          }
+          // Keep Esc from also reaching page handlers (e.g. reveal.js overview),
+          // except an open reveal.js slide menu, which Esc should close too.
+          // The menu handles keys only when its keyboard option is on.
+          const menuHandlesEsc = window.Reveal?.getPlugin?.('menu')?.isOpen() &&
+            window.Reveal.getConfig().menu?.keyboard !== false;
+          if (!menuHandlesEsc) {
+            event.stopPropagation();
+          }
+          if (instance.popper.contains(window.document.activeElement)) {
+            // Disabled while refocusing so the focus trigger does not reopen it
+            instance.disable();
+            instance.reference.focus();
+            instance.enable();
+          }
+          dismiss();
+        };
+        const onFocusOut = (event) => {
+          const target = event.relatedTarget;
+          if (target && !instance.reference.contains(target) &&
+              !instance.popper.contains(target)) {
+            dismiss();
+          }
+        };
+        // On the trigger too: a click trigger (code-annotations: select) has no
+        // blur handling. Attached for the instance's lifetime so leaving the
+        // trigger also cancels a show still pending on the trigger delay.
+        instance.reference.addEventListener('focusout', onFocusOut);
+        return {
+          onShow() {
+            window.document.addEventListener('keydown', onKeyDown, true);
+            instance.popper.addEventListener('focusout', onFocusOut);
+          },
+          onHide() {
+            window.document.removeEventListener('keydown', onKeyDown, true);
+            instance.popper.removeEventListener('focusout', onFocusOut);
+          },
+          onDestroy() {
+            instance.reference.removeEventListener('focusout', onFocusOut);
+          },
+        };
+      },
+    };
     function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
       const config = {
         allowHTML: true,
@@ -628,6 +736,7 @@ ul.task-list li input[type="checkbox"] {
         interactiveBorder: 10,
         theme: 'quarto',
         placement: 'bottom-start',
+        plugins: [hideOnEscAndFocusOut],
       };
       if (contentFn) {
         config.content = contentFn;
@@ -790,44 +899,54 @@ ul.task-list li input[type="checkbox"] {
           const lineIds = lines.map((line) => {
             return targetCell + "-" + line;
           })
-          let top = null;
-          let height = null;
-          let parent = null;
+          // Each band is positioned against its own containing block, which is
+          // not the offsetParent of the lines, so place it from client rects.
+          const placeBand = (band, firstEl, lastEl, codeBlock) => {
+            const container = band.offsetParent;
+            if (container === null) {
+              return;
+            }
+            const containerRect = container.getBoundingClientRect();
+            // Reveal.js scales slides with a transform, so convert client
+            // pixels back to the CSS pixels of the container.
+            const scale = containerRect.height / container.offsetHeight || 1;
+            const firstRect = firstEl.getBoundingClientRect();
+            const lastRect = lastEl.getBoundingClientRect();
+            const top = (firstRect.top - containerRect.top) / scale - container.clientTop + container.scrollTop;
+            const height = (lastRect.bottom - firstRect.top) / scale;
+            band.style.top = top - 2 + "px";
+            band.style.height = height + 4 + "px";
+            if (codeBlock) {
+              // Without the copy button wrapper, the containing block is wider
+              // than the code block, so span the code block explicitly.
+              const blockRect = codeBlock.getBoundingClientRect();
+              band.style.left = (blockRect.left - containerRect.left) / scale - container.clientLeft + container.scrollLeft + "px";
+              band.style.width = blockRect.width / scale + "px";
+            }
+          };
           if (lineIds.length > 0) {
-              //compute the position of the single el (top and bottom and make a div)
-              const el = window.document.getElementById(lineIds[0]);
-              top = el.offsetTop;
-              height = el.offsetHeight;
-              parent = el.parentElement.parentElement;
-            if (lineIds.length > 1) {
-              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
-              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
-              height = bottom - top;
+            const el = window.document.getElementById(lineIds[0]);
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const parent = el.parentElement.parentElement;
+            // cook up a div (if necessary) and position it
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
             }
-            if (top !== null && height !== null && parent !== null) {
-              // cook up a div (if necessary) and position it 
-              let div = window.document.getElementById("code-annotation-line-highlight");
-              if (div === null) {
-                div = window.document.createElement("div");
-                div.setAttribute("id", "code-annotation-line-highlight");
-                div.style.position = 'absolute';
-                parent.appendChild(div);
-              }
-              div.style.top = top - 2 + "px";
-              div.style.height = height + 4 + "px";
-              div.style.left = 0;
-              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
-              if (gutterDiv === null) {
-                gutterDiv = window.document.createElement("div");
-                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
-                gutterDiv.style.position = 'absolute';
-                const codeCell = window.document.getElementById(targetCell);
-                const gutter = codeCell.querySelector('.code-annotation-gutter');
-                gutter.appendChild(gutterDiv);
-              }
-              gutterDiv.style.top = top - 2 + "px";
-              gutterDiv.style.height = height + 4 + "px";
+            placeBand(div, el, lastEl, parent.closest("div.sourceCode") || parent);
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
             }
+            placeBand(gutterDiv, el, lastEl);
             selectedAnnoteEl = annoteEl;
           }
         };
@@ -926,7 +1045,10 @@ ul.task-list li input[type="checkbox"] {
     }
   });
   </script>
-<nav class="page-navigation">
+  <script type="application/javascript">
+  window.quartoScrollableRegionsLabels = {"code":"Scrollable code","output":"Scrollable output"};
+  </script>
+<nav class="page-navigation" aria-label="Page">
   <div class="nav-page nav-page-previous">
       <a href="../user-guide/performance.html" class="pagination-link" aria-label="Performance">
         <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Performance</span>

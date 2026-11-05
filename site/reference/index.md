@@ -1,7 +1,7 @@
 # API Reference
 
 
-The public API of diskcache-oxide: Cache, NullCache, CacheLike protocol, the Caches registry, exceptions, and SQLite utilities.
+The public API of diskcache-oxide: Cache, NullCache, the CacheLike and TransactionalCacheLike protocols, the Caches registry, exceptions, and SQLite utilities.
 
 
 ## Cache
@@ -77,17 +77,20 @@ Copy the write-ahead log into the database and truncate it to zero.
 [Cache.close()](Cache.close.md#diskcache_oxide.Cache.close)  
 Close this handle and return its connections.
 
+[Cache.transact()](Cache.transact.md#diskcache_oxide.Cache.transact)  
+A write transaction, for `with cache.transact() as tx:`.
+
 [Cache.__getitem__()](Cache.__getitem__.md#diskcache_oxide.Cache.__getitem__)  
-`cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under `durable=True`.
+`cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under
 
 [Cache.__setitem__()](Cache.__setitem__.md#diskcache_oxide.Cache.__setitem__)  
-`cache[key] = value`: store a value that never expires, like `set()`. Under `durable=True` a failed write is dropped.
+`cache[key] = value`: store a value that never expires, like `set()`. Under `durable=True` a failed write is
 
 [Cache.__delitem__()](Cache.__delitem__.md#diskcache_oxide.Cache.__delitem__)  
-`del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired, or the delete failed under `durable=True`.
+`del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired, or the delete failed
 
 [Cache.__contains__()](Cache.__contains__.md#diskcache_oxide.Cache.__contains__)  
-`key in cache`: True if the key holds a live (unexpired) value. False if the check failed under `durable=True`.
+`key in cache`: True if the key holds a live (unexpired) value. False if the check failed under
 
 [Cache.__len__()](Cache.__len__.md#diskcache_oxide.Cache.__len__)  
 The number of entries, including expired entries not yet removed.
@@ -119,6 +122,9 @@ A switched-off cache, so app code needs no `if cache is None` checks.
 
 [CacheLike](CacheLike.md#diskcache_oxide.CacheLike)  
 What application code can rely on from a `Cache` or a `NullCache`.
+
+[TransactionalCacheLike](TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike)  
+A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have.
 
 
 ## NullCache Methods
@@ -201,6 +207,9 @@ Return `default`. With `invalidate=`, also delete the key from that cache.
 
 [NullCache.iterkeys()](NullCache.iterkeys.md#diskcache_oxide.NullCache.iterkeys)  
 Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works.
+
+[NullCache.transact()](NullCache.transact.md#diskcache_oxide.NullCache.transact)  
+A no-op context manager that yields this `NullCache`.
 
 [NullCache.expire()](NullCache.expire.md#diskcache_oxide.NullCache.expire)  
 Always 0.
@@ -384,6 +393,9 @@ Exceptions raised by cache operations.
 [Timeout](Timeout.md#diskcache_oxide.Timeout)  
 A lock stayed held, or a fork stayed pending, for longer than the cache's timeout.
 
+[TransactionBusy](TransactionBusy.md#diskcache_oxide.TransactionBusy)  
+A thread holding one cache's transaction couldn't begin another's, because another thread holds its write
+
 [UnsafeValueError](UnsafeValueError.md#diskcache_oxide.UnsafeValueError)  
 A pickle=False cache read a value that was stored with pickle.
 
@@ -391,7 +403,7 @@ A pickle=False cache read a value that was stored with pickle.
 A stored value couldn't be decoded: an unknown mode, or bytes that don't parse.
 
 [ForeignValueError](ForeignValueError.md#diskcache_oxide.ForeignValueError)  
-A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote it), or a time zone missing from this host.
+A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote
 
 [FormatMismatchError](FormatMismatchError.md#diskcache_oxide.FormatMismatchError)  
 The cache directory holds a database in a format this version doesn't support.

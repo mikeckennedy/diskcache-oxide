@@ -73,7 +73,18 @@ cache.clear()  # clears the real cache
 cache.iterkeys(prefix='user:')  # the real cache's keys, so list-then-delete still works
 ```
 
-When caching comes back on, nothing stale is waiting.
+When caching comes back on, nothing you invalidated by removing it is waiting.
+
+Only removals are forwarded, so invalidating by *writing* is lost while caching is off. Overwriting the stale value with a fresh [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), or bumping a version key with [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) so readers build a new key, does nothing, and the old value is served once caching is back on:
+
+``` python
+cache = NullCache(invalidate=real)  # real holds 'user:42' = old_profile, and 'users:version' = 3
+
+cache.set('user:42', new_profile)  # dropped: real still has old_profile
+cache.incr('users:version')  # dropped: still 3, so readers keep reading the old keys
+```
+
+If your app invalidates that way, delete the entry instead (or as well), or [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) the real cache when you turn caching back on.
 
 
 # [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike)
@@ -93,3 +104,12 @@ def load_user(user_id: str, cache: CacheLike) -> dict:
 ```
 
 A test in diskcache-oxide's own suite checks that [Cache](../reference/Cache.md#diskcache_oxide.Cache), [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) keep identical public signatures, so they can't drift apart.
+
+
+# [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) and [TransactionalCacheLike](../reference/TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike)
+
+[NullCache.transact()](../reference/NullCache.transact.md#diskcache_oxide.NullCache.transact) is a no-op context manager that yields the [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), so code written as `with cache.transact() as tx:` runs unchanged with caching off. There's nothing to commit or roll back. It accepts `retry=` as [Cache.transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) does, and a keyword-only `key=`, which it ignores.
+
+With `invalidate=`, it never opens a transaction on the real cache: a switched-off cache must never take a write lock or raise [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout). So removals forwarded inside the block land at once, and an exception in the block doesn't undo them.
+
+[CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) has no [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact). To accept either class and call it, annotate with [TransactionalCacheLike](../reference/TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike), which adds it. See [Transactions](transactions.md#typing-transactionalcachelike).

@@ -38,6 +38,9 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-026 | `pop` of a value it can't read | Row is deleted, then the decode fails | Decodes first, so the row stays unless no build could read it |
 | D-027 | A call behind a pending fork | Never waits: there's no fork barrier | Waits within its `timeout`, then raises `Timeout` |
 | D-028 | An outage on a single-key call | `Cache` raises; `FanoutCache` answers `Timeout` alone as a miss | Raises by default; `durable=True` answers it as a miss or `False`, and reports it |
+| D-029 | `with cache.transact() as tx:` | `tx` is `None`; a second handle's `transact()` inside waits out the timeout | `tx` is the cache; every handle on the directory joins the outer transaction |
+| D-030 | A transaction on a second, busy cache | Waits for the timeout; `retry=True` loops on any `OperationalError` | `TransactionBusy` at once; `retry=True` retries only `Timeout` |
+| D-031 | Ending a transaction on another thread | "May not be shared between threads" | Allowed, within its `timeout`; the owner's exit raises unless it committed |
 
 ## Safety
 
@@ -85,7 +88,21 @@ When a process forks while another of its threads is in a write transaction, dis
 
 ### D-020: forking inside your own transaction
 
-CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide, the child's copy of the transaction is poisoned and its writes to that database raise `RuntimeError` immediately, and the parent gets a `RuntimeWarning`. This becomes reachable when `transact()` arrives in Phase 6b.
+CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide, the child's copy of the transaction is poisoned and its writes to that database raise `RuntimeError` immediately, and the parent gets a `RuntimeWarning`.
+
+## Transactions
+
+### D-029: `tx` is the cache, and every handle shares it
+
+diskcache's `with cache.transact() as tx:` binds `tx` to `None`, and a second `Cache` on the same directory has its own connection, so its `transact()` inside the first one's block waits for the write lock until it times out. In diskcache-oxide `tx` is the cache itself, and on the thread that entered the block every call on that directory runs in the transaction, through any handle: a `transact()` on a second handle joins the outer one instead of waiting. Other threads' calls never join it. See [Transactions](transactions.qmd).
+
+### D-030: `TransactionBusy`, and what `retry=True` retries
+
+Inside one cache's transaction, diskcache's `transact()` on a second cache waits for its write lock until it times out, and `retry=True` loops on any `sqlite3.OperationalError`. When another thread holds that lock, diskcache-oxide raises `TransactionBusy`, a `Timeout` subclass, at once: that thread could be waiting for a lock this one holds, and no timeout setting fixes that. `retry=True` retries a plain `Timeout` and never `TransactionBusy`, and checks for `Ctrl-C` between attempts.
+
+### D-031: a transaction can end on another thread
+
+diskcache says a transaction "may not be shared between threads". In diskcache-oxide any thread may commit or roll back the owner's transaction through its `__exit__`, within the transaction's `timeout`. A commit that can't run in time raises `Timeout` and rolls back, and the owner's own exit afterwards raises `RuntimeError` unless the transaction committed, so a `with` block never exits cleanly when its writes are gone. An owner's exit during another thread's commit waits for the outcome.
 
 ## Resources
 
@@ -115,7 +132,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-007:** `Timeout` subclasses `TimeoutError`, so `except TimeoutError` catches it too.
 - **D-009:** `bool(Cache)` is always True and `bool(NullCache)` is False, so `if cache:` means "caching is on".
 - **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
-- **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. See [A cache that can't take a request down](getting-started.qmd#a-cache-that-cant-take-a-request-down).
+- **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.qmd#a-cache-that-cant-take-a-request-down).
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ## diskcache-community

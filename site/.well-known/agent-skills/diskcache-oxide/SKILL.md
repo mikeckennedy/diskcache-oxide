@@ -47,6 +47,7 @@ Methods for the Cache class
 - `Cache.volume`
 - `Cache.checkpoint`
 - `Cache.close`
+- `Cache.transact`
 - `Cache.__getitem__`
 - `Cache.__setitem__`
 - `Cache.__delitem__`
@@ -64,6 +65,7 @@ Switched-off cache behaving as if every entry expires instantly.
 
 - `NullCache`: A switched-off cache, so app code needs no `if cache is None` checks
 - `CacheLike`: What application code can rely on from a `Cache` or a `NullCache`
+- `TransactionalCacheLike`: A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have
 
 ### NullCache Methods
 
@@ -94,6 +96,7 @@ Methods for the NullCache class
 - `NullCache.pop`
 - `NullCache.clear`
 - `NullCache.iterkeys`
+- `NullCache.transact`
 - `NullCache.expire`
 - `NullCache.cull`
 - `NullCache.close`
@@ -167,6 +170,7 @@ Methods for the Caches class
 Exceptions raised by cache operations.
 
 - `Timeout`: A lock stayed held, or a fork stayed pending, for longer than the cache's timeout
+- `TransactionBusy`: A thread holding one cache's transaction couldn't begin another's because another thread holds its write lock
 - `UnsafeValueError`: A pickle=False cache read a value that was stored with pickle
 - `CorruptValueError`: A stored value couldn't be decoded: an unknown mode, or bytes that don't parse
 - `ForeignValueError`: A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote it), or a time zone missing from this host

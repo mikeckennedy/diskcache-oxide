@@ -33,6 +33,7 @@
 - [Cache.volume](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.volume.html)
 - [Cache.checkpoint](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.checkpoint.html)
 - [Cache.close](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.close.html)
+- [Cache.transact](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.transact.html)
 - [Cache.__getitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__getitem__.html)
 - [Cache.__setitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__setitem__.html)
 - [Cache.__delitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__delitem__.html)
@@ -49,6 +50,7 @@
 
 - [NullCache](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.html): A switched-off cache, so app code needs no `if cache is None` checks
 - [CacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.html): What application code can rely on from a `Cache` or a `NullCache`
+- [TransactionalCacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/TransactionalCacheLike.html): A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have
 
 #### NullCache Methods
 > Methods for the NullCache class
@@ -78,6 +80,7 @@
 - [NullCache.pop](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.pop.html)
 - [NullCache.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.clear.html)
 - [NullCache.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.iterkeys.html)
+- [NullCache.transact](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.transact.html)
 - [NullCache.expire](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.expire.html)
 - [NullCache.cull](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.cull.html)
 - [NullCache.close](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.close.html)
@@ -147,6 +150,7 @@
 > Exceptions raised by cache operations.
 
 - [Timeout](https://mkennedy.codes/docs/diskcache-oxide/reference/Timeout.html): A lock stayed held, or a fork stayed pending, for longer than the cache's timeout
+- [TransactionBusy](https://mkennedy.codes/docs/diskcache-oxide/reference/TransactionBusy.html): A thread holding one cache's transaction couldn't begin another's because another thread holds its write lock
 - [UnsafeValueError](https://mkennedy.codes/docs/diskcache-oxide/reference/UnsafeValueError.html): A pickle=False cache read a value that was stored with pickle
 - [CorruptValueError](https://mkennedy.codes/docs/diskcache-oxide/reference/CorruptValueError.html): A stored value couldn't be decoded: an unknown mode, or bytes that don't parse
 - [ForeignValueError](https://mkennedy.codes/docs/diskcache-oxide/reference/ForeignValueError.html): A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote it), or a time zone missing from this host
@@ -172,6 +176,7 @@
 - [Serialization](https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html)
 - [NullCache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html)
 - [Caches: named caches](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html)
+- [Transactions](https://mkennedy.codes/docs/diskcache-oxide/user-guide/transactions.html)
 - [Concurrency and forks](https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html)
 - [Storage and WAL](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html)
 

@@ -64,6 +64,7 @@ user_guide:
       - serialization.qmd
       - null-cache.qmd
       - caches.qmd
+      - transactions.qmd
       - concurrency-and-forks.qmd
       - storage-and-wal.qmd
   - section: "Background & Reference"
@@ -115,7 +116,7 @@ authors:
 reference:
   title: "API Reference"
   desc: >-
-    The public API of diskcache-oxide: Cache, NullCache, CacheLike protocol,
+    The public API of diskcache-oxide: Cache, NullCache, the CacheLike and TransactionalCacheLike protocols,
     the Caches registry, exceptions, and SQLite utilities.
   sections:
     - title: Cache
@@ -127,6 +128,7 @@ reference:
       contents:
         - NullCache
         - CacheLike
+        - TransactionalCacheLike
     - title: Caches
       desc: "A registry of named caches under one base directory."
       contents:
@@ -136,6 +138,7 @@ reference:
       desc: "Exceptions raised by cache operations."
       contents:
         - Timeout
+        - TransactionBusy
         - UnsafeValueError
         - CorruptValueError
         - ForeignValueError

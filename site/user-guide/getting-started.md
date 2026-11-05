@@ -90,6 +90,8 @@ cache.decr('page_views', 2)  # 4
 
 [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) on a missing key starts from `default` (0). Pass `default=None` to get a `KeyError` instead. A key holding a non-number raises `TypeError`.
 
+To make several calls atomic together, group them with `with cache.transact() as tx:`. See [Transactions](transactions.md).
+
 
 # List keys
 
@@ -167,6 +169,7 @@ It covers [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), `cache[key
 | An unreadable value (malformed bytes, a failing unpickle) | deletes that version, then raises | deletes that version, returns the default and reports | the same as `'miss'` |
 | An unreadable value, and that delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default and reports both, row kept |
 | [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), an I/O error or `RecursionError` from a pickle hook | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
+| `RecursionError` from a value too deep for this thread's stack | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
 | `MemoryError` or a `BaseException` from a pickle hook | raises, row kept | raises, row kept | raises, row kept |
 | The value decoded, and the delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default, never the value, row kept |
 
@@ -209,7 +212,7 @@ These always raise:
 - **Bugs.** A non-`str` key, a value that can't be stored without pickle, a non-numeric [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr), an [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) past 64 bits, [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError), and misusing a transaction.
 - **`MemoryError` and `KeyboardInterrupt`.** That includes SQLite running out of memory.
 - **Admin calls.** [clear](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [cull](../reference/Cache.cull.md#diskcache_oxide.Cache.cull), [checkpoint](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint), `len`, [volume](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) and iteration, because their callers need the truth, and most have their own `timeout=`. [checkpoint](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) still returns `False` when it's only busy.
-- **The constructor, and starting a transaction.** Use [`Caches`](caches.md) if opening shouldn't raise: it gives you a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) until the cache can open.
+- **The constructor, and starting a [transaction](transactions.md).** Use [`Caches`](caches.md) if opening shouldn't raise: it gives you a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) until the cache can open.
 - **Anything inside a transaction you hold on this cache.** A dropped write there would break the transaction's atomicity.
 - **Errors from your own code**, other than the pickle hooks on a read described above. A `clock=` function that raises, or a pickle hook on a write, raises as usual, even if what it raises is a [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout).
 

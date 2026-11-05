@@ -54,7 +54,7 @@ caches.enable('pages')
 caches.enabled('pages')  # False while it's off
 ```
 
-While a cache is disabled, its lookups return `NullCache(invalidate=real)`: reads miss and writes are dropped, but [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) and [clear](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) still reach the real cache, so nothing stale is served when it comes back on. Switches only change later lookups. Code that already holds the real [Cache](../reference/Cache.md#diskcache_oxide.Cache) keeps using it, so set them at startup, before you hand caches out.
+While a cache is disabled, its lookups return `NullCache(invalidate=real)`: reads miss and writes are dropped, but [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) and [clear](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) still reach the real cache, so entries you invalidate by removing them aren't served stale when it comes back on. Invalidating by writing doesn't survive: an overwriting [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) or a version-bump [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) is dropped like any other write, and the old value is served again (see [Keep invalidating while caching is off](null-cache.md#keep-invalidating-while-caching-is-off-invalidate)). Switches only change later lookups. Code that already holds the real [Cache](../reference/Cache.md#diskcache_oxide.Cache) keeps using it, so set them at startup, before you hand caches out.
 
 If your app has its own names for what it caches (Talk Python calls them purposes), map them onto registered caches in your own code. It's a few lines:
 

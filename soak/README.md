@@ -2,6 +2,10 @@
 
 A long run (24 hours by default) of many processes and threads against two shared caches, with chaos: SIGKILLed and respawned workers, forks under load, and `clear()`/`expire()`/`cull()` under load. It looks for deadlocks (stalls), races (lost, doubled or corrupt writes, expired values returned, totals drift, missing files), and leaks (RSS, fds, database and WAL growth). Workers alternate between Python 3.14 and 3.14t on the same cache files. Beside them run the lanes that plan 09 needs: exactly-once `pop`, `durable=True`, forks behind budgeted calls, real stuck forks, and `wal_checkpoint='auto'`. See [The plan 09 lanes](#the-plan-09-lanes).
 
+## Before production: a fresh soak is required
+
+Plan 12 changed the write path and the transaction machinery: step 1 updates a live counter in place in `incr`, and step 3 made `transact()` public, bounded every wait that ends a held transaction (an end that can't run is parked and rolled back at the end of the fork), and lets another thread end a transaction. No soak result from before those commits covers them, so run a fresh 24-hour soak on the mini, on a build that includes both, before it goes to production. The held-transaction sites in the load, the stuck-fork lane and the durable hog now go through `transact()`, as Talk Python will.
+
 ## Setup on a fresh Mac
 
 ```sh

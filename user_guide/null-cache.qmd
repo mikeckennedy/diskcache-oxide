@@ -99,3 +99,11 @@ def load_user(user_id: str, cache: CacheLike) -> dict:
 ```
 
 A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `CacheLike` keep identical public signatures, so they can't drift apart.
+
+## `transact()` and `TransactionalCacheLike`
+
+`NullCache.transact()` is a no-op context manager that yields the `NullCache`, so code written as `with cache.transact() as tx:` runs unchanged with caching off. There's nothing to commit or roll back. It accepts `retry=` as `Cache.transact()` does, and a keyword-only `key=`, which it ignores.
+
+With `invalidate=`, it never opens a transaction on the real cache: a switched-off cache must never take a write lock or raise `Timeout`. So removals forwarded inside the block land at once, and an exception in the block doesn't undo them.
+
+`CacheLike` has no `transact()`. To accept either class and call it, annotate with `TransactionalCacheLike`, which adds it. See [Transactions](transactions.qmd#typing-transactionalcachelike).

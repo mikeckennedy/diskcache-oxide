@@ -33,7 +33,8 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) | Anything (tiny values silently empty the cache) | At least 1 MiB |
 | `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
 | `disk=`, `eviction_policy=` | Supported | Not supported (eviction policies are coming) |
-| `transact()`, tags, `memoize`, `FanoutCache` | Supported | Coming in later phases |
+| [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) | `tx` is `None` | `tx` is the cache; see [`transact()`](#transact) below |
+| Tags, `memoize`, `FanoutCache` | Supported | Coming in later phases |
 
 
 # Values: no pickle unless you ask
@@ -59,6 +60,19 @@ A cache opened without `pickle=True` never unpickles. If it finds a pickled valu
 # String keys
 
 Only `str` keys are accepted today; anything else raises `TypeError`. Keys are already stored with a type tag, so other key types can be added in Phase 6a without changing the file format. In the meantime, build string keys yourself (`f'user:{user_id}'`).
+
+
+# [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact)
+
+`with cache.transact():` works as it does in diskcache: the block's calls on the entering thread commit together on exit and roll back on an exception, a nested block joins the outer one, its exit commits nothing, and an exception caught inside the outer block keeps the inner writes. What differs (details in [Transactions](transactions.md)):
+
+- **`tx` is the cache** instead of `None`, and a second [Cache](../reference/Cache.md#diskcache_oxide.Cache) handle on the same directory joins the transaction instead of waiting for it (D-029).
+- **A transaction on a second cache whose write lock another thread holds** raises [TransactionBusy](../reference/TransactionBusy.md#diskcache_oxide.TransactionBusy), a [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) subclass, at once, and `retry=True` retries only [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), never [TransactionBusy](../reference/TransactionBusy.md#diskcache_oxide.TransactionBusy). diskcache waits, and its `retry=True` loops on any `OperationalError` (D-030).
+- **Another thread may end it.** Its commit or rollback runs within the transaction's [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout), and the owner's own exit then raises `RuntimeError` unless it committed (D-031). The object [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) returns can be entered once.
+- **A block that didn't commit raises at its exit** with `RuntimeError`, for example after a write inside it failed on a full disk.
+- **`durable=True`**, which diskcache doesn't have, still raises when a transaction can't begin and for any failure inside one (D-028).
+- **Forking inside your own transaction** poisons the child's copy, whose writes raise `RuntimeError` at once, instead of stalling for the timeout (D-020).
+- **It belongs to a thread, not an asyncio task**, as in diskcache: don't `await` inside the block.
 
 
 # Truthiness
