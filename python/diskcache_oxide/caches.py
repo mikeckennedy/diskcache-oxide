@@ -42,7 +42,7 @@ from typing import Any, Self
 
 from diskcache_oxide._core import Cache, Timeout
 from diskcache_oxide.null import NullCache
-from diskcache_oxide.protocol import CacheLike
+from diskcache_oxide.protocol import TransactionalCacheLike
 
 __all__ = ['CacheStats', 'Caches']
 
@@ -138,7 +138,7 @@ class Caches[N: str = str]:
         # What `caches[name]` returns, filled on first lookup. Read without a lock: a lookup that
         # races another opens a second handle, and the loser is closed (handles on one directory
         # share one store, so that's cheap and safe).
-        self._resolved: dict[N, CacheLike] = {}
+        self._resolved: dict[N, TransactionalCacheLike] = {}
         # The real handles, opened on demand.
         self._opened: dict[N, Cache] = {}
         # name -> (retry after this monotonic time, the NullCache handed out until then).
@@ -208,7 +208,7 @@ class Caches[N: str = str]:
 
     # -- lookup ----------------------------------------------------------------------------------
 
-    def __getitem__(self, name: N) -> CacheLike:
+    def __getitem__(self, name: N) -> TransactionalCacheLike:
         """The named cache: opened on first use, then the same object every time.
 
         A `NullCache` while it can't be opened (see the class docs), or `NullCache(invalidate=real)`
@@ -223,7 +223,7 @@ class Caches[N: str = str]:
         except KeyError:
             return self._resolve(name)
 
-    def _resolve(self, name: N) -> CacheLike:
+    def _resolve(self, name: N) -> TransactionalCacheLike:
         self._spec(name)
         failed = self._failed.get(name)
         if failed is not None and self._monotonic() < failed[0]:
@@ -240,7 +240,7 @@ class Caches[N: str = str]:
             return null
         self._failed.pop(name, None)
         disabled = name in self._disabled
-        result: CacheLike = NullCache(invalidate=real) if disabled else real
+        result: TransactionalCacheLike = NullCache(invalidate=real) if disabled else real
         stored = self._resolved.setdefault(name, result)
         # A switch or close_all that ran between the checks above and the store would otherwise
         # leave a stale answer in place for good: drop it, so the next lookup resolves afresh.

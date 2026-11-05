@@ -1,9 +1,14 @@
-"""`CacheLike`: the interface `Cache` and `NullCache` share, for typing code that accepts either."""
+"""`CacheLike`: the interface `Cache` and `NullCache` share, for typing code that accepts either.
+
+`TransactionalCacheLike` adds `transact()`. It's a separate protocol so a cache whose transactions
+need more than `retry` (a sharded cache's `transact(key=...)`) can still be a `CacheLike`.
+"""
 
 from __future__ import annotations
 
 import os
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from types import TracebackType
 from typing import Any, Literal, Protocol, Self, overload, runtime_checkable
 
@@ -117,6 +122,18 @@ class CacheLike(Protocol):
         /,
     ) -> None:
         """Close the cache."""
+
+
+@runtime_checkable
+class TransactionalCacheLike(CacheLike, Protocol):
+    """A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have.
+
+    On a `Cache`, `with cache.transact() as tx:` runs the block's calls on this thread in one write
+    transaction; `tx` is the cache. On a `NullCache` it's a no-op that yields the `NullCache`.
+    """
+
+    def transact(self, retry: bool = False) -> AbstractContextManager[Self]:
+        """A context manager holding a write transaction for the block, yielding the cache."""
 
 
 # The constructor arguments both classes accept (NullCache accepts and ignores them).

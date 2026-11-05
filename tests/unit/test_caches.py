@@ -320,6 +320,29 @@ def test_a_disabled_cache_is_null_but_still_invalidates(base: Path) -> None:
     caches.close_all()
 
 
+def test_a_disabled_caches_transact_is_a_no_op(base: Path) -> None:
+    caches = Caches(base, timeout=0.05)
+    caches.register('a')
+    real = caches['a']
+    real.set('k', 'v')
+    caches.disable('a')
+    off = caches['a']
+    with pytest.raises(KeyError), off.transact() as tx:
+        assert tx is off
+        tx.set('new', 'v')
+        tx.delete('k')
+        assert real.set('elsewhere', 1) is True, "the real cache's write lock was taken"
+        raise KeyError('k')
+    assert 'new' not in real, 'writes are dropped'
+    assert 'k' not in real, 'the delete reached the real cache and stayed'
+    caches.enable('a')
+    with caches['a'].transact() as tx:
+        assert tx is real
+        tx.set('in-tx', 1)
+    assert real.get('in-tx') == 1
+    caches.close_all()
+
+
 # -- admin ----------------------------------------------------------------------------------------
 
 

@@ -515,7 +515,7 @@ def test_pop_in_a_held_transaction_uses_it_for_the_read_and_the_delete(directory
         pass
 
     try:
-        with cache._hold_write_transaction():
+        with cache.transact():
             cache.set('k', 'written in the transaction')
             assert cache.pop('k') == 'written in the transaction', 'the read saw the uncommitted write'
             assert 'k' not in cache

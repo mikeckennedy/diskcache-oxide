@@ -767,7 +767,7 @@ def test_a_hold_starts_with_an_error_not_a_miss(directory: Path) -> None:
     cache = Cache(directory, timeout=SHORT, durable=True)
     cache.set('k', 1)
     with peer_holding_the_write_lock(directory), pytest.raises(Timeout):
-        cache._hold_write_transaction().__enter__()
+        cache.transact().__enter__()
     cache.close()
 
 
@@ -777,7 +777,7 @@ def test_failures_inside_a_held_transaction_raise(directory: Path) -> None:
     cache = Cache(directory, durable=True)
     cache.set('k', b'x' * BIG)
     path = _value_file(directory)
-    with cache._hold_write_transaction():
+    with cache.transact():
         with unreadable(path):
             with pytest.raises(PermissionError):
                 cache.get('k')
@@ -801,7 +801,7 @@ def test_an_outage_from_a_hook_inside_a_held_transaction_raises(
     cache = Cache(directory, pickle=True, durable=True)
     cache.set('k', Hooked('kept'))
     Hooked.hook = _raising(OSError('disk'))
-    with cache._hold_write_transaction():
+    with cache.transact():
         with pytest.raises(OSError, match='disk'):
             cache.get('k')
         with pytest.raises(OSError, match='disk'):
@@ -827,7 +827,7 @@ def test_a_nested_call_inside_a_held_transaction_raises_too(directory: Path) -> 
             raised.append(exc)
 
     Hooked.hook = nested
-    with cache._hold_write_transaction(), unreadable(path):
+    with cache.transact(), unreadable(path):
         assert cache.get('k').payload == 'kept'
     assert isinstance(raised[0], PermissionError), raised
     cache.close()
@@ -839,10 +839,10 @@ def test_a_hold_on_another_store_or_another_thread_doesnt_count(tmp_path: Path) 
     other = Cache(tmp_path / 'other')
     cache.set('k', b'x' * BIG)
     with unreadable(_value_file(tmp_path / 'c')):
-        with other._hold_write_transaction():
+        with other.transact():
             assert cache.get('k', 'default') == 'default', 'a hold on another store'
         answers: list[Any] = []
-        with cache._hold_write_transaction():
+        with cache.transact():
             thread = threading.Thread(target=lambda: answers.append(cache.get('k', 'default')), daemon=True)
             thread.start()
             thread.join(WATCHDOG)
@@ -1072,7 +1072,7 @@ def test_a_hook_outage_isnt_counted_when_it_raises(directory: Path) -> None:
     cache = Cache(directory, pickle=True, durable=True)
     cache.set('k', Hooked('kept'))
     Hooked.hook = _raising(OSError('disk'))
-    with cache._hold_write_transaction(), pytest.raises(OSError, match='disk'):
+    with cache.transact(), pytest.raises(OSError, match='disk'):
         cache.get('k')
     assert _total(cache._durable_stats(), 'broken') == 0
     cache.close()

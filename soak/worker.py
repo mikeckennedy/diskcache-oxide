@@ -391,7 +391,7 @@ class Worker:
             pops = 0
             found: list[str] = []  # Problems seen inside the hold, reported after it for the same reason.
             try:
-                with self.ledger._hold_write_transaction():
+                with self.ledger.transact():
                     tx = int(self.ledger.incr(f'hctr:{self.id}'))
                     for key, version in planned.items():
                         if version:
@@ -890,7 +890,7 @@ class LaneWorker(Worker):
 
             try:
                 if n % 2:
-                    with self.stuck_held._hold_write_transaction():
+                    with self.stuck_held.transact():
                         scene()
                 else:
                     _stuck_hook = scene
@@ -970,7 +970,7 @@ class LaneWorker(Worker):
         while not self.stop.wait(rng.uniform(*HOG_EVERY)):
             self.beat('hog')
             try:
-                with self.hog._hold_write_transaction():
+                with self.hog.transact():
                     self.count('hog_holds')
                     self.stop.wait(HOG_HOLD)
             except Timeout:

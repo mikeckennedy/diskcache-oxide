@@ -128,3 +128,5 @@ Each is one commit through `scripts/check.sh` on all four interpreters.
 - **Don't drift the budget:** each shard's `max_connections` is computed once at open; `fetch_max` from other handles still applies per shard (`store.rs:537`).
 - **Keep D-019:** the new reads (`stat` for the markers, the `settings` row) never write.
 - **Don't build 13c beside Step 3:** both rewrite `cache.rs`'s transaction code.
+
+Note (2026-11-05, from plan 12 step 3d): `Caches.__getitem__` and its helpers are typed `TransactionalCacheLike`, which is accurate while a lookup can only return a `Cache` or a `NullCache`. When `Caches` can register a FanoutCache, widen that annotation (a union, or back to `CacheLike`) and keep `caches[name].transact()` type-checking for the plain-cache case.

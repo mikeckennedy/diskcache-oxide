@@ -79,7 +79,7 @@ def d020(directory: Path) -> list[str]:
     other = directory.parent / f'{directory.name}-other'
     cache = Cache(directory, timeout=TIMEOUT)
     cache.set('before', 'parent')
-    hold = cache._hold_write_transaction()
+    hold = cache.transact()
     hold.__enter__()
     cache.set('in-hold', 1)
 
@@ -298,7 +298,7 @@ def shared_iterator_while_a_fork_waits(directory: Path) -> list[str]:
     held = threading.Event()
 
     def holder() -> None:
-        with cache._hold_write_transaction():
+        with cache.transact():
             held.set()
             release.wait(TIMEOUT)
 

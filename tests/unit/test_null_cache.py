@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
+from diskcache_oxide import Cache
 from diskcache_oxide.null import NullCache
-from diskcache_oxide.protocol import CacheLike
+from diskcache_oxide.protocol import CacheLike, TransactionalCacheLike
 
 
 class Recorder:
@@ -147,3 +150,52 @@ def test_close_never_closes_the_forwarding_target() -> None:
 
 def test_null_cache_satisfies_the_protocol() -> None:
     assert isinstance(NullCache(), CacheLike)
+
+
+def test_null_cache_satisfies_the_transactional_protocol() -> None:
+    assert isinstance(NullCache(), TransactionalCacheLike)
+
+
+def test_transact_is_a_no_op_that_yields_the_null_cache() -> None:
+    cache = NullCache()
+    with cache.transact() as tx:
+        assert tx is cache
+        assert tx.set('k', 1) is True
+        with cache.transact(retry=True) as inner, cache.transact(key='k') as keyed:
+            assert inner is cache and keyed is cache
+    assert cache.get('k') is None
+    with pytest.raises(ValueError, match='boom'), cache.transact():
+        raise ValueError('boom')
+
+
+@pytest.mark.parametrize('retry', [1, 0, None, 'yes'])
+def test_transact_refuses_a_retry_that_isnt_a_bool(retry: object) -> None:
+    with pytest.raises(TypeError, match='retry'):
+        NullCache().transact(retry=retry)  # ty: ignore[invalid-argument-type]
+
+
+def test_transact_refuses_a_key_that_isnt_a_str() -> None:
+    with pytest.raises(TypeError):
+        NullCache().transact(key=1)  # ty: ignore[invalid-argument-type]
+
+
+def test_transact_with_invalidate_opens_no_transaction_on_the_real_cache(tmp_path: Path) -> None:
+    # Removals inside the block land at once, and the block's exception doesn't undo them. Another
+    # thread's write to the real cache doesn't wait: no write lock is held.
+    real = Cache(tmp_path / 'c', timeout=0.05)
+    real.set('stale', 1)
+    real.set('also-stale', 1)
+    cache = NullCache(invalidate=real)
+    with pytest.raises(ValueError), cache.transact():
+        assert cache.delete('stale') is True
+        assert real.get('stale') is None, 'the forwarded delete was not visible at once'
+        written: list[object] = []
+        thread = threading.Thread(target=lambda: written.append(real.set('other', 2)))
+        thread.start()
+        thread.join(10)
+        assert written == [True], written
+        cache.pop('also-stale')
+        raise ValueError
+    assert real.get('stale') is None and real.get('also-stale') is None, 'the exception undid a removal'
+    assert real.get('other') == 2
+    real.close()

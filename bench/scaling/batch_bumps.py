@@ -22,7 +22,7 @@ else:
     import diskcache_oxide
 
     c = diskcache_oxide.Cache(tempfile.mkdtemp(dir=tmp), timeout=0.25, durable=True)
-    group = c._hold_write_transaction
+    group = c.transact
 
 
 def bump(key, window):

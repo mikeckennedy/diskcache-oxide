@@ -248,7 +248,7 @@ class Lazy:
 CACHE = Cache(sys.argv[1], pickle=True)
 CACHE.set('plain', 1)
 CACHE.set('lazy', Lazy(7))
-with CACHE._hold_write_transaction():
+with CACHE.transact():
     CACHE.set('in-hold', 2)
     value = CACHE.get('lazy')
     assert (value.n, value.sibling) == (7, 1), vars(value)
@@ -289,7 +289,7 @@ class Slow:
 
 CACHE = Cache(sys.argv[1], pickle=True)
 CACHE.set('slow', Slow())
-hold = CACHE._hold_write_transaction()
+hold = CACHE.transact()
 hold.__enter__()
 CACHE.set('in-hold', 1)
 
@@ -350,7 +350,7 @@ from diskcache_oxide import Cache
 
 CACHE = Cache(sys.argv[1])
 CACHE.set('before', 1)
-hold = CACHE._hold_write_transaction()
+hold = CACHE.transact()
 hold.__enter__()
 with warnings.catch_warnings():
     warnings.simplefilter('ignore', RuntimeWarning)
@@ -398,7 +398,7 @@ from diskcache_oxide import Cache
 
 CACHE = Cache(sys.argv[1])
 CACHE.set('k', 'before')
-HOLD = CACHE._hold_write_transaction()
+HOLD = CACHE.transact()
 HOLD.__enter__()
 CACHE.set('k', 'inside')
 with warnings.catch_warnings():
@@ -477,7 +477,7 @@ def test_clear_inside_a_held_transaction_doesnt_pause_for_a_writer_that_cant_get
     cache = Cache(tmp_path / 'c', timeout=10)
     for i in range(5_000):
         cache.set(f'k{i}', i)
-    with cache._hold_write_transaction():
+    with cache.transact():
         writer = threading.Thread(target=lambda: cache.set('w', 1))
         writer.start()
         time.sleep(0.05)  # The writer now waits for the write lock.
@@ -500,7 +500,7 @@ def test_beginning_a_second_caches_transaction_behind_another_threads_write_lock
     holding, release = threading.Event(), threading.Event()
 
     def hold_b() -> None:
-        with b._hold_write_transaction():
+        with b.transact():
             holding.set()
             release.wait(10)
 
@@ -508,10 +508,10 @@ def test_beginning_a_second_caches_transaction_behind_another_threads_write_lock
     holder.start()
     try:
         assert holding.wait(10)
-        with a._hold_write_transaction():
+        with a.transact():
             started = time.monotonic()
             with pytest.raises(TransactionBusy) as raised:
-                with b._hold_write_transaction():
+                with b.transact():
                     pass
             assert time.monotonic() - started < 1, 'the refusal waited'
             assert isinstance(raised.value, Timeout)
@@ -548,7 +548,7 @@ def test_a_hold_exited_inside_its_own_operation_fails_its_with_statement(
     # statement's own __exit__ must then report that, not succeed with the writes gone.
     cache = Cache(tmp_path / 'c', pickle=True)
     cache.set('obj', _ExitsTheHold())
-    hold = cache._hold_write_transaction()
+    hold = cache.transact()
     _ExitsTheHold.hold = hold
     with pytest.raises(RuntimeError, match='rolled back'), hold:
         cache.set('inside', 1)

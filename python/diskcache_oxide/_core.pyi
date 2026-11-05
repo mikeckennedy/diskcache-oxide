@@ -431,8 +431,6 @@ class Cache:
         Raises:
             TypeError: `retry` isn't a `bool`.
         """
-    def _hold_write_transaction(self) -> Transaction:
-        """Test hook, an alias of `transact()` until its users move to it."""
     def __getitem__(self, key: str, /) -> Any:
         """`cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under
         `durable=True`."""

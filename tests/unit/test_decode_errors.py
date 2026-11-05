@@ -293,7 +293,7 @@ def test_a_write_transaction_on_another_thread_never_delays_the_miss(
     holding, done = threading.Event(), threading.Event()
 
     def hold() -> None:
-        with other._hold_write_transaction():
+        with other.transact():
             holding.set()
             done.wait(10)
 
@@ -317,7 +317,7 @@ def test_inside_this_threads_own_transaction_the_delete_is_skipped(
 ) -> None:
     _moved_away(directory, monkeypatch)
     cache = Cache(directory, pickle=True, on_decode_error='miss')
-    with cache._hold_write_transaction():
+    with cache.transact():
         assert cache.get('k') is None
     assert _stored(directory, 'k')
     cache.close()
@@ -378,7 +378,7 @@ def test_a_callable_that_reads_the_bad_key_again_is_not_called_again(
     cache = Cache(directory, pickle=True, on_decode_error=report)
     with (
         caplog.at_level(logging.WARNING, logger=LOGGER),
-        cache._hold_write_transaction(),
+        cache.transact(),
     ):
         assert cache.get('k') is None
     assert calls == ['k']
@@ -402,7 +402,7 @@ def test_a_logging_handler_that_reads_the_bad_key_cant_recurse(
     logger = logging.getLogger(LOGGER)
     logger.addHandler(handler)
     try:
-        with cache._hold_write_transaction():  # So the bad row stays and fails each time.
+        with cache.transact():  # So the bad row stays and fails each time.
             assert cache.get('k') is None
     finally:
         logger.removeHandler(handler)

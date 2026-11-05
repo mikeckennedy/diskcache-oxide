@@ -19,6 +19,11 @@ else stays null, so invalidation that writes doesn't: a `set` that overwrites th
 `incr` that bumps a version key, is dropped, and the old value is served again once caching is back
 on.
 
+**`transact()`.** It's a no-op context manager that yields the `NullCache`: there's nothing to
+commit or roll back. It never opens a transaction on an `invalidate=` cache, since a switched-off
+cache must never take a write lock or raise `Timeout`. So removals forwarded inside the block land
+at once, and an exception in the block doesn't undo them.
+
 The constructor accepts the same arguments as `Cache` and ignores them, so switching between the
 two is a one-line change. Bad argument *types* still raise as they would on `Cache` (`bool`
 expire/timeout, non-`str` keys), so code that works with a `NullCache` also works with a real one.
@@ -28,6 +33,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, nullcontext
 from types import TracebackType
 from typing import Any, Literal, Self, overload
 
@@ -269,6 +275,28 @@ class NullCache:
         if self._invalidate is not None:
             return self._invalidate.iterkeys(prefix=prefix, reverse=reverse)
         return iter(())
+
+    # -- transactions: nothing to hold ------------------------------------------------------------
+
+    def transact(self, retry: bool = False, *, key: str | None = None) -> AbstractContextManager[Self]:
+        """A no-op context manager that yields this `NullCache`.
+
+        It never opens a transaction on an `invalidate=` cache: removals forwarded inside the block
+        land at once, and an exception in the block doesn't undo them.
+
+        Args:
+            retry: Accepted for `Cache.transact()`'s signature; it must be a `bool`.
+            key: Accepted so a switched-off sharded cache's `transact(key=...)` works too; it must be
+                a `str` or None.
+
+        Raises:
+            TypeError: `retry` isn't a `bool`, or `key` isn't a `str` or None.
+        """
+        if not isinstance(retry, bool):
+            raise TypeError(f'retry must be a bool, not {type(retry).__name__}')
+        if key is not None:
+            _check_key(key)
+        return nullcontext(self)
 
     # -- maintenance and lifecycle -------------------------------------------------------------
 

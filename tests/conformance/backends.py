@@ -237,13 +237,7 @@ class OxideBackend(Backend):
         return OXIDE_FD_BUDGET
 
     def hold_write_transaction(self, cache: Any) -> AbstractContextManager[Any]:
-        if self.supports('transact'):
-            return cache.transact()
-        # Phase 1 must provide this private test hook so the deterministic D-012 fork test runs
-        # before transact() lands in Phase 6b. Same contract as transact(): it holds the cache's
-        # own write transaction open, the holding thread's operations join it, and it commits on
-        # exit. Drop the hook once transact is supported.
-        return cache._hold_write_transaction()
+        return cache.transact()
 
     def sqlite_info(self) -> dict[str, Any] | None:
         mod = self._module

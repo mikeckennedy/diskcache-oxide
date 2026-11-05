@@ -493,11 +493,6 @@ impl Cache {
     fn transact(slf: Py<Self>, retry: bool) -> Transaction {
         Transaction::new(slf, retry)
     }
-
-    /// Test hook, an alias of `transact()` until its users move to it (plan 12, step 3e).
-    fn _hold_write_transaction(slf: Py<Self>) -> Transaction {
-        Transaction::new(slf, false)
-    }
 }
 
 impl Cache {
@@ -946,7 +941,7 @@ impl TxState {
     }
 }
 
-/// The context manager returned by `Cache.transact()` (and the `_hold_write_transaction()` alias).
+/// The context manager returned by `Cache.transact()`.
 /// Single use: it's entered once and exited once. It may be exited on another thread (D-031).
 #[pyclass(frozen, module = "diskcache_oxide")]
 pub(crate) struct Transaction {

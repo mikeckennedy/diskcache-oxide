@@ -111,7 +111,7 @@ class StuckFork:
         wait_until(lambda: stats()['pending'], 'the fork claiming')
 
     def __enter__(self) -> StuckFork:
-        self.hold = self.held._hold_write_transaction()
+        self.hold = self.held.transact()
         self.hold.__enter__()
         self.start_fork()
         return self
@@ -202,7 +202,7 @@ def every_public_call(directory: Path) -> None:
         raised += 3
         raises_timeout('a closed handle reused', lambda: closed.get('k'))
         raised += 1
-        raises_timeout('_hold_write_transaction', lambda: c._hold_write_transaction().__enter__())
+        raises_timeout('transact', lambda: c.transact().__enter__())
         raised += 1
         assert existing._handle_count() == 1, 'a timed-out open claimed a handle'
         assert closed._handle_count() == 0, 'a timed-out reopen counted a handle'

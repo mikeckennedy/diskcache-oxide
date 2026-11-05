@@ -184,7 +184,7 @@ def test_writes_inside_a_held_transaction_never_checkpoint(tmp_path: Path) -> No
     cache = Cache(tmp_path / 'c', wal_size_limit=LIMIT, wal_checkpoint='auto')
     cache.set('k', 'v')
     before = cache._wal_stats()['checks']
-    with cache._hold_write_transaction():
+    with cache.transact():
         for i in range(200):
             cache.set(f'h{i}', 'x' * 1_000)
     assert cache._wal_stats()['checks'] == before
@@ -446,7 +446,7 @@ def test_checkpoint_waits_for_another_threads_transaction_and_then_succeeds(
     entered, release = threading.Event(), threading.Event()
 
     def hold() -> None:
-        with cache._hold_write_transaction():
+        with cache.transact():
             cache.set('held', 1)
             entered.set()
             release.wait(10)
@@ -467,7 +467,7 @@ def test_checkpoint_inside_your_own_transaction_returns_false_at_once(
 ) -> None:
     cache = Cache(tmp_path / 'c', timeout=10)
     cache.set('k', 'v')
-    with cache._hold_write_transaction():
+    with cache.transact():
         started = time.monotonic()
         assert cache.checkpoint() is False
         assert time.monotonic() - started < 0.5

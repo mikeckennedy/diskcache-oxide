@@ -205,7 +205,6 @@ def test_fork_while_another_thread_holds_a_write_transaction(
 ) -> None:
     # Observed on diskcache, every time: the child's get works, but its set raises Timeout after the
     # cache's timeout, though the parent thread committed right after the fork. The parent is fine.
-    # The holder uses backend.hold_write_transaction, so this runs on oxide before transact() lands.
     _fork_check(backend, cache_dir, 'fork-in-write-txn')
     assert make_cache(cache_dir).get('from-child') == 'child'
 

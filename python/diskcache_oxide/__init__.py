@@ -2,8 +2,8 @@
 
 The cache itself lives in the compiled `diskcache_oxide._core` extension. This package re-exports
 it, so `diskcache_oxide.Timeout` is the public name and the one exceptions pickle under.
-`NullCache` (a switched-off cache), `CacheLike` (the interface both share) and `Caches` (a registry of
-named caches) are pure Python.
+`NullCache` (a switched-off cache), `CacheLike` and `TransactionalCacheLike` (the interfaces both
+share) and `Caches` (a registry of named caches) are pure Python.
 """
 
 from diskcache_oxide._core import (
@@ -21,7 +21,7 @@ from diskcache_oxide._core import (
 )
 from diskcache_oxide.caches import Caches, CacheStats
 from diskcache_oxide.null import NullCache
-from diskcache_oxide.protocol import CacheLike
+from diskcache_oxide.protocol import CacheLike, TransactionalCacheLike
 
 __all__ = [
     'BUNDLED_SQLITE_VERSION',
@@ -35,6 +35,7 @@ __all__ = [
     'NullCache',
     'Timeout',
     'TransactionBusy',
+    'TransactionalCacheLike',
     'UnsafeValueError',
     '__version__',
     'sqlite_compile_options',

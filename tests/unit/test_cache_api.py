@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from diskcache_oxide import Cache, CacheLike, NullCache
+from diskcache_oxide import Cache, CacheLike, NullCache, TransactionalCacheLike
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -72,6 +72,67 @@ def test_ty_sees_both_classes_as_cache_like(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_cache_like_has_no_transact() -> None:
+    # A sharded cache's transact() takes a key, so it can be a CacheLike but not a TransactionalCacheLike.
+    assert 'transact' not in vars(CacheLike) and not hasattr(CacheLike, 'transact')
+
+
+def test_transact_has_the_protocols_parameters_on_both_classes() -> None:
+    expected = params(TransactionalCacheLike.transact)
+    assert expected == [('retry', inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+    assert params(Cache.transact) == expected
+    # NullCache also takes the keyword-only key of a sharded cache's transact(key=...).
+    assert params(NullCache.transact) == [*expected, ('key', inspect.Parameter.KEYWORD_ONLY)]
+    assert inspect.signature(Cache.transact).parameters['retry'].default is False
+    assert inspect.signature(NullCache.transact).parameters['retry'].default is False
+
+
+def test_both_classes_are_transactional_at_runtime(tmp_path: Path) -> None:
+    with Cache(tmp_path / 'c') as real:
+        assert isinstance(real, TransactionalCacheLike)
+        assert isinstance(NullCache(invalidate=real), TransactionalCacheLike)
+
+
+def test_the_test_hook_is_gone() -> None:
+    assert not hasattr(Cache, '_hold_write_transaction')
+
+
+def _ty(tmp_path: Path, source: str) -> subprocess.CompletedProcess[str]:
+    probe = tmp_path / 'probe.py'
+    probe.write_text(source)
+    return subprocess.run(
+        [sys.executable, '-m', 'ty', 'check', '--python', sys.prefix, str(probe)],
+        capture_output=True,
+        text=True,
+        cwd=REPO,
+    )
+
+
+def test_ty_sees_both_classes_as_transactional(tmp_path: Path) -> None:
+    result = _ty(
+        tmp_path,
+        'from diskcache_oxide import Cache, Caches, NullCache, TransactionalCacheLike\n'
+        "real: TransactionalCacheLike = Cache('/tmp/x')\n"
+        'null: TransactionalCacheLike = NullCache()\n'
+        'forwarding: TransactionalCacheLike = NullCache(invalidate=real)\n'
+        "looked_up: TransactionalCacheLike = Caches('/tmp/y')['a']\n"
+        'with real.transact(retry=True) as tx:\n'
+        "    tx.set('k', 1)\n",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_ty_finds_no_transact_on_cache_like(tmp_path: Path) -> None:
+    result = _ty(
+        tmp_path,
+        'from diskcache_oxide import CacheLike\n'
+        'def use(cache: CacheLike) -> None:\n'
+        '    with cache.transact():\n'
+        '        pass\n',
+    )
+    assert result.returncode != 0 and 'transact' in result.stdout, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize('timeout', [1e10, 1e19, 1e20, 1e300])
 def test_a_huge_timeout_works_instead_of_panicking(tmp_path: Path, timeout: float) -> None:
     # Duration::from_secs_f64 panics above about 1.8e19 s, and Instant + Duration on overflow; a
@@ -128,7 +189,7 @@ def test_pop_inside_a_held_transaction_decodes_with_the_same_transaction_still_u
         value.payload = 'x'
         cache.set('k', value)
         started = time.monotonic()
-        with cache._hold_write_transaction():
+        with cache.transact():
             assert isinstance(cache.pop('k'), _WritesOnUnpickle)
         assert time.monotonic() - started < 1, 'the write from __setstate__ waited on its own transaction'
         assert cache.get('written-while-unpickling') == 1
@@ -172,7 +233,7 @@ def test_a_rolled_back_held_transaction_keeps_spilled_values_and_leaves_no_new_f
         cache.set('k', b'x' * _BIG)
         before = _value_files(tmp_path / 'c')
         with pytest.raises(RuntimeError, match='abort'):
-            with cache._hold_write_transaction():
+            with cache.transact():
                 _change_spilled_key(cache, op)
                 raise RuntimeError('abort')
         assert cache.get('k') == b'x' * _BIG
@@ -187,7 +248,7 @@ def test_a_committed_held_transaction_unlinks_the_spilled_values_it_replaced(tmp
     try:
         cache.set('k', b'x' * _BIG)
         before = _value_files(tmp_path / 'c')
-        with cache._hold_write_transaction():
+        with cache.transact():
             _change_spilled_key(cache, op)
             assert before <= _value_files(tmp_path / 'c'), 'a value file went before the commit'
         after = _value_files(tmp_path / 'c')
@@ -214,7 +275,7 @@ def test_held_maintenance_unlinks_value_files_only_once_it_commits(tmp_path: Pat
                 cache.set(f'k{i}', b'x' * _BIG)
         before = _value_files(tmp_path / 'c')
         try:
-            with cache._hold_write_transaction():
+            with cache.transact():
                 removed = cache.expire() if op == 'expire' else cache.cull()
                 assert removed >= 1
                 assert _value_files(tmp_path / 'c') == before, 'a value file went before the commit'
@@ -288,7 +349,7 @@ def test_maintenance_timeout_also_bounds_another_threads_write(tmp_path: Path, m
     holding, done = threading.Event(), threading.Event()
 
     def hold() -> None:
-        with other._hold_write_transaction():
+        with other.transact():
             holding.set()
             done.wait(10)
 

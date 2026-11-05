@@ -168,7 +168,7 @@ def admin_raises_behind_a_fork(directory: Path) -> None:
         raises_timeout('expire', lambda: c.expire(timeout=TIMEOUT))
         raises_timeout('cull', lambda: c.cull(timeout=TIMEOUT))
         raises_timeout('Cache(...)', lambda: Cache(fresh, timeout=TIMEOUT, durable=True))
-        raises_timeout('a hold starting', lambda: c._hold_write_transaction().__enter__())
+        raises_timeout('a hold starting', lambda: c.transact().__enter__())
         result, _ = on_thread(lambda: c.checkpoint(timeout=TIMEOUT))
         assert result is False, f'checkpoint: {result!r}'
     assert sum(c._durable_stats()['busy'].values()) == 0, 'none of those counts as swallowed'
@@ -279,7 +279,7 @@ def fork_inside_a_hold(directory: Path) -> None:
     c.set('k', 'old')
     c.set('n', 10)
     c.set('in-hold', 'old')
-    hold = c._hold_write_transaction()
+    hold = c.transact()
     hold.__enter__()
     c.set('in-hold', 'new')
     with warnings.catch_warnings():
