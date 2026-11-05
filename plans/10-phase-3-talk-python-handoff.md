@@ -16,7 +16,9 @@ Paths: `LIB` = `~/github/mk/diskcache-oxide`. `APP` = `~/github/talk-python/talk
 | 24-hour soak on the mini | **PASS on `ae48524`** (section 8). Since then: comments, docs, tests and formatting, plus the finding 3 follow-up to the deferred-owner lock and its child-hook refinement (a forked child frees a holder that held only the stamp), paths the soak didn't reach |
 | PGO wheels | Rebuilt 2026-11-04 on `07ed13d` plus the child-hook refinement into `LIB/dist/`, macOS arm64 only (section 4) |
 | Linux wheel | **Doesn't exist.** Production installs from a wheel, not PyPI (Michael). Version is still `0.0.0`. Blocks production, not local work |
-| Port plan | **Not written.** Section 6 has the raw material; it goes in `plans/` and gets the architect's review |
+| Port plan | Written: `APP/plans/084-diskcache-oxide-port.plan.md` (plan 084) |
+| Unsafe check of the deferred-owner stack (`cf74d92`) | Clean (2026-11-04): Miri, 16 seeds, on the `stack` tests; ThreadSanitizer on those plus `row_5_concurrent_deferrals_leak_nothing_with_or_without_a_fork` |
+| Whole-codebase sanitizer pass | **Not done.** Required before production (section 3, item 6) |
 
 Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency work), `plans/08` (what's built, with the reasoning), `plans/09` (built, including the review's required changes). `reviews/deep-review-5b2ea85-2026-10-31.md` has the deep review of plan 09 and the status of each finding.
 
@@ -31,6 +33,8 @@ Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency wor
 - **The soak restarts once plan 09 is built:** a fresh 24 hours on that commit, replacing the 6-8 hour re-soak. Done: it passed on `ae48524`. The mini is Michael's to give; it's currently dedicated to this.
 - **No pickle in Talk Python: msgpack only, and the app adjusts.** The two dataclass values become plain dicts (section 5, step 3). No cache opens with `pickle=True`.
 - **Use `ty`, never mypy,** in the library too.
+- **The wheels Talk Python installs are PGO builds** (2026-11-04), on Linux and macOS. This replaces plan 084 default 3 (plain wheels).
+- **A whole-codebase sanitizer pass comes before production** (2026-11-04): after the port is far enough along to move Talk Python over, and before the final 24-hour soak, so that soak covers any fixes (section 3, item 6).
 
 ## 3. What to do next, in order
 
@@ -39,7 +43,7 @@ Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency wor
 3. **Done: add `pop` and durable lanes to the soak kit and soak 24 hours.** It passed on `ae48524` (section 8). Rule for any rerun: one soak at a time on the mini. Use `zsh -lc` over ssh, and see the memory note `soak-on-mini`.
 4. **Write the port plan** from section 6, settling section 7's decisions with Michael. The architect reviews it.
 5. **Port on the branch.** Run `./venv/bin/ty check`, `./venv/bin/ruff check --fix talk_python_to_me_com/`, `./venv/bin/ruff format talk_python_to_me_com/` and the tests, from `APP`. About 8,500 tests, serial, and `tests/test_type_check.py` fails on any `ty` diagnostic.
-6. **Before production:** the soak PASS on the final library commit, a Linux wheel (section 9), and the cold-cutover steps (section 7, items 1 and 2). Near the end, Michael runs a real test on `talk-python-htz`, on real Linux, as the near-final check (2026-10-30). That's where Linux performance gets measured, including the fork cost at the worker's real size (section 11).
+6. **Before production, in this order.** First, the sanitizer pass, on the mini overnight, from a new `scripts/sanitize.sh` that can be rerun before each release. Miri (with `-Zmiri-many-seeds`) runs on the pure-Rust modules it can execute: `gate`, `genlock`, `stack`, `sync` and the codec. It can't run SQLite (C) or `fork()`. ThreadSanitizer runs on all of core's tests, with the bundled SQLite built with `-fsanitize=thread` and the fork tests run separately (`die_after_fork=0`) or left out, and on the Python suite on 3.14t against a TSan-built CPython. AddressSanitizer and LeakSanitizer run on core and the Python suite. Fix what they find, with the architect's review. Then the soak PASS on the final library commit, a Linux wheel (section 9), and the cold-cutover steps (section 7, items 1 and 2). Near the end, Michael runs a real test on `talk-python-htz`, on real Linux, as the near-final check (2026-10-30). That's where Linux performance gets measured, including the fork cost at the worker's real size (section 11).
 
 Library changes during the port: Python-only changes such as `Caches` shouldn't need another soak. A change to `get_with`, `pop` or the locking does.
 
