@@ -37,7 +37,22 @@ use crate::to_py_err;
 /// A disk cache backed by SQLite, shared safely across threads and processes.
 #[pyclass(frozen, module = "diskcache_oxide")]
 pub(crate) struct Cache {
+    handle: StoreHandle,
+    config: HandleConfig,
+}
+
+/// This handle's membership in one store: the store, and whether this handle closed it. A
+/// `FanoutCache` holds one per shard.
+struct StoreHandle {
     store: Arc<Store>,
+    closed: AtomicBool,
+}
+
+/// What a handle applies to every store it operates on: its settings and what it has reported.
+/// Embedded by value, so an operation reaches it with no indirection. The operations that run
+/// against one store take that store explicitly, so a handle over several stores shares them.
+struct HandleConfig {
+    /// The directory the handle was opened on: shown in `repr` and named in failure reports.
     directory: String,
     timeout: Duration,
     serializer: Serializer,
@@ -48,7 +63,6 @@ pub(crate) struct Cache {
     failures: Option<Box<Failures>>,
     /// Stored versions already reported under `on_decode_error` (see `first_report`).
     reported: Mutex<HashSet<Version>>,
-    closed: AtomicBool,
 }
 
 /// How many reported versions a handle remembers before it forgets them all and starts over.
@@ -138,17 +152,19 @@ impl Cache {
             role: Role::Plain,
         };
         let store = crate::detach(py, || Store::open(&options)).map_err(to_py_err)?;
+        let on_decode_error = on_decode_error.unwrap_or(if durable { DecodePolicy::Miss } else { DecodePolicy::Raise });
         Ok(Self {
-            store,
-            directory: directory.to_string_lossy().into_owned(),
-            timeout,
-            serializer,
-            pickle,
-            clock,
-            on_decode_error: on_decode_error.unwrap_or(if durable { DecodePolicy::Miss } else { DecodePolicy::Raise }),
-            failures: durable.then(|| Box::new(Failures::new(timeout.as_secs_f64()))),
-            reported: Mutex::new(HashSet::new()),
-            closed: AtomicBool::new(false),
+            handle: StoreHandle { store, closed: AtomicBool::new(false) },
+            config: HandleConfig {
+                directory: directory.to_string_lossy().into_owned(),
+                timeout,
+                serializer,
+                pickle,
+                clock,
+                on_decode_error,
+                failures: durable.then(|| Box::new(Failures::new(timeout.as_secs_f64()))),
+                reported: Mutex::new(HashSet::new()),
+            },
         })
     }
 
@@ -156,22 +172,22 @@ impl Cache {
 
     #[getter]
     fn directory(&self) -> &str {
-        &self.directory
+        &self.config.directory
     }
 
     #[getter]
     fn timeout(&self) -> f64 {
-        self.timeout.as_secs_f64()
+        self.config.timeout.as_secs_f64()
     }
 
     #[getter]
     fn size_limit(&self) -> i64 {
-        self.store.cached_limits().size_limit
+        self.handle.store.cached_limits().size_limit
     }
 
     #[getter]
     fn cull_limit(&self) -> i64 {
-        self.store.cached_limits().cull_limit
+        self.handle.store.cached_limits().cull_limit
     }
 
     /// Always True for a real cache (a `NullCache` is False).
@@ -183,7 +199,7 @@ impl Cache {
 
     /// Test hook: what forced WAL checkpoints have done on this cache's store.
     fn _wal_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
-        let s = self.store.wal_stats();
+        let s = self.handle.store.wal_stats();
         let d = pyo3::types::PyDict::new(py);
         for (k, v) in [
             ("checks", s.checks),
@@ -207,7 +223,7 @@ impl Cache {
     /// Test hook: every failure `durable=True` has swallowed on this handle, by bucket (`busy`,
     /// `broken`, `lost_deletes`) and then by operation. Empty on a handle that isn't durable.
     fn _durable_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
-        match &self.failures {
+        match &self.config.failures {
             Some(failures) => failures.stats(py),
             None => Ok(pyo3::types::PyDict::new(py)),
         }
@@ -215,23 +231,17 @@ impl Cache {
 
     /// Test hook: how many open handles this cache's store counts, deferred releases included.
     fn _handle_count(&self) -> isize {
-        self.store.handles()
+        self.handle.store.handles()
     }
 
     fn __repr__(&self) -> String {
-        format!("Cache({:?})", self.directory)
+        format!("Cache({:?})", self.config.directory)
     }
 
     /// Lets the garbage collector see the Python objects this handle holds: a `clock` or an
     /// `on_decode_error` callable that refers back to the cache would otherwise leak both.
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        if let Some(clock) = &self.clock {
-            visit.call(clock)?;
-        }
-        if let DecodePolicy::Report(callback) = &self.on_decode_error {
-            visit.call(callback)?;
-        }
-        Ok(())
+        self.config.traverse(&visit)
     }
 
     // -- reads --------------------------------------------------------------------------------
@@ -245,8 +255,8 @@ impl Cache {
         expire_time: bool,
     ) -> PyResult<Py<PyAny>> {
         let key = str_key(key)?;
-        let now = self.now(py)?;
-        let found = self.lookup(py, key, now)?;
+        let now = self.config.now(py)?;
+        let found = self.config.lookup(py, &self.handle, key, now)?;
         let default = default.unwrap_or_else(|| py.None());
         match (found, expire_time) {
             (Some((value, _)), false) => Ok(value),
@@ -260,8 +270,8 @@ impl Cache {
 
     fn __getitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let name = str_key(key)?;
-        let now = self.now(py)?;
-        match self.lookup(py, name, now)? {
+        let now = self.config.now(py)?;
+        match self.config.lookup(py, &self.handle, name, now)? {
             Some((value, _)) => Ok(value),
             None => Err(PyKeyError::new_err(key.clone().unbind())),
         }
@@ -269,14 +279,17 @@ impl Cache {
 
     fn __contains__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
         let key = str_key(key)?;
-        let now = self.now(py)?;
-        let found = self.ensure_open(self.timeout).and_then(|timeout| self.store.contains(timeout, key, now));
-        Ok(self.attempt(py, Op::Contains, now, found)?.unwrap_or(false))
+        let now = self.config.now(py)?;
+        let found = self
+            .handle
+            .ensure_open(self.config.timeout)
+            .and_then(|timeout| self.handle.store.contains(timeout, key, now));
+        Ok(self.config.attempt(py, &self.handle.store, Op::Contains, now, found)?.unwrap_or(false))
     }
 
     fn __len__(&self) -> PyResult<usize> {
-        let timeout = self.ensure_open(self.timeout).map_err(to_py_err)?;
-        let count = self.store.len(timeout).map_err(to_py_err)?;
+        let timeout = self.handle.ensure_open(self.config.timeout).map_err(to_py_err)?;
+        let count = self.handle.store.len(timeout).map_err(to_py_err)?;
         Ok(usize::try_from(count).unwrap_or(0))
     }
 
@@ -287,8 +300,8 @@ impl Cache {
     }
 
     fn volume(&self) -> PyResult<i64> {
-        let timeout = self.ensure_open(self.timeout).map_err(to_py_err)?;
-        self.store.volume(timeout).map_err(to_py_err)
+        let timeout = self.handle.ensure_open(self.config.timeout).map_err(to_py_err)?;
+        self.handle.store.volume(timeout).map_err(to_py_err)
     }
 
     /// Checkpoints the write-ahead log and truncates it to zero (D-024), retrying until `timeout`.
@@ -296,16 +309,16 @@ impl Cache {
     /// `timeout`: how long to keep trying, in seconds (default: the cache's timeout).
     #[pyo3(signature = (*, timeout = None))]
     fn checkpoint(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        let timeout = self.call_timeout(timeout)?;
+        let timeout = self.config.call_timeout(timeout)?;
         // A closed handle that can't rejoin behind a fork is busy too, and this never raises for busy.
-        let timeout = match self.ensure_open(timeout) {
+        let timeout = match self.handle.ensure_open(timeout) {
             Ok(left) => left,
             Err(Error::Timeout { .. }) => return Ok(false),
             Err(error) => return Err(to_py_err(error)),
         };
         // Each round waits on the write lock and backs off after a busy one. Detached, none of
         // those waits takes the interpreter back in between (the copy itself always runs detached).
-        crate::detach(py, || self.store.checkpoint(timeout)).map_err(to_py_err)
+        crate::detach(py, || self.handle.store.checkpoint(timeout)).map_err(to_py_err)
     }
 
     // -- writes -------------------------------------------------------------------------------
@@ -320,12 +333,14 @@ impl Cache {
     ) -> PyResult<bool> {
         let key = str_key(key)?;
         let expire = optional_seconds("expire", expire)?;
-        let encoded = codec::encode(py, value, self.serializer, self.pickle)?;
+        let encoded = codec::encode(py, value, self.config.serializer, self.config.pickle)?;
         let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
-        let now = self.now(py)?;
-        let stored =
-            self.ensure_open(self.timeout).and_then(|timeout| self.store.set(timeout, key, value, expire, now));
-        Ok(self.attempt(py, Op::Set, now, stored)?.unwrap_or(false))
+        let now = self.config.now(py)?;
+        let stored = self
+            .handle
+            .ensure_open(self.config.timeout)
+            .and_then(|timeout| self.handle.store.set(timeout, key, value, expire, now));
+        Ok(self.config.attempt(py, &self.handle.store, Op::Set, now, stored)?.unwrap_or(false))
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -342,18 +357,24 @@ impl Cache {
     ) -> PyResult<bool> {
         let key = str_key(key)?;
         let expire = optional_seconds("expire", expire)?;
-        let encoded = codec::encode(py, value, self.serializer, self.pickle)?;
+        let encoded = codec::encode(py, value, self.config.serializer, self.config.pickle)?;
         let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
-        let now = self.now(py)?;
-        let added = self.ensure_open(self.timeout).and_then(|timeout| self.store.add(timeout, key, value, expire, now));
-        Ok(self.attempt(py, Op::Add, now, added)?.unwrap_or(false))
+        let now = self.config.now(py)?;
+        let added = self
+            .handle
+            .ensure_open(self.config.timeout)
+            .and_then(|timeout| self.handle.store.add(timeout, key, value, expire, now));
+        Ok(self.config.attempt(py, &self.handle.store, Op::Add, now, added)?.unwrap_or(false))
     }
 
     fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
         let key = str_key(key)?;
-        let now = self.now(py)?;
-        let deleted = self.ensure_open(self.timeout).and_then(|timeout| self.store.delete(timeout, key, now));
-        Ok(self.attempt(py, Op::Delete, now, deleted)?.unwrap_or(false))
+        let now = self.config.now(py)?;
+        let deleted = self
+            .handle
+            .ensure_open(self.config.timeout)
+            .and_then(|timeout| self.handle.store.delete(timeout, key, now));
+        Ok(self.config.attempt(py, &self.handle.store, Op::Delete, now, deleted)?.unwrap_or(false))
     }
 
     fn __delitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -363,11 +384,14 @@ impl Cache {
     #[pyo3(signature = (key, default = None))]
     fn pop(&self, py: Python<'_>, key: &Bound<'_, PyAny>, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
         let key = str_key(key)?;
-        let now = self.now(py)?;
+        let now = self.config.now(py)?;
         // In a child that can't write (D-020) a read could report a miss; a pop fails.
-        let ready = self.ensure_open(self.timeout).and_then(|timeout| self.store.check_writable().map(|()| timeout));
-        let popped = match self.attempt(py, Op::Pop, now, ready)? {
-            Some(timeout) => self.pop_value(py, key, now, timeout)?,
+        let ready = self
+            .handle
+            .ensure_open(self.config.timeout)
+            .and_then(|timeout| self.handle.store.check_writable().map(|()| timeout));
+        let popped = match self.config.attempt(py, &self.handle.store, Op::Pop, now, ready)? {
+            Some(timeout) => self.config.pop_value(py, &self.handle.store, key, now, timeout)?,
             None => None,
         };
         Ok(popped.unwrap_or_else(|| default.unwrap_or_else(|| py.None())))
@@ -377,19 +401,22 @@ impl Cache {
     fn touch(&self, py: Python<'_>, key: &Bound<'_, PyAny>, expire: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
         let key = str_key(key)?;
         let expire = optional_seconds("expire", expire)?;
-        let now = self.now(py)?;
-        let touched = self.ensure_open(self.timeout).and_then(|timeout| self.store.touch(timeout, key, expire, now));
-        Ok(self.attempt(py, Op::Touch, now, touched)?.unwrap_or(false))
+        let now = self.config.now(py)?;
+        let touched = self
+            .handle
+            .ensure_open(self.config.timeout)
+            .and_then(|timeout| self.handle.store.touch(timeout, key, expire, now));
+        Ok(self.config.attempt(py, &self.handle.store, Op::Touch, now, touched)?.unwrap_or(false))
     }
 
     #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
     fn incr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        self.add_number(py, key, delta, default, false)
+        self.config.add_number(py, &self.handle, key, delta, default, false)
     }
 
     #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
     fn decr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        self.add_number(py, key, delta, default, true)
+        self.config.add_number(py, &self.handle, key, delta, default, true)
     }
 
     // -- maintenance and iteration -------------------------------------------------------------
@@ -398,29 +425,29 @@ impl Cache {
     /// for this call: how long each chunk may wait for the write lock.
     #[pyo3(signature = (*, timeout = None))]
     fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
-        let timeout = self.call_timeout(timeout)?;
-        let now = self.now(py)?;
-        let timeout = self.ensure_open(timeout).map_err(to_py_err)?;
-        crate::detach(py, || self.store.expire(timeout, now)).map_err(to_py_err)
+        let timeout = self.config.call_timeout(timeout)?;
+        let now = self.config.now(py)?;
+        let timeout = self.handle.ensure_open(timeout).map_err(to_py_err)?;
+        crate::detach(py, || self.handle.store.expire(timeout, now)).map_err(to_py_err)
     }
 
     /// Removes every entry stored before the call. Returns how many it removed. `timeout` as for
     /// `expire`.
     #[pyo3(signature = (*, timeout = None))]
     fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
-        let timeout = self.call_timeout(timeout)?;
-        let timeout = self.ensure_open(timeout).map_err(to_py_err)?;
-        crate::detach(py, || self.store.clear(timeout)).map_err(to_py_err)
+        let timeout = self.config.call_timeout(timeout)?;
+        let timeout = self.handle.ensure_open(timeout).map_err(to_py_err)?;
+        crate::detach(py, || self.handle.store.clear(timeout)).map_err(to_py_err)
     }
 
     /// Removes expired entries, then evicts until the cache is under `size_limit`. Returns how many
     /// it removed. `timeout` as for `expire`.
     #[pyo3(signature = (*, timeout = None))]
     fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
-        let timeout = self.call_timeout(timeout)?;
-        let now = self.now(py)?;
-        let timeout = self.ensure_open(timeout).map_err(to_py_err)?;
-        crate::detach(py, || self.store.cull(timeout, now)).map_err(to_py_err)
+        let timeout = self.config.call_timeout(timeout)?;
+        let now = self.config.now(py)?;
+        let timeout = self.handle.ensure_open(timeout).map_err(to_py_err)?;
+        crate::detach(py, || self.handle.store.cull(timeout, now)).map_err(to_py_err)
     }
 
     /// Keys in sorted order (code-point order, like `sorted()`), optionally only those starting
@@ -452,24 +479,24 @@ impl Cache {
     fn close(&self, py: Python<'_>, checkpoint: bool) {
         // Before the swap: a logging handler that uses this cache would reopen a handle already marked
         // closed, and this close would then return with it open.
-        if let Some(failures) = &self.failures {
-            failures.flush(py, &self.directory);
+        if let Some(failures) = &self.config.failures {
+            failures.flush(py, &self.config.directory);
         }
-        if !self.closed.swap(true, Ordering::AcqRel) {
+        if !self.handle.closed.swap(true, Ordering::AcqRel) {
             // The interpreter is released only when the last handle closes on a large WAL, so the
             // usual close doesn't wait to get it back. Then both steps run detached: the
             // checkpoint, and the release, since closing the last connection may run SQLite's own
             // checkpoint (with `checkpoint=False`, or after a busy one).
-            if self.store.closing_on_a_large_wal() {
-                let budget = self.timeout.min(Duration::from_secs(1));
+            if self.handle.store.closing_on_a_large_wal() {
+                let budget = self.config.timeout.min(Duration::from_secs(1));
                 crate::detach(py, || {
                     if checkpoint {
-                        self.store.checkpoint_on_close(budget);
+                        self.handle.store.checkpoint_on_close(budget);
                     }
-                    self.store.release_handle();
+                    self.handle.store.release_handle();
                 });
             } else {
-                self.store.release_handle();
+                self.handle.store.release_handle();
             }
         }
     }
@@ -497,22 +524,7 @@ impl Cache {
     }
 }
 
-impl Cache {
-    fn now(&self, py: Python<'_>) -> PyResult<f64> {
-        match &self.clock {
-            Some(clock) => clock.bind(py).call0()?.extract::<f64>(),
-            None => Ok(SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())),
-        }
-    }
-
-    /// A per-call `timeout=` argument, or the cache's own when it's omitted or None.
-    fn call_timeout(&self, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<Duration> {
-        match optional_seconds("timeout", timeout)? {
-            Some(t) => timeout_duration(t),
-            None => Ok(self.timeout),
-        }
-    }
-
+impl StoreHandle {
     /// A handle that was closed and is used again rejoins its store (diskcache reopens lazily).
     /// Returns what's left of `timeout` for the operation: all of it, unless the handle was closed.
     #[inline]
@@ -534,46 +546,98 @@ impl Cache {
         )?;
         Ok(deadline.saturating_duration_since(Instant::now()))
     }
+}
 
-    /// The result of a store call, or `None` if it failed and this handle answers that as a miss. The
-    /// one place a failure can be swallowed: only a store's own failure ever gets here, so a `Timeout`
-    /// raised by the caller's code (a clock, a pickle hook) is never taken for this cache's.
+impl HandleConfig {
+    /// Visits the Python objects the handle holds, for `__traverse__`.
+    fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if let Some(clock) = &self.clock {
+            visit.call(clock)?;
+        }
+        if let DecodePolicy::Report(callback) = &self.on_decode_error {
+            visit.call(callback)?;
+        }
+        Ok(())
+    }
+
+    fn now(&self, py: Python<'_>) -> PyResult<f64> {
+        match &self.clock {
+            Some(clock) => clock.bind(py).call0()?.extract::<f64>(),
+            None => Ok(SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())),
+        }
+    }
+
+    /// A per-call `timeout=` argument, or the cache's own when it's omitted or None.
+    fn call_timeout(&self, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<Duration> {
+        match optional_seconds("timeout", timeout)? {
+            Some(t) => timeout_duration(t),
+            None => Ok(self.timeout),
+        }
+    }
+
+    /// The result of a call on `store`, or `None` if it failed and this handle answers that as a
+    /// miss. The one place a failure can be swallowed: only a store's own failure ever gets here, so
+    /// a `Timeout` raised by the caller's code (a clock, a pickle hook) is never taken for this
+    /// cache's.
     #[inline]
-    fn attempt<T>(&self, py: Python<'_>, op: Op, now: f64, result: Result<T, Error>) -> PyResult<Option<T>> {
+    fn attempt<T>(
+        &self,
+        py: Python<'_>,
+        store: &Store,
+        op: Op,
+        now: f64,
+        result: Result<T, Error>,
+    ) -> PyResult<Option<T>> {
         match result {
             Ok(value) => Ok(Some(value)),
-            Err(error) => self.store_failed(py, op, now, error).map(|()| None),
+            Err(error) => self.store_failed(py, store, op, now, error).map(|()| None),
         }
     }
 
     /// `Ok` if `error` was swallowed and counted, or the exception to raise: it isn't durable, it's a
-    /// bug rather than an outage, or this thread holds a transaction on this store, whose atomicity
-    /// a dropped write would break.
+    /// bug rather than an outage, or this thread holds a transaction on `store`, whose atomicity a
+    /// dropped write would break.
     #[cold]
     #[inline(never)]
-    fn store_failed(&self, py: Python<'_>, op: Op, now: f64, error: Error) -> PyResult<()> {
+    fn store_failed(&self, py: Python<'_>, store: &Store, op: Op, now: f64, error: Error) -> PyResult<()> {
         let Some(failures) = self.failures.as_deref() else { return Err(to_py_err(error)) };
-        if !error.is_operational() || self.store.held_by_this_thread() {
+        if !error.is_operational() || store.held_by_this_thread() {
             return Err(to_py_err(error));
         }
         failures.record(py, op, now, &error, &self.directory)
     }
 
-    fn lookup(&self, py: Python<'_>, key: &str, now: f64) -> PyResult<Option<(Py<PyAny>, Option<f64>)>> {
-        let read = self.ensure_open(self.timeout).and_then(|timeout| self.read_row(py, timeout, key, now));
-        let Some(Some(hit)) = self.attempt(py, Op::Get, now, read)? else { return Ok(None) };
+    fn lookup(
+        &self,
+        py: Python<'_>,
+        handle: &StoreHandle,
+        key: &str,
+        now: f64,
+    ) -> PyResult<Option<(Py<PyAny>, Option<f64>)>> {
+        let store = &*handle.store;
+        let read = handle.ensure_open(self.timeout).and_then(|timeout| self.read_row(py, store, timeout, key, now));
+        let Some(Some(hit)) = self.attempt(py, store, Op::Get, now, read)? else { return Ok(None) };
         match hit.value {
             Ok(value) => Ok(Some((value, hit.expire_time))),
-            Err((mode, e)) => self.decode_failed(py, key, Op::Get, mode, e, Row::Stored(hit.version)).map(|()| None),
+            Err((mode, e)) => {
+                self.decode_failed(py, store, key, Op::Get, mode, e, Row::Stored(hit.version)).map(|()| None)
+            }
         }
     }
 
-    /// The live value of `key`, decoded, or the decode error with the row's mode. A store failure is
-    /// the outer `Err`, so the decode policy never sees one.
+    /// The live value of `key` in `store`, decoded, or the decode error with the row's mode. A store
+    /// failure is the outer `Err`, so the decode policy never sees one.
     #[inline]
-    fn read_row(&self, py: Python<'_>, timeout: Duration, key: &str, now: f64) -> Result<Option<Decoded>, Error> {
+    fn read_row(
+        &self,
+        py: Python<'_>,
+        store: &Store,
+        timeout: Duration,
+        key: &str,
+        now: f64,
+    ) -> Result<Option<Decoded>, Error> {
         let allow_pickle = self.pickle;
-        self.store.get_with(
+        store.get_with(
             timeout,
             key,
             now,
@@ -594,50 +658,57 @@ impl Cache {
     ///
     /// On a durable handle a store failure is a miss. That includes a failed delete after a clean
     /// decode: the row is still there, so returning the value could deliver it twice.
-    fn pop_value(&self, py: Python<'_>, key: &str, now: f64, timeout: Duration) -> PyResult<Option<Py<PyAny>>> {
+    fn pop_value(
+        &self,
+        py: Python<'_>,
+        store: &Store,
+        key: &str,
+        now: f64,
+        timeout: Duration,
+    ) -> PyResult<Option<Py<PyAny>>> {
         let deadline = lockwait::deadline_after(Instant::now(), timeout);
         let left = || deadline.saturating_duration_since(Instant::now());
         for _ in 0..spill::OPTIMISTIC_ATTEMPTS {
-            let read = self.read_row(py, left(), key, now);
-            let Some(Some(hit)) = self.pop_attempt(py, now, read)? else { return Ok(None) };
+            let read = self.read_row(py, store, left(), key, now);
+            let Some(Some(hit)) = self.pop_attempt(py, store, now, read)? else { return Ok(None) };
             match hit.value {
                 Ok(value) => {
-                    let deleted = self.store.delete_version(left(), hit.version);
-                    match self.pop_attempt(py, now, deleted)? {
+                    let deleted = store.delete_version(left(), hit.version);
+                    match self.pop_attempt(py, store, now, deleted)? {
                         Some(true) => return Ok(Some(value)),
                         Some(false) => {}
                         None => return Ok(None),
                     }
                 }
                 Err((mode, e)) => {
-                    if self.pop_failed(py, key, now, mode, e, hit.version, left())? {
+                    if self.pop_failed(py, store, key, now, mode, e, hit.version, left())? {
                         return Ok(None);
                     }
                 }
             }
             if left().is_zero() {
-                self.pop_attempt(py, now, Err::<(), _>(Error::Timeout { seconds: 0.0 }))?;
+                self.pop_attempt(py, store, now, Err::<(), _>(Error::Timeout { seconds: 0.0 }))?;
                 return Ok(None);
             }
         }
         let allow_pickle = self.pickle;
         let refuse = |mode| codec::refuses(mode, allow_pickle);
-        let removed = self.store.pop(left(), key, now, refuse);
-        match self.pop_attempt(py, now, removed)? {
+        let removed = store.pop(left(), key, now, refuse);
+        match self.pop_attempt(py, store, now, removed)? {
             None | Some(Pop::Missing) => Ok(None),
             Some(Pop::Removed(popped)) => match decode_value(py, popped.mode, popped.value_ref(), allow_pickle) {
                 Ok(value) => Ok(Some(value)),
-                Err(e) => self.decode_failed(py, key, Op::Pop, popped.mode, e, Row::Removed).map(|()| None),
+                Err(e) => self.decode_failed(py, store, key, Op::Pop, popped.mode, e, Row::Removed).map(|()| None),
             },
             Some(Pop::Refused { mode }) => {
-                self.decode_failed(py, key, Op::Pop, mode, codec::refusal(mode), Row::Kept).map(|()| None)
+                self.decode_failed(py, store, key, Op::Pop, mode, codec::refusal(mode), Row::Kept).map(|()| None)
             }
         }
     }
 
-    /// [`Cache::attempt`] for a store call during `pop`.
-    fn pop_attempt<T>(&self, py: Python<'_>, now: f64, result: Result<T, Error>) -> PyResult<Option<T>> {
-        self.attempt(py, Op::Pop, now, result.map_err(|e| self.whole_timeout(e)))
+    /// [`HandleConfig::attempt`] for a store call during `pop`.
+    fn pop_attempt<T>(&self, py: Python<'_>, store: &Store, now: f64, result: Result<T, Error>) -> PyResult<Option<T>> {
+        self.attempt(py, store, Op::Pop, now, result.map_err(|e| self.whole_timeout(e)))
     }
 
     /// A store failure during `pop`. A timeout names the cache's timeout: the store only knows the
@@ -660,6 +731,7 @@ impl Cache {
     fn pop_failed(
         &self,
         py: Python<'_>,
+        store: &Store,
         key: &str,
         now: f64,
         mode: i64,
@@ -667,14 +739,14 @@ impl Cache {
         version: Version,
         timeout: Duration,
     ) -> PyResult<bool> {
-        if !matches!(self.classify(py, mode, &e), Failure::Unreadable) {
-            return self.decode_failed(py, key, Op::Pop, mode, e, Row::Stored(version)).map(|()| true);
+        if !matches!(self.classify(py, store, mode, &e), Failure::Unreadable) {
+            return self.decode_failed(py, store, key, Op::Pop, mode, e, Row::Stored(version)).map(|()| true);
         }
-        match self.store.delete_version(timeout, version) {
-            Ok(true) => self.decode_failed(py, key, Op::Pop, mode, e, Row::Removed).map(|()| true),
+        match store.delete_version(timeout, version) {
+            Ok(true) => self.decode_failed(py, store, key, Op::Pop, mode, e, Row::Removed).map(|()| true),
             Ok(false) => Ok(false),
-            Err(error) => match self.store_failed(py, Op::Pop, now, self.whole_timeout(error)) {
-                Ok(()) => self.decode_failed(py, key, Op::Pop, mode, e, Row::Stored(version)).map(|()| true),
+            Err(error) => match self.store_failed(py, store, Op::Pop, now, self.whole_timeout(error)) {
+                Ok(()) => self.decode_failed(py, store, key, Op::Pop, mode, e, Row::Stored(version)).map(|()| true),
                 Err(error) => {
                     error.set_cause(py, Some(e));
                     Err(error)
@@ -683,17 +755,27 @@ impl Cache {
         }
     }
 
-    /// A value of `key` failed to decode with `e`. Under `on_decode_error='raise'`, or for an error
-    /// that isn't about the stored bytes, returns `e`. Otherwise the read is a miss: an unreadable
-    /// row is deleted (exactly that version, without waiting), a foreign one is left for whoever can
-    /// read it, and the failure is reported, once per stored version for a row that stays. Runs
-    /// with no connection of its own held; inside a pickle hook of an outer read, that read's
-    /// connection is still held, so a slow report delays forks and checkpoints for as long.
-    fn decode_failed(&self, py: Python<'_>, key: &str, op: Op, mode: i64, e: PyErr, row: Row) -> PyResult<()> {
+    /// A value of `key` in `store` failed to decode with `e`. Under `on_decode_error='raise'`, or for
+    /// an error that isn't about the stored bytes, returns `e`. Otherwise the read is a miss: an
+    /// unreadable row is deleted (exactly that version, without waiting), a foreign one is left for
+    /// whoever can read it, and the failure is reported, once per stored version for a row that
+    /// stays. Runs with no connection of its own held; inside a pickle hook of an outer read, that
+    /// read's connection is still held, so a slow report delays forks and checkpoints for as long.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_failed(
+        &self,
+        py: Python<'_>,
+        store: &Store,
+        key: &str,
+        op: Op,
+        mode: i64,
+        e: PyErr,
+        row: Row,
+    ) -> PyResult<()> {
         if matches!(self.on_decode_error, DecodePolicy::Raise) {
             return Err(e);
         }
-        let failure = self.classify(py, mode, &e);
+        let failure = self.classify(py, store, mode, &e);
         if matches!(failure, Failure::Transient)
             && let Some(failures) = &self.failures
         {
@@ -713,7 +795,7 @@ impl Cache {
             (Failure::Foreign, Row::Stored(version)) => {
                 ("left in place for a version or host that can read it", Some(version))
             }
-            (Failure::Unreadable, Row::Stored(version)) => match self.store.delete_version_nowait(version) {
+            (Failure::Unreadable, Row::Stored(version)) => match store.delete_version_nowait(version) {
                 VersionDelete::Removed => ("deleted", None),
                 VersionDelete::Gone => ("already replaced", None),
                 VersionDelete::Skipped => (
@@ -740,14 +822,14 @@ impl Cache {
 
     /// What kind of decode failure `e` is on this handle. A durable handle takes a pickle hook's
     /// `OSError` (`Timeout` included) or `RecursionError` as an outage: a miss with the row kept, so
-    /// the request doesn't fail. Not inside this thread's own transaction, which raises as any failure
-    /// there does.
-    fn classify(&self, py: Python<'_>, mode: i64, e: &PyErr) -> Failure {
+    /// the request doesn't fail. Not inside this thread's own transaction on `store`, which raises as
+    /// any failure there does.
+    fn classify(&self, py: Python<'_>, store: &Store, mode: i64, e: &PyErr) -> Failure {
         match classify(py, mode, e) {
             Failure::Passthrough
                 if self.failures.is_some()
                     && (e.is_instance_of::<PyOSError>(py) || e.is_instance_of::<PyRecursionError>(py))
-                    && !self.store.held_by_this_thread() =>
+                    && !store.held_by_this_thread() =>
             {
                 Failure::Transient
             }
@@ -797,6 +879,7 @@ impl Cache {
     fn add_number(
         &self,
         py: Python<'_>,
+        handle: &StoreHandle,
         key: &Bound<'_, PyAny>,
         Delta(mut delta): Delta,
         IncrDefault(default): IncrDefault,
@@ -813,14 +896,15 @@ impl Cache {
         }
         let now = self.now(py)?;
         let op = if negate { Op::Decr } else { Op::Incr };
+        let store = &*handle.store;
         let stored =
-            self.ensure_open(self.timeout).and_then(|timeout| self.store.incr(timeout, name, delta, default, now));
+            handle.ensure_open(self.timeout).and_then(|timeout| store.incr(timeout, name, delta, default, now));
         let number = match stored {
             Ok(number) => number,
             Err(Error::KeyMissing) => return Err(PyKeyError::new_err(key.clone().unbind())),
             Err(error) => {
                 // Answered as a `NullCache` does, so a rate limiter fails open.
-                self.store_failed(py, op, now, error)?;
+                self.store_failed(py, store, op, now, error)?;
                 let Some(default) = default else { return Err(PyKeyError::new_err(key.clone().unbind())) };
                 default.checked_add(delta).map_err(to_py_err)?
             }
@@ -839,8 +923,8 @@ impl Drop for Cache {
     /// before the thread asks for the interpreter back). Releasing attached when it declines is
     /// only a fallback.
     fn drop(&mut self) {
-        if !self.closed.swap(true, Ordering::AcqRel) {
-            let store = &self.store;
+        if !self.handle.closed.swap(true, Ordering::AcqRel) {
+            let store = &self.handle.store;
             let detached = store.closing_on_a_large_wal()
                 && Python::try_attach(|py| crate::detach(py, || store.release_handle())).is_some();
             if !detached {
@@ -895,9 +979,12 @@ impl KeyIterator {
             return Ok(None);
         }
         let cache = self.cache.get();
-        let timeout = cache.ensure_open(cache.timeout).map_err(to_py_err)?;
-        let (keys, next) =
-            cache.store.keys_page(timeout, self.order, self.prefix.as_deref(), &state.cursor).map_err(to_py_err)?;
+        let timeout = cache.handle.ensure_open(cache.config.timeout).map_err(to_py_err)?;
+        let (keys, next) = cache
+            .handle
+            .store
+            .keys_page(timeout, self.order, self.prefix.as_deref(), &state.cursor)
+            .map_err(to_py_err)?;
         if keys.is_empty() {
             state.done = true;
             return Ok(None);
@@ -972,13 +1059,14 @@ impl Transaction {
         let cache = self.cache.get();
         // Per store, so a second handle on the directory passes through too. An inherited
         // transaction doesn't count: a child's `begin_hold` then refuses (D-020).
-        if cache.store.held_by_this_thread() {
+        if cache.handle.store.held_by_this_thread() {
             return Ok(TxState::PassThrough);
         }
         loop {
             let began = cache
-                .ensure_open(cache.timeout)
-                .and_then(|timeout| crate::detach(py, || cache.store.begin_hold(timeout)));
+                .handle
+                .ensure_open(cache.config.timeout)
+                .and_then(|timeout| crate::detach(py, || cache.handle.store.begin_hold(timeout)));
             match began {
                 Ok(held) => return Ok(TxState::Held(held)),
                 Err(Error::Timeout { .. }) if self.retry => py.check_signals()?,
@@ -992,7 +1080,7 @@ impl Transaction {
     /// Waits, detached, up to the cache's `timeout` for another thread's end to finish, and returns
     /// whether it committed, or `None` if it's still running.
     fn wait_for_end(&self, py: Python<'_>) -> Option<bool> {
-        let timeout = self.cache.get().timeout;
+        let timeout = self.cache.get().config.timeout;
         crate::detach(py, || {
             let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             let (state, _) = self
