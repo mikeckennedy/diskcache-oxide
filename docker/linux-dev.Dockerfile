@@ -30,12 +30,16 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             --component rustfmt --component clippy \
     && rustc --version && cargo fmt --version && cargo clippy --version
 
-# cargo-deny: the prebuilt musl binary (a source build costs minutes).
+# cargo-deny: the prebuilt musl binary (a source build costs minutes). Stripping the archive's top
+# directory keeps tar from creating one: under OrbStack's Rosetta (--platform linux/amd64 on an
+# arm64 Mac), GNU tar fails every file it extracts into a directory it made ("Cannot open:
+# Function not implemented").
 RUN arch="$(uname -m)" \
+    && mkdir /tmp/cargo-deny \
     && curl -sSfL "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/cargo-deny-${CARGO_DENY_VERSION}-${arch}-unknown-linux-musl.tar.gz" \
-        | tar -xz -C /tmp \
-    && install -m 0755 "/tmp/cargo-deny-${CARGO_DENY_VERSION}-${arch}-unknown-linux-musl/cargo-deny" /opt/cargo/bin/ \
-    && rm -rf /tmp/cargo-deny-* \
+        | tar -xz -C /tmp/cargo-deny --strip-components=1 \
+    && install -m 0755 /tmp/cargo-deny/cargo-deny /opt/cargo/bin/ \
+    && rm -rf /tmp/cargo-deny \
     && cargo deny --version
 
 # uv (official installer) and uv-managed Pythons.

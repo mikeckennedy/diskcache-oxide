@@ -13,6 +13,8 @@
 #   DCO_TESTS    0 skips the per-Python smoke test, ty and pytest (envs are still synced)
 #   DCO_EXEC     a shell command run in the repo copy once per Python, with $VENV and $PY set
 #   DCO_ROUNDS   gate rounds (default 4)
+#   DCO_EMULATED set (by --platform, when it isn't the host's architecture) under emulation: tests
+#                that can't run under Rosetta skip. They check that it's set, not its value.
 set -uo pipefail
 
 PYTHONS="${DCO_PYTHONS:-3.14,3.14t,3.15,3.15t}"
@@ -46,11 +48,22 @@ env_dir() {
 
 step "snapshot /src -> $REPO"
 rm -rf "$REPO" && mkdir -p "$REPO"
+# Python's tarfile unpacks, not GNU tar: under OrbStack's Rosetta (--platform linux/amd64 on an
+# arm64 Mac), GNU tar fails every directory and file it creates below the top level ("Function not
+# implemented"). Creating the archive works there. filter="tar", not the stricter "data": it still
+# refuses absolute names, `..` and setuid bits, but allows a symlink that points outside the copy,
+# which a repo can hold.
 tar -C /src -cf - \
-    --exclude=./target --exclude='./venv' --exclude='./venv*' --exclude='./.venv*' \
+    --exclude=./target --exclude=./dist --exclude=./soak-results \
+    --exclude='./venv' --exclude='./venv*' --exclude='./.venv*' \
     --exclude='*/__pycache__' --exclude=./.pytest_cache \
     --exclude=./.ruff_cache --exclude=./.hypothesis --exclude='./python/diskcache_oxide/*.so' \
-    . | tar -C "$REPO" -xf -
+    . | "$(uv python find 3.14)" -c '
+import sys, tarfile
+with tarfile.open(fileobj=sys.stdin.buffer, mode="r|") as archive:
+    archive.extractall(sys.argv[1], filter="tar")
+' "$REPO" || { echo "snapshot failed" >&2; exit 1; }
+[[ -f "$REPO/Cargo.toml" ]] || { echo "snapshot is missing Cargo.toml" >&2; exit 1; }
 cd "$REPO" || exit 1
 printf '%s, %s CPUs, kernel %s, user %s\n' "$(. /etc/os-release && echo "$PRETTY_NAME")" "$(nproc)" "$(uname -r)" "$(id -un)"
 

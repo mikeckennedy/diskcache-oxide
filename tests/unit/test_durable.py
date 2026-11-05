@@ -313,6 +313,10 @@ def test_a_size_the_value_file_doesnt_match_is_a_miss(directory: Path, durable: 
     cache.close()
 
 
+@pytest.mark.skipif(
+    bool(os.environ.get('DCO_EMULATED')),
+    reason='under Rosetta (linux-check.sh --platform) a failed allocation kills the process instead of failing',
+)
 @pytest.mark.parametrize('durable', [True, False])
 def test_a_value_too_big_to_allocate_is_a_memory_error_and_stays(directory: Path, durable: bool) -> None:
     size = 2**54  # past any address space, and a sparse file APFS allows

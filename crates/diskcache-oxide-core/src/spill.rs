@@ -207,6 +207,13 @@ mod tests {
 
     #[test]
     fn a_size_too_big_to_allocate_is_out_of_memory() {
+        // Under Rosetta (`scripts/linux-check.sh --platform linux/amd64` on an arm64 Mac) the failed
+        // allocation kills the process ("rosetta error: could not find free space") instead of
+        // returning an error, so there's nothing to learn there. Real x86-64 runs it.
+        if std::env::var_os("DCO_EMULATED").is_some() {
+            eprintln!("skipped: DCO_EMULATED is set");
+            return;
+        }
         let tmp = TempDir::new("spill-huge");
         let pending = PendingFile::write(tmp.path(), b"x").unwrap();
         pending.commit_name().unwrap();
