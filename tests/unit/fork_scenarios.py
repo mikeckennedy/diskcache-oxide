@@ -19,7 +19,7 @@ import warnings
 from collections.abc import Callable
 from pathlib import Path
 
-from diskcache_oxide import Cache
+from diskcache_oxide import Cache, FanoutCache
 
 from tests.conformance.proc_workers import SqlitePeer
 from tests.proctitle import set_title
@@ -417,6 +417,72 @@ def transact_fork_from_another_thread(directory: Path) -> list[str]:
     return failures
 
 
+def fanout_fork_while_writing(directory: Path) -> list[str]:
+    """Fork while threads write to different shards of an 8-store FanoutCache (plan 13, step 13d).
+
+    The gate, the registry and the generations are process-wide, so eight stores need no new
+    protocol, only proof: the child writes and reads back a key on every shard, through the
+    inherited handle and through a fresh one, and the parent then sees every child write.
+    """
+    rounds = 5
+    cache = FanoutCache(directory, timeout=TIMEOUT)
+    # One key per shard, so each writer's `set` and each child write hits a different store (a
+    # writer's `{key}-count` counter lands wherever it hashes).
+    per_shard: dict[int, str] = {}
+    i = 0
+    while len(per_shard) < cache.shards:
+        per_shard.setdefault(cache.shard_of(f'k{i}'), f'k{i}')
+        i += 1
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def writer(key: str) -> None:
+        n = 0
+        try:
+            while not stop.is_set():
+                cache.set(key, n)
+                cache.incr(f'{key}-count')
+                n += 1
+        except BaseException as ex:
+            errors.append(ex)
+
+    def child(r: int) -> None:
+        for shard, key in per_shard.items():
+            name = f'child-{r}-{key}'
+            assert cache.set(name, r) is True, f'shard {shard}'
+            assert cache.get(name) == r
+        with FanoutCache(directory, timeout=TIMEOUT) as fresh:
+            assert fresh.shards == cache.shards
+            for key in per_shard.values():
+                assert fresh.get(f'child-{r}-{key}') == r
+                assert fresh.set(f'fresh-{r}-{key}', r) is True
+
+    threads = [threading.Thread(target=writer, args=(key,)) for key in per_shard.values()]
+    for t in threads:
+        t.start()
+    codes = [wait(fork(lambda: child(r))) for r in range(rounds)]
+    stop.set()
+    for t in threads:
+        t.join(TIMEOUT)
+
+    failures = [f'writer failed: {ex!r}' for ex in errors]
+    if codes != [0] * rounds:
+        failures.append(f'child exit codes {codes}')
+    missing = [
+        f'{prefix}-{r}-{key}'
+        for r in range(rounds)
+        for key in per_shard.values()
+        for prefix in ('child', 'fresh')
+        if cache.get(f'{prefix}-{r}-{key}') != r
+    ]
+    if missing:
+        failures.append(f'missing child writes: {missing}')
+    cache.close()
+    if cache._handle_counts() != [0] * 8:
+        failures.append(f'handles left after close: {cache._handle_counts()}')
+    return failures
+
+
 SCENARIOS = {
     'd020': d020,
     'transact-fork-from-the-owner': transact_fork_from_the_owner,
@@ -425,6 +491,7 @@ SCENARIOS = {
     'two-forkers': two_forkers,
     'parent-closes-after-fork': parent_closes_after_fork,
     'shared-iterator-while-a-fork-waits': shared_iterator_while_a_fork_waits,
+    'fanout-fork-while-writing': fanout_fork_while_writing,
 }
 
 

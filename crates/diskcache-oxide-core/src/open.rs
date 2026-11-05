@@ -210,7 +210,25 @@ pub fn connect(directory: &Path, timeout: Duration) -> Result<Connection> {
 /// after checking that its stamp matches `role` (see [`Role`]). A new database gets `role`'s stamp;
 /// a refused open writes nothing. Returns the limits in effect.
 pub fn prepare(conn: &mut Connection, requested: Requested, role: Role, timeout: Duration) -> Result<Limits> {
+    prepare_creating(conn, requested, role, DEFAULT_SIZE_LIMIT, timeout)
+}
+
+/// [`prepare`], giving a database it creates `new_size_limit` when `requested` names no
+/// `size_limit`. A `FanoutCache` shard's share of the default total (plan 13, section 4); an
+/// existing database keeps whatever it stores.
+pub fn prepare_creating(
+    conn: &mut Connection,
+    requested: Requested,
+    role: Role,
+    new_size_limit: i64,
+    timeout: Duration,
+) -> Result<Limits> {
     requested.validate()?;
+    if new_size_limit < MIN_SIZE_LIMIT {
+        return Err(Error::InvalidSetting(format!(
+            "a new database's size_limit must be at least {MIN_SIZE_LIMIT} bytes, got {new_size_limit}"
+        )));
+    }
     role.validate()?;
     let sqlite = |e| Error::from_sqlite(e, timeout);
 
@@ -218,7 +236,7 @@ pub fn prepare(conn: &mut Connection, requested: Requested, role: Role, timeout:
 
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).map_err(sqlite)?;
     if version == 0 {
-        create_if_new(conn, requested, role, timeout)?;
+        create_if_new(conn, requested, role, new_size_limit, timeout)?;
     } else if version != FORMAT_VERSION {
         return Err(Error::FormatMismatch { found: version, expected: FORMAT_VERSION, path: None });
     }
@@ -266,7 +284,13 @@ fn ensure_wal(conn: &Connection, timeout: Duration) -> Result<()> {
 
 /// Creates the schema, with `role`'s stamp, if this connection is the first to get the write lock on
 /// a new database. The stamp goes in the same transaction, so racing creators see it or nothing.
-fn create_if_new(conn: &mut Connection, requested: Requested, role: Role, timeout: Duration) -> Result<()> {
+fn create_if_new(
+    conn: &mut Connection,
+    requested: Requested,
+    role: Role,
+    new_size_limit: i64,
+    timeout: Duration,
+) -> Result<()> {
     let sqlite = |e| Error::from_sqlite(e, timeout);
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sqlite)?;
     // Another opener may have created it while this one waited for the lock.
@@ -276,10 +300,7 @@ fn create_if_new(conn: &mut Connection, requested: Requested, role: Role, timeou
             tx.execute_batch(CREATE).map_err(sqlite)?;
             tx.execute(
                 "INSERT INTO totals (only, count, size, next_seq, size_limit, cull_limit) VALUES (1, 0, 0, 1, ?1, ?2)",
-                (
-                    requested.size_limit.unwrap_or(DEFAULT_SIZE_LIMIT),
-                    requested.cull_limit.unwrap_or(DEFAULT_CULL_LIMIT),
-                ),
+                (requested.size_limit.unwrap_or(new_size_limit), requested.cull_limit.unwrap_or(DEFAULT_CULL_LIMIT)),
             )
             .map_err(sqlite)?;
             if let Some(stamp) = role.stamp() {

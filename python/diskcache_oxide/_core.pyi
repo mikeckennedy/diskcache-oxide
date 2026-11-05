@@ -24,6 +24,7 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     '_sqlite_error',
     'FormatMismatchError',
     'Cache',
+    'FanoutCache',
     'Transaction',
 ]
 
@@ -454,6 +455,158 @@ class Cache:
         """
     def __enter__(self) -> Self:
         """Return the cache, for `with Cache(...) as cache:`."""
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+        /,
+    ) -> None:
+        """Close the cache, as `close()` does."""
+
+class FanoutCache:
+    """A disk cache split over several SQLite databases (shards), so reads and writes on different keys
+    don't queue on one file's locks.
+
+    Each key lives in exactly one shard, chosen by a hash that is part of the on-disk format: every
+    process, and every release, sends a key to the same shard. The root records its shard count, so
+    every handle agrees on it. Single-key calls behave exactly as on `Cache`, on the key's shard.
+    `len()` and `volume()` add up every shard under one `timeout`.
+
+    Args:
+        directory: The root directory. It holds the manifest (`diskcache-oxide-fanout`) and one
+            directory per shard, `000` to `NNN`. It must not be a plain `Cache`'s directory.
+        timeout: As for `Cache` (default 60). Opening, `len()`, `volume()` and `close()` share one
+            `timeout` across every shard, not one each.
+        shards: How many shards, 1 to 256. `None` (the default) uses the count the root records, or
+            8 for a new root. A count that differs from the recorded one raises `ValueError`:
+            changing it needs a new directory. Each shard takes about 4 file descriptors to open,
+            and 2 more per connection it opens in use, so 256 shards need over 1,024: more than
+            Linux's default `ulimit -n`. Too few raises `OSError` (`EMFILE`) with the numbers.
+        size_limit: The disk budget in bytes for the whole cache, split evenly (floored) across the
+            shards, each of which culls on its own. Each shard needs at least 1 MiB, so the total must
+            be at least `shards` MiB. With none given, a new root gets 1 GiB in all.
+        cull_limit: As for `Cache`, per shard.
+        serializer: As for `Cache`.
+        pickle: As for `Cache`.
+        clock: As for `Cache`.
+        max_connections: The most SQLite connections this process opens for the whole cache, split
+            across the shards (the first `max_connections % shards` get one more). At least `shards`.
+            The default is one per shard, and never fewer than 8 in all.
+        sqlite_cache_size: As for `Cache`, per connection.
+        wal_size_limit: As for `Cache`, per shard (each shard has its own write-ahead log).
+        wal_checkpoint: As for `Cache`.
+        on_decode_error: As for `Cache`.
+        durable: As for `Cache`: single-key calls on a shard that fails give their miss values. One
+            report covers every shard, named by the root directory.
+
+    Raises:
+        ValueError: A setting is out of range, `shards` differs from the root's, `max_connections` is
+            below `shards`, or the directory belongs to a plain `Cache` (or a shard of it does).
+        TypeError: An argument has the wrong type, including a `bool` for `timeout` or `shards`.
+        FormatMismatchError: The root's manifest, or a shard's database, is in a format this version
+            can't read.
+        OSError: The filesystem doesn't support hard links, which creating the manifest needs, or
+            the process can't open enough files for every shard (`ulimit -n`).
+        Timeout: A shard stayed locked, or a fork stayed pending, for longer than `timeout`.
+    """
+
+    def __new__(
+        cls,
+        directory: str | os.PathLike[str],
+        timeout: float | None = None,
+        *,
+        shards: int | None = None,
+        size_limit: int | None = None,
+        cull_limit: int | None = None,
+        serializer: str = 'msgpack',
+        pickle: bool = False,
+        clock: Callable[[], float] | None = None,
+        max_connections: int | None = None,
+        sqlite_cache_size: int | None = None,
+        wal_size_limit: int | None = None,
+        wal_checkpoint: Literal['manual', 'auto'] = 'manual',
+        on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
+        durable: bool = False,
+    ) -> FanoutCache: ...
+    @property
+    def directory(self) -> str:
+        """The root directory, as given to the constructor."""
+    @property
+    def timeout(self) -> float:
+        """Seconds a call waits for a lock or a pending fork before raising `Timeout`."""
+    @property
+    def shards(self) -> int:
+        """How many shards the root has."""
+    @property
+    def size_limit(self) -> int:
+        """The disk budget in bytes: the sum of every shard's."""
+    @property
+    def cull_limit(self) -> int:
+        """The most entries a single `set()` evicts from its shard when that shard is over its share.
+
+        Shard 0's value: every shard's only while they were all created, and last set, under the same settings.
+        """
+    @property
+    def enabled(self) -> bool:
+        """Always True for a real cache; False for a `NullCache`."""
+    def shard_of(self, key: str) -> int:
+        """The shard `key` lives in, from 0 to `shards - 1`: the same in every process and release."""
+    @overload
+    def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
+        """As `Cache.get`, on the key's shard."""
+    @overload
+    def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
+    def set(self, key: str, value: Any, expire: float | None = None) -> bool:
+        """As `Cache.set`, on the key's shard."""
+    def add(self, key: str, value: Any, expire: float | None = None) -> bool:
+        """As `Cache.add`, on the key's shard: atomic across threads and processes."""
+    def delete(self, key: str) -> bool:
+        """As `Cache.delete`, on the key's shard."""
+    def pop(self, key: str, default: Any = None) -> Any:
+        """As `Cache.pop`, on the key's shard."""
+    def touch(self, key: str, expire: float | None = None) -> bool:
+        """As `Cache.touch`, on the key's shard."""
+    def incr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
+        """As `Cache.incr`, on the key's shard: atomic across threads and processes."""
+    def decr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
+        """As `Cache.decr`, on the key's shard."""
+    def volume(self) -> int:
+        """The total disk use in bytes of every shard (databases plus value files).
+
+        Raises on any shard's failure, under `durable=True` too.
+        """
+    def close(self, *, checkpoint: bool = True) -> None:
+        """Close this handle on every shard, as `Cache.close()` does for one.
+
+        The whole close shares one budget: the checkpoints share at most 1 second, and behind a fork
+        that stays stuck every release together waits at most 1 second more. It never raises. Using
+        the cache again reopens the shards it touches.
+
+        Args:
+            checkpoint: Checkpoint each shard's write-ahead log first, as `Cache.close` does.
+        """
+    def _durable_stats(self) -> dict[str, dict[str, int]]:
+        """Test hook: every failure `durable=True` has swallowed on this handle, as `Cache._durable_stats`."""
+    def _handle_counts(self) -> list[int]:
+        """Test hook: how many open handles each shard's store counts, in shard order."""
+    def __getitem__(self, key: str, /) -> Any:
+        """`cache[key]`, as on `Cache`."""
+    def __setitem__(self, key: str, value: Any, /) -> None:
+        """`cache[key] = value`, as on `Cache`."""
+    def __delitem__(self, key: str, /) -> None:
+        """`del cache[key]`, as on `Cache`."""
+    def __contains__(self, key: object, /) -> bool:
+        """`key in cache`, as on `Cache`."""
+    def __len__(self) -> int:
+        """The number of entries in every shard, including expired entries not yet removed.
+
+        Raises on any shard's failure, under `durable=True` too.
+        """
+    def __bool__(self) -> bool:
+        """Always True, even when empty, so `if cache:` means "caching is on"."""
+    def __enter__(self) -> Self:
+        """Return the cache, for `with FanoutCache(...) as cache:`."""
     def __exit__(
         self,
         exc_type: type[BaseException] | None,

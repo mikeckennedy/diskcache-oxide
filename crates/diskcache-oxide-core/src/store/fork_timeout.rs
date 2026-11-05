@@ -34,6 +34,7 @@ fn options(dir: &Path, timeout: Duration) -> OpenOptions {
         wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
         auto_checkpoint: false,
         role: crate::open::Role::Plain,
+        default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
     }
 }
 
@@ -364,6 +365,33 @@ fn row_5_a_release_behind_a_stuck_fork_defers_and_the_drain_finishes_it() {
     assert_eq!(fds_inside(tmp.path()), 0, "D-018 holds once the release has drained");
     drop(store);
     eventually(|| weak.strong_count() == 0);
+}
+
+/// A `FanoutCache` close behind a stuck fork waits one release budget for all its shards, not one
+/// per shard (plan 13, section 3), and every release is left for the drain.
+#[test]
+fn row_5_closing_eight_shards_behind_a_stuck_fork_waits_one_budget_for_all_of_them() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-close-shards");
+    let stores: Vec<Arc<Store>> = (0..8).map(|i| open_store(&tmp.path().join(format!("{i:03}")))).collect();
+    let budget = Duration::from_millis(100);
+    let behind = stores.clone();
+    behind_a_fork(move || {
+        let started = Instant::now();
+        super::shards::close_all_within(&behind.iter().collect::<Vec<_>>(), Some(budget), budget);
+        let took = started.elapsed();
+        assert!(took >= budget, "deferred after {took:?}");
+        assert!(took < 2 * budget + SLACK, "took {took:?}: each shard waited on its own");
+        for store in &behind {
+            assert_eq!(store.handles(), 1, "still counted until the drain");
+            assert_eq!(store.deferred_releases.load(Ordering::SeqCst), 1);
+        }
+    });
+    for store in &stores {
+        drained(store);
+        assert_eq!(store.handles(), 0);
+        assert!(store.is_retired());
+    }
 }
 
 /// Each deferral retains the store once and the drain gives every one back, with a handle still open

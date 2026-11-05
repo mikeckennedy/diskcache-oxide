@@ -758,6 +758,7 @@ mod tests {
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
+            default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
         })
         .unwrap()
     }
@@ -1387,6 +1388,7 @@ mod reprepare_guard {
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
+            default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
         })
         .unwrap();
         for i in 0..300 {

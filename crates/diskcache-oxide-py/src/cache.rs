@@ -16,6 +16,7 @@ use std::collections::{HashSet, VecDeque};
 use diskcache_oxide_core::maintenance::{Cursor, Order};
 use diskcache_oxide_core::open::{Requested, Role};
 use diskcache_oxide_core::ops::{Hit, Number, Pop, Value, Version, VersionDelete};
+use diskcache_oxide_core::schema::DEFAULT_SIZE_LIMIT;
 use diskcache_oxide_core::store::{
     DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, HeldTransaction, OpenOptions, Store,
 };
@@ -34,6 +35,9 @@ use crate::codec::{self, Payload, Serializer};
 use crate::durable::{Failures, Op};
 use crate::to_py_err;
 
+mod fanout;
+pub(crate) use fanout::FanoutCache;
+
 /// A disk cache backed by SQLite, shared safely across threads and processes.
 #[pyclass(frozen, module = "diskcache_oxide")]
 pub(crate) struct Cache {
@@ -41,10 +45,11 @@ pub(crate) struct Cache {
     config: HandleConfig,
 }
 
-/// This handle's membership in one store: the store, and whether this handle closed it. A
-/// `FanoutCache` holds one per shard.
+/// This handle's membership in one store: the store, its shard index (0 for a plain `Cache`), and
+/// whether this handle closed it. A `FanoutCache` holds one per shard.
 struct StoreHandle {
     store: Arc<Store>,
+    shard: usize,
     closed: AtomicBool,
 }
 
@@ -61,8 +66,10 @@ struct HandleConfig {
     on_decode_error: DecodePolicy,
     /// `durable=True`: what this handle has swallowed. `None` means failures raise.
     failures: Option<Box<Failures>>,
-    /// Stored versions already reported under `on_decode_error` (see `first_report`).
-    reported: Mutex<HashSet<Version>>,
+    /// Stored versions already reported under `on_decode_error`, by shard: a `Version` repeats
+    /// across a `FanoutCache`'s shards, so one shard's report mustn't silence another's (see
+    /// `first_report`).
+    reported: Mutex<HashSet<(usize, Version)>>,
 }
 
 /// How many reported versions a handle remembers before it forgets them all and starts over.
@@ -104,67 +111,23 @@ impl Cache {
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
     ) -> PyResult<Self> {
-        codec::load_types(py)?;
-        let timeout = timeout_duration(match timeout {
-            Some(t) => seconds("timeout", t)?,
-            None => 60.0,
-        })?;
-        let requested =
-            Requested { size_limit: whole("size_limit", size_limit)?, cull_limit: whole("cull_limit", cull_limit)? };
-        let max_connections = match whole("max_connections", max_connections)? {
-            Some(n) if n < 1 => return Err(PyValueError::new_err("max_connections must be at least 1")),
-            Some(n) => n.unsigned_abs(),
-            None => DEFAULT_MAX_CONNECTIONS,
-        };
-        let cache_pages = match whole("sqlite_cache_size", sqlite_cache_size)? {
-            Some(n) if n < 1 => return Err(PyValueError::new_err("sqlite_cache_size must be at least 1 page")),
-            // SQLite reads `PRAGMA cache_size` as a 32-bit int; larger values would wrap.
-            Some(n) if n > i64::from(i32::MAX) => {
-                return Err(PyValueError::new_err(format!("sqlite_cache_size must be at most {} pages", i32::MAX)));
-            }
-            Some(n) => n.unsigned_abs(),
-            None => DEFAULT_CACHE_PAGES,
-        };
-        let min_wal = diskcache_oxide_core::wal::MIN_SIZE_LIMIT;
-        let wal_size_limit = match whole("wal_size_limit", wal_size_limit)? {
-            Some(n) if n < 0 || n.unsigned_abs() < min_wal => {
-                return Err(PyValueError::new_err(format!("wal_size_limit must be at least {min_wal} bytes")));
-            }
-            Some(n) => n.unsigned_abs(),
-            None => DEFAULT_WAL_SIZE_LIMIT,
-        };
-        let auto_checkpoint = match wal_checkpoint {
-            "manual" => false,
-            "auto" => true,
-            other => {
-                return Err(PyValueError::new_err(format!("wal_checkpoint must be 'manual' or 'auto', got {other:?}")));
-            }
-        };
-        let serializer = Serializer::from_name(serializer)?;
-        let options = OpenOptions {
-            directory: directory.clone(),
+        let settings = Settings::parse(
+            py,
             timeout,
-            requested,
+            size_limit,
+            cull_limit,
+            serializer,
             max_connections,
-            cache_pages,
+            sqlite_cache_size,
             wal_size_limit,
-            auto_checkpoint,
-            role: Role::Plain,
-        };
+            wal_checkpoint,
+        )?;
+        let max_connections = settings.max_connections.unwrap_or(DEFAULT_MAX_CONNECTIONS);
+        let options = settings.options(directory.clone(), max_connections, Role::Plain);
         let store = crate::detach(py, || Store::open(&options)).map_err(to_py_err)?;
-        let on_decode_error = on_decode_error.unwrap_or(if durable { DecodePolicy::Miss } else { DecodePolicy::Raise });
         Ok(Self {
-            handle: StoreHandle { store, closed: AtomicBool::new(false) },
-            config: HandleConfig {
-                directory: directory.to_string_lossy().into_owned(),
-                timeout,
-                serializer,
-                pickle,
-                clock,
-                on_decode_error,
-                failures: durable.then(|| Box::new(Failures::new(timeout.as_secs_f64()))),
-                reported: Mutex::new(HashSet::new()),
-            },
+            handle: StoreHandle { store, shard: 0, closed: AtomicBool::new(false) },
+            config: HandleConfig::new(&directory, &settings, pickle, clock, on_decode_error, durable),
         })
     }
 
@@ -254,37 +217,15 @@ impl Cache {
         default: Option<Py<PyAny>>,
         expire_time: bool,
     ) -> PyResult<Py<PyAny>> {
-        let key = str_key(key)?;
-        let now = self.config.now(py)?;
-        let found = self.config.lookup(py, &self.handle, key, now)?;
-        let default = default.unwrap_or_else(|| py.None());
-        match (found, expire_time) {
-            (Some((value, _)), false) => Ok(value),
-            (None, false) => Ok(default),
-            (Some((value, expires)), true) => {
-                Ok(PyTuple::new(py, [value, expires.into_pyobject(py)?.into_any().unbind()])?.into_any().unbind())
-            }
-            (None, true) => Ok(PyTuple::new(py, [default, py.None()])?.into_any().unbind()),
-        }
+        self.config.get(py, &self.handle, str_key(key)?, default, expire_time)
     }
 
     fn __getitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
-        let now = self.config.now(py)?;
-        match self.config.lookup(py, &self.handle, name, now)? {
-            Some((value, _)) => Ok(value),
-            None => Err(PyKeyError::new_err(key.clone().unbind())),
-        }
+        self.config.get_item(py, &self.handle, key, str_key(key)?)
     }
 
     fn __contains__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let key = str_key(key)?;
-        let now = self.config.now(py)?;
-        let found = self
-            .handle
-            .ensure_open(self.config.timeout)
-            .and_then(|timeout| self.handle.store.contains(timeout, key, now));
-        Ok(self.config.attempt(py, &self.handle.store, Op::Contains, now, found)?.unwrap_or(false))
+        self.config.contains(py, &self.handle, str_key(key)?)
     }
 
     fn __len__(&self) -> PyResult<usize> {
@@ -331,16 +272,7 @@ impl Cache {
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        let key = str_key(key)?;
-        let expire = optional_seconds("expire", expire)?;
-        let encoded = codec::encode(py, value, self.config.serializer, self.config.pickle)?;
-        let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
-        let now = self.config.now(py)?;
-        let stored = self
-            .handle
-            .ensure_open(self.config.timeout)
-            .and_then(|timeout| self.handle.store.set(timeout, key, value, expire, now));
-        Ok(self.config.attempt(py, &self.handle.store, Op::Set, now, stored)?.unwrap_or(false))
+        self.config.set(py, &self.handle, str_key(key)?, value, expire)
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -355,26 +287,11 @@ impl Cache {
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        let key = str_key(key)?;
-        let expire = optional_seconds("expire", expire)?;
-        let encoded = codec::encode(py, value, self.config.serializer, self.config.pickle)?;
-        let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
-        let now = self.config.now(py)?;
-        let added = self
-            .handle
-            .ensure_open(self.config.timeout)
-            .and_then(|timeout| self.handle.store.add(timeout, key, value, expire, now));
-        Ok(self.config.attempt(py, &self.handle.store, Op::Add, now, added)?.unwrap_or(false))
+        self.config.add(py, &self.handle, str_key(key)?, value, expire)
     }
 
     fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let key = str_key(key)?;
-        let now = self.config.now(py)?;
-        let deleted = self
-            .handle
-            .ensure_open(self.config.timeout)
-            .and_then(|timeout| self.handle.store.delete(timeout, key, now));
-        Ok(self.config.attempt(py, &self.handle.store, Op::Delete, now, deleted)?.unwrap_or(false))
+        self.config.delete(py, &self.handle, str_key(key)?)
     }
 
     fn __delitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -383,40 +300,22 @@ impl Cache {
 
     #[pyo3(signature = (key, default = None))]
     fn pop(&self, py: Python<'_>, key: &Bound<'_, PyAny>, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
-        let key = str_key(key)?;
-        let now = self.config.now(py)?;
-        // In a child that can't write (D-020) a read could report a miss; a pop fails.
-        let ready = self
-            .handle
-            .ensure_open(self.config.timeout)
-            .and_then(|timeout| self.handle.store.check_writable().map(|()| timeout));
-        let popped = match self.config.attempt(py, &self.handle.store, Op::Pop, now, ready)? {
-            Some(timeout) => self.config.pop_value(py, &self.handle.store, key, now, timeout)?,
-            None => None,
-        };
-        Ok(popped.unwrap_or_else(|| default.unwrap_or_else(|| py.None())))
+        self.config.pop(py, &self.handle, str_key(key)?, default)
     }
 
     #[pyo3(signature = (key, expire = None))]
     fn touch(&self, py: Python<'_>, key: &Bound<'_, PyAny>, expire: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        let key = str_key(key)?;
-        let expire = optional_seconds("expire", expire)?;
-        let now = self.config.now(py)?;
-        let touched = self
-            .handle
-            .ensure_open(self.config.timeout)
-            .and_then(|timeout| self.handle.store.touch(timeout, key, expire, now));
-        Ok(self.config.attempt(py, &self.handle.store, Op::Touch, now, touched)?.unwrap_or(false))
+        self.config.touch(py, &self.handle, str_key(key)?, expire)
     }
 
     #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
     fn incr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        self.config.add_number(py, &self.handle, key, delta, default, false)
+        self.config.add_number(py, &self.handle, key, str_key(key)?, delta, default, false)
     }
 
     #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
     fn decr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        self.config.add_number(py, &self.handle, key, delta, default, true)
+        self.config.add_number(py, &self.handle, key, str_key(key)?, delta, default, true)
     }
 
     // -- maintenance and iteration -------------------------------------------------------------
@@ -524,6 +423,88 @@ impl Cache {
     }
 }
 
+/// The constructor arguments `Cache` and `FanoutCache` share, validated in the order `Cache`
+/// always checked them.
+struct Settings {
+    timeout: Duration,
+    requested: Requested,
+    /// `None` when not given: a `Cache` takes the default, a `FanoutCache` one per shard.
+    max_connections: Option<u64>,
+    cache_pages: u64,
+    wal_size_limit: u64,
+    auto_checkpoint: bool,
+    serializer: Serializer,
+}
+
+impl Settings {
+    #[allow(clippy::too_many_arguments)]
+    fn parse(
+        py: Python<'_>,
+        timeout: Option<&Bound<'_, PyAny>>,
+        size_limit: Option<&Bound<'_, PyAny>>,
+        cull_limit: Option<&Bound<'_, PyAny>>,
+        serializer: &str,
+        max_connections: Option<&Bound<'_, PyAny>>,
+        sqlite_cache_size: Option<&Bound<'_, PyAny>>,
+        wal_size_limit: Option<&Bound<'_, PyAny>>,
+        wal_checkpoint: &str,
+    ) -> PyResult<Self> {
+        codec::load_types(py)?;
+        let timeout = timeout_duration(match timeout {
+            Some(t) => seconds("timeout", t)?,
+            None => 60.0,
+        })?;
+        let requested =
+            Requested { size_limit: whole("size_limit", size_limit)?, cull_limit: whole("cull_limit", cull_limit)? };
+        let max_connections = match whole("max_connections", max_connections)? {
+            Some(n) if n < 1 => return Err(PyValueError::new_err("max_connections must be at least 1")),
+            Some(n) => Some(n.unsigned_abs()),
+            None => None,
+        };
+        let cache_pages = match whole("sqlite_cache_size", sqlite_cache_size)? {
+            Some(n) if n < 1 => return Err(PyValueError::new_err("sqlite_cache_size must be at least 1 page")),
+            // SQLite reads `PRAGMA cache_size` as a 32-bit int; larger values would wrap.
+            Some(n) if n > i64::from(i32::MAX) => {
+                return Err(PyValueError::new_err(format!("sqlite_cache_size must be at most {} pages", i32::MAX)));
+            }
+            Some(n) => n.unsigned_abs(),
+            None => DEFAULT_CACHE_PAGES,
+        };
+        let min_wal = diskcache_oxide_core::wal::MIN_SIZE_LIMIT;
+        let wal_size_limit = match whole("wal_size_limit", wal_size_limit)? {
+            Some(n) if n < 0 || n.unsigned_abs() < min_wal => {
+                return Err(PyValueError::new_err(format!("wal_size_limit must be at least {min_wal} bytes")));
+            }
+            Some(n) => n.unsigned_abs(),
+            None => DEFAULT_WAL_SIZE_LIMIT,
+        };
+        let auto_checkpoint = match wal_checkpoint {
+            "manual" => false,
+            "auto" => true,
+            other => {
+                return Err(PyValueError::new_err(format!("wal_checkpoint must be 'manual' or 'auto', got {other:?}")));
+            }
+        };
+        let serializer = Serializer::from_name(serializer)?;
+        Ok(Self { timeout, requested, max_connections, cache_pages, wal_size_limit, auto_checkpoint, serializer })
+    }
+
+    /// The store options for `directory`, with `max_connections` resolved by the caller.
+    fn options(&self, directory: PathBuf, max_connections: u64, role: Role) -> OpenOptions {
+        OpenOptions {
+            directory,
+            timeout: self.timeout,
+            requested: self.requested,
+            max_connections,
+            cache_pages: self.cache_pages,
+            wal_size_limit: self.wal_size_limit,
+            auto_checkpoint: self.auto_checkpoint,
+            role,
+            default_size_limit: DEFAULT_SIZE_LIMIT,
+        }
+    }
+}
+
 impl StoreHandle {
     /// A handle that was closed and is used again rejoins its store (diskcache reopens lazily).
     /// Returns what's left of `timeout` for the operation: all of it, unless the handle was closed.
@@ -549,6 +530,27 @@ impl StoreHandle {
 }
 
 impl HandleConfig {
+    fn new(
+        directory: &std::path::Path,
+        settings: &Settings,
+        pickle: bool,
+        clock: Option<Py<PyAny>>,
+        on_decode_error: Option<DecodePolicy>,
+        durable: bool,
+    ) -> Self {
+        let timeout = settings.timeout;
+        Self {
+            directory: directory.to_string_lossy().into_owned(),
+            timeout,
+            serializer: settings.serializer,
+            pickle,
+            clock,
+            on_decode_error: on_decode_error.unwrap_or(if durable { DecodePolicy::Miss } else { DecodePolicy::Raise }),
+            failures: durable.then(|| Box::new(Failures::new(timeout.as_secs_f64()))),
+            reported: Mutex::new(HashSet::new()),
+        }
+    }
+
     /// Visits the Python objects the handle holds, for `__traverse__`.
     fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
         if let Some(clock) = &self.clock {
@@ -607,6 +609,119 @@ impl HandleConfig {
         failures.record(py, op, now, &error, &self.directory)
     }
 
+    // -- the routed operations: one key, on the store `handle` names ------------------------------
+    //
+    // `Cache` passes its one store; `FanoutCache` the shard the key hashes to. The key is already
+    // validated (D-004): everything after that is here, so both behave exactly alike.
+
+    fn get(
+        &self,
+        py: Python<'_>,
+        handle: &StoreHandle,
+        key: &str,
+        default: Option<Py<PyAny>>,
+        expire_time: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let now = self.now(py)?;
+        let found = self.lookup(py, handle, key, now)?;
+        let default = default.unwrap_or_else(|| py.None());
+        match (found, expire_time) {
+            (Some((value, _)), false) => Ok(value),
+            (None, false) => Ok(default),
+            (Some((value, expires)), true) => {
+                Ok(PyTuple::new(py, [value, expires.into_pyobject(py)?.into_any().unbind()])?.into_any().unbind())
+            }
+            (None, true) => Ok(PyTuple::new(py, [default, py.None()])?.into_any().unbind()),
+        }
+    }
+
+    /// `cache[key]`: `name` is `key` validated; a miss raises `KeyError(key)`.
+    fn get_item(
+        &self,
+        py: Python<'_>,
+        handle: &StoreHandle,
+        key: &Bound<'_, PyAny>,
+        name: &str,
+    ) -> PyResult<Py<PyAny>> {
+        let now = self.now(py)?;
+        match self.lookup(py, handle, name, now)? {
+            Some((value, _)) => Ok(value),
+            None => Err(PyKeyError::new_err(key.clone().unbind())),
+        }
+    }
+
+    fn contains(&self, py: Python<'_>, handle: &StoreHandle, key: &str) -> PyResult<bool> {
+        let now = self.now(py)?;
+        let found = handle.ensure_open(self.timeout).and_then(|timeout| handle.store.contains(timeout, key, now));
+        Ok(self.attempt(py, &handle.store, Op::Contains, now, found)?.unwrap_or(false))
+    }
+
+    fn set(
+        &self,
+        py: Python<'_>,
+        handle: &StoreHandle,
+        key: &str,
+        value: &Bound<'_, PyAny>,
+        expire: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let expire = optional_seconds("expire", expire)?;
+        let encoded = codec::encode(py, value, self.serializer, self.pickle)?;
+        let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
+        let now = self.now(py)?;
+        let stored =
+            handle.ensure_open(self.timeout).and_then(|timeout| handle.store.set(timeout, key, value, expire, now));
+        Ok(self.attempt(py, &handle.store, Op::Set, now, stored)?.unwrap_or(false))
+    }
+
+    fn add(
+        &self,
+        py: Python<'_>,
+        handle: &StoreHandle,
+        key: &str,
+        value: &Bound<'_, PyAny>,
+        expire: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let expire = optional_seconds("expire", expire)?;
+        let encoded = codec::encode(py, value, self.serializer, self.pickle)?;
+        let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
+        let now = self.now(py)?;
+        let added =
+            handle.ensure_open(self.timeout).and_then(|timeout| handle.store.add(timeout, key, value, expire, now));
+        Ok(self.attempt(py, &handle.store, Op::Add, now, added)?.unwrap_or(false))
+    }
+
+    fn delete(&self, py: Python<'_>, handle: &StoreHandle, key: &str) -> PyResult<bool> {
+        let now = self.now(py)?;
+        let deleted = handle.ensure_open(self.timeout).and_then(|timeout| handle.store.delete(timeout, key, now));
+        Ok(self.attempt(py, &handle.store, Op::Delete, now, deleted)?.unwrap_or(false))
+    }
+
+    fn pop(&self, py: Python<'_>, handle: &StoreHandle, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        let now = self.now(py)?;
+        // In a child that can't write (D-020) a read could report a miss; a pop fails.
+        let ready =
+            handle.ensure_open(self.timeout).and_then(|timeout| handle.store.check_writable().map(|()| timeout));
+        let popped = match self.attempt(py, &handle.store, Op::Pop, now, ready)? {
+            Some(timeout) => self.pop_value(py, handle, key, now, timeout)?,
+            None => None,
+        };
+        Ok(popped.unwrap_or_else(|| default.unwrap_or_else(|| py.None())))
+    }
+
+    fn touch(
+        &self,
+        py: Python<'_>,
+        handle: &StoreHandle,
+        key: &str,
+        expire: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let expire = optional_seconds("expire", expire)?;
+        let now = self.now(py)?;
+        let touched =
+            handle.ensure_open(self.timeout).and_then(|timeout| handle.store.touch(timeout, key, expire, now));
+        Ok(self.attempt(py, &handle.store, Op::Touch, now, touched)?.unwrap_or(false))
+    }
+
     fn lookup(
         &self,
         py: Python<'_>,
@@ -619,9 +734,9 @@ impl HandleConfig {
         let Some(Some(hit)) = self.attempt(py, store, Op::Get, now, read)? else { return Ok(None) };
         match hit.value {
             Ok(value) => Ok(Some((value, hit.expire_time))),
-            Err((mode, e)) => {
-                self.decode_failed(py, store, key, Op::Get, mode, e, Row::Stored(hit.version)).map(|()| None)
-            }
+            Err((mode, e)) => self
+                .decode_failed(py, store, handle.shard, key, Op::Get, mode, e, Row::Stored(hit.version))
+                .map(|()| None),
         }
     }
 
@@ -661,11 +776,12 @@ impl HandleConfig {
     fn pop_value(
         &self,
         py: Python<'_>,
-        store: &Store,
+        handle: &StoreHandle,
         key: &str,
         now: f64,
         timeout: Duration,
     ) -> PyResult<Option<Py<PyAny>>> {
+        let (store, shard) = (&*handle.store, handle.shard);
         let deadline = lockwait::deadline_after(Instant::now(), timeout);
         let left = || deadline.saturating_duration_since(Instant::now());
         for _ in 0..spill::OPTIMISTIC_ATTEMPTS {
@@ -681,7 +797,7 @@ impl HandleConfig {
                     }
                 }
                 Err((mode, e)) => {
-                    if self.pop_failed(py, store, key, now, mode, e, hit.version, left())? {
+                    if self.pop_failed(py, store, shard, key, now, mode, e, hit.version, left())? {
                         return Ok(None);
                     }
                 }
@@ -698,10 +814,13 @@ impl HandleConfig {
             None | Some(Pop::Missing) => Ok(None),
             Some(Pop::Removed(popped)) => match decode_value(py, popped.mode, popped.value_ref(), allow_pickle) {
                 Ok(value) => Ok(Some(value)),
-                Err(e) => self.decode_failed(py, store, key, Op::Pop, popped.mode, e, Row::Removed).map(|()| None),
+                Err(e) => {
+                    self.decode_failed(py, store, shard, key, Op::Pop, popped.mode, e, Row::Removed).map(|()| None)
+                }
             },
             Some(Pop::Refused { mode }) => {
-                self.decode_failed(py, store, key, Op::Pop, mode, codec::refusal(mode), Row::Kept).map(|()| None)
+                let e = codec::refusal(mode);
+                self.decode_failed(py, store, shard, key, Op::Pop, mode, e, Row::Kept).map(|()| None)
             }
         }
     }
@@ -732,6 +851,7 @@ impl HandleConfig {
         &self,
         py: Python<'_>,
         store: &Store,
+        shard: usize,
         key: &str,
         now: f64,
         mode: i64,
@@ -740,13 +860,15 @@ impl HandleConfig {
         timeout: Duration,
     ) -> PyResult<bool> {
         if !matches!(self.classify(py, store, mode, &e), Failure::Unreadable) {
-            return self.decode_failed(py, store, key, Op::Pop, mode, e, Row::Stored(version)).map(|()| true);
+            return self.decode_failed(py, store, shard, key, Op::Pop, mode, e, Row::Stored(version)).map(|()| true);
         }
         match store.delete_version(timeout, version) {
-            Ok(true) => self.decode_failed(py, store, key, Op::Pop, mode, e, Row::Removed).map(|()| true),
+            Ok(true) => self.decode_failed(py, store, shard, key, Op::Pop, mode, e, Row::Removed).map(|()| true),
             Ok(false) => Ok(false),
             Err(error) => match self.store_failed(py, store, Op::Pop, now, self.whole_timeout(error)) {
-                Ok(()) => self.decode_failed(py, store, key, Op::Pop, mode, e, Row::Stored(version)).map(|()| true),
+                Ok(()) => {
+                    self.decode_failed(py, store, shard, key, Op::Pop, mode, e, Row::Stored(version)).map(|()| true)
+                }
                 Err(error) => {
                     error.set_cause(py, Some(e));
                     Err(error)
@@ -766,6 +888,7 @@ impl HandleConfig {
         &self,
         py: Python<'_>,
         store: &Store,
+        shard: usize,
         key: &str,
         op: Op,
         mode: i64,
@@ -812,7 +935,7 @@ impl HandleConfig {
             return Ok(());
         }
         if let Some(version) = stays
-            && !self.first_report(version)
+            && !self.first_report(shard, version)
         {
             return Ok(());
         }
@@ -837,14 +960,14 @@ impl HandleConfig {
         }
     }
 
-    /// True the first time `version` is reported by this handle (remembering at most
-    /// `REPORTED_VERSIONS`, then starting over).
-    fn first_report(&self, version: Version) -> bool {
+    /// True the first time `version` of shard `shard` is reported by this handle (remembering at
+    /// most `REPORTED_VERSIONS`, then starting over).
+    fn first_report(&self, shard: usize, version: Version) -> bool {
         let mut reported = self.reported.lock().unwrap_or_else(PoisonError::into_inner);
         if reported.len() >= REPORTED_VERSIONS {
             reported.clear();
         }
-        reported.insert(version)
+        reported.insert((shard, version))
     }
 
     /// Logs a decode failure, or hands it to the `on_decode_error` callable. Never raises: a report
@@ -876,16 +999,19 @@ impl HandleConfig {
         }
     }
 
+    /// `incr`/`decr`: `name` is `key` validated; a missing key with no default raises
+    /// `KeyError(key)`.
+    #[allow(clippy::too_many_arguments)]
     fn add_number(
         &self,
         py: Python<'_>,
         handle: &StoreHandle,
         key: &Bound<'_, PyAny>,
+        name: &str,
         Delta(mut delta): Delta,
         IncrDefault(default): IncrDefault,
         negate: bool,
     ) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
         if negate {
             delta = match delta {
                 Number::Int(n) => {

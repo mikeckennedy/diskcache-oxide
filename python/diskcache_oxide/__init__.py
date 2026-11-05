@@ -1,15 +1,17 @@
 """diskcache-oxide: a clean-room Rust reimplementation of diskcache.
 
-The cache itself lives in the compiled `diskcache_oxide._core` extension. This package re-exports
-it, so `diskcache_oxide.Timeout` is the public name and the one exceptions pickle under.
-`NullCache` (a switched-off cache), `CacheLike` and `TransactionalCacheLike` (the interfaces both
-share) and `Caches` (a registry of named caches) are pure Python.
+The caches themselves (`Cache` and `FanoutCache`) live in the compiled `diskcache_oxide._core`
+extension. This package re-exports them, so `diskcache_oxide.Timeout` is the public name and the one
+exceptions pickle under. `NullCache` (a switched-off cache), `CacheLike` and
+`TransactionalCacheLike` (the interfaces both share) and `Caches` (a registry of named caches) are
+pure Python.
 """
 
 from diskcache_oxide._core import (
     BUNDLED_SQLITE_VERSION,
     Cache,
     CorruptValueError,
+    FanoutCache,
     ForeignValueError,
     FormatMismatchError,
     Timeout,
@@ -30,6 +32,7 @@ __all__ = [
     'CacheStats',
     'Caches',
     'CorruptValueError',
+    'FanoutCache',
     'ForeignValueError',
     'FormatMismatchError',
     'NullCache',

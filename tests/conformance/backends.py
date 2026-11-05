@@ -42,7 +42,7 @@ FEATURE_PHASES: dict[str, str] = {
 }
 assert set(FEATURE_PHASES.values()) <= set(PHASE_ORDER)
 # Features that landed ahead of their phase, by name: bumping OXIDE_PHASE to 6b would turn on all of 6a.
-OXIDE_EARLY_FEATURES = frozenset({'transact'})
+OXIDE_EARLY_FEATURES = frozenset({'transact', 'fanout'})
 assert OXIDE_EARLY_FEATURES <= set(FEATURE_PHASES)
 OXIDE_SUPPORTED_FEATURES: frozenset[str] = (
     frozenset(f for f, phase in FEATURE_PHASES.items() if PHASE_ORDER.index(phase) <= PHASE_ORDER.index(OXIDE_PHASE))
@@ -84,6 +84,19 @@ class Backend:
         clock: Callable[[], float] | None = None,
         **opts: Any,
     ) -> Any:
+        raise NotImplementedError
+
+    def make_fanout_cache(
+        self,
+        directory: Path,
+        *,
+        shards: int = 8,
+        timeout: float = 60.0,
+        size_limit: int | None = None,
+        clock: Callable[[], float] | None = None,
+        **opts: Any,
+    ) -> Any:
+        """A FanoutCache with `shards` shards. `size_limit` is the whole cache's, which both backends split."""
         raise NotImplementedError
 
     def db_path(self, directory: Path) -> Path:
@@ -165,6 +178,22 @@ class DiskcacheBackend(Backend):
             kwargs['cull_limit'] = cull_limit
         return self._module.Cache(str(directory), **kwargs)
 
+    def make_fanout_cache(
+        self,
+        directory: Path,
+        *,
+        shards: int = 8,
+        timeout: float = 60.0,
+        size_limit: int | None = None,
+        clock: Callable[[], float] | None = None,
+        **opts: Any,
+    ) -> Any:
+        # The clock is the fake_clock fixture's monkeypatched time.time, as for make_cache.
+        kwargs: dict[str, Any] = {k: v for k, v in opts.items() if k not in OXIDE_ONLY_OPTIONS}
+        if size_limit is not None:
+            kwargs['size_limit'] = size_limit
+        return self._module.FanoutCache(str(directory), shards=shards, timeout=timeout, **kwargs)
+
     def supports(self, feature: str) -> bool:
         return True
 
@@ -228,6 +257,25 @@ class OxideBackend(Backend):
         if clock is not None:
             kwargs['clock'] = clock
         return self._module.Cache(str(directory), **kwargs)
+
+    def make_fanout_cache(
+        self,
+        directory: Path,
+        *,
+        shards: int = 8,
+        timeout: float = 60.0,
+        size_limit: int | None = None,
+        clock: Callable[[], float] | None = None,
+        **opts: Any,
+    ) -> Any:
+        if not self.supports('fanout'):
+            raise NotImplementedError('oxide does not support FanoutCache yet; mark the test requires("fanout")')
+        kwargs: dict[str, Any] = dict(opts)
+        if size_limit is not None:
+            kwargs['size_limit'] = size_limit
+        if clock is not None:
+            kwargs['clock'] = clock
+        return self._module.FanoutCache(str(directory), timeout=timeout, shards=shards, **kwargs)
 
     def supports(self, feature: str) -> bool:
         return feature in OXIDE_SUPPORTED_FEATURES

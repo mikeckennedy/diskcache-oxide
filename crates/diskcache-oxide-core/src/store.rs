@@ -117,6 +117,10 @@ pub struct OpenOptions {
     /// A plain cache's database or a `FanoutCache` shard (see [`Role`]). Checked against the
     /// database's stamp on every open, the fast path included.
     pub role: Role,
+    /// The `size_limit` a database this open creates gets when `requested` names none:
+    /// [`crate::schema::DEFAULT_SIZE_LIMIT`] for a plain cache, a shard's share of it for a
+    /// `FanoutCache` (plan 13, section 4). An existing database keeps what it stores.
+    pub default_size_limit: i64,
 }
 
 /// One database file's shared state. See the module docs.
@@ -358,6 +362,40 @@ impl Drop for Lend<'_, '_> {
 impl Store {
     /// Opens (or joins) the store for `options.directory` and registers one more handle on it.
     pub fn open(options: &OpenOptions) -> Result<Arc<Self>> {
+        // One deadline for the lookup, the open sequence and a joining handle's write.
+        let deadline = lockwait::deadline_after(Instant::now(), options.timeout);
+        Self::open_until(options, deadline).map_err(|error| match error {
+            Error::Timeout { .. } => Error::Timeout { seconds: options.timeout.as_secs_f64() },
+            other => other,
+        })
+    }
+
+    /// [`Store::open`] under a deadline the caller already took, so a `FanoutCache` opens all its
+    /// shards under one `timeout`. A timeout's number is left for the caller, who knows the budget.
+    ///
+    /// A plain cache looks for a `FanoutCache` manifest before its database can be created, so a
+    /// mistaken `Cache(root)` leaves nothing behind, and again once it has its store, so a
+    /// `FanoutCache` that created its manifest meanwhile is noticed too: of two racing creators at
+    /// least one is refused (plan 13, section 1).
+    pub fn open_until(options: &OpenOptions, deadline: Instant) -> Result<Arc<Self>> {
+        Self::validate(options)?;
+        open::ensure_directory(&options.directory)?;
+        if options.role != Role::Plain {
+            return Self::open_store(options, deadline);
+        }
+        crate::fanout::refuse_manifest(&options.directory)?;
+        let store = Self::open_store(options, deadline)?;
+        #[cfg(test)]
+        shard_identity::after_open_store(&options.directory);
+        if let Err(error) = crate::fanout::refuse_manifest(&options.directory) {
+            store.release_now_or_defer();
+            return Err(error);
+        }
+        Ok(store)
+    }
+
+    /// Refuses settings no store can honor, before anything touches the disk.
+    fn validate(options: &OpenOptions) -> Result<()> {
         if options.max_connections == 0 {
             return Err(Error::InvalidSetting("max_connections must be at least 1".into()));
         }
@@ -370,32 +408,15 @@ impl Store {
                 crate::wal::MIN_SIZE_LIMIT
             )));
         }
+        if options.default_size_limit < crate::schema::MIN_SIZE_LIMIT {
+            return Err(Error::InvalidSetting(format!(
+                "a new database's size_limit must be at least {} bytes, got {}",
+                crate::schema::MIN_SIZE_LIMIT,
+                options.default_size_limit
+            )));
+        }
         options.requested.validate()?;
-        options.role.validate()?;
-        open::ensure_directory(&options.directory)?;
-        // One deadline for the lookup, the open sequence and a joining handle's write.
-        let deadline = lockwait::deadline_after(Instant::now(), options.timeout);
-        Self::open_until(options, deadline).map_err(|error| match error {
-            Error::Timeout { .. } => Error::Timeout { seconds: options.timeout.as_secs_f64() },
-            other => other,
-        })
-    }
-
-    /// [`Store::open`] under a deadline the caller already took. A plain cache looks for a
-    /// `FanoutCache` manifest before its database can be created, so a mistaken `Cache(root)` leaves
-    /// nothing behind, and again once it has its store, so a `FanoutCache` that created its manifest
-    /// meanwhile is noticed too: of two racing creators at least one is refused (plan 13, section 1).
-    fn open_until(options: &OpenOptions, deadline: Instant) -> Result<Arc<Self>> {
-        if options.role != Role::Plain {
-            return Self::open_store(options, deadline);
-        }
-        crate::fanout::refuse_manifest(&options.directory)?;
-        let store = Self::open_store(options, deadline)?;
-        if let Err(error) = crate::fanout::refuse_manifest(&options.directory) {
-            store.release_now_or_defer();
-            return Err(error);
-        }
-        Ok(store)
+        options.role.validate()
     }
 
     /// Finds or opens the store and registers a handle on it; see [`Store::open_until`].
@@ -420,7 +441,13 @@ impl Store {
         let (gate, conn, limits, pin, file_id) = lockwait::retry(left(), |attempt_deadline| {
             let gate = enter_until(attempt_deadline)?;
             let mut conn = open::connect(&options.directory, options.timeout)?;
-            let limits = open::prepare(&mut conn, options.requested, options.role, options.timeout)?;
+            let limits = open::prepare_creating(
+                &mut conn,
+                options.requested,
+                options.role,
+                options.default_size_limit,
+                options.timeout,
+            )?;
             let (pin, file_id) = open_pin(&gate, &db_path)?;
             Ok((gate, conn, limits, pin, file_id))
         })?;
@@ -567,8 +594,9 @@ impl Store {
     /// its whole budget.
     fn join(self: &Arc<Self>, options: &OpenOptions, timeout: Duration) -> Result<()> {
         // First, before anything is raised or written: the fast path (`lookup`) never runs
-        // `prepare`, so this is the only stamp check a handle joining a live store gets.
-        if let Err(error) = open::check_role(&open::db_path(&self.directory), options.role, self.role) {
+        // `prepare`, so this is the only stamp check a handle joining a live store gets. The error
+        // names the path this caller gave, not the first opener's spelling of it.
+        if let Err(error) = open::check_role(&open::db_path(&options.directory), options.role, self.role) {
             self.release_now_or_defer();
             return Err(error);
         }
@@ -1788,6 +1816,8 @@ pub fn drain_deferred_releases() {
     });
 }
 
+mod shards;
+
 #[cfg(test)]
 mod fork_timeout;
 
@@ -1812,6 +1842,7 @@ mod tests {
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
+            default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
         }
     }
 

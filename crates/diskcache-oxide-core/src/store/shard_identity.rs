@@ -22,6 +22,7 @@ fn options(dir: &Path, role: Role) -> OpenOptions {
         wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
         auto_checkpoint: false,
         role,
+        default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
     }
 }
 
@@ -69,6 +70,11 @@ fn a_plain_cache_on_a_live_shard_is_refused_through_the_fast_path() {
     assert_eq!(shards[1].handles(), 1);
     assert_eq!(shards[1].max_connections.load(Ordering::Acquire), DEFAULT_MAX_CONNECTIONS, "nothing was raised");
     assert_ne!(shards[1].cached_limits().size_limit, 9 << 20, "nothing was written");
+    // The error names the path this caller typed, even when it spells the directory differently.
+    let spelled = tmp.path().join("000").join("..").join("001");
+    let err = Store::open(&options(&spelled, Role::Plain)).unwrap_err();
+    assert!(err.to_string().contains(&*spelled.to_string_lossy()), "{err}");
+    assert_eq!(shards[1].handles(), 1);
     // The right role still joins the same store.
     let again = Store::open(&options(&dir, shard(1, 2))).unwrap();
     assert!(Arc::ptr_eq(&again, &shards[1]));
@@ -197,4 +203,64 @@ fn a_plain_cache_racing_a_fanout_cache_for_one_root_never_both_succeed() {
             store.release_handle();
         }
     }
+}
+
+/// A hook run with the directory being opened.
+type Hook = Box<dyn FnOnce(&Path)>;
+
+thread_local! {
+    /// Run once by the next plain `Store::open_until` on this thread, between its store and its second
+    /// manifest check, so a test can create the manifest exactly there.
+    static AFTER_OPEN_STORE: std::cell::RefCell<Option<Hook>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The test hook `Store::open_until` calls; does nothing unless a test armed it on this thread.
+pub(super) fn after_open_store(directory: &Path) {
+    if let Some(hook) = AFTER_OPEN_STORE.with(|h| h.borrow_mut().take()) {
+        hook(directory);
+    }
+}
+
+/// Arms [`after_open_store`] to write a manifest into the directory being opened.
+fn write_manifest_after_open_store() {
+    AFTER_OPEN_STORE.with(|h| {
+        *h.borrow_mut() = Some(Box::new(|dir: &Path| {
+            std::fs::write(dir.join(MANIFEST_FILENAME), fanout::Manifest::new(8).unwrap().render()).unwrap();
+        }));
+    });
+}
+
+#[test]
+fn a_manifest_that_appears_after_the_store_opens_is_refused_and_the_joined_handle_released() {
+    // No other test's fork pending: a refusal behind one defers its release, by design.
+    let _forks = crate::testutil::one_global_fork_at_a_time();
+    let tmp = TempDir::new("shard-post-check-join");
+    let store = Store::open(&options(tmp.path(), Role::Plain)).unwrap();
+    write_manifest_after_open_store();
+    // The fast path: this open joins the live store (2 handles), then its second check refuses.
+    refused(Store::open(&options(tmp.path(), Role::Plain)), "is a FanoutCache root");
+    assert_eq!(store.handles(), 1, "the refused open released the handle it joined with");
+    store.release_handle();
+    assert_eq!(store.handles(), 0);
+}
+
+#[test]
+fn a_manifest_that_appears_after_a_new_store_opens_is_refused_and_leaves_no_handle_counted() {
+    // No other test's fork pending: a refusal behind one defers its release, by design.
+    let _forks = crate::testutil::one_global_fork_at_a_time();
+    let tmp = TempDir::new("shard-post-check-new");
+    write_manifest_after_open_store();
+    // The slow path: this open creates the store, then its second check refuses.
+    refused(Store::open(&options(tmp.path(), Role::Plain)), "is a FanoutCache root");
+    let gate = GATE.enter_shared_blocking();
+    let live: Vec<Arc<Store>> =
+        registry(&gate).iter().filter_map(Weak::upgrade).filter(|s| s.directory == tmp.path()).collect();
+    drop(gate);
+    assert!(live.iter().all(|s| s.handles() == 0 && s.is_retired()), "the refused open kept its handle");
+    drop(live);
+    // Once the manifest is gone the directory opens again, with exactly one handle counted.
+    std::fs::remove_file(tmp.path().join(MANIFEST_FILENAME)).unwrap();
+    let store = Store::open(&options(tmp.path(), Role::Plain)).unwrap();
+    assert_eq!(store.handles(), 1);
+    store.release_handle();
 }

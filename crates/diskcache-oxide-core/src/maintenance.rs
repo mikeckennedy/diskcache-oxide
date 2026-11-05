@@ -319,6 +319,7 @@ mod tests {
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
+            default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
         })
         .unwrap()
     }
@@ -570,6 +571,7 @@ mod tests {
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
+            default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
         })
         .unwrap();
         let blob = vec![1u8; 30_000];

@@ -102,7 +102,12 @@ def test_function_signatures_match(name: str) -> None:
     _check_defaults(name, FUNCTIONS[name], inspect.signature(getattr(_core, name)))
 
 
-@pytest.mark.parametrize('name', sorted(n for n, c in CLASSES.items() if n not in ('Cache', 'Transaction')))
+CACHE_CLASSES = ('Cache', 'FanoutCache')
+
+
+@pytest.mark.parametrize(
+    'name', sorted(n for n, c in CLASSES.items() if n not in ('Cache', 'FanoutCache', 'Transaction'))
+)
 def test_exception_bases_match(name: str) -> None:
     node = CLASSES[name]
     runtime = getattr(_core, name)
@@ -110,20 +115,17 @@ def test_exception_bases_match(name: str) -> None:
     assert bases == [b.__name__ for b in runtime.__bases__], name
 
 
-def test_the_constructor_matches() -> None:
-    _check_defaults(
-        'Cache',
-        _members(CLASSES['Cache'])['__new__'][0],
-        inspect.signature(_core.Cache),
-    )
+@pytest.mark.parametrize('cls', CACHE_CLASSES)
+def test_the_constructor_matches(cls: str) -> None:
+    _check_defaults(cls, _members(CLASSES[cls])['__new__'][0], inspect.signature(getattr(_core, cls)))
 
 
-CACHE_MEMBERS = _members(CLASSES['Cache'])
+MEMBERS = {cls: _members(CLASSES[cls]) for cls in CACHE_CLASSES}
 
 
-@pytest.mark.parametrize('name', sorted(CACHE_MEMBERS))
-def test_every_stubbed_member_exists(name: str) -> None:
-    assert hasattr(_core.Cache, name), f'Cache.{name} is in the stub but not the module'
+@pytest.mark.parametrize(('cls', 'name'), [(c, n) for c in CACHE_CLASSES for n in sorted(MEMBERS[c])])
+def test_every_stubbed_member_exists(cls: str, name: str) -> None:
+    assert hasattr(getattr(_core, cls), name), f'{cls}.{name} is in the stub but not the module'
 
 
 # The garbage collector's protocol, not part of the API.
@@ -131,33 +133,35 @@ RUNTIME_ONLY = {'__traverse__', '__clear__'}
 
 
 @pytest.mark.parametrize(
-    'name',
-    sorted(
-        n
-        for n, m in vars(_core.Cache).items()
+    ('cls', 'name'),
+    [
+        (c, n)
+        for c in CACHE_CLASSES
+        for n, m in sorted(vars(getattr(_core, c)).items())
         if callable(m) or isinstance(m, property) or inspect.isgetsetdescriptor(m)
-    ),
+    ],
 )
-def test_every_public_member_is_stubbed(name: str) -> None:
+def test_every_public_member_is_stubbed(cls: str, name: str) -> None:
     public = not name.startswith('_') or name.startswith('__') and name not in RUNTIME_ONLY
     # Whatever `object` already declares (`__repr__`, `__new__`, ...) needs no stub line.
     if not public or hasattr(object, name):
         return
-    assert name in CACHE_MEMBERS, f'Cache.{name} is in the module but not the stub'
+    assert name in MEMBERS[cls], f'{cls}.{name} is in the module but not the stub'
 
 
 @pytest.mark.parametrize(
-    'name',
-    sorted(
-        n
-        for n, defs in CACHE_MEMBERS.items()
+    ('cls', 'name'),
+    [
+        (c, n)
+        for c in CACHE_CLASSES
+        for n, defs in sorted(MEMBERS[c].items())
         if not n.startswith('__') and not _is_property(defs[0]) and not n.startswith('_')
-    ),
+    ],
 )
-def test_method_signatures_match(name: str) -> None:
-    runtime = inspect.signature(getattr(_core.Cache, name))
-    for definition in CACHE_MEMBERS[name]:
+def test_method_signatures_match(cls: str, name: str) -> None:
+    runtime = inspect.signature(getattr(getattr(_core, cls), name))
+    for definition in MEMBERS[cls][name]:
         expected = [(n, k) for n, k, _ in _signature(definition)]
-        assert expected == [(p.name, p.kind) for p in runtime.parameters.values() if p.name != 'self'], f'Cache.{name}'
-    if len(CACHE_MEMBERS[name]) == 1:
-        _check_defaults(f'Cache.{name}', CACHE_MEMBERS[name][0], runtime)
+        assert expected == [(p.name, p.kind) for p in runtime.parameters.values() if p.name != 'self'], f'{cls}.{name}'
+    if len(MEMBERS[cls][name]) == 1:
+        _check_defaults(f'{cls}.{name}', MEMBERS[cls][name][0], runtime)

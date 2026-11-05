@@ -214,6 +214,25 @@ def incr_many(backend_name: str, directory: str, barrier: Barrier, ops: int) -> 
             cache.incr('counter')
 
 
+def open_fanout(backend_name: str, directory: str) -> Any:
+    return _backend(backend_name).make_fanout_cache(Path(directory), shards=8)
+
+
+@titled('race-fanout-add')
+def fanout_add_race(backend_name: str, directory: str, keys: list[str], barrier: Barrier, results: Any) -> None:
+    with open_fanout(backend_name, directory) as cache:
+        barrier.wait(SYNC_TIMEOUT)
+        results.put((os.getpid(), [key for key in keys if cache.add(key, os.getpid())]))
+
+
+@titled('race-fanout-incr')
+def fanout_incr_many(backend_name: str, directory: str, keys: list[str], barrier: Barrier, ops: int) -> None:
+    with open_fanout(backend_name, directory) as cache:
+        barrier.wait(SYNC_TIMEOUT)
+        for i in range(ops):
+            cache.incr(keys[i % len(keys)])
+
+
 @titled('race-pop')
 def pop_many(backend_name: str, directory: str, barrier: Barrier, keys: list[str], results: Any) -> None:
     with open_cache(backend_name, directory) as cache:
