@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "diskcache-oxide-core"
-version = "0.1.0-dev.1"
+version = "0.1.0-dev.2"
 dependencies = [
  "rusqlite",
  "shuttle",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "diskcache-oxide-py"
-version = "0.1.0-dev.1"
+version = "0.1.0-dev.2"
 dependencies = [
  "base64",
  "diskcache-oxide-core",
