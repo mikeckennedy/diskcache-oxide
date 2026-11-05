@@ -249,10 +249,29 @@ fn _sqlite_memory(reset: bool) -> (i64, i64) {
     unsafe { (rusqlite::ffi::sqlite3_memory_used(), rusqlite::ffi::sqlite3_memory_highwater(i32::from(reset))) }
 }
 
+/// The crate version in the PEP 440 form the wheel's metadata has. maturin derives the wheel's
+/// version from Cargo's, turning a semver pre-release such as `0.1.0-dev.1` into `0.1.0.dev1`; this
+/// does the same, so `__version__` matches what pip and `importlib.metadata` report
+/// (`tests/unit/test_version.py`), including a tag with no number (`-alpha` is `a0`). maturin
+/// refuses to build any other tag, so the fallback below never ships.
+fn pep440_version() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let Some((release, pre)) = version.split_once('-') else { return version.to_owned() };
+    let (tag, number) = pre.split_once('.').unwrap_or((pre, "0"));
+    let tag = match tag {
+        "alpha" => "a",
+        "beta" => "b",
+        "rc" | "pre" | "c" | "preview" => "rc",
+        "dev" => ".dev",
+        _ => return version.to_owned(),
+    };
+    format!("{release}{tag}{number}")
+}
+
 #[pymodule(gil_used = false)]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
-    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add("__version__", pep440_version())?;
     m.add("BUNDLED_SQLITE_VERSION", sqlite::compile_version())?;
     // Lets benchmarks refuse to measure an unoptimized build.
     m.add("_DEBUG_BUILD", cfg!(debug_assertions))?;

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "diskcache-oxide"
-version = "0.0.0"
+dynamic = ["version"]
 description = "A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API."
 readme = "README.md"
 license = "MIT"
