@@ -84,6 +84,22 @@ pub(crate) fn quiesce_registry() {
 /// keeps its memory in the child (its release still runs), and the child's own deferrals still go in.
 static DEFERRED_OWNERS: TakeAllStack<Arc<Store>> = TakeAllStack::new();
 
+/// Held transactions whose end couldn't get in behind a fork (see [`HeldTransaction::park`]), for
+/// the drain at the end of that fork to roll back. A lock-free stack for the same reason as
+/// [`DEFERRED_OWNERS`]: it's pushed with no gate level. Each entry keeps its store alive.
+static DEFERRED_ENDS: TakeAllStack<HeldTransaction> = TakeAllStack::new();
+
+/// Counts `HeldTransaction::abandon` calls, so a test can tell that path ran.
+#[cfg(test)]
+static ABANDONS: AtomicUsize = AtomicUsize::new(0);
+
+// `DEFERRED_ENDS` is a static, which needs `Sync`, and its entries move between threads, which needs
+// `Send`; `TakeAllStack` is each only when its values are.
+const _: () = {
+    const fn send_and_sync<T: Send + Sync>() {}
+    send_and_sync::<HeldTransaction>();
+};
+
 /// How a handle wants its store opened.
 #[derive(Debug, Clone)]
 pub struct OpenOptions {
@@ -1358,9 +1374,13 @@ impl Drop for Lease<'_, '_> {
 }
 
 /// A write transaction held across calls. See [`Store::begin_hold`]. `Send`: it may be finished or
-/// dropped on another thread (the GC may drop the Python object holding it anywhere). While the
-/// owner thread is inside an operation on it, that waits for the operation, with the interpreter
-/// released.
+/// dropped on another thread (the GC may drop the Python object holding it anywhere).
+///
+/// Ending it is bounded. A commit waits up to the transaction's `timeout`; a rollback, or a drop,
+/// tries once. An end that couldn't get in behind its owner's fork is *parked* (see
+/// `HeldTransaction::park`) and rolled back by the drain at the end of that fork; until then the
+/// transaction is still its owner's. A commit from another thread waiting for the owner's operation
+/// gives up at its deadline and leaves the rollback to that operation.
 #[derive(Debug)]
 #[must_use = "dropping a held transaction rolls it back"]
 pub struct HeldTransaction {
@@ -1371,18 +1391,45 @@ pub struct HeldTransaction {
     timeout: Duration,
 }
 
+/// What [`HeldTransaction::end`] did.
+#[derive(Debug)]
+enum EndOutcome {
+    /// It ran, or was left to the owner's operation, or (`Err(EndInsideOperation)`) can't run here.
+    Ended(Result<()>),
+    /// It couldn't get in by its deadline behind a fork that doesn't wait for it: nothing was
+    /// released, and `write_word` is still `Some`. Only this is ever parked: an
+    /// `Ended(Err(Timeout))` may be a COMMIT that failed busy after everything was released.
+    NotEnded,
+}
+
 impl HeldTransaction {
     /// Commits (`commit = true`) or rolls back, and releases everything. In a child forked while
     /// the transaction was held it does neither and reports [`Error::ForkPoisoned`]: the parent
     /// still owns the transaction, and the child forgets its copy of the connection.
+    ///
+    /// A commit waits up to the transaction's `timeout`, a rollback not at all. One that can't get
+    /// in behind its owner's fork by then is parked, to roll back at the end of that fork: a commit
+    /// then reports [`Error::Timeout`], a rollback `Ok`.
     pub fn finish(mut self, commit: bool) -> Result<()> {
-        self.end(commit)
+        let start = Instant::now();
+        // The owner thread never waits to get in (it holds the share's level), so only another
+        // thread's rollback, which nobody waits on, tries once instead.
+        let deadline = if commit { lockwait::deadline_after(start, self.timeout) } else { start };
+        match self.end(commit, deadline) {
+            EndOutcome::Ended(result) => result,
+            EndOutcome::NotEnded => {
+                Self::park(self.take_live());
+                if commit { Err(Error::Timeout { seconds: self.timeout.as_secs_f64() }) } else { Ok(()) }
+            }
+        }
     }
 
-    /// Ends the transaction. Inside one of its own operations (the connection is lent to this
-    /// thread) it can't, and reports [`Error::EndInsideOperation`] with nothing released.
-    fn end(&mut self, commit: bool) -> Result<()> {
-        let Some(write_word) = self.write_word else { return Ok(()) };
+    /// Ends the transaction, entering the gate until `deadline`. Inside one of its own operations
+    /// (the connection is lent to this thread) it can't, and reports [`Error::EndInsideOperation`]
+    /// with nothing released; behind a fork it couldn't get past by `deadline`, it reports
+    /// [`EndOutcome::NotEnded`], with nothing released either.
+    fn end(&mut self, commit: bool, deadline: Instant) -> EndOutcome {
+        let Some(write_word) = self.write_word else { return EndOutcome::Ended(Ok(())) };
         let me = std::thread::current().id();
         // The levels this thread holds outside this transaction (it may be inside an operation of
         // its own when the GC finalizes the transaction here).
@@ -1390,8 +1437,14 @@ impl HeldTransaction {
         let mut inherited = false;
         let (gate, pinned) = loop {
             // On the transaction's own level: from another thread, a plain entry would wait for a
-            // pending fork, which waits for this transaction. `share` is `Some` while `write_word` is.
-            let gate = self.share.as_ref().unwrap_or_else(|| unreachable!("a live hold has a share")).enter();
+            // pending fork, which waits for this transaction. A parked transaction has given its
+            // share up, and only the drain ends it, on a level of its own, so a plain entry there
+            // is reentrant.
+            let entered = match self.share.as_ref() {
+                Some(share) => share.enter_until(deadline),
+                None => GATE.try_enter_shared(),
+            };
+            let Some(gate) = entered else { return EndOutcome::NotEnded };
             let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
             match &mut *slot {
                 PinnedSlot::Lent { generation, .. } if *generation != gate::generation() => {
@@ -1401,29 +1454,39 @@ impl HeldTransaction {
                     drop(slot);
                     break (gate, None);
                 }
-                PinnedSlot::Lent { owner, .. } if *owner == me => return Err(Error::EndInsideOperation),
-                PinnedSlot::Lent { abandoned, .. } if !commit || outer > 0 => {
+                PinnedSlot::Lent { owner, .. } if *owner == me => {
+                    return EndOutcome::Ended(Err(Error::EndInsideOperation));
+                }
+                PinnedSlot::Lent { abandoned, .. } if !commit || outer > 0 || Instant::now() >= deadline => {
                     // The owner thread is inside an operation on it. A rollback needn't wait for
                     // that operation: it's left to it, as a drop inside it is. A commit from a thread
                     // holding levels of its own can't wait either: a fork from inside that operation
-                    // would wait for those levels while this thread waits for the operation. Then
-                    // it's rolled back the same way, and the commit reports why.
+                    // would wait for those levels while this thread waits for the operation. Nor can
+                    // one whose deadline has passed. Then it's rolled back the same way, and the
+                    // commit reports why.
+                    let timed_out = outer == 0 && Instant::now() >= deadline;
                     *abandoned = Some(Abandoned { write_word, hold: self.hold.take(), share: self.share.take() });
                     self.write_word = None;
                     drop(slot);
                     drop(gate);
-                    return if commit { Err(Error::EndInsideOperation) } else { Ok(()) };
+                    return EndOutcome::Ended(match (commit, timed_out) {
+                        (false, _) => Ok(()),
+                        (true, true) => Err(Error::Timeout { seconds: self.timeout.as_secs_f64() }),
+                        (true, false) => Err(Error::EndInsideOperation),
+                    });
                 }
                 PinnedSlot::Lent { .. } => {
-                    // A commit from a thread with no other levels: wait for the operation to hand the
-                    // connection back, with the interpreter released, since that operation may be
-                    // running Python (a pickle hook) and need it. The operation is at gate depth > 0,
-                    // where every gate wait is bounded, and a fork from it doesn't wait for this
-                    // thread, which holds no level while it sleeps. This wait has no deadline, though:
-                    // a hook that depends on this thread never hands the connection back.
+                    // A commit from a thread with no other levels: wait, until its deadline, for the
+                    // operation to hand the connection back, with the interpreter released, since that
+                    // operation may be running Python (a pickle hook) and need it. The operation is at
+                    // gate depth > 0, where every gate wait is bounded, and a fork from it doesn't wait
+                    // for this thread, which holds no level while it sleeps. A hook that depends on
+                    // this thread never hands the connection back, so at the deadline it's abandoned
+                    // (above), never parked: it waits on the operation, not a fork.
                     drop(slot);
                     drop(gate);
-                    gate::run_blocking(&|| std::thread::sleep(LENT_POLL));
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    gate::run_blocking(&|| std::thread::sleep(LENT_POLL.min(left)));
                 }
                 _ => {
                     self.store.pinned_active.store(false, Ordering::Release);
@@ -1447,7 +1510,49 @@ impl HeldTransaction {
         self.hold.take();
         self.share.take();
         self.store.unlink(garbage);
-        result
+        EndOutcome::Ended(result)
+    }
+
+    /// Rolls back without waiting, as a drop does, and returns the transaction if it couldn't end,
+    /// for the caller to park. Inside one of its own operations it's abandoned to that operation.
+    fn end_now(&mut self) -> Option<Self> {
+        match self.end(false, Instant::now()) {
+            EndOutcome::Ended(Err(Error::EndInsideOperation)) => {
+                self.abandon();
+                None
+            }
+            EndOutcome::Ended(_) => None,
+            EndOutcome::NotEnded => Some(self.take_live()),
+        }
+    }
+
+    /// Moves what this transaction still holds into a new one, leaving a husk whose drop does
+    /// nothing (`write_word` is `None`).
+    fn take_live(&mut self) -> Self {
+        Self {
+            store: Arc::clone(&self.store),
+            write_word: self.write_word.take(),
+            hold: self.hold.take(),
+            share: self.share.take(),
+            timeout: self.timeout,
+        }
+    }
+
+    /// Leaves an end that couldn't get in behind a fork ([`EndOutcome::NotEnded`]) for the drain at
+    /// the end of that fork, which rolls it back (see [`drain_deferred_releases`]). Recorded before
+    /// it's flagged, then this thread tries the drain itself, in case that fork has just ended
+    /// ([`Gate::defer`](crate::gate::Gate::defer)).
+    ///
+    /// The share's gate level goes first, so no fork ever waits for a parked end: kept, a fork
+    /// claimed after the one it parked behind, by a thread that isn't the owner, would wait for that
+    /// level, and only a drain at that fork's end could release it (model 19). The write lock and
+    /// the D-020 hold stay, so other writers still wait, and a child forked before the drain is
+    /// poisoned for this file. The slot is unchanged too: the owner's operations still run inside
+    /// the transaction whenever it can enter the gate (it no longer holds a level of its own, so
+    /// behind another thread's fork they wait like anyone's), and roll back with it.
+    fn park(mut parked: Self) {
+        drop(parked.share.take());
+        GATE.defer(|| DEFERRED_ENDS.push(parked), || gate::run_blocking(&drain_deferred_releases));
     }
 
     /// Leaves the rollback to the operation the connection is lent to (see [`PinnedSlot::Lent`]),
@@ -1455,7 +1560,21 @@ impl HeldTransaction {
     /// that will roll back.
     fn abandon(&mut self) {
         let Some(write_word) = self.write_word.take() else { return };
-        let gate = self.share.as_ref().unwrap_or_else(|| unreachable!("a live hold has a share")).enter();
+        #[cfg(test)]
+        ABANDONS.fetch_add(1, Ordering::SeqCst);
+        // `HeldShare::enter` has no deadline, so it may only run where it can't wait: on the owner
+        // thread inside its own operation, which holds a level, so the entry is reentrant.
+        #[cfg(debug_assertions)]
+        {
+            let key = self.store.key();
+            let lent_here = LENT.with(|lent| lent.borrow().iter().any(|(k, _)| *k == key));
+            assert!(lent_here || GATE.guard_depth() > 0, "abandoned a held transaction outside an operation");
+        }
+        // A parked transaction has no share; it's only abandoned by the drain, on its own level.
+        let gate = match self.share.as_ref() {
+            Some(share) => share.enter(),
+            None => GATE.try_enter_shared().unwrap_or_else(|| unreachable!("the drain was refused the gate")),
+        };
         let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
         if let PinnedSlot::Lent { abandoned, .. } = &mut *slot {
             *abandoned = Some(Abandoned { write_word, hold: self.hold.take(), share: self.share.take() });
@@ -1473,8 +1592,9 @@ impl HeldTransaction {
 
 impl Drop for HeldTransaction {
     fn drop(&mut self) {
-        if let Err(Error::EndInsideOperation) = self.end(false) {
-            self.abandon();
+        // A GC finalizer: nobody needs the outcome, so it tries once and parks rather than block.
+        if let Some(parked) = self.end_now() {
+            Self::park(parked);
         }
     }
 }
@@ -1508,7 +1628,7 @@ fn close_pinned(
         if commit { Err(Error::TransactionAborted) } else { Ok(()) }
     } else {
         let sql = if commit { "COMMIT" } else { "ROLLBACK" };
-        let outcome = conn.execute_batch(sql).map_err(|e| Error::from_sqlite(e, timeout));
+        let outcome = run_end(conn, sql, timeout);
         if outcome.is_err() && !conn.is_autocommit() {
             // Leave no half-open transaction on a pooled connection.
             let _ = conn.execute_batch("ROLLBACK");
@@ -1522,6 +1642,23 @@ fn close_pinned(
     let files = pinned.files.into_inner();
     let garbage = if committed { files.removed } else { files.created };
     (outcome, garbage)
+}
+
+/// Runs a held transaction's `COMMIT` or `ROLLBACK`.
+fn run_end(conn: &Connection, sql: &str, timeout: Duration) -> Result<()> {
+    #[cfg(test)]
+    if FAIL_NEXT_END_BUSY.with(|fail| fail.replace(false)) {
+        // What a busy COMMIT leaves: nothing ended, and the transaction still open.
+        return Err(Error::Timeout { seconds: timeout.as_secs_f64() });
+    }
+    conn.execute_batch(sql).map_err(|e| Error::from_sqlite(e, timeout))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests only: the next [`run_end`] on this thread fails busy without running, as a `COMMIT` does
+    /// when SQLite reports `SQLITE_BUSY` (the only way to get one on demand).
+    static FAIL_NEXT_END_BUSY: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Opens a store's pin on its database file, and the file's id. The pin is a SQLite connection that
@@ -1579,12 +1716,24 @@ impl Drop for FilePin {
     }
 }
 
-/// Releases the handles deferred behind a fork that has now ended, if the gate can be entered (see
+/// Rolls back the held transactions parked behind a fork that has now ended, then releases the
+/// handles deferred behind it, if the gate can be entered (see
 /// [`Gate::drain_deferred`](crate::gate::Gate::drain_deferred)). Run from the after-fork hooks.
 /// Closing a last connection can run SQLite's own checkpoint, so call it with the interpreter
 /// released. In a child, the connections it inherited are forgotten rather than closed.
 pub fn drain_deferred_releases() {
     GATE.drain_deferred(|gate| {
+        // Parked ends first, each dropped under this level and outside the registry mutex (it may
+        // drop a store's last `Arc`). Dropped, not finished: if the owner forked from inside an
+        // operation, this is that thread, and the end is abandoned to the operation.
+        for mut parked in DEFERRED_ENDS.take_all() {
+            // Unreachable: this thread holds the gate, so the entry is reentrant. A release fallback only:
+            // it goes back with a no-op try, never a drain inside a drain.
+            if let Some(again) = parked.end_now() {
+                debug_assert!(false, "a drained end was refused the gate");
+                GATE.defer(|| DEFERRED_ENDS.push(again), || {});
+            }
+        }
         // Before the counts (see `Store::defer_release`), and kept past the releases. A last `Arc`
         // goes at the end of this closure, under the level and outside the registry mutex.
         let _owners = DEFERRED_OWNERS.take_all();
@@ -2068,6 +2217,47 @@ mod tests {
         assert_eq!(count(&store), 0, "rolled back when the operation returned");
         put(&store, "after", b"v");
         assert_eq!(count(&store), 1);
+    }
+
+    #[test]
+    fn a_commit_waiting_on_the_owners_operation_times_out_and_is_abandoned_not_parked() {
+        // It waits on the owner's operation, not a fork, so at its deadline it's left to that
+        // operation, which rolls it back, and reports the timeout.
+        let tmp = TempDir::new("store-hold-commit-times-out");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let timeout = Duration::from_millis(200);
+        // Begun with `T`, since other tests' forks can hold up a begin, then given the short one.
+        let mut held = store.begin_hold(T).unwrap();
+        held.timeout = timeout;
+        put(&store, "k", b"v");
+        let (took, result) = end_mid_operation(&store, held, true, false);
+        assert!(matches!(result, Err(Error::Timeout { seconds }) if (seconds - 0.2).abs() < 1e-9), "{result:?}");
+        assert!(took >= timeout, "gave up after {took:?}, before its deadline");
+        assert!(took < timeout + Duration::from_secs(1), "the commit waited {took:?}");
+        assert_eq!(Arc::strong_count(&store), 1, "the end was parked");
+        assert_eq!(count(&store), 0, "rolled back when the operation returned");
+        put(&store, "after", b"v"); // The write lock was released.
+        assert_eq!(count(&store), 1);
+    }
+
+    #[test]
+    fn a_commit_or_rollback_that_fails_busy_is_reported_not_parked() {
+        // It ran, and released everything, before it failed: there's nothing to park, and parking
+        // a rollback would report it as `Ok`.
+        let tmp = TempDir::new("store-hold-end-busy");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        for commit in [true, false] {
+            let held = store.begin_hold(T).unwrap();
+            put(&store, "k", b"v");
+            FAIL_NEXT_END_BUSY.with(|fail| fail.set(true));
+            let result = held.finish(commit);
+            assert!(matches!(result, Err(Error::Timeout { .. })), "commit={commit}: {result:?}");
+            assert!(store.write_lock.try_lock().is_some(), "commit={commit}: the write lock is still held");
+            assert_eq!(GATE.own_depth(), 0, "commit={commit}: the gate level is still held");
+            assert_eq!(Arc::strong_count(&store), 1, "commit={commit}: the end was parked");
+            assert!(!store.held_by_this_thread(), "commit={commit}: still held");
+            assert_eq!(count(&store), 0, "commit={commit}: a failed end committed");
+        }
     }
 
     #[test]

@@ -872,6 +872,283 @@ fn rows_12_and_13_begin_hold_behind_a_fork_is_a_timeout_not_a_false_nesting() {
     });
 }
 
+// -- ending a held transaction behind its owner's fork (plan 12, step 3a) --------------------------
+
+/// Ends the pending fork this thread claimed, as the parent, when dropped, so a failed assert can't
+/// leave it claimed for the rest of the binary.
+struct EndsTheFork;
+impl Drop for EndsTheFork {
+    fn drop(&mut self) {
+        gate::end_fork_parent();
+    }
+}
+
+/// How ending a held transaction on another thread went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EndBy {
+    /// `finish(true)`.
+    Commit,
+    /// Dropping it, as a GC finalizer does.
+    Drop,
+}
+
+/// Ends `held` on another thread, by `by`, and reports how long that took and what it returned.
+fn end_on_another_thread(held: HeldTransaction, by: EndBy) -> mpsc::Receiver<(Duration, Result<()>)> {
+    let (done, finished) = mpsc::channel();
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let result = match by {
+            EndBy::Commit => held.finish(true),
+            EndBy::Drop => {
+                drop(held);
+                Ok(())
+            }
+        };
+        let _ = done.send((started.elapsed(), result));
+    });
+    finished
+}
+
+/// A commit gives up at the transaction's timeout and a drop at once, and neither waits longer.
+#[track_caller]
+fn parked_in_time(by: EndBy, (took, result): (Duration, Result<()>)) {
+    match by {
+        EndBy::Commit => {
+            assert!(matches!(result, Err(Error::Timeout { seconds }) if (seconds - SHORT.as_secs_f64()).abs() < 1e-9));
+            assert!(took >= SHORT, "gave up after {took:?}, before its deadline");
+            assert!(took < SHORT + SLACK, "took {took:?}");
+        }
+        EndBy::Drop => {
+            result.unwrap();
+            assert!(took < SHORT, "a drop waited {took:?} behind the fork");
+        }
+    }
+}
+
+/// Drains until `store`'s write lock is free: another test's drain may be the one that ends it.
+#[track_caller]
+fn drained_until_unlocked(store: &Store) {
+    eventually(|| {
+        drain_deferred_releases();
+        store.write_lock.try_lock().is_some()
+    });
+}
+
+/// An end from another thread while the owner (this thread) forks: that fork doesn't wait for the
+/// transaction, so the end can't get in. It's parked with nothing released, and the drain at the end
+/// of the fork rolls it back.
+#[test]
+fn an_end_elsewhere_during_the_owners_fork_is_parked_and_rolled_back_at_the_forks_end() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-park-end");
+    let store = open_store(tmp.path());
+    for by in [EndBy::Commit, EndBy::Drop] {
+        let held = store.begin_hold(SHORT).unwrap();
+        put(&store, "k");
+        gate::begin_fork(); // Returns at once: the only level is this thread's own.
+        let fork = EndsTheFork;
+        let report = end_on_another_thread(held, by).recv_timeout(T).expect("the watchdog: the end never returned");
+        parked_in_time(by, report);
+        assert!(store.write_lock.try_lock().is_none(), "{by:?}: a parked end released the write lock");
+        assert!(store.held_by_this_thread(), "{by:?}: a parked transaction stopped being its owner's");
+        assert_eq!(GATE.own_depth(), 0, "{by:?}: a parked end kept its share's gate level");
+        drop(fork);
+        drained_until_unlocked(&store);
+        assert!(!store.held_by_this_thread(), "{by:?}: still held after the drain");
+        assert_eq!(GATE.own_depth(), 0, "{by:?}: the transaction's gate level leaked");
+        only_owner(&store);
+        assert!(!store.contains(T, "k", NOW).unwrap(), "{by:?}: a parked end committed");
+        put(&store, "after"); // Nothing is left holding the write lock or the file.
+        assert!(store.contains(T, "after", NOW).unwrap());
+    }
+}
+
+/// The deadlock gate model 19 pins: the owner's fork ends without a drain (the end was recorded
+/// after its after-fork hook looked), and another thread then forks. That fork isn't the owner's,
+/// so a parked end that kept its share's level would hold it up for good, with only a drain at its
+/// own end to release it. A parked end gives the level up, so the fork returns, and its drain rolls
+/// the transaction back.
+#[test]
+fn a_parked_end_never_holds_up_a_later_fork_by_another_thread() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-park-third");
+    let store = open_store(tmp.path());
+    let held = store.begin_hold(SHORT).unwrap();
+    put(&store, "k");
+    gate::begin_fork();
+    let fork = EndsTheFork;
+    let report =
+        end_on_another_thread(held, EndBy::Drop).recv_timeout(T).expect("the watchdog: the end never returned");
+    parked_in_time(EndBy::Drop, report);
+    assert_eq!(GATE.own_depth(), 0, "a parked end kept its share's gate level");
+    drop(fork); // The owner's fork ends, with no drain.
+    let (forked, returned) = mpsc::channel();
+    std::thread::spawn(move || {
+        gate::begin_fork();
+        let _ = forked.send(());
+        gate::end_fork_parent();
+        drain_deferred_releases(); // That fork's after-fork hook.
+    });
+    returned.recv_timeout(T).expect("a later fork by another thread waited for a parked end");
+    drained_until_unlocked(&store);
+    assert!(!store.held_by_this_thread());
+    only_owner(&store);
+    assert!(!store.contains(T, "k", NOW).unwrap(), "a parked end committed");
+}
+
+/// Between the park and the drain the transaction is still the owner's: its writes land in it, and
+/// roll back with it.
+#[test]
+fn the_owners_writes_between_the_park_and_the_drain_stay_inside_and_roll_back() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-park-owner-writes");
+    let store = open_store(tmp.path());
+    let held = store.begin_hold(SHORT).unwrap();
+    put(&store, "before");
+    gate::begin_fork();
+    let fork = EndsTheFork;
+    let report = end_on_another_thread(held, EndBy::Commit).recv_timeout(T).expect("the watchdog");
+    parked_in_time(EndBy::Commit, report);
+    assert_eq!(GATE.own_depth(), 0, "a parked end kept its share's gate level");
+    put(&store, "meanwhile"); // The owner, between its hooks: inside the transaction, past the fork.
+    assert!(store.held_by_this_thread());
+    assert!(store.contains(T, "meanwhile", NOW).unwrap(), "the owner's write went elsewhere");
+    let reader = Arc::clone(&store);
+    let seen = on_another_thread(move || {
+        // Behind the fork with no level, so it can't look; once the fork ends it sees nothing.
+        reader.contains(SHORT, "meanwhile", NOW)
+    });
+    assert!(matches!(seen, Err(Error::Timeout { .. })), "{seen:?}");
+    drop(fork);
+    drained_until_unlocked(&store);
+    assert!(!store.held_by_this_thread());
+    assert!(!store.contains(T, "before", NOW).unwrap(), "the write before the park committed");
+    assert!(!store.contains(T, "meanwhile", NOW).unwrap(), "the owner's write after the park committed");
+}
+
+/// The owner writes while a THIRD thread's fork is pending, after its own parked end was recorded
+/// and its own fork ended with no drain. It holds no level, so the write waits at the gate like
+/// anyone's. Two orderings are legitimate, and which one a run takes depends on whether the owner
+/// gets back in between that fork's end and its after-fork drain:
+/// - the owner's `on_pinned` succeeds first, and the write joins the doomed transaction, which the
+///   drain then rolls back (so "meanwhile" is gone);
+/// - otherwise the write takes the normal path, waits for the write lock its own parked end holds,
+///   and commits on its own after the drain (so "meanwhile" survives).
+///
+/// Neither loses a write silently by design: the owner is inside its `with` block, and the
+/// transaction's `__exit__` reports one that didn't commit (`TransactionAborted`, step 3c; 3a
+/// doesn't expose that outcome, so it isn't asserted here). Either way a write made before the park
+/// is rolled back, and nothing is left holding the lock, a gate level or a parked end.
+#[test]
+fn the_owner_writing_behind_a_third_threads_fork_either_commits_alone_or_rolls_back_with_the_end() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-park-owner-third");
+    let store = open_store(tmp.path());
+    let held = store.begin_hold(SHORT).unwrap();
+    put(&store, "before");
+    gate::begin_fork();
+    let fork = EndsTheFork;
+    let report = end_on_another_thread(held, EndBy::Commit).recv_timeout(T).expect("the watchdog");
+    parked_in_time(EndBy::Commit, report);
+    drop(fork); // The owner's fork ends, with no drain: the parked end is still recorded.
+    let (forked, claimed) = mpsc::channel();
+    let third = std::thread::spawn(move || {
+        gate::begin_fork();
+        let _ = forked.send(());
+        std::thread::sleep(SHORT);
+        gate::end_fork_parent();
+        drain_deferred_releases(); // That fork's after-fork hook.
+    });
+    claimed.recv_timeout(T).expect("the third fork never claimed");
+    let started = Instant::now();
+    put(&store, "meanwhile"); // Waits behind the third fork: this thread holds no level.
+    assert!(started.elapsed() >= SHORT / 2, "the write didn't wait behind the fork: {:?}", started.elapsed());
+    third.join().unwrap();
+    drained_until_unlocked(&store);
+    assert!(!store.held_by_this_thread(), "still held after the drain");
+    assert_eq!(GATE.own_depth(), 0, "the transaction's gate level leaked");
+    only_owner(&store);
+    assert!(!store.contains(T, "before", NOW).unwrap(), "the write before the park committed");
+    assert!(DEFERRED_ENDS.take_all().is_empty(), "a parked end was stranded");
+    assert!(store.write_lock.try_lock().is_some(), "the write lock leaked");
+    // Either it committed on its own after the drain or it rolled back with the transaction: both are
+    // consistent, so "meanwhile" isn't asserted.
+}
+
+/// A parked end drained in a "child": the transaction's connection is from another generation, so
+/// the drain forgets it rather than ending it, and releases the rest. The real thing forks, which
+/// core's tests can't: here the connection's generation is moved on by hand, as a child sees it.
+#[test]
+fn a_parked_end_drained_in_a_child_forgets_the_connection_and_releases_the_rest() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-park-child");
+    let store = open_store(tmp.path());
+    let held = store.begin_hold(SHORT).unwrap();
+    put(&store, "k");
+    gate::begin_fork();
+    let fork = EndsTheFork;
+    let report = end_on_another_thread(held, EndBy::Drop).recv_timeout(T).expect("the watchdog");
+    parked_in_time(EndBy::Drop, report);
+    assert_eq!(GATE.own_depth(), 0, "a parked end kept its share's gate level");
+    {
+        let gate = GATE.try_enter_shared().expect("the forking thread is refused");
+        let mut slot = store.pinned.lock().unwrap();
+        let PinnedSlot::Here(pinned) = &mut *slot else { panic!("the parked transaction's slot moved") };
+        pinned.generation = gate::generation().wrapping_add(1);
+        drop(slot);
+        drop(gate);
+    }
+    assert!(!store.held_by_this_thread(), "a transaction from another generation still counts");
+    drop(fork);
+    drained_until_unlocked(&store);
+    assert_eq!(GATE.own_depth(), 0, "the transaction's gate level leaked");
+    only_owner(&store);
+    let gate = GATE.enter_shared_blocking();
+    assert_eq!(store.pool.idle(&gate), 0, "the inherited connection was given back to the pool");
+    drop(gate);
+    assert!(!store.pinned_active.load(Ordering::Acquire), "the slot still says it's held");
+}
+
+/// The owner forks from inside one of the transaction's own operations, and a drop elsewhere parks.
+/// The drain at the end of that fork runs on the owner, still inside the operation, so the end is
+/// abandoned to the operation, as a drop there would be, and rolls back when it returns.
+#[test]
+fn a_drain_that_finds_the_slot_lent_to_the_drainer_abandons_the_end_to_the_operation() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-park-lent");
+    let store = open_store(tmp.path());
+    let held = store.begin_hold(SHORT).unwrap();
+    put(&store, "k");
+    let mut held = Some(held);
+    let abandons = ABANDONS.load(Ordering::SeqCst);
+    let (report, locked) = store
+        .read(T, |_| {
+            // A pickle hook calling `os.fork()`, with the transaction's connection lent to it.
+            gate::begin_fork();
+            let fork = EndsTheFork;
+            let held = held.take().expect("read runs once on the held connection");
+            let report = end_on_another_thread(held, EndBy::Drop).recv_timeout(T).expect("the watchdog");
+            drop(fork);
+            // As the after-fork hook does, on this thread, inside the operation. Another test's drain
+            // may have got there first: either way the end is abandoned to this operation.
+            eventually(|| {
+                drain_deferred_releases();
+                matches!(&*store.pinned.lock().unwrap(), PinnedSlot::Lent { abandoned: Some(_), .. })
+            });
+            Ok((report, store.write_lock.try_lock().is_none()))
+        })
+        .unwrap();
+    parked_in_time(EndBy::Drop, report);
+    // Only `abandon` counts: a drain by another thread would leave the end to the operation another way.
+    assert!(ABANDONS.load(Ordering::SeqCst) > abandons, "the drain didn't take the EndInsideOperation path");
+    assert!(locked, "an abandoned end released the write lock before its operation returned");
+    assert!(store.write_lock.try_lock().is_some(), "the operation didn't release the write lock");
+    assert!(!store.held_by_this_thread());
+    assert_eq!(GATE.own_depth(), 0, "the transaction's gate level leaked");
+    only_owner(&store);
+    assert!(!store.contains(T, "k", NOW).unwrap(), "an abandoned transaction committed");
+}
+
 // -- rows 16 and 17: drops -----------------------------------------------------------------------
 
 #[test]

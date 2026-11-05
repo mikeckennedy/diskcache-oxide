@@ -39,7 +39,8 @@ static REGISTRY: Registry = Registry::new();
 ///
 /// Call it with the gate held (`gate` is the proof), before the level is turned into a
 /// [`HeldShare`](crate::gate::HeldShare). Drop the guard after the transaction ends, but before
-/// that share is dropped, so a fork never sees the transaction open and not registered.
+/// that share is dropped, so a fork never sees the transaction open and not registered. A parked end
+/// drops the share first and keeps the hold, which only widens the window a child is poisoned in.
 pub fn begin_hold(gate: &SharedGuard<'_>, id: FileId) -> HoldGuard<'static> {
     REGISTRY.begin_hold(gate, id)
 }

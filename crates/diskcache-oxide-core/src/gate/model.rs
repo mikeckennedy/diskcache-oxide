@@ -640,3 +640,403 @@ fn model_a_deferred_release_is_always_drained() {
     });
     CLAIM_BEAT_THE_DRAIN.assert_reached("a drain whose try failed because the second fork had claimed");
 }
+
+/// A held transaction as the models end it: its share, and its write lock's raw word.
+type Held = (HeldShare<'static>, u64);
+
+/// What the transaction-end models share: the write lock, the parked ends, and the witness.
+///
+/// The protocol under test: an end that can't get in on its share by its deadline *parks*. It drops
+/// the share first (its gate level goes, so no fork ever waits for a parked end), keeps the write
+/// lock (and, in the store, the D-020 hold, so a child forked meanwhile is poisoned for that file),
+/// and leaves the rest to [`Gate::defer`]. The drain ends it on the drainer's own plain level, which
+/// can't fail, so nothing is ever pushed back.
+struct Ends {
+    gate: &'static Gate,
+    lock: crate::genlock::WriteLock,
+    /// Parked ends: only the write lock's word is left once the share is dropped.
+    parked: crate::stack::TakeAllStack<u64>,
+    /// True while a drain is between its take and the end of its closure.
+    draining: AtomicBool,
+    /// Parked ends recorded while a drain was mid-closure (after its take).
+    pushed_during_drain: AtomicUsize,
+    /// The transaction's slot, as `Store::pinned`: whether its connection is lent to an operation
+    /// on its owner, and the end a drain left to that operation.
+    slot: shuttle::sync::Mutex<Slot>,
+    /// Ends a drain left to an operation instead of running them (`HeldTransaction::abandon`).
+    abandons: AtomicUsize,
+    w: Arc<Witness>,
+}
+
+#[derive(Default)]
+struct Slot {
+    lent: bool,
+    /// The write lock's word, to be released when the operation returns.
+    abandoned: Option<u64>,
+}
+
+impl Ends {
+    fn new(gate: &'static Gate, w: Arc<Witness>) -> Arc<Self> {
+        Arc::new(Self {
+            gate,
+            lock: crate::genlock::WriteLock::new(),
+            parked: crate::stack::TakeAllStack::new(),
+            draining: AtomicBool::new(false),
+            pushed_during_drain: AtomicUsize::new(0),
+            slot: shuttle::sync::Mutex::new(Slot::default()),
+            abandons: AtomicUsize::new(0),
+            w,
+        })
+    }
+
+    /// Begins one, as `Store::begin_hold` does: the write lock, then the gate, kept as a share.
+    fn begin(&self) -> Held {
+        let word = self.lock.try_lock().expect("the write lock is free").into_raw();
+        (self.gate.enter_shared_blocking().into_held(), word)
+    }
+
+    /// The end's work (COMMIT or ROLLBACK) on a level the caller holds, then the write lock.
+    fn finish_under_level(&self, word: u64) {
+        self.w.start_work();
+        thread::yield_now(); // COMMIT / ROLLBACK
+        self.w.end_work();
+        self.lock.release_raw(word);
+    }
+
+    /// Ends one on its share's level, as `HeldTransaction::end` does: the work, then the gate, the
+    /// write lock and the share, in that order. `false` if it couldn't get in by `deadline`, with
+    /// nothing released.
+    fn try_end(&self, held: &Held, deadline: Instant) -> bool {
+        let Some(g) = held.0.enter_until(deadline) else { return false };
+        self.w.start_work();
+        thread::yield_now(); // COMMIT
+        self.w.end_work();
+        drop(g);
+        self.lock.release_raw(held.1);
+        true
+    }
+
+    /// Ends one from another thread, parking it if it can't get in, as `HeldTransaction::park`.
+    /// Returns `(parked, the parker's own try drained)`.
+    fn end_or_park(&self, held: Held, deadline: Instant) -> (bool, bool) {
+        if self.try_end(&held, deadline) {
+            drop(held);
+            return (false, false);
+        }
+        assert!(now() >= deadline, "gave up before its deadline");
+        let (share, word) = held;
+        // The share goes first: from here no fork waits for this transaction.
+        drop(share);
+        let mut drained = false;
+        self.gate.defer(
+            || {
+                if self.draining.load(Ordering::SeqCst) {
+                    self.pushed_during_drain.fetch_add(1, Ordering::SeqCst);
+                }
+                self.parked.push(word);
+            },
+            || drained = self.drain(),
+        );
+        (true, drained)
+    }
+
+    /// `drain_deferred_releases`: ends every parked transaction on the drainer's level. Returns
+    /// whether its try got in.
+    fn drain(&self) -> bool {
+        let mut ran = false;
+        self.gate.drain_deferred(|_| {
+            ran = true;
+            let taken = self.parked.take_all();
+            self.draining.store(true, Ordering::SeqCst);
+            for word in taken {
+                // As `HeldTransaction::end` on a lent slot: left to the operation, not run.
+                let mut slot = self.slot.lock().expect("the slot mutex is never poisoned");
+                if slot.lent {
+                    assert!(slot.abandoned.replace(word).is_none(), "two ends abandoned to one operation");
+                    self.abandons.fetch_add(1, Ordering::SeqCst);
+                    continue;
+                }
+                drop(slot);
+                self.finish_under_level(word);
+            }
+            thread::yield_now();
+            self.draining.store(false, Ordering::SeqCst);
+        });
+        ran
+    }
+
+    /// The owner's operation starts: its connection is lent.
+    fn lend(&self) {
+        self.slot.lock().expect("the slot mutex is never poisoned").lent = true;
+    }
+
+    /// The operation returns the connection, and ends what was left to it, on its own level.
+    fn unlend(&self) {
+        let abandoned = {
+            let mut slot = self.slot.lock().expect("the slot mutex is never poisoned");
+            slot.lent = false;
+            slot.abandoned.take()
+        };
+        if let Some(word) = abandoned {
+            self.finish_under_level(word);
+        }
+    }
+
+    /// Nothing is left: no parked end, the write lock free, and the gate idle.
+    fn assert_idle(&self) {
+        assert!(self.parked.take_all().is_empty(), "a parked end was stranded");
+        assert!(
+            self.slot.lock().expect("the slot mutex is never poisoned").abandoned.is_none(),
+            "an abandoned end was never run"
+        );
+        assert!(self.lock.try_lock().is_some(), "the write lock leaked");
+        assert_eq!(self.lock.waiters(), 0);
+        assert_idle(self.gate);
+    }
+}
+
+/// Model 17: a held transaction ended on another thread while its owner forks (a GC finalizer, or
+/// a commit from elsewhere). That fork doesn't wait for the share, so the end gives up at its
+/// deadline and parks, and the drain at the end of the fork (or the ender's own try) always ends it,
+/// never beside an exclusive fork.
+#[test]
+fn model_an_end_parked_behind_its_owners_fork_is_always_drained() {
+    static PARKED: Reach = Reach::new();
+    static UNUSED: Reach = Reach::new();
+    check(|| {
+        let gate = fresh_gate();
+        let ends = Ends::new(gate, Witness::new(&UNUSED));
+        let (tx, rx) = mpsc::channel::<Held>();
+        let owner = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                tx.send(ends.begin()).unwrap();
+                ends.w.fork(gate, 0);
+                ends.drain(); // The after-fork hook.
+            })
+        };
+        let ender = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                let held = rx.recv().unwrap();
+                if ends.end_or_park(held, soon(2)).0 {
+                    PARKED.hit();
+                }
+            })
+        };
+        for t in [owner, ender] {
+            t.join().unwrap();
+        }
+        ends.assert_idle();
+    });
+    PARKED.assert_reached("an end parked behind its owner's fork");
+}
+
+/// Model 18: the owner forks too, parked behind a third thread's fork. The end gives up and parks;
+/// the third thread's drain can fail its try because the owner has claimed the next fork, and then
+/// the owner's own drain ends it.
+#[test]
+fn model_an_end_parked_while_its_owner_parks_is_drained_by_the_owner() {
+    static PARKED_WHILE_OWNER_PARKED: Reach = Reach::new();
+    static OWNER_CLAIM_BEAT_THE_DRAIN: Reach = Reach::new();
+    static OWNER_DRAINED: Reach = Reach::new();
+    static UNUSED: Reach = Reach::new();
+    check(|| {
+        let gate = fresh_gate();
+        let ends = Ends::new(gate, Witness::new(&UNUSED));
+        let (tx, rx) = mpsc::channel::<Held>();
+        let owner = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                tx.send(ends.begin()).unwrap();
+                ends.w.fork(gate, 0);
+                let was_set = gate.has_deferred();
+                if ends.drain() && was_set {
+                    OWNER_DRAINED.hit();
+                }
+            })
+        };
+        let ender = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                let held = rx.recv().unwrap();
+                let owner_parked = gate.parked() != 0;
+                if ends.end_or_park(held, soon(2)).0 && owner_parked {
+                    PARKED_WHILE_OWNER_PARKED.hit();
+                }
+            })
+        };
+        let third = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                ends.w.fork(gate, 0);
+                let was_set = gate.has_deferred();
+                if !ends.drain() && was_set && gate.pending.load(Ordering::SeqCst) {
+                    OWNER_CLAIM_BEAT_THE_DRAIN.hit();
+                }
+            })
+        };
+        for t in [owner, ender, third] {
+            t.join().unwrap();
+        }
+        ends.assert_idle();
+    });
+    PARKED_WHILE_OWNER_PARKED.assert_reached("an end parked while its owner was parked behind another fork");
+    OWNER_CLAIM_BEAT_THE_DRAIN.assert_reached("a drain whose try failed because the owner had claimed the next fork");
+    OWNER_DRAINED.assert_reached("the owner's own drain ending a parked end");
+}
+
+/// Model 19, the regression for the deadlock model 18 first found (seed 13188134919237689476 under
+/// the first protocol, which kept the share's level while parked): the owner's fork ends before the
+/// end is recorded, so its after-fork drain sees no flag; a third thread then claims a fork, so the
+/// parker's own try fails; and that fork, which no longer belongs to the owner, would wait forever
+/// for a parked share's level that only a drain at its end could release. Under the protocol the
+/// parked end holds no level, so the third fork finishes and its drain ends the transaction.
+#[test]
+fn model_an_end_parked_behind_a_third_fork_never_holds_that_fork_up() {
+    static TRY_FAILED_BEHIND_A_THIRD_FORK: Reach = Reach::new();
+    static UNUSED: Reach = Reach::new();
+    check(|| {
+        let gate = fresh_gate();
+        let ends = Ends::new(gate, Witness::new(&UNUSED));
+        let (tx, rx) = mpsc::channel::<Held>();
+        let (owner_done_tx, owner_done_rx) = mpsc::channel::<()>();
+        let owner = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                tx.send(ends.begin()).unwrap();
+                ends.w.fork(gate, 0);
+                ends.drain();
+                owner_done_tx.send(()).unwrap();
+            })
+        };
+        let ender = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                let held = rx.recv().unwrap();
+                let (parked, drained) = ends.end_or_park(held, soon(2));
+                // The schedule: the owner's fork and drain are over, and the try failed because a
+                // fork that isn't the owner's is pending.
+                if parked && !drained && gate.pending.load(Ordering::SeqCst) && gate.parked() == 0 {
+                    TRY_FAILED_BEHIND_A_THIRD_FORK.hit();
+                }
+            })
+        };
+        let third = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                owner_done_rx.recv().unwrap();
+                ends.w.fork(gate, 0);
+                ends.drain();
+            })
+        };
+        for t in [owner, ender, third] {
+            t.join().unwrap();
+        }
+        ends.assert_idle();
+    });
+    TRY_FAILED_BEHIND_A_THIRD_FORK.assert_reached("a parker's try failing behind a third thread's fork");
+}
+
+/// Model 20, the push-back race the first fix ran into: an end recorded while a drain is already
+/// past its take. Two forkers drain at their ends, and the parker's own try drains too. Nothing is
+/// ever pushed back (a drained end runs on the drainer's level and can't fail), and the flag's
+/// order (record, set, try; the drain clears it only once it holds a level) means whichever drain
+/// comes next takes the late record.
+#[test]
+fn model_an_end_recorded_during_a_drain_is_never_stranded() {
+    static RECORDED_DURING_A_DRAIN: Reach = Reach::new();
+    static UNUSED: Reach = Reach::new();
+    check(|| {
+        let gate = fresh_gate();
+        let ends = Ends::new(gate, Witness::new(&UNUSED));
+        let (tx, rx) = mpsc::channel::<Held>();
+        let owner = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                tx.send(ends.begin()).unwrap();
+                ends.w.fork(gate, 0);
+                ends.drain();
+            })
+        };
+        let ender = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                let held = rx.recv().unwrap();
+                ends.end_or_park(held, soon(1));
+            })
+        };
+        let third = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                // A deferral of its own, so a drain is running while the end is recorded.
+                if gate.try_enter_shared().is_none() {
+                    gate.defer(
+                        || {},
+                        || {
+                            ends.drain();
+                        },
+                    );
+                }
+                ends.w.fork(gate, 0);
+                ends.drain();
+            })
+        };
+        for t in [owner, ender, third] {
+            t.join().unwrap();
+        }
+        if ends.pushed_during_drain.load(Ordering::SeqCst) > 0 {
+            RECORDED_DURING_A_DRAIN.hit();
+        }
+        ends.assert_idle();
+    });
+    RECORDED_DURING_A_DRAIN.assert_reached("an end recorded while a drain was past its take");
+}
+
+/// Model 21: the owner forks from inside an operation on the transaction's connection (a pickle
+/// hook), so the connection is lent while the drain at that fork's end runs, or while the ender's
+/// own try does. The drain finds the slot lent and leaves the end to the operation, which runs it
+/// on its own level when it returns the connection. The rest of the drain's job is unchanged, and
+/// whichever side of the operation the drain lands on, the end runs exactly once and nothing is
+/// left. (The model's slot is the lent flag and the abandoned word; the store's real `end` also
+/// refuses a commit there, which the models don't need.)
+#[test]
+fn model_a_drain_that_finds_the_slot_lent_leaves_the_end_to_the_operation() {
+    static ABANDONED: Reach = Reach::new();
+    static UNUSED: Reach = Reach::new();
+    check(|| {
+        let gate = fresh_gate();
+        let ends = Ends::new(gate, Witness::new(&UNUSED));
+        let (tx, rx) = mpsc::channel::<Held>();
+        let owner = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                tx.send(ends.begin()).unwrap();
+                // The operation: it holds a level, with the connection lent, and forks from inside.
+                let level = gate.enter_shared_blocking();
+                ends.lend();
+                ends.w.start_work();
+                ends.w.fork(gate, 1);
+                ends.drain(); // The after-fork hook, inside the operation.
+                ends.w.end_work();
+                ends.unlend();
+                drop(level);
+            })
+        };
+        let ender = {
+            let ends = Arc::clone(&ends);
+            thread::spawn(move || {
+                let held = rx.recv().unwrap();
+                ends.end_or_park(held, soon(2));
+            })
+        };
+        for t in [owner, ender] {
+            t.join().unwrap();
+        }
+        if ends.abandons.load(Ordering::SeqCst) > 0 {
+            ABANDONED.hit();
+        }
+        ends.assert_idle();
+    });
+    ABANDONED.assert_reached("a drain that found the slot lent to an operation");
+}

@@ -128,7 +128,8 @@ pub(crate) fn quiesce_all() {
 /// [`quiesce_all`], with the gate held exclusively, so no other thread is using a pool: once every
 /// connection on a database file is closed, SQLite frees its lock record for the file, and the
 /// child doesn't inherit it (see the module docs). Only the forking thread's own leases and held
-/// transactions stay open across the fork.
+/// transactions stay open across the fork, plus the transactions of parked forkers and parked ends,
+/// which also cross it, quiescent and poisoned.
 pub(crate) fn close_idle_all() {
     let pools: Vec<Arc<PoolShared>> = registry().iter().filter_map(Weak::upgrade).collect();
     let current = gate::generation();

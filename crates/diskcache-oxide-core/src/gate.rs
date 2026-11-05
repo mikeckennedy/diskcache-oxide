@@ -25,7 +25,8 @@
 //!   times out.
 //!   Waiting for another thread's operation happens only with no level held: committing a held
 //!   transaction from a thread that isn't its owner, while the owner is inside an operation on it,
-//!   waits (detached, between entries) for that operation to hand the connection back. A rollback
+//!   waits (detached, between entries) for that operation to hand the connection back, until the
+//!   transaction's `timeout`, then it's left to that operation. A rollback
 //!   from there, or a commit from a thread that holds levels of its own, never waits: it's left to
 //!   the operation (a fork from inside it would otherwise wait for this thread's levels while this
 //!   thread waits for the operation).
@@ -35,10 +36,14 @@
 //! - A wait behind a pending fork belongs to an operation and ends at its deadline
 //!   ([`Gate::enter_shared_until`]). Only a thread with no level ever waits here, and a waiter holds
 //!   no level and no count, so giving up leaves nothing to undo. Code with no deadline doesn't wait:
-//!   it tries once and defers or skips. The exceptions are [`Gate::begin_fork`], since Python can't
-//!   refuse a fork and proceeding without quiescence would hand the child half a transaction, and
-//!   [`HeldShare::enter`], while the share's owner is forking or parked or the share was inherited;
-//!   `transact()` must bound those before it ships.
+//!   it tries once and defers or skips. Ending a held transaction enters on its share with a
+//!   deadline ([`HeldShare::enter_until`]); an end that couldn't get in by then gives its share up
+//!   (so no later fork waits for it) and is parked with [`Gate::defer`], to be ended on the drain's
+//!   own level at the end of the fork, so it never waits without bound.
+//!   The exceptions are [`Gate::begin_fork`], since Python can't refuse a fork and proceeding
+//!   without quiescence would hand the child half a transaction, and [`HeldShare::enter`], which
+//!   only a transaction abandoned inside its owner's own operation uses: that thread already holds
+//!   a level, so the entry is reentrant and never waits.
 //! - [`Gate::begin_fork`] waits until the only holders left are the calling thread's own levels and
 //!   those of threads parked in `begin_fork` behind it, so forking inside your own transaction
 //!   doesn't deadlock, and neither do two threads that each hold their own and fork at once: a
@@ -287,8 +292,8 @@ impl Gate {
     }
 
     /// Enters in shared mode with no deadline, running any wait through the installed [`Blocker`].
-    /// Only for [`HeldShare::enter`], whose callers have nowhere to park a transaction that couldn't
-    /// end: an operation uses [`Gate::enter_shared_until`], and code with no deadline
+    /// Only for [`HeldShare::enter`], whose one caller already holds a level, so this never waits
+    /// there: an operation uses [`Gate::enter_shared_until`], and code with no deadline
     /// [`Gate::try_enter_shared`].
     fn enter_unbounded(&self) -> SharedGuard<'_> {
         loop {
@@ -373,6 +378,14 @@ impl Gate {
     #[must_use]
     pub fn own_depth(&self) -> usize {
         self.local.with(|t| t.depth.get() + t.held_levels())
+    }
+
+    /// The shared levels the calling thread holds through [`SharedGuard`]s only, not those kept as
+    /// [`HeldShare`]s: whether it is inside an operation right now. For debug assertions.
+    #[cfg(debug_assertions)]
+    #[must_use]
+    pub(crate) fn guard_depth(&self) -> usize {
+        self.local.with(|t| t.depth.get())
     }
 
     /// Takes the gate exclusively: claims the fork (waiting for another thread's to end), blocks
@@ -588,18 +601,16 @@ pub struct HeldShare<'g> {
 
 impl<'g> HeldShare<'g> {
     /// Enters the gate on this share's authority, on any thread, without waiting for a pending fork
-    /// that waits for this share's level. For ending a held transaction on a thread that isn't its
-    /// owner (a GC finalizer), which would otherwise wait for a fork that waits for it. The level
-    /// entered here only adds to what that fork already waits for.
+    /// that waits for this share's level. The level entered here only adds to what that fork
+    /// already waits for.
     ///
     /// Not every fork waits for the share: not one claimed by the share's owner (its levels are its
     /// own), nor one claimed by another thread while the owner is parked behind it (parked levels
-    /// don't count). While the owner is forking or parked, this waits, through the blocker, with no
-    /// deadline. That fork doesn't wait for the share, but it can still wait for a third thread's
-    /// level, and if that third thread depends on this one, the wait is a cycle. It keeps the share's
-    /// authority meanwhile, since the next fork may be one that does. A share inherited across
-    /// `fork()` counts for nothing in the child, so there it enters with no deadline, after the
-    /// child's early reset, which a stuck fork of that child's own can also hold up.
+    /// don't count). While the owner is forking or parked this waits, through the blocker, with no
+    /// deadline, and a share inherited across `fork()` enters with no deadline too. So only a thread
+    /// that already holds a level may call it, where both waits are reentrant entries that never
+    /// wait: a held transaction abandoned inside its owner's own operation. Ending one anywhere else
+    /// uses [`HeldShare::enter_until`].
     pub fn enter(&self) -> SharedGuard<'g> {
         let gate = self.gate;
         loop {
@@ -615,6 +626,47 @@ impl<'g> HeldShare<'g> {
             run_blocking(&|| {
                 while gate.pending.load(Ordering::SeqCst) && self.owner.levels.load(Ordering::SeqCst) & FLAGS != 0 {
                     thread::sleep(WAITER_POLL);
+                }
+            });
+        }
+    }
+
+    /// [`HeldShare::enter`], until `deadline`: for ending a held transaction on a thread that isn't
+    /// its owner (a GC finalizer, a commit from another thread), which would otherwise wait for a
+    /// fork that waits for it.
+    ///
+    /// It waits only behind a fork that doesn't wait for the share: one claimed by its owner, or by
+    /// another thread while the owner is parked behind it, or, for a share inherited across
+    /// `fork()`, behind a fork of the child's own. That fork's end is coming, and it can still wait
+    /// for a third thread's level that depends on this one, so the wait ends at `deadline`. `None`
+    /// means it passed: nothing was entered and the share is unchanged. The caller then drops the
+    /// share, so no later fork waits for it, and parks the end for the drain at the end of the fork
+    /// ([`Gate::defer`]). Like [`Gate::enter_shared_until`], it tries once more after a wait, and a
+    /// passed deadline still tries once.
+    #[must_use]
+    pub fn enter_until(&self, deadline: Instant) -> Option<SharedGuard<'g>> {
+        let gate = self.gate;
+        loop {
+            match self.try_enter() {
+                ShareEntry::Entered(guard) => return Some(guard),
+                ShareEntry::OwnersFork => {}
+                ShareEntry::Inherited => return gate.enter_shared_until(deadline),
+            }
+            // Reentrant (this thread holds levels of its own), or no fork is pending any more.
+            if let Some(guard) = gate.try_enter_shared() {
+                return Some(guard);
+            }
+            if now() >= deadline {
+                gate.fork_timeouts.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+            run_blocking(&|| {
+                while gate.pending.load(Ordering::SeqCst) && self.owner.levels.load(Ordering::SeqCst) & FLAGS != 0 {
+                    let left = deadline.saturating_duration_since(now());
+                    if left.is_zero() {
+                        return;
+                    }
+                    thread::sleep(WAITER_POLL.min(left));
                 }
             });
         }
@@ -1273,30 +1325,56 @@ mod tests {
         assert_eq!(gate.stats().fork_timeouts, 0);
     }
 
-    /// `HeldShare::enter` while the share's owner is forking keeps waiting, with no deadline, until
-    /// that fork ends: bounding it needs somewhere to park an ended transaction (Phase 6b).
+    /// `HeldShare::enter_until` while the share's owner is forking gives up at its deadline, entering
+    /// nothing, and a later one with time to spare gets in once the fork ends.
     #[test]
-    fn a_share_entered_during_its_owners_fork_waits_with_no_deadline() {
+    fn a_share_entered_during_its_owners_fork_gives_up_at_its_deadline() {
         let gate = test_gate!(G);
         let share = gate.try_enter_shared().unwrap().into_held();
         let fork = gate.begin_fork();
+        let bound = Duration::from_millis(200);
         let (tx, rx) = mpsc::channel();
         let ender = thread::spawn(move || {
-            let guard = share.enter();
-            tx.send(()).unwrap();
-            drop(guard);
+            let start = Instant::now();
+            let entered = share.enter_until(start + bound).is_some();
+            tx.send((entered, start.elapsed())).unwrap();
+            share
+        });
+        let (entered, took) = rx.recv_timeout(Duration::from_secs(5)).expect("the watchdog: it never gave up");
+        assert!(!entered, "it got in beside its owner's fork");
+        assert!(took >= bound, "gave up after {took:?}, before its deadline");
+        assert_eq!(gate.stats().fork_timeouts, 1);
+        assert_eq!(gate.holders(), 1, "giving up entered nothing: only the share's own level is held");
+        let share = ender.join().unwrap();
+        // A passed deadline still tries once, and waits for nothing.
+        let (tx, rx) = mpsc::channel();
+        let share = thread::spawn(move || {
+            let start = Instant::now();
+            tx.send((share.enter_until(start).is_some(), start.elapsed())).unwrap();
+            share
+        })
+        .join()
+        .unwrap();
+        let (entered, took) = rx.recv().unwrap();
+        assert!(!entered);
+        assert!(took < Duration::from_millis(100), "a passed deadline waited {took:?}");
+        let (tx, rx) = mpsc::channel();
+        let ender = thread::spawn(move || {
+            let entered = share.enter_until(Instant::now() + Duration::from_secs(5)).is_some();
+            tx.send(entered).unwrap();
             drop(share);
         });
-        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "it worked beside its owner's fork");
+        assert!(rx.recv_timeout(Duration::from_millis(100)).is_err(), "it worked beside its owner's fork");
         fork.end_parent();
-        rx.recv_timeout(Duration::from_secs(5)).expect("it never entered after the fork");
+        assert!(rx.recv_timeout(Duration::from_secs(5)).expect("it never entered after the fork"));
         ender.join().unwrap();
+        assert_eq!((gate.holders(), gate.parked()), (0, 0));
     }
 
-    /// The `Inherited` arm: a child thread finalizing an inherited hold, behind that child's own
-    /// stuck fork.
+    /// The `Inherited` arm: a child thread ending an inherited hold behind that child's own stuck
+    /// fork gives up at its deadline, and gets in once the fork ends.
     #[test]
-    fn an_inherited_share_behind_a_stuck_fork_waits_until_the_fork_ends() {
+    fn an_inherited_share_behind_a_stuck_fork_gives_up_at_its_deadline() {
         let gate = test_gate!(G);
         let (share_tx, share_rx) = mpsc::channel();
         // Its owner is parked, so the fork below doesn't wait for it, and the "child" forgets it.
@@ -1311,16 +1389,28 @@ mod tests {
         // The "child": its epoch has moved on, so the share counts for nothing here.
         gate.begin_fork().end_child();
         let fork = gate.begin_fork();
+        let bound = Duration::from_millis(200);
         let (tx, rx) = mpsc::channel();
         let ender = thread::spawn(move || {
-            let guard = inherited.enter();
-            tx.send(()).unwrap();
-            drop(guard);
+            let start = Instant::now();
+            let entered = inherited.enter_until(start + bound).is_some();
+            tx.send((entered, start.elapsed())).unwrap();
+            inherited
+        });
+        let (entered, took) = rx.recv_timeout(Duration::from_secs(5)).expect("the watchdog: it never gave up");
+        assert!(!entered, "it entered beside a fork");
+        assert!(took >= bound, "gave up after {took:?}, before its deadline");
+        assert_eq!(gate.stats().fork_timeouts, 1);
+        let inherited = ender.join().unwrap();
+        let (tx, rx) = mpsc::channel();
+        let ender = thread::spawn(move || {
+            let entered = inherited.enter_until(Instant::now() + Duration::from_secs(5)).is_some();
+            tx.send(entered).unwrap();
             drop(inherited);
         });
-        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "it entered beside a fork");
+        assert!(rx.recv_timeout(Duration::from_millis(100)).is_err(), "it entered beside a fork");
         fork.end_parent();
-        rx.recv_timeout(Duration::from_secs(5)).expect("the watchdog: it never entered after the fork");
+        assert!(rx.recv_timeout(Duration::from_secs(5)).expect("it never entered after the fork"));
         ender.join().unwrap();
         assert_eq!(gate.holders(), 0);
     }
