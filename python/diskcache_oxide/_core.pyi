@@ -2,7 +2,6 @@
 
 import os
 from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager
 from types import TracebackType
 from typing import Any, Literal, Self, final, overload
 
@@ -25,6 +24,7 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     '_sqlite_error',
     'FormatMismatchError',
     'Cache',
+    'Transaction',
 ]
 
 __version__: str
@@ -411,8 +411,28 @@ class Cache:
         and then by operation. Empty on a handle that isn't durable."""
     def _handle_count(self) -> int:
         """Test hook: how many open handles this cache's store counts, deferred releases included."""
-    def _hold_write_transaction(self) -> AbstractContextManager[None]:
-        """Test hook until transact() lands: holds a write transaction until the block exits."""
+    def transact(self, retry: bool = False) -> Transaction:
+        """A write transaction, for `with cache.transact() as tx:`.
+
+        `tx` is the cache itself. On the thread that entered the block, every call on this cache
+        directory inside it, through any handle, runs in the transaction: it commits when the block
+        exits and rolls back if the block raises. Other threads' and processes' writes wait for it.
+        Entered on a thread that already holds a transaction on this directory, it joins that one:
+        the inner block's exit doesn't commit, and an exception the caller catches inside doesn't
+        undo the inner block's writes.
+
+        A transaction belongs to a thread, not an asyncio task: another coroutine's writes on the
+        same thread during an `await` inside the block join it and roll back with it.
+
+        Args:
+            retry: Keep trying to begin while it times out, instead of raising `Timeout`. Never
+                retries `TransactionBusy`. Each attempt waits up to `timeout`.
+
+        Raises:
+            TypeError: `retry` isn't a `bool`.
+        """
+    def _hold_write_transaction(self) -> Transaction:
+        """Test hook, an alias of `transact()` until its users move to it."""
     def __getitem__(self, key: str, /) -> Any:
         """`cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under
         `durable=True`."""
@@ -444,3 +464,44 @@ class Cache:
         /,
     ) -> None:
         """Close the cache, as `close()` does."""
+
+@final
+class Transaction:
+    """The context manager `Cache.transact()` returns. It's entered once and exited once.
+
+    It may be exited on another thread: that thread commits or rolls back the owner's transaction
+    within its `timeout`, and a commit that can't run in time raises `Timeout` and rolls back.
+    """
+
+    def __enter__(self) -> Cache:
+        """Begin the transaction, or join the one this thread already holds on the directory, and
+        return the cache.
+
+        Raises:
+            Timeout: The write lock stayed taken, or a fork stayed pending, for longer than
+                `timeout` (with `retry=False`).
+            TransactionBusy: This thread holds another cache's transaction, and another thread holds
+                this one's write lock.
+            RuntimeError: It was already entered, or is being entered on another thread, or this
+                process is a child forked inside a transaction on this directory.
+        """
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> bool:
+        """Commit (no exception) or roll back, and return False. A joined transaction's exit does neither.
+
+        With no exception, while another thread is still ending the transaction, it waits up to
+        the cache's `timeout` for that end and reports its outcome. With an exception passing it
+        returns at once.
+
+        Raises:
+            RuntimeError: With no exception, the transaction didn't commit: it was rolled back by
+                another thread, an earlier exit, or an error inside it (`TransactionAborted`). Also
+                raised if it was never entered or is still being entered.
+            Timeout: The commit couldn't run within `timeout`; it rolled back. Or another thread's
+                end was still running after `timeout`, and whether it committed is unknown.
+        """

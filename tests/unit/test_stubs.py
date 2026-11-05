@@ -102,7 +102,7 @@ def test_function_signatures_match(name: str) -> None:
     _check_defaults(name, FUNCTIONS[name], inspect.signature(getattr(_core, name)))
 
 
-@pytest.mark.parametrize('name', sorted(n for n, c in CLASSES.items() if n != 'Cache'))
+@pytest.mark.parametrize('name', sorted(n for n, c in CLASSES.items() if n not in ('Cache', 'Transaction')))
 def test_exception_bases_match(name: str) -> None:
     node = CLASSES[name]
     runtime = getattr(_core, name)

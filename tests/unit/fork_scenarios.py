@@ -335,8 +335,92 @@ def shared_iterator_while_a_fork_waits(directory: Path) -> list[str]:
     return failures
 
 
+def transact_fork_from_the_owner(directory: Path) -> list[str]:
+    """Fork inside this thread's own `with cache.transact()` block (D-020, through the public API).
+
+    In the child the inherited transaction is poisoned: a write inside it, a nested `transact()`
+    (an inherited transaction doesn't count as this thread's, so it doesn't pass through), one on a
+    fresh handle, and leaving the block all raise RuntimeError at once. The parent's block commits.
+    """
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    txn = cache.transact()
+
+    def child() -> None:
+        fails_fast('write inside the inherited transaction', lambda: cache.set('child', 1))
+        fails_fast('a nested transact()', lambda: cache.transact().__enter__())
+        fails_fast("a fresh handle's transact()", lambda: Cache(directory, timeout=TIMEOUT).transact().__enter__())
+        fails_fast('leaving the inherited transaction', lambda: txn.__exit__(None, None, None))
+        assert cache.get('before') == 'parent'
+        assert cache.get('in-tx') is None, "the parent's uncommitted write is visible"
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        with txn as tx:
+            tx.set('in-tx', 1)
+            code = wait(fork(child))
+            tx.set('after-fork', 2)
+
+    failures = []
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if not any(issubclass(w.category, RuntimeWarning) for w in caught):
+        failures.append('the parent got no RuntimeWarning for forking inside its transaction')
+    if (cache.get('in-tx'), cache.get('after-fork')) != (1, 2):
+        failures.append("the parent's transaction did not commit")
+    if cache.get('child') is not None:
+        failures.append('the poisoned child wrote to the database')
+    cache.close()
+    return failures
+
+
+def transact_fork_from_another_thread(directory: Path) -> list[str]:
+    """Fork while another thread is inside `with cache.transact()`.
+
+    The fork waits for the transaction to end (its owner holds a gate level, so its own calls pass
+    the pending fork), then the child sees everything it committed and can write.
+    """
+    cache = Cache(directory, timeout=TIMEOUT)
+    inside = threading.Event()
+
+    def owner() -> None:
+        with cache.transact() as tx:
+            tx.set('in-tx', 1)
+            inside.set()
+            time.sleep(0.3)  # The fork is pending meanwhile.
+            tx.set('late', 2)
+
+    def child() -> None:
+        assert (cache.get('in-tx'), cache.get('late')) == (1, 2), 'the fork did not wait for the commit'
+        assert cache.set('child', 3) is True
+        with cache.transact() as tx:
+            tx.set('child-tx', 4)
+        assert cache.get('child-tx') == 4
+
+    thread = threading.Thread(target=owner, daemon=True)
+    thread.start()
+    failures = []
+    if not inside.wait(TIMEOUT):
+        return ['the owner never entered its transaction']
+    started = time.monotonic()
+    pid = fork(child)
+    took = time.monotonic() - started
+    code = wait(pid)
+    thread.join(TIMEOUT)
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if took < 0.2:
+        failures.append(f'the fork returned after {took:.2f}s, before the transaction ended')
+    if (cache.get('child'), cache.get('child-tx')) != (3, 4):
+        failures.append("the child's writes are missing")
+    cache.close()
+    return failures
+
+
 SCENARIOS = {
     'd020': d020,
+    'transact-fork-from-the-owner': transact_fork_from_the_owner,
+    'transact-fork-from-another-thread': transact_fork_from_another_thread,
     'fork-while-a-write-waits': fork_while_a_write_waits,
     'two-forkers': two_forkers,
     'parent-closes-after-fork': parent_closes_after_fork,

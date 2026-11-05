@@ -297,6 +297,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_sqlite_error, m)?)?;
     m.add("FormatMismatchError", py.get_type::<FormatMismatchError>())?;
     m.add_class::<cache::Cache>()?;
+    m.add_class::<cache::Transaction>()?;
     install_fork_barrier(m)?;
     Ok(())
 }

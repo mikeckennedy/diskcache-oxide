@@ -154,8 +154,8 @@ pub struct Store {
     /// current values inside their transaction.
     size_limit: AtomicI64,
     cull_limit: AtomicI64,
-    /// A write transaction held across calls (`_hold_write_transaction()` now, `transact()` in
-    /// Phase 6b): its owner thread's operations run on the pinned connection. Locked only under
+    /// A write transaction held across calls (`transact()`): its owner thread's operations run on
+    /// the pinned connection. Locked only under
     /// the gate, and only for a moment: an operation borrows the connection (see
     /// [`Store::on_pinned`]) rather than keeping the mutex. `pinned_active` keeps the common
     /// no-hold path to one relaxed load.

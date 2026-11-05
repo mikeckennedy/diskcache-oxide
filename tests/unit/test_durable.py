@@ -712,14 +712,12 @@ def test_a_pickle_on_a_handle_without_pickle_still_raises(directory: Path) -> No
     cache.close()
 
 
-def test_misuse_of_a_hold_still_raises(directory: Path) -> None:
+def test_misuse_of_a_transaction_still_raises(directory: Path) -> None:
+    # A nested transact() joins the outer one, so the misuse left is entering one twice.
     cache = Cache(directory, durable=True)
-    with (
-        cache._hold_write_transaction(),
-        pytest.raises(RuntimeError, match='already holds'),
-    ):
-        with cache._hold_write_transaction():
-            pass
+    txn = cache.transact()
+    with txn, pytest.raises(RuntimeError, match='only once'):
+        txn.__enter__()
     cache.close()
 
 

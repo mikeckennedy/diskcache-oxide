@@ -41,8 +41,12 @@ FEATURE_PHASES: dict[str, str] = {
     'recipes': '6e',
 }
 assert set(FEATURE_PHASES.values()) <= set(PHASE_ORDER)
-OXIDE_SUPPORTED_FEATURES: frozenset[str] = frozenset(
-    f for f, phase in FEATURE_PHASES.items() if PHASE_ORDER.index(phase) <= PHASE_ORDER.index(OXIDE_PHASE)
+# Features that landed ahead of their phase, by name: bumping OXIDE_PHASE to 6b would turn on all of 6a.
+OXIDE_EARLY_FEATURES = frozenset({'transact'})
+assert OXIDE_EARLY_FEATURES <= set(FEATURE_PHASES)
+OXIDE_SUPPORTED_FEATURES: frozenset[str] = (
+    frozenset(f for f, phase in FEATURE_PHASES.items() if PHASE_ORDER.index(phase) <= PHASE_ORDER.index(OXIDE_PHASE))
+    | OXIDE_EARLY_FEATURES
 )
 
 # Values of 64 KiB or more spill to their own file (04-design.md section 4, Spike 4a).

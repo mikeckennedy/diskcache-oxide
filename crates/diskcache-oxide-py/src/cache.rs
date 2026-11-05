@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, TryLockError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, TryLockError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use std::collections::{HashSet, VecDeque};
@@ -21,8 +21,8 @@ use diskcache_oxide_core::store::{
 use diskcache_oxide_core::{Error, ValueRef, lockwait, open::Requested, spill};
 use pyo3::PyTraverseError;
 use pyo3::exceptions::{
-    PyException, PyKeyError, PyMemoryError, PyOSError, PyOverflowError, PyRecursionError, PyTimeoutError, PyTypeError,
-    PyValueError,
+    PyException, PyKeyError, PyMemoryError, PyOSError, PyOverflowError, PyRecursionError, PyRuntimeError,
+    PyTimeoutError, PyTypeError, PyValueError,
 };
 use pyo3::gc::PyVisit;
 use pyo3::prelude::*;
@@ -482,10 +482,21 @@ impl Cache {
         self.close(py, true);
     }
 
-    /// Test hook until `transact()` lands (Phase 6b): a context manager holding a write
-    /// transaction. Operations by the same thread inside it run in the transaction.
-    fn _hold_write_transaction(slf: Py<Self>) -> WriteHold {
-        WriteHold { cache: slf, held: Mutex::new(None), abandoned: AtomicBool::new(false) }
+    /// A context manager holding a write transaction: `with cache.transact() as tx:`. On the
+    /// thread that enters it, every call on this store (through any handle) inside the block runs
+    /// in the transaction, which commits when the block exits and rolls back if it raises. Entered
+    /// on a thread that already holds one on this store, it passes through: the inner exit
+    /// doesn't commit. `retry=True` retries a `Timeout` (never `TransactionBusy`) until it begins.
+    /// `retry` is a strict `bool`, as `expire` and `timeout` refuse one (D-014): `retry=1` raises
+    /// `TypeError`.
+    #[pyo3(signature = (retry = false))]
+    fn transact(slf: Py<Self>, retry: bool) -> Transaction {
+        Transaction::new(slf, retry)
+    }
+
+    /// Test hook, an alias of `transact()` until its users move to it (plan 12, step 3e).
+    fn _hold_write_transaction(slf: Py<Self>) -> Transaction {
+        Transaction::new(slf, false)
     }
 }
 
@@ -900,52 +911,191 @@ impl KeyIterator {
     }
 }
 
-/// The context manager returned by `Cache._hold_write_transaction()`.
+/// Where a [`Transaction`] is. Only `__enter__` leaves `Ready`, and `Done` is final.
+#[derive(Debug)]
+enum TxState {
+    /// Not entered yet.
+    Ready,
+    /// `__enter__` is beginning the transaction, with the mutex released: any other `__enter__` or
+    /// `__exit__` meanwhile raises.
+    Entering,
+    /// This `Transaction` holds the store's write transaction.
+    Held(HeldTransaction),
+    /// Entered on a thread already holding a transaction on this store: it joined that one, and
+    /// its exit neither commits nor rolls back.
+    PassThrough,
+    /// An `__exit__` is committing or rolling back, with the mutex released. Another exit with no
+    /// exception waits (on `ended`) for the outcome; one with an exception returns at once.
+    Ending,
+    /// Exited. `committed` is true only for a commit that returned `Ok`, and for a pass-through: an
+    /// exit with no exception raises `TransactionAborted` unless it's true.
+    Done { committed: bool },
+}
+
+impl TxState {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Ready => "Ready",
+            Self::Entering => "Entering",
+            Self::Held(_) => "Held",
+            Self::PassThrough => "PassThrough",
+            Self::Ending => "Ending",
+            Self::Done { committed: true } => "Done(committed)",
+            Self::Done { committed: false } => "Done(rolled back)",
+        }
+    }
+}
+
+/// The context manager returned by `Cache.transact()` (and the `_hold_write_transaction()` alias).
+/// Single use: it's entered once and exited once. It may be exited on another thread (D-031).
 #[pyclass(frozen, module = "diskcache_oxide")]
-pub(crate) struct WriteHold {
+pub(crate) struct Transaction {
     cache: Py<Cache>,
-    held: Mutex<Option<HeldTransaction>>,
-    /// Set when an `__exit__` from inside one of the transaction's own operations was refused (it
-    /// rolls back when that operation returns), so the `with` statement's own `__exit__` reports
-    /// that rather than success.
-    abandoned: AtomicBool,
+    /// Retry a `BEGIN` that timed out, between attempts checking for signals.
+    retry: bool,
+    /// Taken attached, and never held across `begin_hold` or `finish`, which wait detached:
+    /// `Entering` and `Ending` keep a second caller out meanwhile.
+    state: Mutex<TxState>,
+    /// Notified when `Ending` becomes `Done`.
+    ended: Condvar,
+}
+
+impl Transaction {
+    fn new(cache: Py<Cache>, retry: bool) -> Self {
+        Self { cache, retry, state: Mutex::new(TxState::Ready), ended: Condvar::new() }
+    }
+
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, TxState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Begins the transaction, or joins the one this thread already holds on the store. Never
+    /// through `attempt`, so a durable handle raises rather than swallowing a failed `BEGIN`.
+    fn begin(&self, py: Python<'_>) -> PyResult<TxState> {
+        let cache = self.cache.get();
+        // Per store, so a second handle on the directory passes through too. An inherited
+        // transaction doesn't count: a child's `begin_hold` then refuses (D-020).
+        if cache.store.held_by_this_thread() {
+            return Ok(TxState::PassThrough);
+        }
+        loop {
+            let began = cache
+                .ensure_open(cache.timeout)
+                .and_then(|timeout| crate::detach(py, || cache.store.begin_hold(timeout)));
+            match began {
+                Ok(held) => return Ok(TxState::Held(held)),
+                Err(Error::Timeout { .. }) if self.retry => py.check_signals()?,
+                Err(error) => return Err(to_py_err(error)),
+            }
+        }
+    }
+}
+
+impl Transaction {
+    /// Waits, detached, up to the cache's `timeout` for another thread's end to finish, and returns
+    /// whether it committed, or `None` if it's still running.
+    fn wait_for_end(&self, py: Python<'_>) -> Option<bool> {
+        let timeout = self.cache.get().timeout;
+        crate::detach(py, || {
+            let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let (state, _) = self
+                .ended
+                .wait_timeout_while(state, timeout, |s| matches!(s, TxState::Ending))
+                .unwrap_or_else(PoisonError::into_inner);
+            match *state {
+                TxState::Done { committed } => Some(committed),
+                _ => None,
+            }
+        })
+    }
 }
 
 #[pymethods]
-impl WriteHold {
-    fn __enter__(&self, py: Python<'_>) -> PyResult<()> {
-        let cache = self.cache.get();
-        let timeout = cache.ensure_open(cache.timeout).map_err(to_py_err)?;
-        let held = crate::detach(py, || cache.store.begin_hold(timeout)).map_err(to_py_err)?;
-        self.abandoned.store(false, Ordering::Release);
-        let mut slot = self.held.lock().unwrap_or_else(PoisonError::into_inner);
-        let old = slot.replace(held);
-        drop(slot);
-        drop(old); // Ending one (unreachable: the write lock serializes holds) never runs under the mutex.
-        Ok(())
+impl Transaction {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.cache)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("<diskcache_oxide.Transaction {}>", self.lock_state().name())
+    }
+
+    fn __enter__(&self, py: Python<'_>) -> PyResult<Py<Cache>> {
+        {
+            let mut state = self.lock_state();
+            match *state {
+                TxState::Ready => *state = TxState::Entering,
+                TxState::Entering => {
+                    return Err(PyRuntimeError::new_err("this transaction is already being entered on another thread"));
+                }
+                _ => return Err(PyRuntimeError::new_err("a transaction can be entered only once")),
+            }
+        }
+        let began = self.begin(py);
+        let mut state = self.lock_state();
+        // Nothing else leaves `Entering`, so this drops nothing.
+        match began {
+            Ok(entered) => {
+                *state = entered;
+                Ok(self.cache.clone_ref(py))
+            }
+            Err(error) => {
+                *state = TxState::Ready;
+                Err(error)
+            }
+        }
     }
 
     #[pyo3(signature = (exc_type, _exc_value, _traceback))]
     fn __exit__(
         &self,
+        py: Python<'_>,
         exc_type: Option<&Bound<'_, PyAny>>,
         _exc_value: Option<&Bound<'_, PyAny>>,
         _traceback: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        let held = self.held.lock().unwrap_or_else(PoisonError::into_inner).take();
-        match held {
-            Some(held) => {
-                let result = held.finish(exc_type.is_none());
-                if matches!(result, Err(Error::EndInsideOperation)) {
-                    self.abandoned.store(true, Ordering::Release);
+        let commit = exc_type.is_none();
+        let mut state = self.lock_state();
+        let taken = match &*state {
+            TxState::Ready => return Err(PyRuntimeError::new_err("this transaction was never entered")),
+            TxState::Entering => {
+                return Err(PyRuntimeError::new_err("this transaction is still being entered on another thread"));
+            }
+            // A second exit, or the owner's exit after another thread ended it.
+            TxState::Done { committed } => {
+                if commit && !*committed {
+                    return Err(to_py_err(Error::TransactionAborted));
                 }
-                result.map_err(to_py_err)?;
+                return Ok(false);
             }
-            None if exc_type.is_none() && self.abandoned.swap(false, Ordering::AcqRel) => {
-                return Err(to_py_err(Error::TransactionAborted));
+            // Another thread is ending it. An exception passing needs no outcome; otherwise this
+            // exit reports whether that end committed, once it has.
+            TxState::Ending => {
+                drop(state);
+                if !commit {
+                    return Ok(false);
+                }
+                return match self.wait_for_end(py) {
+                    Some(true) => Ok(false),
+                    Some(false) => Err(to_py_err(Error::TransactionAborted)),
+                    None => Err(crate::Timeout::new_err(
+                        "this transaction is still being ended on another thread; whether it committed is unknown",
+                    )),
+                };
             }
-            None => {}
-        }
+            TxState::PassThrough => {
+                *state = TxState::Done { committed: true };
+                return Ok(false);
+            }
+            TxState::Held(_) => std::mem::replace(&mut *state, TxState::Ending),
+        };
+        drop(state);
+        let TxState::Held(held) = taken else { unreachable!("only `Held` is taken") };
+        // Outside the mutex: a commit may wait (detached) for the owner's operation.
+        let result = held.finish(commit);
+        *self.lock_state() = TxState::Done { committed: commit && result.is_ok() };
+        self.ended.notify_all();
+        result.map_err(to_py_err)?;
         Ok(false)
     }
 }
