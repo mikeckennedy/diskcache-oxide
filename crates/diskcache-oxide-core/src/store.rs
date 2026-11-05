@@ -969,10 +969,22 @@ impl Store {
     /// job, after a large `clear()`). Inside the calling thread's own held transaction, or a nested
     /// operation, it returns `Ok(false)` without trying (its own open transaction keeps the WAL busy).
     pub fn checkpoint(&self, timeout: Duration) -> Result<bool> {
-        use crate::wal::Outcome;
         crate::poison::check_writable(self.file_id)?;
         let start = Instant::now();
-        let deadline = lockwait::deadline_after(start, timeout);
+        self.checkpoint_rounds(start, lockwait::deadline_after(start, timeout))
+    }
+
+    /// [`Store::checkpoint`], retrying busy rounds only until `deadline`, which the caller took for
+    /// a whole call over every shard of a `FanoutCache`. Past it, it still makes one round, as a
+    /// `checkpoint` whose timeout ran out does.
+    pub fn checkpoint_until(&self, deadline: Instant) -> Result<bool> {
+        crate::poison::check_writable(self.file_id)?;
+        self.checkpoint_rounds(Instant::now(), deadline)
+    }
+
+    /// The rounds of [`Store::checkpoint`], from `start`, until one isn't busy or `deadline` passes.
+    fn checkpoint_rounds(&self, start: Instant, deadline: Instant) -> Result<bool> {
+        use crate::wal::Outcome;
         // Inside this thread's own held transaction (held levels count in own_depth) or a nested
         // operation, TRUNCATE can't succeed, and the PASSIVE copy could stall for seconds while
         // holding the gate: don't try. Another thread's held transaction is fine: the loop below

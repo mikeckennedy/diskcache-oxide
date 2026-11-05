@@ -473,11 +473,21 @@ class FanoutCache:
     every handle agrees on it. Single-key calls behave exactly as on `Cache`, on the key's shard.
     `len()` and `volume()` add up every shard under one `timeout`.
 
+    `clear()`, `expire()`, `cull()` and `checkpoint()` run on every shard in turn, under one
+    `timeout` for the whole call. If a shard fails, the others are still done, and then the first
+    failure raises, as its own type (so `except Timeout` still works), with two extra attributes and
+    a note naming them:
+
+    - `failed_shards`: a tuple of the indexes of the shards that failed, in order.
+    - `removed` (not on `checkpoint()`): how many entries the call removed in all, from every
+      shard, including what a failed shard removed before it failed.
+
     Args:
         directory: The root directory. It holds the manifest (`diskcache-oxide-fanout`) and one
             directory per shard, `000` to `NNN`. It must not be a plain `Cache`'s directory.
-        timeout: As for `Cache` (default 60). Opening, `len()`, `volume()` and `close()` share one
-            `timeout` across every shard, not one each.
+        timeout: As for `Cache` (default 60). Opening, `len()`, `volume()`, `clear()`, `expire()`,
+            `cull()`, `checkpoint()` and `close()` share one `timeout` across every shard, not one
+            each.
         shards: How many shards, 1 to 256. `None` (the default) uses the count the root records, or
             8 for a new root. A count that differs from the recorded one raises `ValueError`:
             changing it needs a new directory. Each shard takes about 4 file descriptors to open,
@@ -575,6 +585,67 @@ class FanoutCache:
         """The total disk use in bytes of every shard (databases plus value files).
 
         Raises on any shard's failure, under `durable=True` too.
+        """
+    def expire(self, *, timeout: float | None = None) -> int:
+        """Remove every expired entry from every shard, and its value file, as `Cache.expire` does.
+
+        Args:
+            timeout: Seconds the whole call may spend waiting for write locks (another thread's or
+                another process's) or a pending fork, across every shard, for this call only (default:
+                the cache's `timeout`). It bounds waiting, not work: a chunk already running finishes,
+                and once it's spent, each remaining chunk still gets one try with no wait, so shards no
+                one else is writing are all done even at a short timeout.
+
+        Returns:
+            How many entries were removed.
+
+        Raises:
+            Timeout: Some shard stayed locked past `timeout`; the others were still done. It carries
+                `removed` and `failed_shards` (see the class docs), as any failure here does, under
+                `durable=True` too.
+        """
+    def clear(self, *, timeout: float | None = None) -> int:
+        """Remove every entry that existed when the call started, from every shard.
+
+        Every shard's starting point is taken before anything is removed, so writes that land while
+        it runs, on any shard, are kept, as on `Cache.clear`.
+
+        Args:
+            timeout: As for `expire`: one budget for the whole call.
+
+        Returns:
+            How many entries were removed.
+
+        Raises:
+            Timeout: As for `expire`, with `removed` and `failed_shards`.
+        """
+    def cull(self, *, timeout: float | None = None) -> int:
+        """Remove expired entries, then evict the least recently stored from each shard until it's
+        under its share of `size_limit`.
+
+        Args:
+            timeout: As for `expire`: one budget for the whole call.
+
+        Returns:
+            How many entries were removed.
+
+        Raises:
+            Timeout: As for `expire`, with `removed` and `failed_shards`.
+        """
+    def checkpoint(self, *, timeout: float | None = None) -> bool:
+        """Checkpoint every shard's write-ahead log and truncate it to zero, as `Cache.checkpoint` does.
+
+        Args:
+            timeout: Seconds to keep retrying busy shards, for the whole call (default: the cache's
+                `timeout`). A shard reached after it's spent still gets one try.
+
+        Returns:
+            True if every shard's log was reset, False if readers or writers in other processes, or
+            a pending fork, kept any of them busy.
+
+        Raises:
+            OSError: A real error, such as a full disk, on some shard, raised after every shard was
+                tried. It carries `failed_shards` (see the class docs).
         """
     def close(self, *, checkpoint: bool = True) -> None:
         """Close this handle on every shard, as `Cache.close()` does for one.

@@ -6,6 +6,17 @@
 //! unlinks the chunk's value files, pauses briefly with the interpreter released, and yields to
 //! any same-process writer waiting on the write lock, so writers get in during a long `clear()`.
 //!
+//! Each call comes in two forms. The plain one (`clear(timeout)`, a `Cache` call) gives every
+//! wait the full `timeout`. The `_until` one (`clear_until(snapshot, deadline)`, a `FanoutCache` call
+//! over every shard) gives every wait only what's left before one `deadline` the caller took for
+//! the whole call, and reports how much it removed when it stops early ([`Interrupted`]). The
+//! deadline bounds waiting, not work: a chunk already running finishes, and past the deadline each
+//! chunk still gets one attempt with no wait, so an idle store is still emptied at a short timeout.
+//! `clear` and `expire` are bounded by their snapshot as well, so they always finish. `cull`'s
+//! eviction loop isn't: it runs until the store is under its `size_limit`, so past the deadline a
+//! writer in another process that keeps the store over its limit can keep `cull_until` going (as it
+//! can keep `cull` going).
+//!
 //! Iteration is keyset-paged: each page is one short read that returns its connection, so no
 //! cursor or read transaction is held across user code (D-017), and deleting keys while iterating
 //! is safe. It isn't a snapshot (concurrent writes may or may not be seen, as with diskcache) and
@@ -72,11 +83,108 @@ pub fn prefix_upper(prefix: &str) -> Option<String> {
     None
 }
 
+/// How long each wait in a maintenance call may take.
+#[derive(Debug, Clone, Copy)]
+enum Budget {
+    /// The full `timeout` for every wait: a `Cache` call.
+    Each(Duration),
+    /// Whatever is left before the deadline, and nothing once it has passed: one call over every
+    /// shard of a `FanoutCache`.
+    Until(Instant),
+}
+
+impl Budget {
+    /// What the next wait may take.
+    fn left(self) -> Duration {
+        match self {
+            Self::Each(timeout) => timeout,
+            Self::Until(deadline) => deadline.saturating_duration_since(Instant::now()),
+        }
+    }
+}
+
+/// The point a maintenance call starts from (D-011): every row stored before it has a smaller
+/// `store_seq`, so a call bounded by it always finishes and never removes a later write. Taken by
+/// [`Store::snapshot_until`], and only for the store that took it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct Snapshot {
+    seq: i64,
+    /// The address of the store that took it, to refuse a snapshot passed to another shard's store,
+    /// whose later writes it could delete. Both are alive for the call, so the address can't have
+    /// been reused.
+    store: usize,
+}
+
+/// A maintenance call under a deadline that stopped early: it removed `removed` rows, each chunk
+/// committed, before `error`.
+#[derive(Debug)]
+pub struct Interrupted {
+    pub removed: u64,
+    pub error: Error,
+}
+
 impl Store {
     /// Removes every row that expired before `now`, in chunks. Returns how many it removed.
     pub fn expire(&self, timeout: Duration, now: f64) -> Result<u64> {
         let snapshot = self.seq_snapshot(timeout)?;
-        self.chunked(timeout, |conn| {
+        self.expire_from(snapshot, now, Budget::Each(timeout)).map_err(|stopped| stopped.error)
+    }
+
+    /// Removes every row stored before the call started, in chunks. Returns how many it removed.
+    pub fn clear(&self, timeout: Duration) -> Result<u64> {
+        let snapshot = self.seq_snapshot(timeout)?;
+        self.clear_from(snapshot, Budget::Each(timeout)).map_err(|stopped| stopped.error)
+    }
+
+    /// Removes expired rows, then evicts least-recently-stored rows until the cache is under its
+    /// `size_limit`. Returns how many it removed in total.
+    pub fn cull(&self, timeout: Duration, now: f64) -> Result<u64> {
+        let snapshot = self.seq_snapshot(timeout)?;
+        self.cull_from(snapshot, now, Budget::Each(timeout)).map_err(|stopped| stopped.error)
+    }
+
+    /// The starting point for [`Store::clear_until`], [`Store::expire_until`] and
+    /// [`Store::cull_until`] on this store: one short read, waiting no later than `deadline` (one
+    /// attempt with no wait once it has passed). A `FanoutCache` takes every shard's before it removes
+    /// anything, so a call removes only what every shard held when it started.
+    pub fn snapshot_until(&self, deadline: Instant) -> Result<Snapshot> {
+        let seq = self.seq_snapshot(Budget::Until(deadline).left())?;
+        Ok(Snapshot { seq, store: self.address() })
+    }
+
+    /// [`Store::expire`] from `snapshot`, every wait ending by `deadline` (see the module docs).
+    pub fn expire_until(&self, snapshot: Snapshot, now: f64, deadline: Instant) -> Result<u64, Interrupted> {
+        self.expire_from(self.seq_of(snapshot)?, now, Budget::Until(deadline))
+    }
+
+    /// [`Store::clear`] from `snapshot`, every wait ending by `deadline` (see the module docs).
+    pub fn clear_until(&self, snapshot: Snapshot, deadline: Instant) -> Result<u64, Interrupted> {
+        self.clear_from(self.seq_of(snapshot)?, Budget::Until(deadline))
+    }
+
+    /// [`Store::cull`] from `snapshot` (its expire step), every wait ending by `deadline` (see the
+    /// module docs).
+    pub fn cull_until(&self, snapshot: Snapshot, now: f64, deadline: Instant) -> Result<u64, Interrupted> {
+        self.cull_from(self.seq_of(snapshot)?, now, Budget::Until(deadline))
+    }
+
+    fn address(&self) -> usize {
+        std::ptr::from_ref(self).addr()
+    }
+
+    /// `snapshot`'s `store_seq`, or an error, before anything is removed, if another store took it.
+    fn seq_of(&self, snapshot: Snapshot) -> Result<i64, Interrupted> {
+        if snapshot.store == self.address() {
+            Ok(snapshot.seq)
+        } else {
+            let reason = "a maintenance snapshot was passed to a store other than the one that took it";
+            Err(Interrupted { removed: 0, error: Error::InvalidSetting(reason.to_string()) })
+        }
+    }
+
+    fn expire_from(&self, snapshot: i64, now: f64, budget: Budget) -> Result<u64, Interrupted> {
+        self.chunked(budget, |conn, timeout| {
             conn.prepare_cached(
                 "DELETE FROM cache WHERE id IN (
                      SELECT id FROM cache
@@ -89,10 +197,8 @@ impl Store {
         })
     }
 
-    /// Removes every row stored before the call started, in chunks. Returns how many it removed.
-    pub fn clear(&self, timeout: Duration) -> Result<u64> {
-        let snapshot = self.seq_snapshot(timeout)?;
-        self.chunked(timeout, |conn| {
+    fn clear_from(&self, snapshot: i64, budget: Budget) -> Result<u64, Interrupted> {
+        self.chunked(budget, |conn, timeout| {
             conn.prepare_cached(
                 "DELETE FROM cache WHERE id IN (
                      SELECT id FROM cache WHERE store_seq < ?1 ORDER BY store_seq LIMIT ?2)
@@ -103,22 +209,23 @@ impl Store {
         })
     }
 
-    /// Removes expired rows, then evicts least-recently-stored rows until the cache is under its
-    /// `size_limit`. Returns how many it removed in total.
-    pub fn cull(&self, timeout: Duration, now: f64) -> Result<u64> {
-        let mut removed = self.expire(timeout, now)?;
+    fn cull_from(&self, snapshot: i64, now: f64, budget: Budget) -> Result<u64, Interrupted> {
+        let mut removed = self.expire_from(snapshot, now, budget)?;
         loop {
-            let (over, batch) = self.write_files(timeout, LockPriority::Normal, |writer, conn| {
-                let (size_limit, size): (i64, i64) = conn
-                    .prepare_cached("SELECT size_limit, size FROM totals WHERE only = 1")
-                    .and_then(|mut stmt| stmt.query_row([], |r| Ok((r.get(0)?, r.get(1)?))))
-                    .map_err(|e| Error::from_sqlite(e, timeout))?;
-                if crate::ops::volume_in(conn, size, timeout)? < size_limit {
-                    return Ok(Changed::removing((false, 0), []));
-                }
-                let batch = writer.delete_oldest(CHUNK)?;
-                Ok(Changed::removing((true, count(batch.len())), batch))
-            })?;
+            let timeout = budget.left();
+            let (over, batch) = self
+                .write_files(timeout, LockPriority::Normal, |writer, conn| {
+                    let (size_limit, size): (i64, i64) = conn
+                        .prepare_cached("SELECT size_limit, size FROM totals WHERE only = 1")
+                        .and_then(|mut stmt| stmt.query_row([], |r| Ok((r.get(0)?, r.get(1)?))))
+                        .map_err(|e| Error::from_sqlite(e, timeout))?;
+                    if crate::ops::volume_in(conn, size, timeout)? < size_limit {
+                        return Ok(Changed::removing((false, 0), []));
+                    }
+                    let batch = writer.delete_oldest(CHUNK)?;
+                    Ok(Changed::removing((true, count(batch.len())), batch))
+                })
+                .map_err(|error| Interrupted { removed, error })?;
             let done = !over || batch == 0;
             removed += batch;
             if done {
@@ -154,17 +261,22 @@ impl Store {
     /// Runs `delete_chunk` in its own write transaction until it removes nothing, fixing up the
     /// totals for each chunk, and stepping aside between chunks while a same-process writer waits.
     /// Returns the total removed.
+    ///
+    /// Each chunk waits what `budget` has left when it starts; `delete_chunk` gets that too, for
+    /// the number a timeout reports. Stopped by an error, it says how many the committed chunks
+    /// removed.
     fn chunked(
         &self,
-        timeout: Duration,
-        mut delete_chunk: impl FnMut(&Connection) -> Result<Vec<(i64, Option<String>)>>,
-    ) -> Result<u64> {
+        budget: Budget,
+        mut delete_chunk: impl FnMut(&Connection, Duration) -> Result<Vec<(i64, Option<String>)>>,
+    ) -> Result<u64, Interrupted> {
         let mut total = 0;
         let mut yielded = false;
         loop {
+            let timeout = budget.left();
             let chunk = |writer: &RowWriter<'_>, conn: &Connection| -> Result<Changed<u64>> {
                 writer.raise_seq_floor()?;
-                let rows = delete_chunk(conn)?;
+                let rows = delete_chunk(conn, timeout)?;
                 let size: i64 = rows.iter().map(|(size, _)| size).sum();
                 writer.adjust_totals_after_delete(i64::try_from(rows.len()).unwrap_or(i64::MAX), size)?;
                 let removed = count(rows.len());
@@ -172,7 +284,8 @@ impl Store {
             };
             // After stepping aside between chunks, take the lock back with priority.
             let priority = if yielded { LockPriority::AfterYield } else { LockPriority::Normal };
-            let batch = self.write_files(timeout, priority, chunk)?;
+            let batch =
+                self.write_files(timeout, priority, chunk).map_err(|error| Interrupted { removed: total, error })?;
             if batch == 0 {
                 return Ok(total);
             }
@@ -557,6 +670,106 @@ mod tests {
         }
         put(&s, "k0000", None); // Overwrite: keeps its insertion position.
         assert_eq!(all(&s, Order::Inserted, None), keys);
+    }
+
+    #[test]
+    fn past_its_deadline_a_maintenance_call_still_empties_an_idle_store() {
+        let tmp = TempDir::new("maint-until-idle");
+        let s = store(tmp.path());
+        for i in 0..350 {
+            put(&s, &format!("k{i}"), if i < 120 { Some(1.0) } else { None });
+        }
+        let past = Instant::now();
+        let snapshot = s.snapshot_until(past).unwrap();
+        assert_eq!(s.expire_until(snapshot, NOW + 2.0, past).unwrap(), 120, "every chunk, each with no wait");
+        assert_eq!(s.cull_until(snapshot, NOW + 2.0, past).unwrap(), 0, "under its size_limit");
+        assert_eq!(s.clear_until(snapshot, past).unwrap(), 230);
+        assert_eq!(s.len(T).unwrap(), 0);
+        assert!(s.checkpoint_until(past).unwrap(), "one round with no wait resets an idle WAL");
+    }
+
+    #[test]
+    fn a_snapshot_taken_before_a_write_spares_it() {
+        let tmp = TempDir::new("maint-until-snapshot");
+        let s = store(tmp.path());
+        for i in 0..250 {
+            put(&s, &format!("k{i}"), Some(1.0));
+        }
+        let snapshot = s.snapshot_until(Instant::now() + T).unwrap();
+        put(&s, "after", Some(1.0)); // Expired too, but stored after the snapshot.
+        put(&s, "k0", None); // An overwrite after it is a new version: spared as well.
+        let deadline = Instant::now() + T;
+        assert_eq!(s.expire_until(snapshot, NOW + 2.0, deadline).unwrap(), 249);
+        assert_eq!(s.clear_until(snapshot, deadline).unwrap(), 0);
+        assert_eq!(all(&s, Order::Key { reverse: false }, None), ["after", "k0"]);
+    }
+
+    #[test]
+    fn a_snapshot_from_another_store_is_refused_before_anything_is_removed() {
+        let (one, two) = (TempDir::new("maint-until-wrong-a"), TempDir::new("maint-until-wrong-b"));
+        let (a, b) = (store(one.path()), store(two.path()));
+        put(&a, "a", Some(1.0));
+        put(&b, "b", Some(1.0));
+        let deadline = Instant::now() + T;
+        let from_a = a.snapshot_until(deadline).unwrap();
+        for stopped in [
+            b.clear_until(from_a, deadline).unwrap_err(),
+            b.expire_until(from_a, NOW + 2.0, deadline).unwrap_err(),
+            b.cull_until(from_a, NOW + 2.0, deadline).unwrap_err(),
+        ] {
+            assert_eq!(stopped.removed, 0);
+            assert!(matches!(stopped.error, Error::InvalidSetting(_)), "{:?}", stopped.error);
+        }
+        assert_eq!(b.len(T).unwrap(), 1);
+    }
+
+    #[test]
+    fn behind_another_threads_write_lock_the_deadline_bounds_the_wait_and_nothing_is_removed() {
+        let tmp = TempDir::new("maint-until-held");
+        let s = store(tmp.path());
+        for i in 0..50 {
+            put(&s, &format!("k{i}"), None);
+        }
+        let snapshot = s.snapshot_until(Instant::now() + T).unwrap();
+        let held = s.begin_hold(T).unwrap();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                let start = Instant::now();
+                let stopped = s.clear_until(snapshot, start + Duration::from_millis(100)).unwrap_err();
+                (start.elapsed(), stopped)
+            });
+            let (took, stopped) = worker.join().unwrap();
+            assert!(matches!(stopped.error, Error::Timeout { .. }), "{:?}", stopped.error);
+            assert_eq!(stopped.removed, 0);
+            assert!(took >= Duration::from_millis(100), "gave up after {took:?}, before its deadline");
+            assert!(took < Duration::from_secs(2), "waited {took:?}, past its deadline");
+        });
+        held.finish(false).unwrap();
+        assert_eq!(s.len(T).unwrap(), 50);
+    }
+
+    #[test]
+    fn a_chunked_call_stopped_by_an_error_reports_what_its_committed_chunks_removed() {
+        let tmp = TempDir::new("maint-until-partial");
+        let s = store(tmp.path());
+        for i in 0..350 {
+            put(&s, &format!("k{i}"), None);
+        }
+        let mut calls = 0;
+        let stopped = s
+            .chunked(Budget::Each(T), |conn, timeout| {
+                calls += 1;
+                if calls == 3 {
+                    return Err(Error::Closed); // Not a lock timeout, so the write isn't retried.
+                }
+                conn.prepare_cached("DELETE FROM cache WHERE id IN (SELECT id FROM cache ORDER BY id LIMIT ?1) RETURNING size, filename")
+                    .and_then(|mut stmt| collect_removed(stmt.query_map([CHUNK], row_removed)?))
+                    .map_err(|e| Error::from_sqlite(e, timeout))
+            })
+            .unwrap_err();
+        assert_eq!(stopped.removed, 200, "two chunks committed before the third failed");
+        assert!(matches!(stopped.error, Error::Closed), "{:?}", stopped.error);
+        assert_eq!(s.len(T).unwrap(), 150, "and the failed chunk removed nothing");
     }
 
     #[test]

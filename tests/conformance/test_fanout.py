@@ -107,6 +107,38 @@ def test_len_and_volume_add_up_every_shard(make_fanout: Callable[..., Any], cach
     assert len(cache) == 0
 
 
+def test_clear_expire_and_cull_add_up_every_shard(
+    make_fanout: Callable[..., Any], cache_dir: Path, fake_clock: Any
+) -> None:
+    cache = make_fanout(cache_dir, shards=8)
+    # Distinct expire times, and far fewer than 100 per shard: stock's expire() stops after 100 rows
+    # that share one (tests/conformance/test_maintenance.py).
+    for i, key in enumerate(KEYS):
+        cache.set(key, i, expire=10 + i if i < 60 else None)
+    fake_clock.advance(100)
+    assert cache.expire() == 60
+    assert cache.expire() == 0
+    assert len(cache) == len(KEYS) - 60
+    assert cache.clear() == len(KEYS) - 60
+    assert len(cache) == 0
+    assert cache.clear() == 0
+    assert cache.cull() == 0
+
+
+def test_cull_evicts_each_shard_under_its_share(make_fanout: Callable[..., Any], cache_dir: Path) -> None:
+    shards = 4
+    # 1 MiB per shard, and no culling on set, so only cull() removes anything.
+    cache = make_fanout(cache_dir, shards=shards, size_limit=shards << 20, cull_limit=0)
+    value = b'x' * 100_000
+    for i in range(120):  # About 3 MB per shard.
+        cache.set(f'big-{i}', value)
+    assert len(cache) == 120
+    removed = cache.cull()
+    assert removed > 0
+    assert len(cache) == 120 - removed
+    assert len(cache) <= shards * ((1 << 20) // len(value)), 'every shard is under its 1 MiB'
+
+
 def test_values_survive_a_reopen(make_fanout: Callable[..., Any], cache_dir: Path) -> None:
     first = make_fanout(cache_dir, shards=8)
     for i, key in enumerate(KEYS):

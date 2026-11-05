@@ -2,14 +2,17 @@
 //!
 //! Each key lives in exactly one shard, chosen by the frozen hash in `core::fanout`, so every
 //! process routes it the same way forever. A routed operation is exactly `Cache`'s, run by the same
-//! `HandleConfig` method against the key's shard. Calls over every shard (`len`, `volume`, `close`)
-//! share one deadline, not one each. Fan-out maintenance and iteration come in later steps.
+//! `HandleConfig` method against the key's shard. Calls over every shard (`len`, `volume`, `clear`,
+//! `expire`, `cull`, `checkpoint`, `close`) share one deadline, not one each. A maintenance call
+//! carries on past a shard that fails and then raises the first failure, saying how far it got
+//! (`partial_failure`). Iteration comes in a later step.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use diskcache_oxide_core::fanout::{self, Manifest};
+use diskcache_oxide_core::maintenance::{Interrupted, Snapshot};
 use diskcache_oxide_core::open::Role;
 use diskcache_oxide_core::ops::Number;
 use diskcache_oxide_core::store::Store;
@@ -18,6 +21,7 @@ use pyo3::PyTraverseError;
 use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::gc::PyVisit;
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
 
 use super::{DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, str_key, whole};
 use crate::to_py_err;
@@ -260,6 +264,69 @@ impl FanoutCache {
         Ok(self.every_shard(py, Store::volume)?.into_iter().sum())
     }
 
+    /// Removes every expired entry from every shard. Returns how many it removed. `timeout`
+    /// overrides the cache's for this call: one budget for the whole call (see `remove_everywhere`).
+    #[pyo3(signature = (*, timeout = None))]
+    fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+        let timeout = self.config.call_timeout(timeout)?;
+        let now = self.config.now(py)?;
+        self.remove_everywhere(py, "expire", timeout, |store, snapshot, deadline| {
+            store.expire_until(snapshot, now, deadline)
+        })
+    }
+
+    /// Removes every entry stored before the call. Returns how many it removed. `timeout` as for
+    /// `expire`.
+    #[pyo3(signature = (*, timeout = None))]
+    fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+        let timeout = self.config.call_timeout(timeout)?;
+        self.remove_everywhere(py, "clear", timeout, Store::clear_until)
+    }
+
+    /// Removes expired entries, then evicts each shard until it's under its share of `size_limit`.
+    /// Returns how many it removed. `timeout` as for `expire`.
+    #[pyo3(signature = (*, timeout = None))]
+    fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+        let timeout = self.config.call_timeout(timeout)?;
+        let now = self.config.now(py)?;
+        self.remove_everywhere(py, "cull", timeout, |store, snapshot, deadline| {
+            store.cull_until(snapshot, now, deadline)
+        })
+    }
+
+    /// Checkpoints every shard's write-ahead log and truncates it (D-024), retrying busy ones until
+    /// one deadline of `timeout` for the whole call; a shard reached after it gets one try. True only
+    /// if every shard's WAL was reset. A real error (a full disk) raises once every shard was tried.
+    #[pyo3(signature = (*, timeout = None))]
+    fn checkpoint(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
+        let timeout = self.config.call_timeout(timeout)?;
+        let deadline = lockwait::deadline_after(Instant::now(), timeout);
+        let mut reset = true;
+        let mut failures = Vec::new();
+        for (i, handle) in self.shards.iter().enumerate() {
+            if i > 0 {
+                self.check_signals_between(py, "checkpoint", None, &failures)?;
+            }
+            let outcome = crate::detach(py, || {
+                // A closed shard that can't rejoin behind a fork is busy, as on `Cache`.
+                match handle.ensure_open(deadline.saturating_duration_since(Instant::now())) {
+                    Ok(_) => handle.store.checkpoint_until(deadline),
+                    Err(Error::Timeout { .. }) => Ok(false),
+                    Err(error) => Err(error),
+                }
+            });
+            match outcome {
+                Ok(done) => reset &= done,
+                Err(error) => failures.push((handle.shard, error)),
+            }
+        }
+        if failures.is_empty() {
+            Ok(reset)
+        } else {
+            Err(self.partial_failure(py, "checkpoint", timeout, None, failures))
+        }
+    }
+
     // -- lifecycle ----------------------------------------------------------------------------
 
     /// Releases this handle on every shard, as `Cache.close()` does for its one store, but with
@@ -323,6 +390,122 @@ impl FanoutCache {
             py.check_signals()?;
         }
         Ok(results)
+    }
+}
+
+impl FanoutCache {
+    /// A removal (`clear`, `expire`, `cull`) on every shard under one deadline of `timeout` for the
+    /// whole call. It bounds waiting, not work: a chunk already running finishes, and a shard reached
+    /// after the deadline still gets its chunks with no wait each, so idle shards are all done even at
+    /// a short timeout. Every shard's snapshot is taken first (a closed shard rejoins for it), so
+    /// the call removes only what the cache held when it started, and a write made meanwhile on a
+    /// shard not yet reached survives, as on `Cache`. A shard that fails doesn't stop the others;
+    /// the first failure then raises, with how far the call got (`partial_failure`). Ctrl-C is
+    /// checked between shards, not after the last, so a finished call is never thrown away.
+    fn remove_everywhere(
+        &self,
+        py: Python<'_>,
+        call: &str,
+        timeout: Duration,
+        remove: impl Fn(&Store, Snapshot, Instant) -> Result<u64, Interrupted> + Sync,
+    ) -> PyResult<u64> {
+        let deadline = lockwait::deadline_after(Instant::now(), timeout);
+        let snapshots: Vec<Result<Snapshot, Error>> = crate::detach(py, || {
+            let left = || deadline.saturating_duration_since(Instant::now());
+            self.shards
+                .iter()
+                .map(|handle| handle.ensure_open(left()).and_then(|_| handle.store.snapshot_until(deadline)))
+                .collect()
+        });
+        let mut removed = 0;
+        let mut failures = Vec::new();
+        for (i, (handle, snapshot)) in self.shards.iter().zip(snapshots).enumerate() {
+            if i > 0 {
+                self.check_signals_between(py, call, Some(removed), &failures)?;
+            }
+            let outcome = match snapshot {
+                Ok(snapshot) => crate::detach(py, || remove(&handle.store, snapshot, deadline)),
+                Err(error) => Err(Interrupted { removed: 0, error }),
+            };
+            match outcome {
+                Ok(n) => removed += n,
+                Err(Interrupted { removed: n, error }) => {
+                    removed += n;
+                    failures.push((handle.shard, error));
+                }
+            }
+        }
+        if failures.is_empty() {
+            Ok(removed)
+        } else {
+            Err(self.partial_failure(py, call, timeout, Some(removed), failures))
+        }
+    }
+
+    /// The exception a fanned-out call raises when shards failed: the first failure's own type, so
+    /// `except Timeout` still works (a timeout names the call's whole budget), with `failed_shards`
+    /// (a tuple of the failed shards' indexes, in order) and, for a removal, `removed` (how many it
+    /// removed in all, from every shard, the failed ones' committed chunks included), plus a note
+    /// naming them. `failures` is never empty.
+    fn partial_failure(
+        &self,
+        py: Python<'_>,
+        call: &str,
+        timeout: Duration,
+        removed: Option<u64>,
+        failures: Vec<(usize, Error)>,
+    ) -> PyErr {
+        let failed: Vec<usize> = failures.iter().map(|(shard, _)| *shard).collect();
+        let Some((_, first)) = failures.into_iter().next() else {
+            return PyValueError::new_err("partial_failure needs a failure");
+        };
+        let raised = to_py_err(match first {
+            Error::Timeout { .. } => Error::Timeout { seconds: timeout.as_secs_f64() },
+            other => other,
+        });
+        self.annotate(py, raised, call, removed, &failed)
+    }
+
+    /// Checks for a signal between two shards. An exception it raises (Ctrl-C) after some shard
+    /// already failed carries the same `failed_shards`, `removed` and note as a partial failure.
+    fn check_signals_between(
+        &self,
+        py: Python<'_>,
+        call: &str,
+        removed: Option<u64>,
+        failures: &[(usize, Error)],
+    ) -> PyResult<()> {
+        py.check_signals().map_err(|raised| {
+            if failures.is_empty() {
+                return raised;
+            }
+            let failed: Vec<usize> = failures.iter().map(|(shard, _)| *shard).collect();
+            self.annotate(py, raised, call, removed, &failed)
+        })
+    }
+
+    /// `raised` with `failed_shards`, `removed` (when given) and a note naming them.
+    fn annotate(&self, py: Python<'_>, raised: PyErr, call: &str, removed: Option<u64>, failed: &[usize]) -> PyErr {
+        let listed = failed.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        let noun = if failed.len() == 1 { "shard" } else { "shards" };
+        let shards = self.shards.len();
+        let note = match removed {
+            Some(removed) => {
+                format!(
+                    "FanoutCache.{call}() failed on {noun} {listed} of {shards}; it removed {removed} entries in all"
+                )
+            }
+            None => format!("FanoutCache.{call}() failed on {noun} {listed} of {shards}"),
+        };
+        let value = raised.value(py);
+        let annotated = PyTuple::new(py, failed)
+            .and_then(|shards| value.setattr("failed_shards", shards))
+            .and_then(|()| removed.map_or(Ok(()), |removed| value.setattr("removed", removed)))
+            .and_then(|()| value.call_method1("add_note", (note,)).map(|_| ()));
+        match annotated {
+            Ok(()) => raised,
+            Err(error) => error,
+        }
     }
 }
 

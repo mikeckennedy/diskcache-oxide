@@ -12,14 +12,19 @@ import random
 import resource
 import subprocess
 import sys
+import threading
+import time
 import traceback
-from collections.abc import Iterator
+from collections.abc import Callable, Generator, Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 
 import pytest
 import xxhash
-from diskcache_oxide import Cache, FanoutCache
+from diskcache_oxide import Cache, FanoutCache, Timeout
+
+from tests.conformance.proc_workers import SqlitePeer
 
 MiB = 1 << 20
 GiB = 1 << 30
@@ -250,6 +255,155 @@ print(before, fds())
     assert cause == 'OSError', 'the SQLite error is kept as the cause'
     before, after = map(int, counts.split())
     assert after == before, f'the failed open left {after - before} fds open'
+
+
+# -- maintenance over every shard -------------------------------------------------------------------
+
+DB = 'diskcache-oxide.sqlite'
+
+REMOVALS: dict[str, Callable[..., int]] = {
+    'clear': lambda cache, **kw: cache.clear(**kw),
+    'expire': lambda cache, **kw: cache.expire(**kw),
+    'cull': lambda cache, **kw: cache.cull(**kw),
+}
+
+
+@contextmanager
+def _locked(root: Path, shards: list[int], mode: str = 'IMMEDIATE') -> Generator[None]:
+    """Each of `shards` locked by a SQLite connection in its own process (never this one, whose bundled
+    SQLite and the stdlib's would break each other's POSIX locks): `IMMEDIATE` holds the write lock,
+    `READ` a read snapshot that keeps the WAL from being reset."""
+    with ExitStack() as stack:
+        for shard in shards:
+            peer = stack.enter_context(SqlitePeer(root / f'{shard:03d}' / DB))
+            peer.begin(mode)
+            stack.callback(peer.rollback)
+        yield
+
+
+def _expired_cache(root: Path, keys: list[str], shards: int = 8) -> tuple[FanoutCache, list[int]]:
+    """A cache holding `keys`, every one already expired (so `clear`, `expire` and `cull` each remove
+    them all), and how many of them each shard holds."""
+    now = [1_000.0]
+    cache = FanoutCache(root, shards=shards, timeout=10, clock=lambda: now[0])
+    for key in keys:
+        cache.set(key, 'v', expire=1)
+    now[0] += 10
+    counts = [0] * shards
+    for key in keys:
+        counts[cache.shard_of(key)] += 1
+    return cache, counts
+
+
+@pytest.mark.parametrize('op', REMOVALS)
+def test_a_locked_shard_fails_alone_and_the_error_says_how_far_the_call_got(tmp_path: Path, op: str) -> None:
+    keys = [f'k{i}' for i in range(400)]
+    cache, counts = _expired_cache(tmp_path, keys)
+    with _locked(tmp_path, [3]):
+        with pytest.raises(Timeout) as raised:
+            REMOVALS[op](cache, timeout=0.2)
+    error: Any = raised.value
+    assert error.failed_shards == (3,)
+    assert error.removed == len(keys) - counts[3], 'every other shard was still done'
+    assert f'FanoutCache.{op}() failed on shard 3 of 8; it removed {error.removed} entries in all' in error.__notes__
+    assert 'after 0.2 s' in str(error), 'the timeout names the whole call budget'
+    assert len(cache) == counts[3]
+    assert REMOVALS[op](cache) == counts[3], 'unlocked, the shard is done'
+    cache.close()
+
+
+def test_a_write_to_a_later_shard_while_clear_waits_on_an_earlier_one_survives(tmp_path: Path) -> None:
+    # Every shard's snapshot is taken before anything is removed, so a write made while clear() waits on
+    # shard 0 is spared on shard 5 too, as a write made during Cache.clear() is.
+    keys = [f'k{i}' for i in range(400)]
+    cache = FanoutCache(tmp_path, shards=8, timeout=10)
+    counts = [0] * 8
+    for key in keys:  # None expired, so the late set sweeps nothing from its shard.
+        cache.set(key, 'v')
+        counts[cache.shard_of(key)] += 1
+    late = next(f'late-{i}' for i in range(10_000) if cache.shard_of(f'late-{i}') == 5)
+    outcome: list[BaseException] = []
+
+    def clear() -> None:
+        try:
+            cache.clear(timeout=0.3)
+        except BaseException as error:  # noqa: BLE001 - handed to the test thread
+            outcome.append(error)
+
+    with _locked(tmp_path, [0]):
+        worker = threading.Thread(target=clear)
+        worker.start()
+        time.sleep(0.1)  # clear() has its snapshots and is waiting on shard 0.
+        assert worker.is_alive()
+        cache.set(late, 'written during the clear')
+        worker.join(10)
+    assert not worker.is_alive()
+    assert len(outcome) == 1 and isinstance(outcome[0], Timeout), outcome
+    error: Any = outcome[0]
+    assert error.failed_shards == (0,)
+    assert error.removed == len(keys) - counts[0], 'the late write was not counted'
+    assert cache.get(late) == 'written during the clear'
+    cache.close()
+
+
+def test_one_timeout_bounds_the_whole_call_not_one_per_shard(tmp_path: Path) -> None:
+    keys = [f'k{i}' for i in range(400)]
+    cache, counts = _expired_cache(tmp_path, keys)
+    timeout = 0.25
+    with _locked(tmp_path, [0, 2, 4, 6]):
+        start = time.monotonic()
+        with pytest.raises(Timeout) as raised:
+            cache.clear(timeout=timeout)
+        took = time.monotonic() - start
+    error: Any = raised.value
+    assert error.failed_shards == (0, 2, 4, 6)
+    assert error.removed == sum(counts[1::2])
+    assert timeout <= took < 3 * timeout, f'{took:.3f} s: four locked shards waited about one timeout, not four'
+    cache.close()
+
+
+def test_at_a_zero_timeout_every_idle_shard_is_still_emptied(tmp_path: Path) -> None:
+    # Over 100 rows (one chunk) per shard, so every chunk past the first also gets its no-wait try.
+    keys = [f'k{i}' for i in range(2_000)]
+    cache, _ = _expired_cache(tmp_path, keys)
+    cache.set('live', 'v')  # Its set sweeps a few expired rows from its shard, as any set does.
+    expired = len(cache) - 1
+    assert expired > len(keys) - 20
+    assert cache.expire(timeout=0) == expired
+    assert cache.cull(timeout=0) == 0
+    assert cache.clear(timeout=0) == 1
+    assert len(cache) == 0
+    assert cache.checkpoint(timeout=0) is True
+    cache.close()
+
+
+def test_maintenance_on_a_closed_handle_reopens_every_shard(tmp_path: Path) -> None:
+    keys = [f'k{i}' for i in range(100)]
+    cache, _ = _expired_cache(tmp_path, keys, shards=4)
+    cache.close()
+    assert cache.clear() == len(keys)
+    assert cache._handle_counts() == [1, 1, 1, 1]
+    cache.close()
+    assert cache.checkpoint() is True
+    assert cache._handle_counts() == [1, 1, 1, 1]
+    cache.close()
+
+
+def test_checkpoint_is_true_only_when_every_shard_resets(tmp_path: Path) -> None:
+    cache = FanoutCache(tmp_path, shards=4, timeout=10)
+    keys = [f'k{i}' for i in range(200)]
+    for key in keys:
+        cache.set(key, 'v')
+    assert cache.checkpoint() is True
+    with _locked(tmp_path, [2], 'READ'):
+        for key in keys:
+            cache.set(key, 'w')  # WAL frames past the reader's snapshot on every shard.
+        start = time.monotonic()
+        assert cache.checkpoint(timeout=0.2) is False, 'a reader kept shard 2 busy; busy never raises'
+        took = time.monotonic() - start
+    assert took < 2.0, f'{took:.3f} s'
+    assert cache.checkpoint() is True
+    cache.close()
 
 
 # -- lifecycle -------------------------------------------------------------------------------------
