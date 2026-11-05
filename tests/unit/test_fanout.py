@@ -7,6 +7,7 @@ vector is a format break, never a test update.
 
 from __future__ import annotations
 
+import gc
 import multiprocessing
 import random
 import resource
@@ -403,6 +404,233 @@ def test_checkpoint_is_true_only_when_every_shard_resets(tmp_path: Path) -> None
         took = time.monotonic() - start
     assert took < 2.0, f'{took:.3f} s'
     assert cache.checkpoint() is True
+    cache.close()
+
+
+# -- iteration ---------------------------------------------------------------------------------------
+
+# Keys whose sorted order a merge could get wrong: non-ASCII at every UTF-8 width (byte order on UTF-8
+# is code-point order), a key that is a prefix of another, NUL, the largest code point, shared
+# prefixes, and enough of them that every shard needs several merge pages.
+ODD_KEYS = [
+    '',
+    'a',
+    'a\0',
+    'ab',
+    'a\x7f',
+    'a\x80',
+    'aé',
+    'a\u07ff',
+    'a\u0800',
+    'a中',
+    'a\uffff',
+    'a\U00010000',
+    'a\U0001f40d',
+    'a\U0010ffff',
+    'b',
+    'Z',
+    '\U0010ffff',
+    'é',
+    'éa',
+]
+MANY_KEYS = ODD_KEYS + [f'user:{i:05}' for i in range(1_500)] + [f'usé:{i}' for i in range(300)]
+
+
+def _filled_cache(root: Path, keys: list[str], shards: int = 8, **kwargs: Any) -> FanoutCache:
+    cache = FanoutCache(root, shards=shards, **kwargs)
+    for key in keys:
+        cache.set(key, 1)
+    return cache
+
+
+def test_iterkeys_merges_every_shard_into_the_order_sorted_and_a_plain_cache_give(tmp_path: Path) -> None:
+    keys = list(MANY_KEYS)
+    random.Random(13).shuffle(keys)
+    cache = _filled_cache(tmp_path / 'fanout', keys)
+    plain = Cache(tmp_path / 'plain')
+    for key in keys:
+        plain.set(key, 1)
+    assert len({cache.shard_of(k) for k in keys}) == 8
+    for prefix in (None, '', 'a', 'user:', 'user:01', 'usé', 'é', 'a\U00010000', '\U0010ffff', 'nothing'):
+        want = sorted(k for k in keys if k.startswith(prefix or ''))
+        for reverse in (False, True):
+            got = list(cache.iterkeys(prefix=prefix, reverse=reverse))
+            assert got == (want[::-1] if reverse else want), (prefix, reverse)
+            assert got == list(plain.iterkeys(prefix=prefix, reverse=reverse)), (prefix, reverse)
+    plain.close()
+    cache.close()
+
+
+def test_iter_yields_every_key_once_shard_by_shard_each_in_insertion_order(tmp_path: Path) -> None:
+    keys = [f'k{i}' for i in range(2_000)]
+    cache = _filled_cache(tmp_path, keys)
+    cache.set('k0', 2)  # An overwrite keeps its place, as on `Cache`.
+    got = list(cache)
+    assert sorted(got) == sorted(keys)
+    shards = [cache.shard_of(k) for k in got]
+    assert shards == sorted(shards), 'shard 0 first, then shard 1, ...'
+    for shard in range(8):
+        assert [k for k in got if cache.shard_of(k) == shard] == [k for k in keys if cache.shard_of(k) == shard]
+    cache.close()
+
+
+@pytest.mark.parametrize('shards', [1, 64])
+def test_iteration_over_one_shard_and_over_many_with_few_keys(tmp_path: Path, shards: int) -> None:
+    cache = _filled_cache(tmp_path, ['c', 'a', 'b'], shards=shards)
+    assert list(cache.iterkeys()) == ['a', 'b', 'c']
+    assert list(cache.iterkeys(reverse=True)) == ['c', 'b', 'a']
+    assert sorted(cache) == ['a', 'b', 'c']
+    cache.clear()
+    assert list(cache.iterkeys()) == [] and list(cache) == []
+    cache.close()
+
+
+def test_an_iterator_holds_no_connection_or_lock_between_yields(tmp_path: Path) -> None:
+    # One connection per shard: had either iterator kept its shard's, the reads and writes below
+    # would time out waiting for it, and a read transaction left open would keep the WAL from resetting.
+    keys = [f'k{i}' for i in range(1_000)]
+    cache = _filled_cache(tmp_path, keys, shards=4, max_connections=4, timeout=0.5)
+    merged, walked = cache.iterkeys(), iter(cache)
+    assert next(merged) == sorted(keys)[0]
+    next(walked)
+    for key in keys[:200]:
+        assert cache.get(key) == 1
+        cache.set(key, 2)
+    assert cache.checkpoint() is True
+    assert len(list(merged)) == len(keys) - 1
+    assert len(list(walked)) == len(keys) - 1
+    cache.close()
+
+
+def test_iterating_while_writing_never_repeats_or_reorders_a_key(tmp_path: Path) -> None:
+    # Keyset pages, as on `Cache`: a key stored or deleted mid-walk may or may not be seen, but no key
+    # comes out twice, the merge stays sorted, and every key left alone throughout is seen.
+    keys = [f'k{i:05}' for i in range(3_000)]
+    cache = _filled_cache(tmp_path, keys)
+    rng = random.Random(5)
+    deleted = set(rng.sample(keys, 500))
+    untouched = set(keys) - deleted
+    for walk in ('merge', 'reverse', 'shards'):
+        cache.clear()
+        for key in keys:
+            cache.set(key, 1)
+        iterator = {'merge': cache.iterkeys(), 'reverse': cache.iterkeys(reverse=True), 'shards': iter(cache)}[walk]
+        seen: list[str] = []
+        doomed = sorted(deleted)
+        for i, key in enumerate(iterator):
+            seen.append(key)
+            if i % 10 == 0 and doomed:
+                cache.delete(doomed.pop(rng.randrange(len(doomed))))
+            if i % 7 == 0:
+                cache.set(f'k{rng.randrange(6_000):05}x', 1)  # Ahead of or behind the walk.
+        assert len(seen) == len(set(seen)), f'{walk}: a key came out twice'
+        assert untouched <= set(seen), f'{walk}: a key left alone was missed'
+        if walk != 'shards':
+            assert seen == sorted(seen, reverse=walk == 'reverse'), f'{walk}: out of order'
+    cache.close()
+
+
+def test_iterating_a_closed_handle_reopens_the_shards_it_reads(tmp_path: Path) -> None:
+    cache = _filled_cache(tmp_path, ['a', 'b', 'c', 'd'], shards=4)
+    cache.close()
+    assert list(cache.iterkeys()) == ['a', 'b', 'c', 'd']
+    assert cache._handle_counts() == [1, 1, 1, 1]
+    cache.close()
+
+
+class _Stall:
+    """Unpickling it blocks until `release` is set, inside the read, which holds its connection
+    meanwhile (decoding runs with the row still borrowed from SQLite)."""
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def __init__(self) -> None:
+        self.n = 1  # Some state, so unpickling calls __setstate__.
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        type(self).entered.set()
+        type(self).release.wait(10)
+
+
+@contextmanager
+def _stalled_shard(cache: FanoutCache, shard: int) -> Generator[None]:
+    """`shard`'s only connection held by another thread until `_Stall.release` is set: a `get` of a
+    value whose unpickling blocks. Needs a `pickle=True` cache with one connection per shard."""
+    _Stall.entered.clear()
+    _Stall.release.clear()
+    stall = next(k for k in (f'stall-{i}' for i in range(10_000)) if cache.shard_of(k) == shard)
+    cache.set(stall, _Stall())
+    holder = threading.Thread(target=cache.get, args=(stall,))
+    holder.start()
+    assert _Stall.entered.wait(10), 'the unpickling never started'
+    try:
+        yield
+    finally:
+        _Stall.release.set()
+        holder.join(10)
+
+
+def test_a_merge_read_that_fails_loses_no_key_and_the_same_iterator_carries_on(tmp_path: Path) -> None:
+    # A shard's refill happens at the start of the next `next()`, before a key is chosen: a refill
+    # that times out raises with nothing taken, and the same iterator then picks up where it was.
+    cache = FanoutCache(tmp_path, shards=2, max_connections=2, timeout=0.3, pickle=True)
+    keys = [f'k{i:04}' for i in range(1_500)]
+    for key in keys:
+        cache.set(key, 1)
+    iterator = cache.iterkeys()
+    seen = [next(iterator) for _ in range(10)]  # Every shard's first page is buffered.
+    with _stalled_shard(cache, 1):
+        with pytest.raises(Timeout):
+            while True:  # Until shard 1's page runs out and its refill can't get a connection.
+                seen.append(next(iterator))
+    seen.extend(iterator)
+    assert seen == sorted(cache.iterkeys()), 'a key was lost or repeated across the failed next()'
+    assert len(seen) == len(keys) + 1
+    cache.close()
+
+
+def test_a_second_thread_inside_next_raises_instead_of_waiting(tmp_path: Path) -> None:
+    cache = FanoutCache(tmp_path, shards=2, max_connections=2, timeout=10, pickle=True)
+    for key in ('a', 'b', 'c', 'd'):
+        cache.set(key, 1)
+    iterator = cache.iterkeys()
+    first: list[str] = []
+    with _stalled_shard(cache, 1):
+        inside = threading.Thread(target=lambda: first.append(next(iterator)))
+        inside.start()  # Waits inside next() for shard 1's connection.
+        time.sleep(0.2)
+        assert inside.is_alive()
+        with pytest.raises(ValueError, match='iterator already executing'):
+            next(iterator)
+    inside.join(10)
+    assert first == ['a']
+    assert list(iterator) == [k for k in sorted(cache.iterkeys()) if k != 'a']
+    cache.close()
+
+
+@pytest.mark.parametrize('walk', ['iterkeys', 'iter'])
+def test_an_iterator_in_a_reference_cycle_is_collected_and_releases_its_handle(tmp_path: Path, walk: str) -> None:
+    keeper = FanoutCache(tmp_path, shards=4)
+
+    def make() -> None:
+        box: dict[str, Any] = {}
+        cache = FanoutCache(tmp_path, clock=lambda: (box, time.time())[1])
+        box['iterator'] = cache.iterkeys() if walk == 'iterkeys' else iter(cache)  # Iterator -> cache -> clock -> box.
+
+    make()
+    assert keeper._handle_counts() == [2, 2, 2, 2], 'the cycle keeps the second handle open'
+    gc.collect()
+    assert keeper._handle_counts() == [1, 1, 1, 1], 'collecting the cycle released it'
+    keeper.close()
+
+
+def test_an_exhausted_iterator_stays_exhausted(tmp_path: Path) -> None:
+    cache = _filled_cache(tmp_path, ['a'], shards=2)
+    iterator = cache.iterkeys()
+    assert list(iterator) == ['a']
+    assert next(iterator, None) is None, 'an exhausted iterator stays exhausted'
     cache.close()
 
 

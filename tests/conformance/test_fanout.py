@@ -139,6 +139,21 @@ def test_cull_evicts_each_shard_under_its_share(make_fanout: Callable[..., Any],
     assert len(cache) <= shards * ((1 << 20) // len(value)), 'every shard is under its 1 MiB'
 
 
+def test_iter_yields_every_key_once(make_fanout: Callable[..., Any], cache_dir: Path) -> None:
+    # Only as a set: each backend walks its shards in turn, and their hashes put keys in different
+    # shards (stock has no iterkeys).
+    cache = make_fanout(cache_dir, shards=8)
+    assert list(cache) == []
+    for key in KEYS:
+        cache.set(key, 1)
+    got = list(cache)
+    assert len(got) == len(KEYS)
+    assert set(got) == set(KEYS)
+    for key in KEYS[::2]:
+        cache.delete(key)
+    assert sorted(cache) == sorted(KEYS[1::2])
+
+
 def test_values_survive_a_reopen(make_fanout: Callable[..., Any], cache_dir: Path) -> None:
     first = make_fanout(cache_dir, shards=8)
     for i, key in enumerate(KEYS):

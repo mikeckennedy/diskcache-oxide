@@ -242,9 +242,23 @@ impl Store {
         prefix: Option<&str>,
         cursor: &Cursor,
     ) -> Result<(Vec<String>, Cursor)> {
+        self.keys_page_of(PAGE, timeout, order, prefix, cursor)
+    }
+
+    /// [`Store::keys_page`] with pages of at most `size` keys (at least 1), for a `FanoutCache`
+    /// merge, which keeps one page per shard buffered at once.
+    pub fn keys_page_of(
+        &self,
+        size: i64,
+        timeout: Duration,
+        order: Order,
+        prefix: Option<&str>,
+        cursor: &Cursor,
+    ) -> Result<(Vec<String>, Cursor)> {
+        let size = size.max(1);
         let upper = prefix.and_then(prefix_upper);
         let lower = prefix.unwrap_or("");
-        self.read(timeout, |conn| page(conn, timeout, order, lower, upper.as_deref(), cursor))
+        self.read(timeout, |conn| page(conn, timeout, order, lower, upper.as_deref(), cursor, size))
     }
 
     /// The next `store_seq` to be handed out: every row stored before now has a smaller one.
@@ -369,6 +383,7 @@ fn page(
     lower: &str,
     upper: Option<&str>,
     cursor: &Cursor,
+    size: i64,
 ) -> Result<(Vec<String>, Cursor)> {
     let sqlite = |e| Error::from_sqlite(e, timeout);
     match order {
@@ -380,7 +395,7 @@ fn page(
             let rows: Vec<(i64, String)> = conn
                 .prepare_cached("SELECT id, key FROM cache WHERE key_type = ?1 AND id > ?2 ORDER BY id LIMIT ?3")
                 .and_then(|mut stmt| {
-                    stmt.query_map((KEY_TYPE_STR, after, PAGE), |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+                    stmt.query_map((KEY_TYPE_STR, after, size), |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
                 })
                 .map_err(sqlite)?;
             let next = rows.last().map_or_else(|| cursor.clone(), |(id, _)| Cursor::Id(*id));
@@ -399,7 +414,7 @@ fn page(
             };
             let keys: Vec<String> = conn
                 .prepare_cached(key_page_sql(reverse, after.is_some(), upper.is_some()))
-                .and_then(|mut stmt| stmt.query_map((KEY_TYPE_STR, low, high, PAGE), |r| r.get(0))?.collect())
+                .and_then(|mut stmt| stmt.query_map((KEY_TYPE_STR, low, high, size), |r| r.get(0))?.collect())
                 .map_err(sqlite)?;
             let next = keys.last().map_or_else(|| cursor.clone(), |k| Cursor::Key(k.clone()));
             Ok((keys, next))
@@ -576,6 +591,31 @@ mod tests {
     }
 
     #[test]
+    fn small_pages_walk_the_same_keys_as_full_ones() {
+        let tmp = TempDir::new("maint-page-small");
+        let s = store(tmp.path());
+        for i in 0..300 {
+            put(&s, &format!("k{i:03}"), None);
+        }
+        for (order, prefix) in
+            [(Order::Key { reverse: false }, None), (Order::Key { reverse: true }, Some("k1")), (Order::Inserted, None)]
+        {
+            let mut cursor = Cursor::Start;
+            let mut small = Vec::new();
+            loop {
+                let (keys, next) = s.keys_page_of(7, T, order, prefix, &cursor).unwrap();
+                assert!(keys.len() <= 7);
+                if keys.is_empty() {
+                    break;
+                }
+                small.extend(keys);
+                cursor = next;
+            }
+            assert_eq!(small, all(&s, order, prefix), "{order:?} {prefix:?}");
+        }
+    }
+
+    #[test]
     fn a_key_walk_sees_changes_ahead_of_its_cursor_and_not_behind_it() {
         let tmp = TempDir::new("maint-page-changes");
         let s = store(tmp.path());
@@ -674,6 +714,9 @@ mod tests {
 
     #[test]
     fn past_its_deadline_a_maintenance_call_still_empties_an_idle_store() {
+        // Past the deadline nothing waits, not even for a pending fork: keep the other tests' forks
+        // on the global gate out of the way, or one of these no-wait attempts can meet one.
+        let _forks = crate::testutil::one_global_fork_at_a_time();
         let tmp = TempDir::new("maint-until-idle");
         let s = store(tmp.path());
         for i in 0..350 {

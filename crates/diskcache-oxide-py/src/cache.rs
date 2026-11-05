@@ -1084,6 +1084,12 @@ impl KeyIterator {
 
 #[pymethods]
 impl KeyIterator {
+    /// Lets the garbage collector see the cache it holds: an iterator kept by something the cache
+    /// refers to (its `clock` or `on_decode_error`) would otherwise leak both, with the handle open.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.cache)
+    }
+
     fn __iter__(slf: Py<Self>) -> Py<Self> {
         slf
     }

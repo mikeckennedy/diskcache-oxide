@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import inspect
 import subprocess
 import sys
@@ -415,3 +416,19 @@ def test_null_cache_clear_passes_the_timeout_to_its_invalidate_cache(
         NullCache(invalidate=cache).clear(timeout=0.2)
     assert time.monotonic() - started < 5
     peer.rollback()
+
+
+@pytest.mark.parametrize('walk', ['iterkeys', 'iter'])
+def test_a_key_iterator_in_a_reference_cycle_is_collected_and_releases_its_handle(tmp_path: Path, walk: str) -> None:
+    keeper = Cache(tmp_path / 'c')
+
+    def make() -> None:
+        box: dict[str, Any] = {}
+        cache = Cache(tmp_path / 'c', clock=lambda: (box, time.time())[1])
+        box['iterator'] = cache.iterkeys() if walk == 'iterkeys' else iter(cache)  # Iterator -> cache -> clock -> box.
+
+    make()
+    assert keeper._handle_count() == 2, 'the cycle keeps the second handle open'
+    gc.collect()
+    assert keeper._handle_count() == 1, 'collecting the cycle released it'
+    keeper.close()

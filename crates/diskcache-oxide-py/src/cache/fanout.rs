@@ -5,14 +5,18 @@
 //! `HandleConfig` method against the key's shard. Calls over every shard (`len`, `volume`, `clear`,
 //! `expire`, `cull`, `checkpoint`, `close`) share one deadline, not one each. A maintenance call
 //! carries on past a shard that fails and then raises the first failure, saying how far it got
-//! (`partial_failure`). Iteration comes in a later step.
+//! (`partial_failure`). `__iter__` walks the shards one after another; `iterkeys` merges the
+//! shards' sorted pages (`FanoutKeyIterator`).
 
+use std::cmp::Ordering as KeyOrdering;
+use std::collections::{BinaryHeap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
 use diskcache_oxide_core::fanout::{self, Manifest};
-use diskcache_oxide_core::maintenance::{Interrupted, Snapshot};
+use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, PAGE, Snapshot};
 use diskcache_oxide_core::open::Role;
 use diskcache_oxide_core::ops::Number;
 use diskcache_oxide_core::store::Store;
@@ -327,6 +331,22 @@ impl FanoutCache {
         }
     }
 
+    /// Keys in sorted order (code-point order, like `sorted()`, the same order a `Cache` gives),
+    /// optionally only those starting with `prefix`: a merge of every shard's sorted pages. Each
+    /// shard keeps a small page buffered (see `merge_page`), so the first `next()` reads every shard
+    /// once; no connection is held between `next()` calls.
+    #[pyo3(signature = (*, prefix = None, reverse = false))]
+    fn iterkeys(slf: Py<Self>, prefix: Option<String>, reverse: bool) -> FanoutKeyIterator {
+        let shards = slf.get().shards.len();
+        FanoutKeyIterator::new(slf, Walk::merge(shards, reverse), prefix)
+    }
+
+    /// Every key once: shard 0's in insertion order, then shard 1's, and so on. That is not the
+    /// order the keys were stored in across the whole cache.
+    fn __iter__(slf: Py<Self>) -> FanoutKeyIterator {
+        FanoutKeyIterator::new(slf, Walk::Shards { shard: 0, cursor: Cursor::Start, buffer: VecDeque::new() }, None)
+    }
+
     // -- lifecycle ----------------------------------------------------------------------------
 
     /// Releases this handle on every shard, as `Cache.close()` does for its one store, but with
@@ -381,13 +401,16 @@ impl FanoutCache {
         let deadline = lockwait::deadline_after(Instant::now(), timeout);
         let mut results = Vec::with_capacity(self.shards.len());
         for handle in &self.shards {
+            if !results.is_empty() {
+                // Between shards only: after the last one it would throw a finished result away.
+                py.check_signals()?;
+            }
             let left = deadline.saturating_duration_since(Instant::now());
             let result = handle.ensure_open(left).and_then(|left| call(&handle.store, left));
             results.push(result.map_err(|error| match error {
                 Error::Timeout { .. } => to_py_err(Error::Timeout { seconds: timeout.as_secs_f64() }),
                 other => to_py_err(other),
             })?);
-            py.check_signals()?;
         }
         Ok(results)
     }
@@ -505,6 +528,168 @@ impl FanoutCache {
         match annotated {
             Ok(()) => raised,
             Err(error) => error,
+        }
+    }
+}
+
+/// Keys per shard page in an `iterkeys` merge, which keeps one page per shard buffered at once:
+/// [`PAGE`] split across the shards, but at least `MIN_MERGE_PAGE`, so a shard's page is still
+/// worth a read. 64 at the default 8 shards; 32 at 256 shards, about 8,000 keys in all.
+fn merge_page(shards: usize) -> i64 {
+    const MIN_MERGE_PAGE: i64 = 32;
+    (PAGE / i64::try_from(shards).unwrap_or(i64::MAX).max(1)).max(MIN_MERGE_PAGE)
+}
+
+/// A lazy iterator over a `FanoutCache`'s keys, one page per fetch, holding no connection between
+/// `next()` calls (D-025). Like `Cache`'s, it isn't a snapshot: a key stored or deleted while it
+/// runs may or may not be seen, but no key is yielded twice and, for `iterkeys`, every key comes
+/// out in order.
+#[pyclass(frozen, module = "diskcache_oxide")]
+pub(crate) struct FanoutKeyIterator {
+    cache: Py<FanoutCache>,
+    prefix: Option<String>,
+    walk: Mutex<Walk>,
+}
+
+/// Where a [`FanoutKeyIterator`] is.
+enum Walk {
+    /// `__iter__`: shard `shard` in insertion order, then the next shard from its start.
+    Shards { shard: usize, cursor: Cursor, buffer: VecDeque<String> },
+    /// `iterkeys`: a k-way merge. `heads` holds each shard's next key, and `shards[i]` the keys
+    /// buffered behind it. A shard in `pending` has nothing buffered: it is read at the start of the
+    /// next `next()`, before any key is chosen, so an error there loses nothing and can be retried.
+    Merge { reverse: bool, heads: BinaryHeap<Head>, shards: Vec<MergeShard>, pending: Vec<usize> },
+}
+
+impl Walk {
+    fn merge(shards: usize, reverse: bool) -> Self {
+        Self::Merge {
+            reverse,
+            heads: BinaryHeap::with_capacity(shards),
+            shards: (0..shards).map(|_| MergeShard { cursor: Cursor::Start, buffer: VecDeque::new() }).collect(),
+            // Every shard is read on the first `next()`, shard 0 first.
+            pending: (0..shards).rev().collect(),
+        }
+    }
+}
+
+/// One shard's place in an `iterkeys` merge.
+struct MergeShard {
+    cursor: Cursor,
+    buffer: VecDeque<String>,
+}
+
+/// A shard's next key in the merge. The heap's greatest is the next key out: the smallest key
+/// ascending, the largest in reverse. Keys are compared as Rust strings, which is byte order on
+/// UTF-8, the order SQLite's `BINARY` collation gives each shard's pages (and code-point order, as
+/// `sorted()` gives). One key lives in one shard, so two heads are never equal.
+#[derive(PartialEq, Eq)]
+struct Head {
+    key: String,
+    shard: usize,
+    reverse: bool,
+}
+
+impl Ord for Head {
+    fn cmp(&self, other: &Self) -> KeyOrdering {
+        let ascending = other.key.cmp(&self.key).then(other.shard.cmp(&self.shard));
+        if self.reverse { ascending.reverse() } else { ascending }
+    }
+}
+
+impl PartialOrd for Head {
+    fn partial_cmp(&self, other: &Self) -> Option<KeyOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl FanoutKeyIterator {
+    fn new(cache: Py<FanoutCache>, walk: Walk, prefix: Option<String>) -> Self {
+        Self { cache, prefix, walk: Mutex::new(walk) }
+    }
+
+    /// The next page of `shard`'s keys after `cursor`, waiting no later than `deadline`.
+    fn page(
+        &self,
+        shard: usize,
+        size: i64,
+        order: Order,
+        cursor: &Cursor,
+        deadline: Instant,
+    ) -> Result<(Vec<String>, Cursor), Error> {
+        let handle = &self.cache.get().shards[shard];
+        let left = deadline.saturating_duration_since(Instant::now());
+        let left = handle.ensure_open(left)?;
+        handle.store.keys_page_of(size, left, order, self.prefix.as_deref(), cursor)
+    }
+}
+
+#[pymethods]
+impl FanoutKeyIterator {
+    /// Lets the garbage collector see the cache it holds, as `Cache`'s `KeyIterator` does.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.cache)
+    }
+
+    fn __iter__(slf: Py<Self>) -> Py<Self> {
+        slf
+    }
+
+    /// The next key. The reads one `next()` makes (every shard's first page, on the first call of a
+    /// merge) share one deadline of the cache's `timeout`.
+    fn __next__(&self) -> PyResult<Option<String>> {
+        // As `Cache`'s iterator: never wait for the state while attached (the gate's rules), and
+        // another thread inside `next()` is an error, as for a generator.
+        let mut walk = match self.walk.try_lock() {
+            Ok(walk) => walk,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return Err(PyValueError::new_err("iterator already executing")),
+        };
+        let timeout = self.cache.get().config.timeout;
+        let deadline = lockwait::deadline_after(Instant::now(), timeout);
+        let whole = |error| match error {
+            Error::Timeout { .. } => to_py_err(Error::Timeout { seconds: timeout.as_secs_f64() }),
+            other => to_py_err(other),
+        };
+        match &mut *walk {
+            Walk::Shards { shard, cursor, buffer } => loop {
+                if let Some(key) = buffer.pop_front() {
+                    return Ok(Some(key));
+                }
+                if *shard >= self.cache.get().shards.len() {
+                    return Ok(None);
+                }
+                let (keys, next) = self.page(*shard, PAGE, Order::Inserted, cursor, deadline).map_err(whole)?;
+                if keys.is_empty() {
+                    *shard += 1;
+                    *cursor = Cursor::Start;
+                } else {
+                    *cursor = next;
+                    buffer.extend(keys);
+                }
+            },
+            Walk::Merge { reverse, heads, shards, pending } => {
+                let size = merge_page(shards.len());
+                let order = Order::Key { reverse: *reverse };
+                while let Some(&shard) = pending.last() {
+                    let state = &mut shards[shard];
+                    let (keys, next) = self.page(shard, size, order, &state.cursor, deadline).map_err(whole)?;
+                    let mut keys = VecDeque::from(keys);
+                    if let Some(key) = keys.pop_front() {
+                        state.cursor = next;
+                        state.buffer = keys;
+                        heads.push(Head { key, shard, reverse: *reverse });
+                    }
+                    // An empty page: this shard is done, and leaves the merge.
+                    pending.pop();
+                }
+                let Some(Head { key, shard, .. }) = heads.pop() else { return Ok(None) };
+                match shards[shard].buffer.pop_front() {
+                    Some(next) => heads.push(Head { key: next, shard, reverse: *reverse }),
+                    None => pending.push(shard),
+                }
+                Ok(Some(key))
+            }
         }
     }
 }

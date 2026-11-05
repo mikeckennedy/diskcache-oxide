@@ -647,6 +647,30 @@ class FanoutCache:
             OSError: A real error, such as a full disk, on some shard, raised after every shard was
                 tried. It carries `failed_shards` (see the class docs).
         """
+    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+        """Iterate over keys in sorted order, optionally only those starting with `prefix`.
+
+        The same order `Cache.iterkeys` gives for the same keys (code-point order, like `sorted()`):
+        a merge of every shard's sorted keys. Each shard keeps a small page of keys buffered, so the
+        first `next()` reads every shard once, and later ones read a shard only when its page runs
+        out. No connection or lock is held between `next()` calls. As on `Cache`, it isn't a
+        snapshot: a key stored or deleted while it runs may or may not be yielded, but none is
+        yielded twice and the order holds. Expired entries not yet removed are included. `next()`
+        raises `ValueError` while another thread is inside it.
+
+        Args:
+            prefix: Only yield keys that start with this string.
+            reverse: Yield keys in descending order.
+
+        Raises:
+            Timeout: A shard stayed locked, or a fork stayed pending, for longer than `timeout`
+                during one `next()` (which shares that one budget across the shards it reads).
+        """
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on.
+
+        That isn't the order keys were stored in across the cache. Otherwise as `iterkeys()`.
+        """
     def close(self, *, checkpoint: bool = True) -> None:
         """Close this handle on every shard, as `Cache.close()` does for one.
 
