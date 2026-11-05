@@ -31,7 +31,7 @@ shuttle = "0.9.9"
 #   [lints]
 #   workspace = true
 [workspace.lints.rust]
-# deny, not forbid: the py crate's PyO3 macros expand to unsafe code. Core adds #![forbid(unsafe_code)].
+# deny, not forbid: the py crate's PyO3 macros expand to unsafe code. Core allows it only in its `stack` module.
 unsafe_code = "deny"
 missing_debug_implementations = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(shuttle)'] }

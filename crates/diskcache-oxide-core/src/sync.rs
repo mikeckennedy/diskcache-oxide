@@ -1,6 +1,6 @@
-//! The primitives `gate` and `genlock` synchronize through: std's, or shuttle's under `cfg(shuttle)`
-//! so the model checker (`crate::model`) controls every interleaving. Only they (and a gate test
-//! in `poison`, for its thread-local) import this.
+//! The primitives `gate`, `genlock` and `stack` synchronize through: std's, or shuttle's under
+//! `cfg(shuttle)` so the model checker (`crate::model`) controls every interleaving. Only they (and a
+//! gate test in `poison`, for its thread-local) import this.
 //!
 //! Under shuttle, `thread::sleep` is a yield (a scheduling point that also tells PCT to deprioritize
 //! the sleeper) that advances a logical clock by the slept duration, and `now()` reads that clock, so
@@ -23,7 +23,7 @@ pub(crate) use shuttle::{thread::LocalKey, thread_local};
 
 #[cfg(shuttle)]
 pub(crate) mod atomic {
-    pub(crate) use shuttle::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+    pub(crate) use shuttle::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize};
 }
 
 #[cfg(shuttle)]

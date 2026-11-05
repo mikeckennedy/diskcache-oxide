@@ -32,8 +32,8 @@ use std::cell::{Cell, RefCell};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError, Weak};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
@@ -45,6 +45,7 @@ use crate::open::{self, Limits, Requested};
 use crate::poison::HoldGuard;
 use crate::pool::{Pool, PooledConn};
 use crate::rows::{Removed, RowWriter};
+use crate::stack::TakeAllStack;
 use crate::{Error, Result, lockwait};
 
 /// Default `max_connections` (04-design.md section 2).
@@ -77,103 +78,11 @@ pub(crate) fn quiesce_registry() {
 }
 
 /// The stores with a release deferred behind a fork, one entry per release, so a store stays in the
-/// registry for its drain after its last other `Arc` has gone. Taken with no gate level, since a
-/// deferrer has none, so a fork can land while it's locked and leave a child with it locked for good.
-/// So it's only ever taken through [`deferred_owners`], which tells that apart from a lock that's
-/// just busy.
-static DEFERRED_OWNERS: Mutex<Vec<Arc<Store>>> = Mutex::new(Vec::new());
-
-/// Who holds [`DEFERRED_OWNERS`]: 0 when nobody does, else the process id of the process whose
-/// thread took it, or [`OWNERS_LOST`]. It's the real lock: the mutex is only taken while holding it,
-/// and let go before it is, so the mutex is never locked while this is 0 or our own id with nobody
-/// in this process inside. A child inherits the parent's id here, which is how it knows the holder
-/// didn't survive the fork.
-static DEFERRED_OWNERS_HOLDER: AtomicU32 = AtomicU32::new(0);
-
-/// [`DEFERRED_OWNERS_HOLDER`] in a child that inherited it held: by a thread that's gone, for good.
-/// Set by [`forget_inherited_owners`], so a later process that reuses the parent's id can't mistake
-/// the dead holder for one of its own threads.
-const OWNERS_LOST: u32 = u32::MAX;
-
-/// How many times [`deferred_owners`] yields to a holder in this process before it sleeps between
-/// tries. Anyone in there is only pushing or taking.
-const DEFERRED_OWNERS_SPINS: u32 = 64;
-
-/// How long [`deferred_owners`] waits for a holder in this process before giving up. Only a holder
-/// descheduled for this long, or a process id reused by a child forked without our hooks, gets here.
-const DEFERRED_OWNERS_PATIENCE: Duration = Duration::from_secs(10);
-
-/// [`DEFERRED_OWNERS`] taken, which lets go of the mutex and then of [`DEFERRED_OWNERS_HOLDER`].
-struct DeferredOwners(Option<MutexGuard<'static, Vec<Arc<Store>>>>);
-
-impl std::ops::Deref for DeferredOwners {
-    type Target = Vec<Arc<Store>>;
-    fn deref(&self) -> &Self::Target {
-        self.0.as_deref().expect("held until dropped")
-    }
-}
-
-impl std::ops::DerefMut for DeferredOwners {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.0.as_deref_mut().expect("held until dropped")
-    }
-}
-
-impl Drop for DeferredOwners {
-    fn drop(&mut self) {
-        drop(self.0.take());
-        DEFERRED_OWNERS_HOLDER.store(0, Ordering::Release);
-    }
-}
-
-/// [`DEFERRED_OWNERS`], waiting for a holder in this process, which only pushes or takes. `None` if
-/// a fork left it held by a thread that's gone (this is a child), or, as a last resort, after
-/// [`DEFERRED_OWNERS_PATIENCE`]. Nothing here waits on a holder that can't come back.
-fn deferred_owners() -> Option<DeferredOwners> {
-    let me = std::process::id();
-    let started = Instant::now();
-    let mut spins = 0;
-    loop {
-        match DEFERRED_OWNERS_HOLDER.compare_exchange(0, me, Ordering::AcqRel, Ordering::Acquire) {
-            Ok(_) => break,
-            Err(holder) if holder == me && started.elapsed() < DEFERRED_OWNERS_PATIENCE => {
-                if spins < DEFERRED_OWNERS_SPINS {
-                    spins += 1;
-                    std::thread::yield_now();
-                } else {
-                    std::thread::sleep(Duration::from_micros(100));
-                }
-            }
-            // Another process's id (a child whose hook hasn't run yet), lost, or out of patience.
-            Err(_) => return None,
-        }
-    }
-    // Holding the holder now, so this lets go of it on every path out.
-    let mut owners = DeferredOwners(None);
-    owners.0 = Some(match DEFERRED_OWNERS.try_lock() {
-        Ok(guard) => guard,
-        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-        // Can't happen while everything takes it through here.
-        Err(TryLockError::WouldBlock) => return None,
-    });
-    Some(owners)
-}
-
-/// The child side of the fork hooks: a holder of [`DEFERRED_OWNERS`] that isn't this process is a
-/// thread the fork left behind. If it was inside the mutex, the mutex stays locked for good here, so
-/// mark it lost. If it held only the stamp (just before taking the mutex, or just after letting go of
-/// it), the queue is whole and nobody is in there, so free it. While the stamp is foreign, nothing
-/// takes the mutex ([`deferred_owners`] gives up before it), so it can't change under the check.
-pub(crate) fn forget_inherited_owners() {
-    let me = std::process::id();
-    let holder = DEFERRED_OWNERS_HOLDER.load(Ordering::Acquire);
-    if holder == 0 || holder == me || holder == OWNERS_LOST {
-        return;
-    }
-    // The guard is a temporary, so a free mutex is let go again before the store.
-    let inside = matches!(DEFERRED_OWNERS.try_lock(), Err(TryLockError::WouldBlock));
-    DEFERRED_OWNERS_HOLDER.store(if inside { OWNERS_LOST } else { 0 }, Ordering::Release);
-}
+/// registry for its drain after its last other `Arc` has gone. Pushed with no gate level, since a
+/// deferrer has none, so a fork can land in the middle of a push. The stack holds no lock for it to
+/// land on: a push a fork cut off in a thread that's gone loses only that entry, whose store then
+/// keeps its memory in the child (its release still runs), and the child's own deferrals still go in.
+static DEFERRED_OWNERS: TakeAllStack<Arc<Store>> = TakeAllStack::new();
 
 /// How a handle wants its store opened.
 #[derive(Debug, Clone)]
@@ -722,14 +631,7 @@ impl Store {
         GATE.defer(
             || {
                 self.deferred_releases.fetch_add(1, Ordering::SeqCst);
-                match deferred_owners() {
-                    Some(mut owners) => owners.push(Arc::clone(self)),
-                    // Only in a child forked while a thread was inside the mutex, where it then
-                    // happens to every later deferral in that child and its descendants, or after a
-                    // holder stuck past DEFERRED_OWNERS_PATIENCE. The store outlives its drain, which
-                    // is the safe direction, as it still releases: only its memory stays.
-                    None => std::mem::forget(Arc::clone(self)),
-                }
+                DEFERRED_OWNERS.push(Arc::clone(self));
             },
             || gate::run_blocking(&drain_deferred_releases),
         );
@@ -1684,8 +1586,8 @@ impl Drop for FilePin {
 pub fn drain_deferred_releases() {
     GATE.drain_deferred(|gate| {
         // Before the counts (see `Store::defer_release`), and kept past the releases. A last `Arc`
-        // goes at the end of this closure, under the level and outside both mutexes.
-        let _owners = deferred_owners().map(|mut owners| std::mem::take(&mut *owners)).unwrap_or_default();
+        // goes at the end of this closure, under the level and outside the registry mutex.
+        let _owners = DEFERRED_OWNERS.take_all();
         // Collected first, so an `Arc` dropped here can never close a pin under the registry mutex.
         let mut deferred: Vec<Arc<Store>> = registry(gate).iter().filter_map(Weak::upgrade).collect();
         deferred.retain(|store| store.deferred_releases.load(Ordering::SeqCst) > 0);

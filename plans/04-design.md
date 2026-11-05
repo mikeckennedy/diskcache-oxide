@@ -8,7 +8,7 @@ This document records the decisions Phase 2 implements. It doesn't repeat the ev
 
 ## 1. Layout
 
-- `crates/diskcache-oxide-core`: the storage engine, with `#![forbid(unsafe_code)]` and no PyO3.
+- `crates/diskcache-oxide-core`: the storage engine, with `#![deny(unsafe_code)]` (allowed only in its `stack` module, a lock-free stack) and no PyO3.
   - It deals in keys, modes, bytes and value files, plus the clock, the pool, the fork gate, maintenance and settings.
   - Modules: `error`, `sqlite`, `schema`, `settings`, `pool`, `gate`, `store` (get/set/add/delete/incr/...), `spill`, `maintenance` (expire/clear/cull), `scan`.
 - `crates/diskcache-oxide-py`: the `diskcache_oxide._core` extension.
