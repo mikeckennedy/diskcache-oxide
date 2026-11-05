@@ -10,8 +10,9 @@ use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 
+use crate::fanout::{HASH_IDENTITY, MAX_SHARDS, MIN_SHARDS, parse_decimal};
 use crate::lockwait;
 use crate::schema::{CREATE, DB_FILENAME, DEFAULT_CULL_LIMIT, DEFAULT_SIZE_LIMIT, FORMAT_VERSION, MIN_SIZE_LIMIT};
 use crate::{Error, Result};
@@ -48,6 +49,117 @@ impl Requested {
         }
         Ok(())
     }
+}
+
+/// What a database is to the cache that opens it: a plain `Cache`'s own, or one shard of a
+/// `FanoutCache` (plan 13, section 1).
+///
+/// A shard's database carries a stamp, the `settings` row `('fanout', '<index>/<count>/<hash
+/// identity>')`, written once when the shard is created and never rewritten. Every open compares
+/// the stamp with the role it asked for, so a renamed, copied or mixed-up shard directory, a second
+/// handle with another shard count, or a plain `Cache` pointed at a shard, is refused rather than
+/// reading or writing the wrong keys. The hash identity is part of the stamp: a stamp naming
+/// another hash isn't a shard this build can open, under any role.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Role {
+    /// A plain `Cache`: the database has no stamp.
+    #[default]
+    Plain,
+    /// Shard `index` of a `FanoutCache` with `count` shards, under [`HASH_IDENTITY`].
+    Shard { index: u32, count: u32 },
+}
+
+/// The `settings` row that holds a shard's stamp.
+const ROLE_SETTING: &str = "fanout";
+
+impl Role {
+    /// Rejects a shard role the format can't hold: a count outside `MIN_SHARDS..=MAX_SHARDS`, or
+    /// an index not below the count.
+    pub fn validate(self) -> Result<()> {
+        match self {
+            Self::Plain => Ok(()),
+            Self::Shard { index, count } if (MIN_SHARDS..=MAX_SHARDS).contains(&count) && index < count => Ok(()),
+            Self::Shard { index, count } => Err(Error::InvalidSetting(format!(
+                "a shard needs 0 <= index < count and {MIN_SHARDS} <= count <= {MAX_SHARDS}, got shard {index} of {count}"
+            ))),
+        }
+    }
+
+    /// The stamp a new database with this role gets, or `None` for a plain cache (no row).
+    #[must_use]
+    pub fn stamp(self) -> Option<String> {
+        match self {
+            Self::Plain => None,
+            Self::Shard { index, count } => Some(format!("{index}/{count}/{HASH_IDENTITY}")),
+        }
+    }
+
+    /// Parses a stamp, accepting only the exact rendering [`Role::stamp`] gives some valid shard
+    /// role: decimal digits with no sign, padding or leading zeros, and this build's hash identity.
+    #[must_use]
+    pub fn from_stamp(stamp: &str) -> Option<Self> {
+        let mut parts = stamp.splitn(3, '/');
+        let index = parse_decimal(parts.next()?)?;
+        let count = parse_decimal(parts.next()?)?;
+        let role = Self::Shard { index, count };
+        let canonical = role.validate().is_ok() && parts.next() == Some(HASH_IDENTITY);
+        canonical.then_some(role)
+    }
+
+    /// Plain words for an error message.
+    fn describe(self) -> String {
+        match self {
+            Self::Plain => "a plain Cache".to_owned(),
+            Self::Shard { index, count } => format!("shard {index} of {count} of a FanoutCache"),
+        }
+    }
+}
+
+/// Refuses an open as `wanted` of a database whose stamp says it is `found` (`path` names the
+/// database in the error). Equal roles pass.
+pub(crate) fn check_role(path: &Path, wanted: Role, found: Role) -> Result<()> {
+    let reason = match (wanted, found) {
+        _ if wanted == found => return Ok(()),
+        (Role::Plain, Role::Shard { .. }) => format!(
+            "this database is {}; open the FanoutCache's root directory instead of one of its shards",
+            found.describe()
+        ),
+        (Role::Shard { .. }, Role::Plain) => format!(
+            "this database belongs to a plain Cache (it has no FanoutCache shard stamp), so it can't be used as {}; \
+             a FanoutCache needs a directory of its own",
+            wanted.describe()
+        ),
+        _ => format!(
+            "this database is {}, but it was opened as {} (a renamed or copied shard directory, or a root whose \
+             manifest was replaced); changing the shard count needs a new directory",
+            found.describe(),
+            wanted.describe()
+        ),
+    };
+    Err(Error::RoleMismatch { path: path.to_path_buf(), reason })
+}
+
+/// Reads the database's stamp, as a [`Role`]. A read, so an unchanged open still writes nothing
+/// (D-019). A stamp this build can't parse (another hash, say) is refused under every role.
+pub fn read_role(conn: &Connection, timeout: Duration) -> Result<Role> {
+    let stamp: Option<rusqlite::types::Value> = conn
+        .query_row("SELECT value FROM settings WHERE name = ?1", [ROLE_SETTING], |row| row.get(0))
+        .optional()
+        .map_err(|e| Error::from_sqlite(e, timeout))?;
+    let parsed = match &stamp {
+        None => return Ok(Role::Plain),
+        Some(rusqlite::types::Value::Text(text)) => Role::from_stamp(text),
+        Some(_) => None,
+    };
+    parsed.ok_or_else(|| Error::RoleMismatch {
+        path: database_path(conn),
+        reason: format!("this database has an unrecognized FanoutCache shard stamp {stamp:?}"),
+    })
+}
+
+/// The file `conn` has open, for error messages.
+fn database_path(conn: &Connection) -> PathBuf {
+    conn.path().map(PathBuf::from).unwrap_or_default()
 }
 
 /// The database file inside `directory`.
@@ -94,20 +206,25 @@ pub fn connect(directory: &Path, timeout: Duration) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Brings the database to format version 1 with the requested settings, writing only what differs.
-/// Returns the limits in effect.
-pub fn prepare(conn: &mut Connection, requested: Requested, timeout: Duration) -> Result<Limits> {
+/// Brings the database to format version 1 with the requested settings, writing only what differs,
+/// after checking that its stamp matches `role` (see [`Role`]). A new database gets `role`'s stamp;
+/// a refused open writes nothing. Returns the limits in effect.
+pub fn prepare(conn: &mut Connection, requested: Requested, role: Role, timeout: Duration) -> Result<Limits> {
     requested.validate()?;
+    role.validate()?;
     let sqlite = |e| Error::from_sqlite(e, timeout);
 
     ensure_wal(conn, timeout)?;
 
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).map_err(sqlite)?;
     if version == 0 {
-        create_if_new(conn, requested, timeout)?;
+        create_if_new(conn, requested, role, timeout)?;
     } else if version != FORMAT_VERSION {
         return Err(Error::FormatMismatch { found: version, expected: FORMAT_VERSION, path: None });
     }
+    // On every open, not only a new one: a database another creator won the race for, or one made
+    // by a plain `Cache` before this shard opened (which has no stamp, and is never adopted).
+    check_role(&database_path(conn), role, read_role(conn, timeout)?)?;
 
     let stored = read_limits(conn, timeout)?;
     let wanted = Limits {
@@ -147,8 +264,9 @@ fn ensure_wal(conn: &Connection, timeout: Duration) -> Result<()> {
     if mode.eq_ignore_ascii_case("wal") { Ok(()) } else { Err(Error::NotWal { mode }) }
 }
 
-/// Creates the schema if this connection is the first to get the write lock on a new database.
-fn create_if_new(conn: &mut Connection, requested: Requested, timeout: Duration) -> Result<()> {
+/// Creates the schema, with `role`'s stamp, if this connection is the first to get the write lock on
+/// a new database. The stamp goes in the same transaction, so racing creators see it or nothing.
+fn create_if_new(conn: &mut Connection, requested: Requested, role: Role, timeout: Duration) -> Result<()> {
     let sqlite = |e| Error::from_sqlite(e, timeout);
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sqlite)?;
     // Another opener may have created it while this one waited for the lock.
@@ -164,6 +282,10 @@ fn create_if_new(conn: &mut Connection, requested: Requested, timeout: Duration)
                 ),
             )
             .map_err(sqlite)?;
+            if let Some(stamp) = role.stamp() {
+                tx.execute("INSERT INTO settings (name, value) VALUES (?1, ?2)", (ROLE_SETTING, stamp))
+                    .map_err(sqlite)?;
+            }
             tx.execute_batch(&format!("PRAGMA user_version = {FORMAT_VERSION}")).map_err(sqlite)?;
             tx.commit().map_err(sqlite)
         }
@@ -182,7 +304,7 @@ mod tests {
     fn open(dir: &Path, requested: Requested) -> (Connection, Limits) {
         ensure_directory(dir).unwrap();
         let mut conn = connect(dir, T).unwrap();
-        let limits = prepare(&mut conn, requested, T).unwrap();
+        let limits = prepare(&mut conn, requested, Role::Plain, T).unwrap();
         (conn, limits)
     }
 
@@ -261,9 +383,13 @@ mod tests {
         ensure_directory(tmp.path()).unwrap();
         let mut conn = connect(tmp.path(), T).unwrap();
         let err =
-            prepare(&mut conn, Requested { size_limit: Some(MIN_SIZE_LIMIT - 1), cull_limit: None }, T).unwrap_err();
+            prepare(&mut conn, Requested { size_limit: Some(MIN_SIZE_LIMIT - 1), cull_limit: None }, Role::Plain, T)
+                .unwrap_err();
         assert!(matches!(err, Error::InvalidSetting(_)), "{err:?}");
-        assert!(prepare(&mut conn, Requested { size_limit: Some(MIN_SIZE_LIMIT), cull_limit: None }, T).is_ok());
+        assert!(
+            prepare(&mut conn, Requested { size_limit: Some(MIN_SIZE_LIMIT), cull_limit: None }, Role::Plain, T)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -274,7 +400,8 @@ mod tests {
         let peer = connect(tmp.path(), T).unwrap();
         let before = data_version(&peer);
         let mut conn = connect(tmp.path(), T).unwrap();
-        let err = prepare(&mut conn, Requested { size_limit: Some(9 << 20), cull_limit: None }, T).unwrap_err();
+        let err =
+            prepare(&mut conn, Requested { size_limit: Some(9 << 20), cull_limit: None }, Role::Plain, T).unwrap_err();
         assert!(matches!(err, Error::FormatMismatch { found: 2, expected: 1, .. }), "{err:?}");
         assert_eq!(data_version(&peer), before);
     }
@@ -291,12 +418,170 @@ mod tests {
                     ensure_directory(&dir).unwrap();
                     // Even connecting can report busy while another opener switches the new
                     // database to WAL, so the whole open is one retried attempt (as `Store` does).
-                    crate::lockwait::retry(T, |_| prepare(&mut connect(&dir, T)?, Requested::default(), T)).unwrap();
+                    crate::lockwait::retry(T, |_| {
+                        prepare(&mut connect(&dir, T)?, Requested::default(), Role::Plain, T)
+                    })
+                    .unwrap();
                 });
             }
         });
         let conn = connect(&dir, T).unwrap();
         let rows: i64 = conn.query_row("SELECT COUNT(*) FROM totals", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 1);
+    }
+
+    fn open_as(dir: &Path, role: Role) -> Result<Limits> {
+        ensure_directory(dir).unwrap();
+        prepare(&mut connect(dir, T)?, Requested::default(), role, T)
+    }
+
+    fn stamp_row(dir: &Path) -> Option<String> {
+        connect(dir, T)
+            .unwrap()
+            .query_row("SELECT value FROM settings WHERE name = 'fanout'", [], |r| r.get(0))
+            .optional()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_new_shard_is_stamped_once_and_a_plain_cache_is_not() {
+        let tmp = TempDir::new("open-stamp");
+        open_as(&tmp.path().join("003"), Role::Shard { index: 3, count: 8 }).unwrap();
+        assert_eq!(stamp_row(&tmp.path().join("003")).as_deref(), Some("3/8/xxh3-64 seed=0 range=mulhi"));
+        open_as(&tmp.path().join("plain"), Role::Plain).unwrap();
+        assert_eq!(stamp_row(&tmp.path().join("plain")), None);
+
+        // Reopening the shard as itself writes nothing (D-019), and the row is never rewritten.
+        let dir = tmp.path().join("003");
+        let peer = connect(&dir, T).unwrap();
+        let before = data_version(&peer);
+        open_as(&dir, Role::Shard { index: 3, count: 8 }).unwrap();
+        assert_eq!(data_version(&peer), before);
+    }
+
+    #[test]
+    fn stamps_round_trip_and_only_the_canonical_rendering_parses() {
+        for role in [
+            Role::Shard { index: 0, count: 1 },
+            Role::Shard { index: 7, count: 8 },
+            Role::Shard { index: 255, count: 256 },
+        ] {
+            assert_eq!(Role::from_stamp(&role.stamp().unwrap()), Some(role));
+        }
+        assert_eq!(Role::Plain.stamp(), None);
+        for bad in [
+            "",
+            "1/8",
+            "1/8/",
+            "01/8/xxh3-64 seed=0 range=mulhi",
+            "+1/8/xxh3-64 seed=0 range=mulhi",
+            " 1/8/xxh3-64 seed=0 range=mulhi",
+            "1/8/xxh3-64 seed=0 range=mulhi ",
+            "1/8/xxh3-64 seed=1 range=mulhi",
+            "8/8/xxh3-64 seed=0 range=mulhi",
+            "0/0/xxh3-64 seed=0 range=mulhi",
+            "0/257/xxh3-64 seed=0 range=mulhi",
+            "1/8/xxh3-64 seed=0 range=mulhi/x",
+        ] {
+            assert_eq!(Role::from_stamp(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn out_of_range_shard_roles_are_invalid_settings() {
+        let tmp = TempDir::new("open-role-range");
+        for role in [
+            Role::Shard { index: 8, count: 8 },
+            Role::Shard { index: 0, count: 0 },
+            Role::Shard { index: 0, count: 257 },
+        ] {
+            let err = open_as(tmp.path(), role).unwrap_err();
+            assert!(matches!(err, Error::InvalidSetting(_)), "{err:?}");
+        }
+        // Refused before anything was created.
+        let version: i64 = connect(tmp.path(), T).unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 0);
+    }
+
+    #[test]
+    fn a_role_that_differs_from_the_stamp_is_refused_without_writing() {
+        let tmp = TempDir::new("open-role-refused");
+        let shard = tmp.path().join("001");
+        open_as(&shard, Role::Shard { index: 1, count: 8 }).unwrap();
+        let plain = tmp.path().join("plain");
+        open_as(&plain, Role::Plain).unwrap();
+        let peers = [(connect(&shard, T).unwrap(), &shard), (connect(&plain, T).unwrap(), &plain)];
+        let before: Vec<i64> = peers.iter().map(|(c, _)| data_version(c)).collect();
+
+        let cases = [
+            (&shard, Role::Plain, "open the FanoutCache's root directory"),
+            (&shard, Role::Shard { index: 0, count: 8 }, "opened as shard 0 of 8"),
+            (&shard, Role::Shard { index: 1, count: 4 }, "opened as shard 1 of 4"),
+            // A database a plain Cache created is never adopted as a shard.
+            (&plain, Role::Shard { index: 0, count: 8 }, "belongs to a plain Cache"),
+        ];
+        for (dir, role, says) in cases {
+            // With and without explicit settings: neither may write.
+            for requested in [Requested::default(), Requested { size_limit: Some(9 << 20), cull_limit: None }] {
+                let err = prepare(&mut connect(dir, T).unwrap(), requested, role, T).unwrap_err();
+                assert!(matches!(err, Error::RoleMismatch { .. }), "{err:?}");
+                assert!(err.to_string().contains(says), "{err}");
+            }
+        }
+        let after: Vec<i64> = peers.iter().map(|(c, _)| data_version(c)).collect();
+        assert_eq!(after, before, "a refused open must not write");
+        assert_eq!(stamp_row(&plain), None, "the plain database was not adopted");
+    }
+
+    #[test]
+    fn an_unrecognized_stamp_is_refused_under_every_role() {
+        let tmp = TempDir::new("open-role-foreign");
+        open_as(tmp.path(), Role::Shard { index: 1, count: 8 }).unwrap();
+        connect(tmp.path(), T)
+            .unwrap()
+            .execute("UPDATE settings SET value = '1/8/some-future-hash' WHERE name = 'fanout'", [])
+            .unwrap();
+        for role in [Role::Plain, Role::Shard { index: 1, count: 8 }] {
+            let err = open_as(tmp.path(), role).unwrap_err();
+            assert!(matches!(err, Error::RoleMismatch { .. }), "{err:?}");
+            assert!(err.to_string().contains("unrecognized FanoutCache shard stamp"), "{err}");
+        }
+        connect(tmp.path(), T).unwrap().execute("UPDATE settings SET value = 18 WHERE name = 'fanout'", []).unwrap();
+        assert!(matches!(open_as(tmp.path(), Role::Plain), Err(Error::RoleMismatch { .. })));
+    }
+
+    #[test]
+    fn racing_shard_creators_agree_on_one_stamp() {
+        let tmp = TempDir::new("open-role-race");
+        let dir = tmp.path().join("002");
+        let barrier = std::sync::Barrier::new(8);
+        let results: Vec<Result<Limits>> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..8u32)
+                .map(|i| {
+                    let (barrier, dir) = (&barrier, &dir);
+                    s.spawn(move || {
+                        // Half ask for 2 of 4 shards, half for 2 of 8: one count wins the stamp.
+                        let role = Role::Shard { index: 2, count: if i % 2 == 0 { 4 } else { 8 } };
+                        barrier.wait();
+                        ensure_directory(dir).unwrap();
+                        crate::lockwait::retry(T, |_| prepare(&mut connect(dir, T)?, Requested::default(), role, T))
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let stamp = stamp_row(&dir).unwrap();
+        let winner = Role::from_stamp(&stamp).unwrap();
+        let Role::Shard { count: won, .. } = winner else { unreachable!() };
+        for (i, result) in (0..8u32).zip(&results) {
+            let asked = if i % 2 == 0 { 4 } else { 8 };
+            match result {
+                Ok(_) => assert_eq!(asked, won),
+                Err(err) => {
+                    assert_ne!(asked, won);
+                    assert!(matches!(err, Error::RoleMismatch { .. }), "{err:?}");
+                }
+            }
+        }
     }
 }

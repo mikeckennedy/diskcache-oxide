@@ -757,6 +757,7 @@ mod tests {
             cache_pages: DEFAULT_CACHE_PAGES,
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
             auto_checkpoint: false,
+            role: crate::open::Role::Plain,
         })
         .unwrap()
     }
@@ -1385,6 +1386,7 @@ mod reprepare_guard {
             cache_pages: DEFAULT_CACHE_PAGES,
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
             auto_checkpoint: false,
+            role: crate::open::Role::Plain,
         })
         .unwrap();
         for i in 0..300 {

@@ -33,6 +33,7 @@ fn options(dir: &Path, timeout: Duration) -> OpenOptions {
         cache_pages: DEFAULT_CACHE_PAGES,
         wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
         auto_checkpoint: false,
+        role: crate::open::Role::Plain,
     }
 }
 

@@ -14,11 +14,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::collections::{HashSet, VecDeque};
 
 use diskcache_oxide_core::maintenance::{Cursor, Order};
+use diskcache_oxide_core::open::{Requested, Role};
 use diskcache_oxide_core::ops::{Hit, Number, Pop, Value, Version, VersionDelete};
 use diskcache_oxide_core::store::{
     DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, HeldTransaction, OpenOptions, Store,
 };
-use diskcache_oxide_core::{Error, ValueRef, lockwait, open::Requested, spill};
+use diskcache_oxide_core::{Error, ValueRef, lockwait, spill};
 use pyo3::PyTraverseError;
 use pyo3::exceptions::{
     PyException, PyKeyError, PyMemoryError, PyOSError, PyOverflowError, PyRecursionError, PyRuntimeError,
@@ -134,6 +135,7 @@ impl Cache {
             cache_pages,
             wal_size_limit,
             auto_checkpoint,
+            role: Role::Plain,
         };
         let store = crate::detach(py, || Store::open(&options)).map_err(to_py_err)?;
         Ok(Self {

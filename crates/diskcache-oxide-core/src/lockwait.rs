@@ -145,7 +145,7 @@ mod tests {
         let tmp = TempDir::new("lockwait");
         open::ensure_directory(tmp.path()).unwrap();
         let mut holder = open::connect(tmp.path(), Duration::from_secs(5)).unwrap();
-        open::prepare(&mut holder, Requested::default(), Duration::from_secs(5)).unwrap();
+        open::prepare(&mut holder, Requested::default(), open::Role::Plain, Duration::from_secs(5)).unwrap();
         let tx = holder.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
 
         let mut waiter = open::connect(tmp.path(), Duration::from_secs(5)).unwrap();

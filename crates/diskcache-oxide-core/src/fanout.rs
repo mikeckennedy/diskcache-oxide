@@ -136,7 +136,7 @@ impl Manifest {
 }
 
 /// Plain ASCII digits only: no sign, no whitespace, no leading zeros, at most 9 digits.
-fn parse_decimal(text: &str) -> Option<u32> {
+pub(crate) fn parse_decimal(text: &str) -> Option<u32> {
     let bytes = text.as_bytes();
     let well_formed = !bytes.is_empty()
         && bytes.len() <= 9
@@ -187,6 +187,16 @@ pub fn read_manifest(root: &Path) -> Result<Option<Manifest>> {
 pub fn open_manifest(root: &Path, shards: Option<u32>) -> Result<Manifest> {
     let requested = shards.map(Manifest::new).transpose()?;
     ensure_directory(root)?;
+    // Before the manifest can be written, and again once it is there: of a plain `Cache` and a
+    // `FanoutCache` creating one root at once, at least one is refused, and nothing is deleted.
+    refuse_plain_cache(root)?;
+    let stored = open_or_create(root, requested)?;
+    refuse_plain_cache(root)?;
+    Ok(stored)
+}
+
+/// [`open_manifest`] after its first check for a plain cache.
+fn open_or_create(root: &Path, requested: Option<Manifest>) -> Result<Manifest> {
     let stored = match read_manifest(root)? {
         Some(manifest) => manifest,
         None => match create_manifest(root, requested.unwrap_or(Manifest::new(DEFAULT_SHARDS)?))? {
@@ -206,6 +216,36 @@ pub fn open_manifest(root: &Path, shards: Option<u32>) -> Result<Manifest> {
         )));
     }
     Ok(stored)
+}
+
+/// Refuses a plain `Cache` on a `FanoutCache` root: `directory` holds a manifest. Only a `stat`,
+/// so it writes nothing (D-019).
+pub(crate) fn refuse_manifest(directory: &Path) -> Result<()> {
+    let path = manifest_path(directory);
+    if exists(&path)? {
+        return Err(Error::RoleMismatch {
+            path,
+            reason: "this directory is a FanoutCache root; open it with FanoutCache, not Cache".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Refuses a `FanoutCache` on a directory that holds a plain `Cache`'s database. Only a `stat`.
+fn refuse_plain_cache(root: &Path) -> Result<()> {
+    let path = crate::open::db_path(root);
+    if exists(&path)? {
+        return Err(Error::RoleMismatch {
+            path,
+            reason: "this directory holds a plain Cache; a FanoutCache needs a directory of its own".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Whether `path` exists. Any other `stat` failure is an error, never "absent".
+fn exists(path: &Path) -> Result<bool> {
+    path.try_exists().map_err(|source| Error::Io { path: path.to_path_buf(), source })
 }
 
 /// Who won the manifest's creation.

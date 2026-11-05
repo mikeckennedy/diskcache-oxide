@@ -290,7 +290,7 @@ mod tests {
     fn new_db(tmp: &TempDir) -> Connection {
         open::ensure_directory(tmp.path()).unwrap();
         let mut conn = open::connect(tmp.path(), T).unwrap();
-        open::prepare(&mut conn, Requested::default(), T).unwrap();
+        open::prepare(&mut conn, Requested::default(), open::Role::Plain, T).unwrap();
         conn
     }
 

@@ -41,7 +41,7 @@ use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
 
 use crate::gate::{self, GATE, HeldShare, SharedGuard};
 use crate::genlock::{Slots, WriteLock};
-use crate::open::{self, Limits, Requested};
+use crate::open::{self, Limits, Requested, Role};
 use crate::poison::HoldGuard;
 use crate::pool::{Pool, PooledConn};
 use crate::rows::{Removed, RowWriter};
@@ -114,6 +114,9 @@ pub struct OpenOptions {
     /// Run forced checkpoints after writes once the WAL is over the limit (`wal_checkpoint="auto"`).
     /// Off by default: checkpoints run on [`Store::checkpoint`] and, without waiting, on close.
     pub auto_checkpoint: bool,
+    /// A plain cache's database or a `FanoutCache` shard (see [`Role`]). Checked against the
+    /// database's stamp on every open, the fast path included.
+    pub role: Role,
 }
 
 /// One database file's shared state. See the module docs.
@@ -161,6 +164,9 @@ pub struct Store {
     /// no-hold path to one relaxed load.
     pinned: Mutex<PinnedSlot>,
     pinned_active: AtomicBool,
+    /// What the database's stamp says it is, checked by `open::prepare` when the store was created.
+    /// A handle that joins a live store skips `prepare`, so [`Store::join`] compares against this.
+    role: Role,
 }
 
 /// The connection of a held write transaction, already inside `BEGIN IMMEDIATE`.
@@ -365,6 +371,7 @@ impl Store {
             )));
         }
         options.requested.validate()?;
+        options.role.validate()?;
         open::ensure_directory(&options.directory)?;
         // One deadline for the lookup, the open sequence and a joining handle's write.
         let deadline = lockwait::deadline_after(Instant::now(), options.timeout);
@@ -374,7 +381,25 @@ impl Store {
         })
     }
 
+    /// [`Store::open`] under a deadline the caller already took. A plain cache looks for a
+    /// `FanoutCache` manifest before its database can be created, so a mistaken `Cache(root)` leaves
+    /// nothing behind, and again once it has its store, so a `FanoutCache` that created its manifest
+    /// meanwhile is noticed too: of two racing creators at least one is refused (plan 13, section 1).
     fn open_until(options: &OpenOptions, deadline: Instant) -> Result<Arc<Self>> {
+        if options.role != Role::Plain {
+            return Self::open_store(options, deadline);
+        }
+        crate::fanout::refuse_manifest(&options.directory)?;
+        let store = Self::open_store(options, deadline)?;
+        if let Err(error) = crate::fanout::refuse_manifest(&options.directory) {
+            store.release_now_or_defer();
+            return Err(error);
+        }
+        Ok(store)
+    }
+
+    /// Finds or opens the store and registers a handle on it; see [`Store::open_until`].
+    fn open_store(options: &OpenOptions, deadline: Instant) -> Result<Arc<Self>> {
         let db_path = open::db_path(&options.directory);
         let left = || deadline.saturating_duration_since(Instant::now());
 
@@ -395,7 +420,7 @@ impl Store {
         let (gate, conn, limits, pin, file_id) = lockwait::retry(left(), |attempt_deadline| {
             let gate = enter_until(attempt_deadline)?;
             let mut conn = open::connect(&options.directory, options.timeout)?;
-            let limits = open::prepare(&mut conn, options.requested, options.timeout)?;
+            let limits = open::prepare(&mut conn, options.requested, options.role, options.timeout)?;
             let (pin, file_id) = open_pin(&gate, &db_path)?;
             Ok((gate, conn, limits, pin, file_id))
         })?;
@@ -436,6 +461,8 @@ impl Store {
             cull_limit: AtomicI64::new(limits.cull_limit),
             pinned: Mutex::new(PinnedSlot::Empty),
             pinned_active: AtomicBool::new(false),
+            // `prepare` just checked the stamp against it.
+            role: options.role,
         });
         stores.retain(|weak| weak.strong_count() > 0);
         stores.push(Arc::downgrade(&store));
@@ -534,10 +561,17 @@ impl Store {
     }
 
     /// Applies a joining handle's settings (its handle is already registered by [`Store::claim`]):
-    /// raises the connection cap if asked, and applies explicitly requested settings, writing only
-    /// if they differ from what's stored, within `timeout`. On failure the handle is released again,
-    /// with no wait: the open has already used its whole budget.
+    /// checks its role against the store's, raises the connection cap if asked, and applies
+    /// explicitly requested settings, writing only if they differ from what's stored, within
+    /// `timeout`. On failure the handle is released again, with no wait: the open has already used
+    /// its whole budget.
     fn join(self: &Arc<Self>, options: &OpenOptions, timeout: Duration) -> Result<()> {
+        // First, before anything is raised or written: the fast path (`lookup`) never runs
+        // `prepare`, so this is the only stamp check a handle joining a live store gets.
+        if let Err(error) = open::check_role(&open::db_path(&self.directory), options.role, self.role) {
+            self.release_now_or_defer();
+            return Err(error);
+        }
         self.max_connections.fetch_max(options.max_connections, Ordering::AcqRel);
         self.pool.raise_max_idle(usize::try_from(options.max_connections).unwrap_or(usize::MAX));
         self.cache_pages.fetch_max(options.cache_pages, Ordering::AcqRel);
@@ -569,12 +603,18 @@ impl Store {
                 Ok(())
             }
             Err(error) => {
-                match GATE.try_enter_shared() {
-                    Some(gate) => self.release_under(&gate),
-                    None => self.defer_release(),
-                }
+                self.release_now_or_defer();
                 Err(error)
             }
+        }
+    }
+
+    /// Releases the handle a failed open registered, with no wait (the open has used its budget):
+    /// now if the gate lets it in, else behind the pending fork.
+    fn release_now_or_defer(self: &Arc<Self>) {
+        match GATE.try_enter_shared() {
+            Some(gate) => self.release_under(&gate),
+            None => self.defer_release(),
         }
     }
 
@@ -1752,6 +1792,9 @@ pub fn drain_deferred_releases() {
 mod fork_timeout;
 
 #[cfg(test)]
+mod shard_identity;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::rows::{NewRow, Stored};
@@ -1768,6 +1811,7 @@ mod tests {
             cache_pages: DEFAULT_CACHE_PAGES,
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,
             auto_checkpoint: false,
+            role: crate::open::Role::Plain,
         }
     }
 

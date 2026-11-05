@@ -55,6 +55,13 @@ pub enum Error {
     #[error("invalid fan-out manifest {path}: {reason}")]
     ManifestInvalid { path: PathBuf, reason: String },
 
+    /// A directory holds the other kind of cache than the one opening it (plan 13, section 1): a
+    /// plain `Cache` on a `FanoutCache` root or shard, a `FanoutCache` on a plain `Cache`'s directory,
+    /// or a shard opened as another index or count than its stamp says (a renamed or copied shard
+    /// directory). Python `ValueError`.
+    #[error("{path}: {reason}")]
+    RoleMismatch { path: PathBuf, reason: String },
+
     /// SQLite refused WAL mode, e.g. on a network filesystem.
     #[error("the cache requires WAL journal mode, but SQLite is using {mode:?}")]
     NotWal { mode: String },
@@ -158,10 +165,11 @@ impl Error {
             | Self::Unwritable
             | Self::ForkPoisoned => true,
             Self::Io { .. } | Self::Sqlite(_) => !self.is_out_of_memory(),
-            // Only an open reports the first three, and the constructor always raises. The rest are
+            // Only an open reports the first four, and the constructor always raises. The rest are
             // bugs in the caller, or would break its transaction's atomicity.
             Self::FormatMismatch { .. }
             | Self::ManifestInvalid { .. }
+            | Self::RoleMismatch { .. }
             | Self::NotWal { .. }
             | Self::InvalidSetting(_)
             | Self::Closed
@@ -241,6 +249,7 @@ mod tests {
             Error::Io { path: PathBuf::from("x"), source: std::io::ErrorKind::OutOfMemory.into() },
             Error::FormatMismatch { found: 2, expected: 1, path: None },
             Error::ManifestInvalid { path: PathBuf::from("x"), reason: "y".into() },
+            Error::RoleMismatch { path: PathBuf::from("x"), reason: "y".into() },
             Error::NotWal { mode: "delete".into() },
             Error::Closed,
             Error::KeyMissing,
