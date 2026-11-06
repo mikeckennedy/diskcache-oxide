@@ -367,6 +367,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Only in a spin-sweep benchmark build (plan 12 step 5): the budget the sweep's override set.
     #[cfg(dco_spin_sweep)]
     m.add("_SWEEP_SPIN_BUDGET", sqlite_mutex::sweep_spin_budget())?;
+    // And the slot wait's spin budget and spinner limit (5b).
+    #[cfg(dco_spin_sweep)]
+    m.add("_SWEEP_SLOT_WAIT", diskcache_oxide_core::genlock::sweep_slot_wait())?;
     m.add("__version__", pep440_version())?;
     m.add("BUNDLED_SQLITE_VERSION", sqlite::compile_version())?;
     // Lets benchmarks refuse to measure an unoptimized build.

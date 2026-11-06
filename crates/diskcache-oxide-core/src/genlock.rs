@@ -21,6 +21,96 @@ const LOW: u64 = 0xFFFF_FFFF;
 /// How often a blocked [`WriteLock::lock_until`] or [`Slots::acquire_until`] re-checks.
 const POLL: Duration = Duration::from_micros(50);
 
+/// The [`Slots::acquire_until`] wait's spin, in `spin_loop` hints (total, not tries), before the
+/// [`POLL`] sleeps. Only on 3 or more CPUs, as the SQLite mutex spin ([`crate::sqlite_mutex`]): on a 2-CPU
+/// quota, spinners use up the quota the slot holder needs.
+#[cfg(not(shuttle))]
+const SLOT_SPIN: u32 = 1024;
+/// Under the model checker: the spin ends in a few steps.
+#[cfg(shuttle)]
+const SLOT_SPIN: u32 = 2;
+
+/// The spin budget in force: [`SLOT_SPIN`], or 0 on 2 or fewer CPUs. Computed on first use and kept
+/// in a plain atomic, not a `OnceLock`: a fork during the first computation can't leave a child
+/// stuck, it only computes it again.
+#[cfg(not(shuttle))]
+fn slot_spin() -> u32 {
+    static SPIN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
+    let spin = SPIN.load(Ordering::Relaxed);
+    if spin != u32::MAX {
+        return spin;
+    }
+    let cpus = std::thread::available_parallelism().ok().map(std::num::NonZero::get);
+    let spin = sweep::slot_spin(slot_spin_for(cpus));
+    SPIN.store(spin, Ordering::Relaxed);
+    spin
+}
+
+/// [`SLOT_SPIN`], or 0 on 2 or fewer CPUs; an unknown count keeps the spin.
+#[cfg(not(shuttle))]
+fn slot_spin_for(cpus: Option<usize>) -> u32 {
+    if cpus.is_some_and(|n| n < 3) { 0 } else { SLOT_SPIN }
+}
+
+#[cfg(shuttle)]
+fn slot_spin() -> u32 {
+    SLOT_SPIN
+}
+
+/// How many slot waiters may spin at once, process-wide: half the CPUs, at least 1.
+#[cfg(not(shuttle))]
+fn slot_spinners() -> u32 {
+    static SPINNERS_MAX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
+    let max = SPINNERS_MAX.load(Ordering::Relaxed);
+    if max != u32::MAX {
+        return max;
+    }
+    let cpus = std::thread::available_parallelism().ok().map(std::num::NonZero::get);
+    let max = sweep::slot_spinners(slot_spinners_for(cpus));
+    SPINNERS_MAX.store(max, Ordering::Relaxed);
+    max
+}
+
+/// Half of `cpus`, at least 1; 4 if the count is unknown.
+#[cfg(not(shuttle))]
+fn slot_spinners_for(cpus: Option<usize>) -> u32 {
+    cpus.map_or(4, |n| u32::try_from(n / 2).unwrap_or(u32::MAX).max(1))
+}
+
+/// The slot wait's spin budget and spinner limit in force, for the sweep's harness to confirm its
+/// overrides took. Only in a sweep build (`--cfg dco_spin_sweep`).
+#[cfg(all(dco_spin_sweep, not(shuttle)))]
+#[doc(hidden)]
+#[must_use]
+pub fn sweep_slot_wait() -> (u32, u32) {
+    (slot_spin(), slot_spinners())
+}
+
+/// The slot-wait sweep's overrides, `DCO_SLOT_SPIN` and `DCO_SLOT_SPINNERS`, compiled in only under
+/// `RUSTFLAGS="--cfg dco_spin_sweep"` (a benchmark build, as for [`crate::sqlite_mutex`]). A shipped
+/// build has no environment knob.
+#[cfg(not(shuttle))]
+mod sweep {
+    #[cfg(dco_spin_sweep)]
+    fn read(name: &str, default: u32) -> u32 {
+        std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    }
+
+    pub(super) fn slot_spin(default: u32) -> u32 {
+        #[cfg(dco_spin_sweep)]
+        return read("DCO_SLOT_SPIN", default);
+        #[cfg(not(dco_spin_sweep))]
+        default
+    }
+
+    pub(super) fn slot_spinners(default: u32) -> u32 {
+        #[cfg(dco_spin_sweep)]
+        return read("DCO_SLOT_SPINNERS", default);
+        #[cfg(not(dco_spin_sweep))]
+        default
+    }
+}
+
 /// How long a [`WriteLock::lock_until`] waiter competes on equal terms before it starves (or half
 /// its time to the deadline, if that's sooner). From then on, threads that didn't wait can't barge
 /// in ahead of it. Waiters find a freed lock by polling,
@@ -281,6 +371,14 @@ impl Slots {
     }
 
     /// Reserves a slot, waiting through the gate's blocker until `deadline`.
+    ///
+    /// Test-and-test-and-set: the permit is only ever taken here, attached. The detached wait only
+    /// watches a plain load until the count shows room (a short spin, then 50 µs sleeps)
+    /// and returns, and the next turn takes the permit. A permit taken while detached would
+    /// be held through the re-attach, up to a GIL holder's switch interval or a stop-the-world on a
+    /// free-threaded build, and the blocker's `Fn` can't hand one back anyway. One detach per wait,
+    /// not per poll. Holds no gate level, so a fork can land mid-wait. The only thing the wait holds
+    /// is a spinner count (generation-packed), which a forked child reads as 0.
     pub fn acquire_until(&self, cap: u64, deadline: Instant) -> Option<SlotPermit<'_>> {
         loop {
             if let Some(permit) = self.try_acquire(cap) {
@@ -289,7 +387,29 @@ impl Slots {
             if now() >= deadline {
                 return None;
             }
-            gate::run_blocking(&|| thread::sleep(POLL));
+            gate::run_blocking(&|| self.wait_for_room(cap, deadline));
+            #[cfg(all(test, shuttle))]
+            tests_support::phase(tests_support::Phase::Attached);
+        }
+    }
+
+    /// Returns once fewer than `cap` slots look in use or `deadline` has passed. Takes nothing, so
+    /// another thread may win the slot it saw free; the caller retries.
+    fn wait_for_room(&self, cap: u64, deadline: Instant) {
+        let room = || self.in_use() < cap;
+        // Spin only while few other waiters in the process do: past that, the spinners take the
+        // CPUs the slot holders need (more busy threads than CPUs). No spin, no count.
+        if slot_spin() > 0
+            && let Some(_spinner) = Spinner::admit()
+            && spin(&room)
+        {
+            return;
+        }
+        #[cfg(all(test, shuttle))]
+        tests_support::phase(tests_support::Phase::Poll);
+        // Shorter sleeps don't help on Linux, whose default timer slack is 50 µs.
+        while !room() && now() < deadline {
+            thread::sleep(POLL);
         }
     }
 
@@ -297,6 +417,73 @@ impl Slots {
     #[must_use]
     pub fn in_use(&self) -> u64 {
         state_now(self.word.load(Ordering::Acquire), current())
+    }
+}
+
+/// The spin phase; true once `room` held.
+fn spin(room: &impl Fn() -> bool) -> bool {
+    #[cfg(all(test, shuttle))]
+    tests_support::phase(tests_support::Phase::Spin);
+    // Loads with `spin_loop` hints between them, gaps doubling to 64, until the budget of hints
+    // is spent. No clock reads (one costs more than the spin).
+    let budget = slot_spin();
+    let (mut spent, mut gap) = (0, 1);
+    while spent < budget {
+        if room() {
+            return true;
+        }
+        for _ in 0..gap {
+            std::hint::spin_loop();
+        }
+        spent += gap;
+        gap = (gap * 2).min(64);
+    }
+    false
+}
+
+/// One of the process's slot waiters in the spin phase, at most [`slot_spinners`] at a
+/// time, taken back on drop. Generation-packed like the other counts, so a fork mid-spin leaves the
+/// child a count it reads as 0.
+#[cfg(not(shuttle))]
+struct Spinner {
+    generation: u64,
+}
+
+#[cfg(not(shuttle))]
+static SPINNERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(not(shuttle))]
+impl Spinner {
+    fn admit() -> Option<Self> {
+        let limit = u64::from(slot_spinners());
+        let generation = current();
+        SPINNERS
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |word| {
+                let n = state_now(word, generation);
+                (n < limit).then(|| pack(generation, n + 1))
+            })
+            .ok()
+            .map(|_| Self { generation })
+    }
+}
+
+#[cfg(not(shuttle))]
+impl Drop for Spinner {
+    fn drop(&mut self) {
+        release_one(&SPINNERS, self.generation);
+    }
+}
+
+/// Under the model checker every waiter spins: the limit is a CPU heuristic, not a correctness
+/// rule, and a process-wide count would be shared between models running in parallel.
+#[cfg(shuttle)]
+struct Spinner;
+
+#[cfg(shuttle)]
+impl Spinner {
+    #[allow(clippy::unnecessary_wraps)]
+    fn admit() -> Option<Self> {
+        Some(Self)
     }
 }
 
@@ -312,6 +499,32 @@ impl Drop for SlotPermit<'_> {
 pub(crate) mod tests_support {
     use super::{WriteLock, current, pack};
     use std::sync::atomic::Ordering;
+
+    /// Where a [`super::Slots::acquire_until`] wait is, for the models to aim at a phase. A std
+    /// thread-local: shuttle runs one execution's threads on one OS thread, so this is one value per
+    /// execution (models using it have a single waiter).
+    #[cfg(shuttle)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum Phase {
+        Attached,
+        Spin,
+        Poll,
+    }
+
+    #[cfg(shuttle)]
+    std::thread_local! {
+        static PHASE: std::cell::Cell<Phase> = const { std::cell::Cell::new(Phase::Attached) };
+    }
+
+    #[cfg(shuttle)]
+    pub(crate) fn phase(p: Phase) {
+        PHASE.with(|c| c.set(p));
+    }
+
+    #[cfg(shuttle)]
+    pub(crate) fn current_phase() -> Phase {
+        PHASE.with(std::cell::Cell::get)
+    }
 
     /// Records one starving waiter in the current generation, as if a thread were waiting.
     pub(crate) fn mark_starving(lock: &WriteLock) {
@@ -524,6 +737,107 @@ mod tests {
         assert!(slots.acquire_until(2, soon(10)).is_none());
         drop(a);
         assert!(slots.try_acquire(2).is_some());
+    }
+
+    #[test]
+    fn the_slot_spin_is_off_on_two_or_fewer_cpus() {
+        assert_eq!(slot_spin_for(Some(1)), 0);
+        assert_eq!(slot_spin_for(Some(2)), 0);
+        assert_eq!(slot_spin_for(Some(3)), SLOT_SPIN);
+        assert_eq!(slot_spin_for(None), SLOT_SPIN, "an unknown count keeps the spin");
+        let cpus = std::thread::available_parallelism().ok().map(std::num::NonZero::get);
+        assert_eq!(slot_spin(), slot_spin_for(cpus));
+    }
+
+    #[test]
+    fn spinners_are_capped_at_half_the_cpus_and_given_back() {
+        assert_eq!(slot_spinners_for(Some(1)), 1);
+        assert_eq!(slot_spinners_for(Some(8)), 4);
+        assert_eq!(slot_spinners_for(Some(18)), 9);
+        assert_eq!(slot_spinners_for(None), 4);
+        // Other tests' waiters may hold some; take what's left, then one more must fail.
+        let mut held = Vec::new();
+        while let Some(s) = Spinner::admit() {
+            held.push(s);
+            assert!(held.len() <= slot_spinners() as usize, "admitted past the limit");
+        }
+        drop(held);
+        // Other tests' waiters (`contended_slot_waits_...` runs in parallel) can fill the limit for a
+        // while, but none holds a spinner for long, so one must come free well inside the deadline.
+        let start = Instant::now();
+        let spinner = loop {
+            if let Some(s) = Spinner::admit() {
+                break s;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5), "spinner counts leaked");
+            std::thread::yield_now();
+        };
+        drop(spinner);
+    }
+
+    #[test]
+    fn a_timed_out_slot_wait_leaks_nothing() {
+        let slots = Slots::new();
+        let held = slots.try_acquire(1).unwrap();
+        let start = Instant::now();
+        assert!(slots.acquire_until(1, soon(5)).is_none());
+        assert!(start.elapsed() >= Duration::from_millis(5));
+        assert_eq!(slots.in_use(), 1, "the wait left a count behind");
+        drop(held);
+        assert_eq!(slots.in_use(), 0);
+    }
+
+    #[test]
+    fn a_slot_waiter_gets_in_after_a_release() {
+        let slots = Slots::new();
+        let held = slots.try_acquire(1).unwrap();
+        std::thread::scope(|s| {
+            let waiter = s.spawn(|| slots.acquire_until(1, soon(10_000)).map(|permit| (Instant::now(), permit)));
+            std::thread::sleep(Duration::from_millis(5)); // Well into the poll phase.
+            let released = Instant::now();
+            drop(held);
+            let (got, permit) = waiter.join().unwrap().expect("the waiter timed out");
+            // One POLL plus scheduling; generous for a loaded machine.
+            assert!(got.duration_since(released) < Duration::from_millis(100));
+            drop(permit);
+        });
+        assert_eq!(slots.in_use(), 0);
+    }
+
+    #[test]
+    fn contended_slot_waits_keep_the_cap_and_never_time_out() {
+        // More threads than slots, each taking and releasing in a loop with a short hold, as reads on
+        // a FanoutCache shard do. A barger can win a slot a waiter saw free; every waiter must still
+        // get in long before its deadline, and the cap must hold.
+        let slots = Slots::new();
+        let inside = std::sync::atomic::AtomicU64::new(0);
+        let peak = std::sync::atomic::AtomicU64::new(0);
+        let worst = std::sync::Mutex::new(Duration::ZERO);
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    for _ in 0..2_000 {
+                        let start = Instant::now();
+                        let permit = slots.acquire_until(2, soon(10_000)).expect("a slot wait timed out");
+                        let waited = start.elapsed();
+                        let n = inside.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(n, Ordering::SeqCst);
+                        let busy = Instant::now();
+                        while busy.elapsed() < Duration::from_micros(2) {
+                            std::hint::spin_loop();
+                        }
+                        inside.fetch_sub(1, Ordering::SeqCst);
+                        drop(permit);
+                        let mut w = worst.lock().unwrap();
+                        *w = (*w).max(waited);
+                    }
+                });
+            }
+        });
+        assert!(peak.load(Ordering::SeqCst) <= 2, "more than the cap inside");
+        assert_eq!(slots.in_use(), 0);
+        let worst = *worst.lock().unwrap();
+        assert!(worst < Duration::from_secs(2), "a waiter waited {worst:?}");
     }
 
     #[test]

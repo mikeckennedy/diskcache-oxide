@@ -162,3 +162,91 @@ fn model_slots_never_exceed_the_cap() {
         assert_eq!(slots.in_use(), 0);
     });
 }
+
+/// Model 4: a holder releases while a waiter is mid-spin and a third thread barges in. The cap is
+/// never exceeded, a far-deadline waiter gets in once the bargers stop, and the count returns to 0.
+/// Shuttle checks bounded schedules, so this shows the waiter isn't shut out by a bounded barger,
+/// not liveness against an unbounded one.
+#[test]
+fn model_slot_wait_survives_a_barger_and_a_release_mid_spin() {
+    use tests_support::{Phase, current_phase, phase};
+    static RELEASED_MID_SPIN: Reach = Reach::new();
+    static BARGED: Reach = Reach::new();
+    check(|| {
+        phase(Phase::Attached);
+        let slots = Arc::new(Slots::new());
+        let inside = Arc::new(AtomicUsize::new(0));
+        let held = slots.try_acquire(1).expect("a fresh counter has room");
+        let waiter = {
+            let (slots, inside) = (Arc::clone(&slots), Arc::clone(&inside));
+            thread::spawn(move || {
+                let permit = slots.acquire_until(1, far()).expect("a far-deadline waiter timed out");
+                enter(&inside, 1, "waiter");
+                thread::yield_now();
+                inside.fetch_sub(1, Ordering::SeqCst);
+                drop(permit);
+            })
+        };
+        let barger = {
+            let (slots, inside) = (Arc::clone(&slots), Arc::clone(&inside));
+            thread::spawn(move || {
+                for _ in 0..3 {
+                    if let Some(permit) = slots.try_acquire(1) {
+                        if current_phase() != Phase::Attached {
+                            BARGED.hit();
+                        }
+                        enter(&inside, 1, "barger");
+                        thread::yield_now();
+                        inside.fetch_sub(1, Ordering::SeqCst);
+                        drop(permit);
+                    }
+                    thread::yield_now();
+                }
+            })
+        };
+        thread::yield_now();
+        if current_phase() == Phase::Spin {
+            RELEASED_MID_SPIN.hit();
+        }
+        drop(held);
+        waiter.join().unwrap();
+        barger.join().unwrap();
+        assert_eq!(slots.in_use(), 0, "a slot leaked");
+    });
+    RELEASED_MID_SPIN.assert_reached("the holder releasing while the waiter spins");
+    BARGED.assert_reached("a barger taking the slot while the waiter waits detached");
+}
+
+/// Model 5: the deadline passes during the spin phase (another thread's sleep moves the
+/// clock). The wait returns `None`, and nothing leaks: only the holder's slot is in use.
+#[test]
+fn model_slot_wait_times_out_during_the_spin() {
+    use tests_support::{Phase, current_phase, phase};
+    static EXPIRED_MID_SPIN: Reach = Reach::new();
+    check(|| {
+        phase(Phase::Attached);
+        let slots = Arc::new(Slots::new());
+        let held = slots.try_acquire(1).expect("a fresh counter has room");
+        let deadline = now() + POLL;
+        let waiter = {
+            let slots = Arc::clone(&slots);
+            thread::spawn(move || {
+                assert!(slots.acquire_until(1, deadline).is_none(), "got a slot that was held throughout");
+            })
+        };
+        let clock = thread::spawn(move || {
+            for _ in 0..2 {
+                crate::sync::thread::sleep(POLL);
+                if now() >= deadline && current_phase() == Phase::Spin {
+                    EXPIRED_MID_SPIN.hit();
+                }
+            }
+        });
+        waiter.join().unwrap();
+        clock.join().unwrap();
+        assert_eq!(slots.in_use(), 1, "the timed-out wait left a count behind");
+        drop(held);
+        assert_eq!(slots.in_use(), 0);
+    });
+    EXPIRED_MID_SPIN.assert_reached("the deadline passing while the waiter spins");
+}
