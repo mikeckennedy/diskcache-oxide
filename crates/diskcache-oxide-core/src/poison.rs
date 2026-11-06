@@ -222,10 +222,13 @@ mod tests {
 
     #[test]
     fn a_hold_dropped_on_another_thread_is_unlisted() {
-        let registry: &'static Registry = Box::leak(Box::new(Registry::new()));
+        // A scoped thread rather than a leaked `'static` registry, so Miri's leak check stays on.
+        let registry = Registry::new();
         let gate = G.try_enter_shared().unwrap();
         let hold = registry.begin_hold(&gate, A);
-        std::thread::spawn(move || drop(hold)).join().unwrap();
+        std::thread::scope(|s| {
+            s.spawn(move || drop(hold));
+        });
         assert_eq!(registry.live_ids(), Vec::<FileId>::new());
     }
 

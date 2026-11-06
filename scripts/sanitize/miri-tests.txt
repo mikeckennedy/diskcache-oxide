@@ -1,0 +1,35 @@
+# Single core tests Miri can run in modules it can't run whole (scripts/sanitize.sh, lane A).
+# Found by running every test of those modules alone under Miri (plan 14, step 1); the rest call
+# into SQLite or need fsync on a real file. Re-probe when these modules gain tests.
+lockwait::tests::a_huge_timeout_makes_a_far_deadline_not_a_panic
+lockwait::tests::without_a_window_busy_is_reported_at_once
+pool::tests::dropped_pools_leave_the_registry
+maintenance::tests::prefix_upper_covers_the_edge_cases
+open::tests::directory_is_created_owner_only_and_existing_ones_are_left_alone
+open::tests::stamps_round_trip_and_only_the_canonical_rendering_parses
+sqlite::tests::every_open_goes_through_the_entry_point
+sqlite_mutex::tests::a_recursive_mutex_nests
+sqlite_mutex::tests::contended_increments_lose_nothing
+sqlite_mutex::tests::each_static_id_is_one_mutex
+sqlite_mutex::tests::freeing_a_static_is_a_no_op
+sqlite_mutex::tests::held_reports_the_owner_only
+sqlite_mutex::tests::no_spin_at_two_or_fewer_cpus
+sqlite_mutex::tests::statics_are_recognized_by_address
+sqlite_mutex::tests::try_on_a_held_fast_mutex_is_busy
+sqlite_mutex::tests::unknown_ids_get_null
+fanout::tests::a_shared_prefix_still_spreads_across_eight_shards
+fanout::tests::every_hash_lands_inside_the_shard_range
+fanout::tests::every_valid_count_round_trips
+fanout::tests::golden_vectors_are_pinned
+fanout::tests::hash_matches_the_python_xxhash_binding_over_lengths_0_to_2048
+fanout::tests::manifest_bytes_are_pinned
+fanout::tests::missing_hard_links_get_a_clear_error
+fanout::tests::non_canonical_manifests_are_refused
+fanout::tests::streaming_equals_one_shot_over_lengths_0_to_2048
+fanout::tests::the_type_tag_keeps_key_types_apart
+fanout::tests::xxh3_matches_its_published_empty_input_value
+store::fork_timeout::row_5_the_release_budget_is_a_flat_second
+store::shards::tests::connections_split_evenly_with_the_remainder_first
+store::shards::tests::size_limits_split_floored_and_at_least_a_mebibyte_each
+store::shards::tests::the_default_total_is_eight_or_two_per_shard
+store::tests::bad_settings_are_rejected_before_touching_disk

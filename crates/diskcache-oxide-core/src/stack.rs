@@ -113,7 +113,9 @@ mod tests {
     #[test]
     fn concurrent_pushes_and_takes_lose_and_repeat_nothing() {
         const THREADS: usize = 8;
-        const EACH: usize = 20_000;
+        // Miri explores interleavings with many seeds rather than many values, and 160,000 values
+        // cost it about eight minutes a seed (plan 14, lane A).
+        const EACH: usize = if cfg!(miri) { 200 } else { 20_000 };
         let stack = Arc::new(TakeAllStack::new());
         let done = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let pushers: Vec<_> = (0..THREADS)

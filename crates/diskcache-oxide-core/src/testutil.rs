@@ -19,7 +19,11 @@ impl TempDir {
     pub(crate) fn new(name: &str) -> Self {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("dco-test-{name}-{}-{n}", std::process::id()));
+        // The pid and counter alone collide under `-Zmiri-many-seeds`, whose seeds run in parallel
+        // with one pid and a counter each starting at 0, and one seed's cleanup would remove
+        // another's directory. A random part (drawn from each seed's RNG under Miri) keeps them apart.
+        let salt = std::hash::BuildHasher::hash_one(&std::hash::RandomState::new(), n);
+        let path = std::env::temp_dir().join(format!("dco-test-{name}-{}-{n}-{salt:016x}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         Self(path)

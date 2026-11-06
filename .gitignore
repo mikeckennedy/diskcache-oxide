@@ -253,6 +253,7 @@ bench/results/*.tmp
 
 # Soak runs (soak/)
 soak-results/
+sanitize-results/
 soak.out
 
 # Great Docs' build directory; the deployable site is mirrored into site/ (committed).
