@@ -18,6 +18,7 @@ Everything goes into one run directory (soak-results/<timestamp>/):
     summary.md     the final verdict (written at the end)
     chaos/, ledger/, stats/   the caches under test, and the workers' latest counters
     durable/, behind/, stuck/, auto-<n>/   the caches of the plan 09 lanes (soak/README.md)
+    fanout/        the FanoutCache of the fanout role, 8 shards (plan 13, step 13g)
 """
 
 from __future__ import annotations
@@ -120,7 +121,7 @@ class Soak:
         # the host folder shared into the VM pays the file-sharing layer on every lock and fsync.
         cache_root = os.environ.get('DCO_SOAK_CACHE_ROOT')
         if cache_root:
-            for name in ('chaos', 'ledger', *self.extra_stores(), 'stuck'):
+            for name in ('chaos', 'ledger', *self.extra_stores(), 'stuck', 'fanout'):
                 target = Path(cache_root) / self.dir.name / name
                 target.mkdir(parents=True)
                 (self.dir / name).symlink_to(target)
@@ -142,6 +143,10 @@ class Soak:
         # keep theirs), every add() race a worker reported winning, and exact final counts.
         self.reported_acked: dict[int, int] = {}
         self.final_acked: dict[int, int] = {}
+        # The fanout role's `fctr:<worker>` counters, as each worker last reported them.
+        self.fanout_acked: dict[int, int] = {}
+        # ...and the exact count from each one that exited cleanly (its final stats).
+        self.fanout_final: dict[int, int] = {}
         self.once_winners: dict[str, set[int]] = {}
         self.counts = {
             'kills': 0,
@@ -210,6 +215,10 @@ class Soak:
             *(f'auto-{n}' for n in range(self.args.auto_stores)),
         ]
 
+    def fanout_shards(self) -> list[str]:
+        """The fanout role's shard directories that exist so far, each checked as a store of its own."""
+        return sorted(f'fanout/{d.name}' for d in (self.dir / 'fanout').glob('[0-9][0-9][0-9]') if d.is_dir())
+
     # -- workers ------------------------------------------------------------------------------
 
     def spawn(self, python: str, long_lived: bool, role: str = 'run', store: int = -1) -> None:
@@ -233,6 +242,8 @@ class Soak:
                 seed,
                 str(store),
             ]
+        elif role == 'fanout':
+            cmd = [python, '-m', 'soak.worker', 'fanout', str(self.dir), str(wid), seed, str(self.args.fanout_threads)]
         elif role != 'run':
             cmd = [
                 python,
@@ -282,6 +293,9 @@ class Soak:
                     store=store,
                 )
             self.spawn(self.pythons[-1], long_lived=False, role='auto-reader', store=store)
+        # The first fanout worker is never killed, so its fd and memory trends cover the whole run.
+        for n in range(self.args.fanout_procs):
+            self.spawn(self.pythons[n % len(self.pythons)], long_lived=n == 0, role='fanout')
 
     def reap(self) -> None:
         for wid, w in list(self.workers.items()):
@@ -334,6 +348,10 @@ class Soak:
         self.reported_acked[w.id] = max(self.reported_acked.get(w.id, 0), stats.get('acked', 0))
         if stats.get('final'):
             self.final_acked[w.id] = stats['acked']
+        if fanout := stats.get('fanout'):
+            self.fanout_acked[w.id] = max(self.fanout_acked.get(w.id, 0), fanout.get('acked', 0))
+            if stats.get('final'):
+                self.fanout_final[w.id] = fanout.get('acked', 0)
         for slot in stats.get('once_won', []):
             self.once_winners.setdefault(slot, set()).add(w.id)
         # With timeouts of 30 and 60 s, even a fork behind busy threads is far inside the bound, so
@@ -787,6 +805,36 @@ class Soak:
                 self.event('add-two-winners', problem=True, slot=slot, winners=sorted(winners))
         self.once_winners = {s: w for s, w in self.once_winners.items() if len(w) <= 1}
 
+    def check_fanout_counters(self) -> None:
+        """Each fanout worker's `fctr:<id>`, wherever it hashed, holds at least what it reported, and
+        exactly its final count once it exited cleanly (a killed worker's last increments may land
+        after its last report)."""
+        stored: dict[int, Any] = {}
+        for name in self.fanout_shards():
+            if not (self.dir / name / DB_NAME).exists():
+                continue
+            conn = self.connect(name)
+            try:
+                for key, value in conn.execute("SELECT key, value FROM cache WHERE key LIKE 'fctr:%'"):
+                    stored[int(key.split(':')[1])] = value
+            except sqlite3.Error as ex:
+                self.event('db-check-error', problem=True, db=name, error=repr(ex))
+            finally:
+                conn.close()
+        for wid, acked in self.fanout_acked.items():
+            value = stored.get(wid, 0)
+            if wid in self.fanout_final:
+                if value != self.fanout_final[wid]:
+                    self.event(
+                        'fanout-counter-mismatch',
+                        problem=True,
+                        id=wid,
+                        stored=value,
+                        final=self.fanout_final[wid],
+                    )
+            elif not isinstance(value, int) or value < acked:
+                self.event('fanout-lost-increment', problem=True, id=wid, stored=value, acknowledged=acked)
+
     # -- the interval ---------------------------------------------------------------------------
 
     def interval(self) -> None:
@@ -794,7 +842,11 @@ class Soak:
         self.check_progress()
         deep = self.interval_no % 10 == 0
         orphans = self.interval_no % 5 == 0
-        db = {name: self.check_db(name, deep, orphans) for name in ('chaos', 'ledger', *self.extra_stores())}
+        db = {
+            name: self.check_db(name, deep, orphans)
+            for name in ('chaos', 'ledger', *self.extra_stores(), *self.fanout_shards())
+        }
+        self.check_fanout_counters()
         self.last_db = db
         now = time.time()
         live = list(self.workers.values())
@@ -1000,8 +1052,13 @@ class Soak:
                     'stuck_forks_completed',
                     'stuck_callers_hung',
                     'auto_writes',
+                    *FANOUT_COUNTERS,
                 )
             },
+            'fanout_max_sampled_fds': max(
+                ((s.get('fanout') or {}).get('max_sampled_fds', 0) for s in self.last_stats.values()),
+                default=0,
+            ),
             'durable_busy': durable['busy'],
             'durable_broken': durable['broken'],
             'durable_lost_deletes': durable['lost_deletes'],
@@ -1053,9 +1110,13 @@ class Soak:
 
     def proof_counters(self) -> dict[str, int]:
         """The counts that show each lane is still proving something, not only still running."""
-        counters = {key: self.ctotal(key) for key in PROOF_COUNTERS}
+        fanout = FANOUT_PROOF_COUNTERS if self.args.fanout_procs else ()
+        counters = {key: self.ctotal(key) for key in PROOF_COUNTERS + fanout}
         for python in {s['python'] for s in self.last_stats.values() if s.get('python')}:
             counters.update({f'{key}[{python}]': self.ctotal(key, python) for key in PROOF_COUNTERS})
+        # The fanout role runs on as many interpreters as it has processes, so only those that run it.
+        for python in {s['python'] for s in self.last_stats.values() if s.get('role') == 'fanout' and s.get('python')}:
+            counters.update({f'{key}[{python}]': self.ctotal(key, python) for key in fanout})
         counters.update({f'auto_rounds[{n}]': st['rounds'] for n, st in self.auto_summary().items()})
         return counters
 
@@ -1069,7 +1130,8 @@ class Soak:
                 continue
             # A counter that moves rarely on a low --rate isn't quiet just for being slow, so the window
             # is also 20 of its own mean gaps. At the full shape every one moves far faster than that.
-            window = max(QUIET_AFTER, QUIET_GAPS * (now - self.started) / value) if value else QUIET_AFTER
+            quiet_after = self.args.quiet_after
+            window = max(quiet_after, QUIET_GAPS * (now - self.started) / value) if value else quiet_after
             if not state[2] and now - state[1] > window:
                 state[2] = True
                 self.event(
@@ -1092,6 +1154,7 @@ class Soak:
             'forks_behind',
             'stuck_forks',
             'pq_delivered',
+            *(FANOUT_PROOF_COUNTERS if self.args.fanout_procs else ()),
         ):
             if not t[key]:
                 self.event(
@@ -1246,6 +1309,10 @@ class Soak:
             f'{t["stuck_caller_max_s"]} s)',
             f'load {t["load_1m"]} on {os.cpu_count()} CPUs',
             *self.auto_status(),
+            f'fanout: {t["fanout_ops"]:,} routed calls, {t["fanout_merges"]:,} merges, {t["fanout_full_walks"]:,} full '
+            f'walks, {t["fanout_maint"]:,} maintenance calls ({t["fanout_maint_partial"]} partial), '
+            f'{t["fanout_forks"]:,} forks, highest sampled database fds {t["fanout_max_sampled_fds"]} of '
+            f'{FANOUT_FD_BUDGET}',
             f'side chaos on the lanes and auto group: {self.counts["side_kills"]} kills, '
             f'{self.counts["side_restarts"]} restarts',
             '',
@@ -1372,8 +1439,9 @@ class Soak:
         )
         self.verify_held()
         self.verify_pq()
-        for name in ('chaos', 'ledger', *self.extra_stores()):
+        for name in ('chaos', 'ledger', *self.extra_stores(), *self.fanout_shards()):
             self.check_db(name, deep=True, orphans=True)
+        self.check_fanout_counters()
         self.event('lanes', **self.check_lanes())
         totals = {
             k: self.total(k)
@@ -1427,6 +1495,15 @@ PROOF_COUNTERS = (
     'pops_chaos', 'pops_held', 'pops_fork', 'pops_pq', 'pq_delivered', 'durable_calls', 'durable_false',
     'forks_behind', 'stuck_forks', 'stuck_callers_timed_out',
 )  # fmt: skip
+# The fanout role's counters (soak/worker.py, FanoutWorker), and those that prove it's doing its job.
+FANOUT_COUNTERS = (
+    'fanout_ops', 'fanout_merges', 'fanout_full_walks', 'fanout_maint', 'fanout_maint_partial', 'fanout_forks',
+    'fanout_fd_checks',
+)  # fmt: skip
+FANOUT_PROOF_COUNTERS = ('fanout_ops', 'fanout_merges', 'fanout_maint', 'fanout_forks')
+# Its database fds at 8 shards and the default connection budget: 2 x 8 + 2 x 8 (D-037). Matches
+# soak/worker.py, which judges it; here it's only shown.
+FANOUT_FD_BUDGET = 32
 TIMELINE_FIELDS = [
     'time', 'elapsed_h', 'workers', 'ops_per_s', 'get_p50_us', 'get_p99_us', 'set_p50_us', 'set_p99_us',
     'rss_total_mib', 'fds_total', 'timeouts_total', 'problems', 'kills', 'forks_ok', 'forks_failed', 'maint_calls',
@@ -1440,6 +1517,7 @@ TIMELINE_FIELDS = [
     'max_overrun_s', 'fork_max_s', 'fork_timeouts_normal', 'fork_timeouts_lanes', 'stuck_forks',
     'stuck_callers_timed_out', 'stuck_forks_completed', 'stuck_callers_hung', 'auto_writes', 'auto_rounds',
     'auto_successes', 'auto_busy', 'auto_fork_pending', 'auto_peak_wal', 'load_1m', 'child_max_s', 'stuck_caller_max_s',
+    *FANOUT_COUNTERS, 'fanout_max_sampled_fds',
 ]  # fmt: skip
 WORKER_FIELDS = [
     'time', 'elapsed_h', 'id', 'python', 'long_lived', 'rss_mib', 'fds', 'ops', 'timeouts', 'problems', 'forks_ok',
@@ -1523,6 +1601,19 @@ def main() -> int:
         default=1,
         help='Writers per auto store. Over 1 is the documented limit: it is reported, and its success rate does not '
         'fail the run.',
+    )
+    parser.add_argument(
+        '--fanout-procs',
+        type=int,
+        default=2,
+        help='Processes running the FanoutCache role on fanout/, on top of --procs (0 turns it off).',
+    )
+    parser.add_argument('--fanout-threads', type=int, default=4, help='Routed-call threads per fanout process.')
+    parser.add_argument(
+        '--quiet-after',
+        type=float,
+        default=QUIET_AFTER,
+        help='Seconds a proof counter may go without moving before the lane counts as quiet (lower it for a smoke).',
     )
     parser.add_argument('--seed', type=int, default=int(time.time()) % 100_000)
     parser.add_argument('--out', default=str(REPO / 'soak-results'))

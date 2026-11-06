@@ -472,6 +472,13 @@ def lane_lines(a: dict[str, Any]) -> list[str]:
         f'side chaos on the lanes and auto group: {lanes.get("side_kills")} kills, {lanes.get("side_restarts")} '
         f'restarts.',
     ]
+    if 'fanout_ops' in t:  # Runs from before the fanout role have none of these.
+        lines.append(
+            f'fanout: {t["fanout_ops"]:,} routed calls, {t["fanout_merges"]:,} merges, {t["fanout_full_walks"]:,} '
+            f'full walks, {t["fanout_maint"]:,} maintenance calls ({t["fanout_maint_partial"]} partial), '
+            f'{t["fanout_forks"]:,} forks. Highest sampled database fds in one process: '
+            f'{t.get("fanout_max_sampled_fds")} (budget 32, checked every walk, not continuously).'
+        )
     return lines
 
 

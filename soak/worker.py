@@ -4,6 +4,7 @@ Started by soak/soak.py, never by hand:
     python -m soak.worker run <run_dir> <worker_id> <threads> <seed> [<every> <ops/s per thread>]
     python -m soak.worker lanes <run_dir> <worker_id> <seed> <slot>
     python -m soak.worker auto-writer|auto-reader <run_dir> <worker_id> <seed> <store> <stores>
+    python -m soak.worker fanout <run_dir> <worker_id> <seed> <threads>
     python -m soak.worker maint <run_dir> clear|expire|cull|checkpoint|verify-held|verify-pq
 
 Two caches share the run directory:
@@ -34,6 +35,12 @@ The other roles run lanes that plan 09 needs, on stores of their own:
   counters are per process: in the other roles any fork_timeouts count means a fork was stuck.
 - `auto-writer`, `auto-reader` (AutoWorker): one writer per auto-<store>/ with
   `wal_checkpoint='auto'`, beside a reader process, in bursts.
+- `fanout` (FanoutWorker): a FanoutCache with 8 shards on fanout/, shared by every fanout process:
+  paced routed calls from several threads (self-checking values, some spilled, some expiring), a
+  `fctr:<worker>` counter and `fown:<worker>:<n>` keys that must survive, sorted merges and
+  `__iter__` walks that must repeat and lose nothing, fanned-out `expire`/`cull`/`checkpoint` under
+  one timeout, forks while all of that runs (the child writes every shard), and a check that its
+  database fds stay within the shard budget (D-037).
 
 Every value carries its key and a CRC of its payload, so corruption or a value landing under the
 wrong key is caught on every read.
@@ -65,7 +72,7 @@ from pathlib import Path
 from typing import Any
 
 import diskcache_oxide
-from diskcache_oxide import Cache, Timeout, _core
+from diskcache_oxide import Cache, FanoutCache, Timeout, _core
 
 STATS_EVERY = 5.0
 CHAOS_KEYS = 20_000
@@ -136,6 +143,20 @@ AUTO_IDLE_PER_S = 20.0
 AUTO_READER_THREADS = 8
 AUTO_READER_SAMPLE = 1_000
 AUTO_FORK_EVERY = 7.0
+# The fanout role (FanoutWorker): a FanoutCache on fanout/ at the default 8 shards and connection
+# budget, so its database fds stay within 2 x max_connections + 2 x shards (D-037). Paced, so it
+# shares the machine with the `run` workers.
+FANOUT_SHARDS = 8
+FANOUT_FD_BUDGET = 2 * 8 + 2 * FANOUT_SHARDS
+FANOUT_SIZE_LIMIT = 2**34
+FANOUT_KEYS = 5_000
+FANOUT_OWNED = 200
+FANOUT_CALLS_PER_S = 500.0
+FANOUT_WALK_EVERY = 5.0
+FANOUT_MAINT_EVERY = 30.0
+FANOUT_MAINT_TIMEOUT = 10.0
+FANOUT_REOPEN_EVERY = 60  # walks, so about every 5 minutes
+FANOUT_FORK_EVERY = 10.0
 
 
 def open_chaos(run_dir: Path) -> Cache:
@@ -1295,6 +1316,265 @@ class AutoWorker(Worker):
         super().close_all()
 
 
+def open_fanout(run_dir: Path) -> FanoutCache:
+    return FanoutCache(run_dir / 'fanout', timeout=30.0, shards=FANOUT_SHARDS, size_limit=FANOUT_SIZE_LIMIT)
+
+
+def db_fds_inside(root: Path) -> list[str] | None:
+    """The paths of this process's fds on a database, WAL or -shm file under `root`, one per fd, or
+    None where that can't be read. Value files are left out: a read of a spilled value holds one for
+    a moment."""
+    import fcntl
+
+    prefix = os.path.realpath(root) + os.sep
+    fd_dir = '/dev/fd' if sys.platform == 'darwin' else '/proc/self/fd'
+    found: list[str] = []
+    try:
+        names = os.listdir(fd_dir)
+    except OSError:
+        return None
+    for name in names:
+        try:
+            if sys.platform == 'darwin':
+                path = fcntl.fcntl(int(name), fcntl.F_GETPATH, bytes(1024)).rstrip(b'\0').decode()
+            else:
+                path = os.readlink(f'{fd_dir}/{name}')
+        except OSError:
+            continue  # Closed since the listing, or not a file.
+        if path.startswith(prefix) and os.path.basename(path).startswith('diskcache-oxide.sqlite'):
+            found.append(path[len(prefix) :])
+    return found
+
+
+class FanoutWorker(Worker):
+    """A FanoutCache on fanout/ (plan 13, step 13g): its routed calls, merges and fanned-out
+    maintenance from several threads, forks while they run, and its fd budget."""
+
+    def __init__(self, run_dir: Path, worker_id: int, threads: int, seed: int) -> None:
+        super().__init__(run_dir, worker_id, 0, seed)
+        self.role = 'fanout'
+        self.fan_threads = threads
+        self.fan = open_fanout(run_dir)
+        self.fan_root = run_dir / 'fanout'
+        # Protected by self.lock: `fctr:<id>` increments that returned (only this worker writes it).
+        self.fan_acked = 0
+        # `fown:<id>:<n>` -> the version last acknowledged, under its own lock: a write and its
+        # read-back are held across it (up to `timeout` each on a busy shard), which must not stall
+        # every thread's counters, heartbeats and stats behind self.lock.
+        self.fan_owned_lock = threading.Lock()
+        self.fan_owned: dict[str, int] = {}
+        self.fan_max_sampled_fds = 0  # The most seen at a check, not a continuous peak.
+        # One key per shard, for the forked child to touch every store. Its own, since another fanout
+        # worker's child may run at the same time (one child at a time per worker).
+        self.child_prefix = f'fchild:{worker_id}:'
+        self.per_shard: dict[int, str] = {}
+        i = 0
+        while len(self.per_shard) < self.fan.shards:
+            key = f'{self.child_prefix}{i}'
+            self.per_shard.setdefault(self.fan.shard_of(key), key)
+            i += 1
+
+    def lane_threads(self) -> list[threading.Thread]:
+        load = [threading.Thread(target=self.fan_main, args=(n,), daemon=True) for n in range(self.fan_threads)]
+        return [
+            *load,
+            threading.Thread(target=self.walk_main, daemon=True),
+            threading.Thread(target=self.forks_main, daemon=True),
+        ]
+
+    # -- routed calls ---------------------------------------------------------------------------
+
+    def fan_main(self, n: int) -> None:
+        rng = random.Random(self.seed * 1_000 + n)
+        next_at = time.monotonic()
+        i = 0
+        while not self.stop.is_set():
+            next_at, stopping = pace(1.0 / FANOUT_CALLS_PER_S, next_at, self.stop)
+            if stopping:
+                break
+            i += 1
+            if i % 256 == 1:
+                self.beat(f'fanout-{n}')
+            try:
+                self.fan_op(rng)
+                self.count('fanout_ops')
+                with self.lock:
+                    self.ops += 1
+            except Timeout:
+                with self.lock:
+                    self.timeouts += 1
+            except Exception:
+                self.problem(f'fanout thread {n}: {traceback.format_exc(limit=6)}')
+                time.sleep(0.1)
+
+    def fan_op(self, rng: random.Random) -> None:
+        roll = rng.random()
+        key = f'f:{rng.randrange(FANOUT_KEYS)}'
+        if roll < 0.70:
+            asked_at = time.time()
+            value = self.fan.get(key)
+            if value is None:
+                with self.lock:
+                    self.misses += 1
+            elif (wrong := check_value(key, value, asked_at)) is not None:
+                self.problem(f'fanout get: {wrong}')
+        elif roll < 0.85:
+            expire = rng.choice((None, None, rng.uniform(1, 60)))
+            expire_at = None if expire is None else time.time() + expire
+            self.fan.set(key, make_value(key, rng, expire_at), expire=expire)
+        elif roll < 0.88:
+            asked_at = time.time()
+            value = self.fan.pop(key)
+            if value is not None and (wrong := check_value(key, value, asked_at)) is not None:
+                self.problem(f'fanout pop: {wrong}')
+        elif roll < 0.90:
+            self.fan.delete(key)
+        elif roll < 0.95:
+            self.fan.incr(f'fctr:{self.id}')
+            with self.lock:
+                self.fan_acked += 1
+        else:
+            owned = f'fown:{self.id}:{rng.randrange(FANOUT_OWNED)}'
+            # Two of this worker's threads may pick the same key; the lock keeps the version exact.
+            with self.fan_owned_lock:
+                version = self.fan_owned.get(owned, 0) + 1
+                assert self.fan.set(owned, {'key': owned, 'v': version}) is True
+                self.fan_owned[owned] = version
+                got = self.fan.get(owned)
+            if not isinstance(got, dict) or got.get('v') != version:
+                self.problem(f'{owned} read back {got!r} right after writing version {version}')
+
+    # -- merges, iteration, maintenance and the fd budget ---------------------------------------
+
+    def walk_main(self) -> None:
+        next_maint = time.monotonic() + FANOUT_MAINT_EVERY
+        rounds = 0
+        while not self.stop.wait(FANOUT_WALK_EVERY):
+            self.beat('fanout-walk')
+            rounds += 1
+            try:
+                self.walk(rounds)
+                if time.monotonic() >= next_maint:
+                    next_maint = time.monotonic() + FANOUT_MAINT_EVERY
+                    self.maintain(rounds)
+                if rounds % FANOUT_REOPEN_EVERY == 0:
+                    self.reopen_fan()
+                self.check_fds()
+            except Timeout:
+                with self.lock:
+                    self.timeouts += 1
+            except Exception:
+                self.problem(f'fanout walk: {traceback.format_exc(limit=6)}')
+
+    def walk(self, rounds: int) -> None:
+        """A merge must be strictly sorted (nothing twice), `__iter__` must repeat nothing, and every
+        owned key acknowledged before the walk must be in it (owned keys are never removed)."""
+        with self.fan_owned_lock:
+            owned = set(self.fan_owned)
+        mine = list(self.fan.iterkeys(prefix=f'fown:{self.id}:'))
+        if any(a >= b for a, b in zip(mine, mine[1:], strict=False)):
+            self.problem('fanout iterkeys(prefix=) is out of order or repeats a key')
+        if missing := owned - set(mine):
+            self.problem(f'fanout iterkeys(prefix=) lost {len(missing)} owned keys, e.g. {sorted(missing)[:3]}')
+        backwards = list(self.fan.iterkeys(prefix=f'fown:{self.id}:', reverse=True))
+        if any(a <= b for a, b in zip(backwards, backwards[1:], strict=False)):
+            self.problem('fanout iterkeys(reverse=True) is out of order or repeats a key')
+        self.count('fanout_merges')
+        if rounds % 4 == 0:  # Every key, both ways: the whole root is larger, so less often.
+            merged = list(self.fan.iterkeys())
+            if any(a >= b for a, b in zip(merged, merged[1:], strict=False)):
+                self.problem('fanout iterkeys() over every key is out of order or repeats a key')
+            walked = list(self.fan)
+            if len(walked) != len(set(walked)):
+                self.problem(f'fanout __iter__ repeated {len(walked) - len(set(walked))} keys')
+            if missing := owned - set(walked):
+                self.problem(f'fanout __iter__ lost {len(missing)} owned keys, e.g. {sorted(missing)[:3]}')
+            self.count('fanout_full_walks')
+
+    def maintain(self, rounds: int) -> None:
+        """Fanned-out maintenance under one timeout: a partial failure must say how far it got."""
+        ops = ('expire', 'cull', 'checkpoint')
+        op = ops[rounds % len(ops)]
+        try:
+            getattr(self.fan, op)(timeout=FANOUT_MAINT_TIMEOUT)
+            self.count('fanout_maint')
+        except Timeout as ex:
+            failed = getattr(ex, 'failed_shards', None)
+            removed = getattr(ex, 'removed', 0 if op != 'checkpoint' else None)
+            if not isinstance(failed, tuple) or not failed or (op != 'checkpoint' and not isinstance(removed, int)):
+                self.problem(f'fanout {op} timed out without failed_shards/removed: {ex!r}')
+            self.count('fanout_maint_partial')
+
+    def reopen_fan(self) -> None:
+        old = self.fan
+        self.fan = open_fanout(self.run_dir)
+        old.close()
+        with self.lock:
+            self.reopens += 1
+
+    def check_fds(self) -> None:
+        paths = db_fds_inside(self.fan_root)
+        if paths is None:
+            return
+        with self.lock:
+            self.fan_max_sampled_fds = max(self.fan_max_sampled_fds, len(paths))
+        if len(paths) > FANOUT_FD_BUDGET:
+            by_path = collections.Counter(paths)
+            self.problem(
+                f'{len(paths)} fds on fanout databases, over the budget of {FANOUT_FD_BUDGET} (D-037): '
+                f'{dict(sorted(by_path.items()))}'
+            )
+        self.count('fanout_fd_checks')
+
+    # -- forks ----------------------------------------------------------------------------------
+
+    def forks_main(self) -> None:
+        # Forks while the routed calls and the walks run, on top of the orchestrator's.
+        while not self.stop.wait(FANOUT_FORK_EVERY):
+            self.beat('fanout-forks')
+            self.fork_test()
+            self.count('fanout_forks')
+
+    def child_work(self) -> None:
+        """Every shard, through the inherited handle: a write, its read-back, and a merge."""
+        tag = os.getpid()
+        for key in self.per_shard.values():
+            value = {'key': key, 'crc': zlib.crc32(b''), 'body': '', 'exp': None, 'pid': tag}
+            assert self.fan.set(key, value) is True
+            got = self.fan.get(key)
+            assert isinstance(got, dict) and got.get('pid') == tag, f'{key} read back {got!r} in the child'
+        merged = list(self.fan.iterkeys(prefix=self.child_prefix))
+        assert merged == sorted(self.per_shard.values()), f'the child merged {merged!r}'
+
+    # -- the end --------------------------------------------------------------------------------
+
+    def verify_owned(self) -> None:
+        super().verify_owned()
+        with self.fan_owned_lock:
+            owned = sorted(self.fan_owned.items())
+        for key, version in owned:
+            got = self.fan.get(key)
+            if not isinstance(got, dict) or got.get('v') != version:
+                self.problem(f'final check: {key} is {got!r}, last acknowledged version {version}')
+        if (count := self.fan.get(f'fctr:{self.id}', 0)) != self.fan_acked:
+            self.problem(f'final check: fctr:{self.id} is {count}, acknowledged increments {self.fan_acked}')
+
+    def extra_stats(self) -> dict[str, Any]:
+        return {
+            'fanout': {
+                'shards': FANOUT_SHARDS,
+                'acked': self.fan_acked,
+                'owned': len(self.fan_owned),  # A dict's len is safe to read without its lock.
+                'max_sampled_fds': self.fan_max_sampled_fds,
+                'fd_budget': FANOUT_FD_BUDGET,
+            },
+        }
+
+    def close_all(self) -> None:
+        self.fan.close()
+        super().close_all()
+
+
 class _Rollback(Exception):
     """Raised inside a held transaction to roll it back."""
 
@@ -1450,6 +1730,10 @@ def main() -> int:
         worker_id, seed, slot = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
         set_title(f'soak-lanes-{worker_id}')
         return LaneWorker(run_dir, worker_id, seed, slot).run()
+    if mode == 'fanout':
+        worker_id, seed, threads = (int(x) for x in sys.argv[3:6])
+        set_title(f'soak-fanout-{worker_id}')
+        return FanoutWorker(run_dir, worker_id, threads, seed).run()
     if mode in ('auto-writer', 'auto-reader'):
         worker_id, seed, store, stores = (int(x) for x in sys.argv[3:7])
         set_title(f'soak-{mode}-{worker_id}')

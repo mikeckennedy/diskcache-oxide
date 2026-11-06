@@ -127,7 +127,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: test-visible
 - diskcache: one shared `Cache` opens a SQLite connection for every thread that uses it, and each holds the database and its WAL open. With 64 threads held after one `get` and one `set` each, 131 fds are open inside the cache directory (2 × (threads + 1) + 1 for the shared `-shm`), on 3.14 and 3.14t. A server with many threads can run into the fd limit (upstream #295, #336).
-- oxide: connections come from a bounded pool, so the fd count inside the cache directory is at most 2 × pool size + 1, however many threads are alive (`OXIDE_FD_BUDGET` in `backends.py`). The pool is per database file and shared by every handle on it. Its size is the largest `max_connections` any live handle asked for (default 8; 04-design.md section 7). A nested operation inside a held transaction may open over the cap, and a forked child deliberately leaks any connection it inherited (idle ones are closed before the fork, so only those the forking thread was using), so fd tests that combine forks must allow for that.
+- oxide: connections come from a bounded pool, so the fd count inside the cache directory is at most 2 × pool size + 1, however many threads are alive (`OXIDE_FD_BUDGET` in `backends.py`). The pool is per database file and shared by every handle on it. Its size is the largest `max_connections` any live handle asked for (default 8; 04-design.md section 7). A nested operation inside a held transaction may open over the cap, and a forked child deliberately leaks any connection it inherited (idle ones are closed before the fork, so only those the forking thread was using), and each store's pin (an fd on the database file, a connection that never runs a statement), which it forgets rather than closes, so fd tests that combine forks must allow for that. A FanoutCache has one pool per shard, and its budget is in D-037.
 - Why: the number of open fds should depend on configuration, not on how many threads happened to touch the cache.
 - Tests: `test_threads.py` (`test_peak_fds_bounded_by_the_pool` is a strict xfail on diskcache; `test_peak_fds_within_the_backend_budget` pins each adapter's `fd_budget`)
 
@@ -135,9 +135,9 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: test-visible
 - diskcache: `close()` closes only the calling thread's connection. After 64 threads have used a shared `Cache` and exited, `close()` leaves 130 fds open inside the cache directory until a gc pass finalizes the connections, and each one then reports `ResourceWarning: unclosed database` (64 warnings, on 3.14 and 3.14t).
-- oxide: connections belong to a per-file `Store` shared by every handle on that file. When the last open handle calls `close()`, every connection is closed, whichever threads used it. No fd inside the cache directory stays open (apart from the one fd the `Store` keeps on the database file while any handle is alive; the tests count after the last close), and nothing warns at finalization. The exception is a `close()` that gave up behind a stuck fork: those connections close when the fork ends (D-027).
+- oxide: connections belong to a per-file `Store` shared by every handle on that file. When the last open handle calls `close()`, every connection is closed, whichever threads used it. No fd inside the cache directory stays open (apart from the one fd the `Store` keeps on the database file, its pin, while any handle is alive; the tests count after the last close). In a forked child, an inherited store's pin is forgotten, never closed (D-017), so the child's last `close()` leaves that one fd per database open, and nothing warns at finalization. The exception is a `close()` that gave up behind a stuck fork: those connections close when the fork ends (D-027).
 - Why: after `close()` the directory must be safe to delete or move, and leaked connections hide in tests behind `ResourceWarning` noise.
-- Tests: `test_threads.py` (`test_close_releases_every_fd` and `test_threads_then_close_emit_no_resource_warning` are strict xfails on diskcache)
+- Tests: `test_threads.py` (`test_close_releases_every_fd` and `test_threads_then_close_emit_no_resource_warning` are strict xfails on diskcache), and for every shard of a FanoutCache, `test_fanout.py` (`test_close_releases_every_fd_on_every_shard`, a strict xfail on diskcache) and the `fanout-close-after-fork` scenario in `tests/unit/fork_scenarios.py`
 
 ## D-019 Opening with unchanged settings never writes
 
@@ -262,6 +262,69 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - oxide: any thread may call the `Transaction`'s `__exit__`, committing (no exception) or rolling back the owner's transaction. While the owner is inside one of its operations, a rollback is left to that operation, which rolls back when it returns, and a commit waits for it until `timeout`; a commit that can't run by then raises `Timeout` and rolls back. The owner's own exit afterwards raises `RuntimeError` (the "rolled back" `TransactionAborted` message) unless the transaction committed, so a `with` block never exits cleanly when its writes are gone. An exit with no exception that comes while another thread's end is still running waits for its outcome, up to the cache's `timeout`, and past that raises `Timeout` ("whether it committed is unknown"); an exit with an exception passing returns at once. Writes the owner makes after another thread ended it run outside the transaction.
 - Why: the transaction's locks must not outlive a thread that's stuck, and an end from elsewhere must never be mistaken for the owner's commit.
 
+## D-032 FanoutCache records its shard count, and a different `shards=` raises
+
+- Kind: note (pinned by `tests/unit/test_fanout.py` and `tests/unit/test_shard_identity.py`)
+- diskcache: `FanoutCache(directory, shards=8)` records nothing. Opening the same directory with another `shards=` silently sends keys to other shards: existing entries read as missing, a second `add` of the same key can win in each process, and `incr` totals split, across processes that disagree.
+- oxide: the root holds a manifest (`diskcache-oxide-fanout`) with the shard count and the hash's identity, created atomically (a temporary file and a hard link, so of two racing creators exactly one wins and the other reads its file). `shards=None` (the default) reads the stored count, or creates 8. An explicit `shards=` that differs raises `ValueError` naming both numbers, so changing the count means a new directory. Each shard's database also records its index, the count and the hash, and a renamed, copied or mismatched shard is refused. Creating the manifest needs hard links, so a filesystem without them (FAT/exFAT, SMB, some FUSE) raises `OSError` saying so. A leftover `diskcache-oxide-fanout.tmp-*` file from a crash is ignored and safe to delete.
+- Why: the shard count is part of where every key lives, so a mismatch has to be an error, not a quiet loss of data and atomicity.
+- Tests: `test_the_stored_count_wins_and_another_is_refused`, `test_processes_racing_to_create_one_root_agree_on_one_manifest`, and the shard-identity tests
+
+## D-033 Shards are chosen by XXH3, and iteration goes shard by shard
+
+- Kind: note (the conformance tests compare iteration as sets)
+- diskcache: a key's shard is `adler32` of its stored form, modulo the shard count. `iter(cache)` chains the shards' iterators, `reversed()` chains the shards backwards, and there is no `iterkeys()` on `FanoutCache` (it's on `Cache`).
+- oxide: a key's shard is XXH3-64 (seed 0) of its key-type byte and its UTF-8 bytes, mapped to the shard by a multiply-high, and `FanoutCache.shard_of(key)` says which. The hash is part of the on-disk format, pinned by golden vectors, so every process and every release agrees. `iter(cache)` yields every key once, shard 0 to N-1, each shard in its insertion order: so not in the cache's insertion order, and not in stock's order, since the shards hold different keys. `iterkeys(prefix=, reverse=)` merges the shards into one sorted order, the order a plain `Cache` gives, holding no connection between yields. Neither is a snapshot: concurrent writes may or may not be seen, never twice. There's no `reversed()` (yet).
+- Why: adler32 spreads short and similar keys poorly, and a hash that's part of the format must be fixed by its definition, not by an implementation that could change. The sorted merge gives FanoutCache the ordered listing `Cache` has.
+- Tests: `tests/unit/test_fanout.py` (the golden table, `test_iter_yields_every_key_once_shard_by_shard_each_in_insertion_order`, `test_iterkeys_merges_every_shard_into_the_order_sorted_and_a_plain_cache_give`)
+
+## D-034 A FanoutCache's single-key calls raise `Timeout`, unless `durable=True`
+
+- Kind: test-visible
+- diskcache: `FanoutCache` swallows `Timeout` on single-key calls: `set`, `add`, `touch` and `delete` give False, `get` and `pop` give the default, and `incr` and `decr` give None. `get` also swallows any `sqlite3.OperationalError`. `cache[key]`, `cache[key] = v` and `del cache[key]` instead retry forever. Its default `timeout` is 0.010 s, so a briefly busy shard drops writes silently.
+- oxide: single-key calls behave exactly as on `Cache`, on the key's shard: a busy shard raises `Timeout` after `timeout` (60 s by default), and so do `[]`, `[]=` and `del`. `durable=True` gives the miss answers instead, logged and counted as on `Cache` (D-028), with one report for the whole FanoutCache, named by its root directory.
+- Why: a silently dropped write and a hang are both worse than an error the caller chose how to handle; `durable=True` is that choice, with the logging stock lacks.
+- Tests: `tests/conformance/test_fanout.py` (`test_a_write_to_a_locked_shard_raises_timeout` is a strict xfail on diskcache; `test_a_durable_fanout_cache_answers_a_locked_shard_as_a_miss` is oxide-only)
+
+## D-035 Fanned-out maintenance shares one `timeout` and reports partial progress
+
+- Kind: note (pinned by `tests/unit/test_fanout.py`)
+- diskcache: `clear`, `expire`, `cull` and `evict` call each shard in turn and retry it forever on `Timeout`, so a shard that stays locked hangs the call, and nothing says which shards were done.
+- oxide: `clear`, `expire`, `cull` and `checkpoint` take `timeout=` (default: the handle's) for the whole call, not per shard, as do opening, `len()`, `volume()` and `close()`. A shard reached after the deadline still gets one try with no wait, so idle shards are always done. A failing shard doesn't stop the others; afterwards the call raises the first failure's own type (so `except Timeout` works) with `.failed_shards` (a tuple of indexes), `.removed` (the total removed from every shard, except on `checkpoint()`) and a note naming them. A removal takes every shard's snapshot first, so a write made during the call survives on every shard, as on `Cache` (D-011). `checkpoint()` is True only if every shard's WAL was reset. `durable=True` doesn't swallow any of these (D-028).
+- Why: a maintenance job must finish in bounded time, and when it can't, it must say what it did.
+- Tests: `test_a_locked_shard_fails_alone_and_the_error_says_how_far_the_call_got`, `test_one_timeout_bounds_the_whole_call_not_one_per_shard`, `test_at_a_zero_timeout_every_idle_shard_is_still_emptied`, `test_checkpoint_is_true_only_when_every_shard_resets`, and the `fanout-fork-mid-clear` scenario in `tests/unit/fork_scenarios.py`
+
+## D-036 `size_limit` is split evenly with a 1 MiB minimum per shard, and reads back as the total
+
+- Kind: note (pinned by `tests/unit/test_fanout.py`)
+- diskcache: divides `size_limit` by the shard count as a float, with no minimum (1 GiB / 8 = 134217728.0), and `cache.size_limit` reads shard 0's share.
+- oxide: each shard gets `floor(size_limit / shards)` and culls on its own. Each needs at least 1 MiB (D-005), so the total must be at least `shards` MiB, or `ValueError`. With none given, a new root gets 1 GiB in all, split the same way. `cache.size_limit` is the sum of the shards' stored limits.
+- Why: an integer budget per shard is what's stored, and the D-005 floor applies to every shard, since a shard is a whole cache.
+- Tests: `test_the_default_size_limit_is_a_gibibyte_in_all`, `test_an_explicit_size_limit_is_split_floored_and_kept_on_reopen`, `test_a_size_limit_under_a_mebibyte_per_shard_is_refused`
+
+## D-037 `max_connections` is a total across the shards, so fds are bounded too
+
+- Kind: test-visible
+- diskcache: every thread opens its own connection to each shard it uses (D-017, once per shard). With 64 threads that each did one `get` and one `set` on an 8-shard FanoutCache, 264 fds are open inside the root, on 3.14 and 3.14t, and `close()` leaves 256 of them open (D-018).
+- oxide: `max_connections` is the most connections the process opens for the whole FanoutCache, split across the shards (`max_connections // shards` each, the first `max_connections % shards` getting one more). It must be at least `shards` (`ValueError`), and the default is one per shard, never fewer than 8 in all, so SQLite's memory (D-023) stays where a default `Cache` has it. Each connection holds its shard's database and WAL, and each shard adds its `-shm` and its pin, so the fds inside the root stay within `2 × max_connections + 2 × shards`, however many threads there are: 32 at the defaults, measured at 32 with 64 threads, and 64 (exactly the budget) at `max_connections=24` on 3.14t. `close()` leaves none. Opening takes about 4 fds per shard, so 256 shards need over 1,024, Linux's default `ulimit -n`. Too few raises `OSError` with `errno` `EMFILE` and a message giving the shard count, the fds needed, the limit and how many are already open, with SQLite's error as the cause; a failed open leaves no fd open. A busy shard gets only its share of connections: raise `max_connections` if a measurement says a hot shard needs more.
+- Why: the fd and memory cost should follow configuration, and sharding shouldn't multiply it by the thread count.
+- Tests: `tests/conformance/test_fanout.py` (`test_peak_fds_bounded_by_the_shard_budget` is a strict xfail on diskcache), `tests/unit/test_fanout.py` (`test_many_threads_stay_within_the_fd_budget_and_close_leaves_none`, `test_max_connections_must_cover_every_shard`, `test_too_few_file_descriptors_for_every_shard_names_the_numbers`)
+
+## D-038 A plain `Cache` and a FanoutCache refuse each other's directories
+
+- Kind: note (pinned by `tests/unit/test_fanout.py` and `tests/unit/test_shard_identity.py`)
+- diskcache: a `Cache` opened on a FanoutCache's root creates its own database there, and one opened on a shard directory (`000`) uses that shard as an ordinary cache, writing keys that the FanoutCache may route elsewhere.
+- oxide: `Cache` on a FanoutCache root, or on one of its shards, raises `ValueError`, and `FanoutCache` on a plain `Cache`'s directory does too. Each checks for the other's marker before writing its own, so the refused open creates nothing: `Cache(fanout_root)` leaves no database behind. That holds while the FanoutCache is open in the same process, too.
+- Why: a typo shouldn't leave a directory that neither kind can open again, or a shard written behind the FanoutCache's back.
+- Tests: `test_a_plain_cache_on_the_root_raises_and_creates_no_database`, `test_a_fanout_cache_on_a_plain_cache_raises_and_writes_no_manifest`, `test_a_plain_cache_on_a_live_shard_raises_and_leaves_the_count_alone`, `test_a_plain_cache_racing_fanout_caches_for_one_root_never_both_open`
+
+## D-039 FanoutCache's constructor and the stock features it doesn't have (yet)
+
+- Kind: note
+- diskcache: `FanoutCache(directory=None, shards=8, timeout=0.010, disk=Disk, **settings)`, so `FanoutCache(path, 4)` asks for 4 shards. It also has `transact()` across every shard, `cache()`, `deque()` and `index()` sub-collections, `stats()`, `evict()` and tag indexes, `check()`, `reset()`, `read()`, `reversed()`, the `retry=`, `read=` and `tag=` arguments, settings read as attributes from shard 0, and pickling.
+- oxide: `FanoutCache(directory, timeout=None, *, shards=None, ...)`, with the same options as `Cache` plus `shards`. `shards` is keyword-only, so stock's `FanoutCache(path, 4)` would be a 4-second timeout here: pass `shards=4`. None of the features above exist yet: `transact(key=...)`, scoped to one shard, comes in plan 13's step 13k, and the rest with Phase 6a and 6d. `directory` is required (D-021), and there's no `disk=` (D-022).
+- Why: the positional `timeout` matches `Cache`'s signature, and each missing feature needs its own design across shards rather than a copy of stock's.
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.
@@ -275,4 +338,7 @@ How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 
 - **D-016 (a spilled value read as missing while it's overwritten):** the fork has the same bug, so the Test A tests are oxide-only. The default variant failed on community in 4/20 runs on 3.14 and 9/20 on 3.14t, and the heavy variant in every run tried (4/4 on 3.14t).
 - **D-012 across two `Cache` objects (upstream #325):** fixed in the fork. Its fork gate also covers a second `Cache` on the same directory: `test_fork_while_another_thread_writes_through_a_second_cache` passed in 20/20 runs on 3.14 and on 3.14t.
 - **Phase 0.5 Tests B, C (idle fork), G and I** pass on the fork as on 5.6.3, including racing creators of a new directory still getting 0700 (D-015). After 6 SIGKILLs of a spill writer (Test I), the fork left 0-3 orphaned value files and 5.6.3 left 0-5 (20 runs each); after 60 kills, 11 and 10.
+- **D-034 (a FanoutCache's single-key calls swallow `Timeout`):** the fork has the same code: with every shard write-locked by another process, `set`, `add`, `delete` and `touch` give False and `incr` and `pop` give None, so the six `test_a_write_to_a_locked_shard_raises_timeout` cases fail on community.
+- **D-037 (FanoutCache connections per thread per shard):** the fork also keeps one connection per thread per shard: 264 fds inside the root with 64 threads on 8 shards, the same as 5.6.3, so `test_peak_fds_bounded_by_the_shard_budget` fails on community.
+- **D-018 on a FanoutCache:** fixed in the fork, as for `Cache`. After 64 threads and `close()`, no fds remain inside the root, so `test_close_releases_every_fd_on_every_shard` passes on community.
 - Everything else in the suite passes on the fork unchanged.

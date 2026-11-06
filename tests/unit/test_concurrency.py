@@ -29,6 +29,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
         'parent-closes-after-fork',
         'shared-iterator-while-a-fork-waits',
         'fanout-fork-while-writing',
+        'fanout-fork-mid-merge',
+        'fanout-close-after-fork',
+        'fanout-fork-mid-clear',
     ],
 )
 def test_fork_scenario(scenario: str, tmp_path: Path) -> None:

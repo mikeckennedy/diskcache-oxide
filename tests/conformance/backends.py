@@ -313,6 +313,13 @@ KNOWN_COMMUNITY_DIFFERENCES: dict[str, str] = {
     'tests/conformance/test_threads.py::test_peak_fds_bounded_by_the_pool': 'D-017',
     'tests/conformance/test_values.py::test_value_roundtrips[float-nan]': 'D-008',
     'tests/conformance/test_values.py::test_value_roundtrips_across_reopen[float-nan]': 'D-008',
+    'tests/conformance/test_fanout.py::test_peak_fds_bounded_by_the_shard_budget': 'D-037',
+    'tests/conformance/test_fanout.py::test_a_write_to_a_locked_shard_raises_timeout[set]': 'D-034',
+    'tests/conformance/test_fanout.py::test_a_write_to_a_locked_shard_raises_timeout[add]': 'D-034',
+    'tests/conformance/test_fanout.py::test_a_write_to_a_locked_shard_raises_timeout[incr]': 'D-034',
+    'tests/conformance/test_fanout.py::test_a_write_to_a_locked_shard_raises_timeout[delete]': 'D-034',
+    'tests/conformance/test_fanout.py::test_a_write_to_a_locked_shard_raises_timeout[pop]': 'D-034',
+    'tests/conformance/test_fanout.py::test_a_write_to_a_locked_shard_raises_timeout[touch]': 'D-034',
 }
 
 

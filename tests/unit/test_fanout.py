@@ -26,6 +26,7 @@ import xxhash
 from diskcache_oxide import Cache, FanoutCache, Timeout
 
 from tests.conformance.proc_workers import SqlitePeer
+from tests.unit.fork_timeout_scenarios import fds_inside
 
 MiB = 1 << 20
 GiB = 1 << 30
@@ -256,6 +257,73 @@ print(before, fds())
     assert cause == 'OSError', 'the SQLite error is kept as the cause'
     before, after = map(int, counts.split())
     assert after == before, f'the failed open left {after - before} fds open'
+
+
+FD_THREADS = 64
+
+
+@pytest.mark.parametrize(('shards', 'max_connections'), [(8, None), (4, 16), (16, None), (8, 24)])
+def test_many_threads_stay_within_the_fd_budget_and_close_leaves_none(
+    tmp_path: Path, shards: int, max_connections: int | None
+) -> None:
+    """D-017's budget, once per shard (D-037): each pooled connection holds its shard's database and
+    WAL, and each shard adds its `-shm` and its pin, so the root never holds more than
+    `2 × max_connections + 2 × shards` fds, however many threads use it, and none after `close()`."""
+    root = tmp_path / 'root'
+    cap = max_connections if max_connections is not None else max(8, shards)
+    budget = 2 * cap + 2 * shards
+    assert fds_inside(tmp_path) == 0
+    cache = FanoutCache(root, shards=shards, max_connections=max_connections)
+    opened = fds_inside(root)
+    assert 0 < opened <= budget, f'{opened} fds after opening, budget {budget}'
+
+    ready = threading.Barrier(FD_THREADS + 1)
+    release = threading.Event()
+    working = threading.Event()
+    errors: list[BaseException] = []
+    peak = [opened]
+
+    def body(tid: int) -> None:
+        try:
+            for i in range(20):
+                assert cache.set(f't{tid}-{i}', i) is True
+                cache.get(f't{(tid + 1) % FD_THREADS}-{i}')
+            ready.wait(30)
+            release.wait(30)
+        except BaseException as ex:
+            errors.append(ex)
+            ready.abort()
+
+    def sampler() -> None:
+        while working.is_set():
+            peak[0] = max(peak[0], fds_inside(root))
+
+    gc_was_enabled = gc.isenabled()
+    gc.disable()  # A gc pass would hide a connection that close() left open.
+    try:
+        working.set()
+        watcher = threading.Thread(target=sampler)
+        watcher.start()
+        workers = [threading.Thread(target=body, args=(tid,)) for tid in range(FD_THREADS)]
+        for t in workers:
+            t.start()
+        ready.wait(30)
+        held = fds_inside(root)
+        working.clear()
+        watcher.join(30)
+        release.set()
+        for t in workers:
+            t.join(30)
+        if errors:
+            raise errors[0]
+        assert len(cache) == FD_THREADS * 20
+        cache.close()
+        after = fds_inside(root)
+    finally:
+        if gc_was_enabled:
+            gc.enable()
+    assert max(peak[0], held) <= budget, f'peak {max(peak[0], held)} fds with {FD_THREADS} threads, budget {budget}'
+    assert after == 0, f'{after} fds still open inside the root after close()'
 
 
 # -- maintenance over every shard -------------------------------------------------------------------

@@ -23,6 +23,7 @@ from diskcache_oxide import Cache, FanoutCache
 
 from tests.conformance.proc_workers import SqlitePeer
 from tests.proctitle import set_title
+from tests.unit.fork_timeout_scenarios import fds_inside
 
 CHILD_DEADLINE = 15.0
 # A write that must fail at once rather than wait out the cache's timeout (TIMEOUT).
@@ -483,6 +484,249 @@ def fanout_fork_while_writing(directory: Path) -> list[str]:
     return failures
 
 
+def one_key_per_shard(cache: FanoutCache, prefix: str) -> dict[int, str]:
+    """A key that routes to each shard, so a loop over them touches every store."""
+    keys: dict[int, str] = {}
+    i = 0
+    while len(keys) < cache.shards:
+        keys.setdefault(cache.shard_of(f'{prefix}{i}'), f'{prefix}{i}')
+        i += 1
+    return keys
+
+
+def fanout_fork_mid_merge(directory: Path) -> list[str]:
+    """Fork in the middle of an `iterkeys()` merge over 8 shards (plan 13, step 13g).
+
+    The main thread has taken 300 keys from a merge, so every shard's page buffer is filled and its
+    cursor is part way, and it forks while another thread writes and a third runs merges of its own.
+    A merge holds no connection between yields (D-025), so the child carries on the inherited one from
+    where the parent stopped, sorted and with nothing repeated or lost, and so does the parent after
+    the forks. A fresh merge in the child, through the inherited handle and a fresh one, sees every
+    key, and the child's own writes on every shard come back merged, in both directions.
+    """
+    rounds = 4
+    taken = 300
+    cache = FanoutCache(directory, timeout=TIMEOUT)
+    keys = [f'k{i:04d}' for i in range(2_000)]
+    for key in keys:
+        cache.set(key, key)
+    expected = sorted(keys)
+    it = cache.iterkeys()
+    head = [next(it) for _ in range(taken)]
+    stop = threading.Event()
+    errors: list[str] = []
+
+    def writer() -> None:
+        n = 0
+        try:
+            while not stop.is_set():
+                cache.set(f'w{n % 500:03d}', n)  # 'w' sorts after every 'k' key.
+                n += 1
+        except BaseException as ex:
+            errors.append(f'writer failed: {ex!r}')
+
+    def merger() -> None:
+        try:
+            while not stop.is_set():
+                merged = list(cache.iterkeys())
+                if any(a >= b for a, b in zip(merged, merged[1:], strict=False)):
+                    errors.append('a merge during the forks was out of order or repeated a key')
+                if [k for k in merged if k.startswith('k')] != expected:
+                    errors.append('a merge during the forks lost a key')
+        except BaseException as ex:
+            errors.append(f'merger failed: {ex!r}')
+
+    def check_rest(rest: list[str]) -> None:
+        assert rest[: len(expected) - taken] == expected[taken:], 'the merge lost its place'
+        tail = rest[len(expected) - taken :]
+        assert all(k.startswith('w') for k in tail), f'unexpected keys after the k range: {tail[:5]}'
+        assert all(a < b for a, b in zip(tail, tail[1:], strict=False)), 'the tail is out of order'
+
+    def child(r: int) -> None:
+        check_rest(list(it))
+        assert list(cache.iterkeys(prefix='k')) == expected
+        mine = sorted(one_key_per_shard(cache, f'child-{r}-').values())
+        for key in mine:
+            assert cache.set(key, r) is True
+        assert list(cache.iterkeys(prefix=f'child-{r}-')) == mine
+        assert list(cache.iterkeys(prefix=f'child-{r}-', reverse=True)) == mine[::-1]
+        with FanoutCache(directory, timeout=TIMEOUT) as fresh:
+            assert list(fresh.iterkeys(prefix='k')) == expected
+
+    threads = [threading.Thread(target=writer), threading.Thread(target=merger)]
+    for t in threads:
+        t.start()
+    time.sleep(0.1)
+    codes = [wait(fork(lambda: child(r))) for r in range(rounds)]
+    stop.set()
+    for t in threads:
+        t.join(TIMEOUT * 2)
+
+    failures = list(dict.fromkeys(errors))
+    if head != expected[:taken]:
+        failures.append('the first keys of the merge are wrong')
+    try:
+        check_rest(list(it))
+    except AssertionError as ex:
+        failures.append(f'in the parent: {ex}')
+    if codes != [0] * rounds:
+        failures.append(f'child exit codes {codes}')
+    for r in range(rounds):
+        if len(list(cache.iterkeys(prefix=f'child-{r}-'))) != cache.shards:
+            failures.append(f"child {r}'s writes are missing")
+    cache.close()
+    return failures
+
+
+def fanout_close_after_fork(directory: Path) -> list[str]:
+    """Close after a fork, on 8 shards: D-018 across shards, and the lock-record trap on each of them.
+
+    The parent forks while threads write to every shard, waits until the child has read every shard,
+    and closes: no fd stays open inside the root. An unrelated process then opens and closes the
+    FanoutCache, which checkpoints and deletes each shard's WAL, and only then does the child write to
+    every shard: each write must reach its database, as `parent-closes-after-fork` checks for one
+    store. The child inherits exactly one pin per shard and no connection (the forking thread held
+    none), and its close leaves just those pins, forgotten by design (D-017), never a connection it
+    opened itself.
+    """
+    cache = FanoutCache(directory, timeout=TIMEOUT)
+    shards = cache.shards
+    keys = one_key_per_shard(cache, 'k')
+    for key in keys.values():
+        cache.set(key, 'parent')
+    ready_r, ready_w = os.pipe()
+    go_r, go_w = os.pipe()
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def writer(key: str) -> None:
+        try:
+            while not stop.is_set():
+                cache.set(f'{key}-busy', 1)
+        except BaseException as ex:
+            errors.append(ex)
+
+    def child() -> None:
+        os.close(ready_r)
+        os.close(go_w)
+        inherited = fds_inside(directory)
+        # One pin per shard; the forking thread held no connection, so the child inherits no other fd.
+        assert inherited == shards, f'the child inherited {inherited} fds inside the root, not one pin per shard'
+        for key in keys.values():
+            assert cache.get(key) == 'parent'
+        os.write(ready_w, b'r')
+        assert os.read(go_r, 1) == b'g'
+        for key in keys.values():
+            assert cache.set(f'{key}-child', 1) is True
+        cache.close()
+        left = fds_inside(directory)
+        assert left == inherited, f'the child left {left} fds open after close(), and inherited {inherited} pins'
+
+    writers = [threading.Thread(target=writer, args=(key,)) for key in keys.values()]
+    for t in writers:
+        t.start()
+    time.sleep(0.1)
+    pid = fork(child)
+    stop.set()
+    for t in writers:
+        t.join(TIMEOUT)
+    os.close(ready_w)
+    os.close(go_r)
+    failures = [f'writer failed: {ex!r}' for ex in errors]
+    if os.read(ready_r, 1) != b'r':
+        failures.append('the child never got ready')
+    cache.close()
+    if (left := fds_inside(directory)) != 0:
+        failures.append(f'D-018: {left} fds still open inside the root after the parent closed')
+    if cache._handle_counts() != [0] * shards:
+        failures.append(f'handles left after close: {cache._handle_counts()}')
+    third = (
+        f'from diskcache_oxide import FanoutCache; c = FanoutCache({str(directory)!r}); c.set("third", 3); c.close()'
+    )
+    subprocess.run([sys.executable, '-c', third], check=True, timeout=TIMEOUT * 2)
+    os.write(go_w, b'g')
+    code = wait(pid)
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    with FanoutCache(directory, timeout=TIMEOUT) as fresh:
+        lost = [shard for shard, key in keys.items() if fresh.get(f'{key}-child') != 1]
+        if lost:
+            failures.append(f"the child's writes are lost on shards {lost}: a fresh handle doesn't see them")
+        if fresh.get('third') != 3:
+            failures.append("the unrelated process's write is missing")
+    if (left := fds_inside(directory)) != 0:
+        failures.append(f'{left} fds open inside the root after the last close')
+    return failures
+
+
+def fanout_fork_mid_clear(directory: Path) -> list[str]:
+    """Fork while another thread's `clear()` is part way through 8 shards.
+
+    Another process holds shard 5's write lock, so `clear()` has emptied shards 0 to 4 and waits on 5
+    when the fork lands. The fork doesn't wait for it (the wait is outside the fork gate), and the
+    child reads and writes every shard, its write on shard 5 waiting for the other process. `clear()`
+    took every shard's snapshot before it started (plan 13, step 13e), so in the parent it removes
+    exactly the keys that existed then, and the child's writes all survive, on the shards it had
+    already emptied and on those it hadn't reached (D-011, across processes).
+    """
+    stalled_on = 5
+    cache = FanoutCache(directory, timeout=TIMEOUT)
+    shards = cache.shards
+    per_shard = [0] * shards
+    for i in range(2_000 * shards):
+        cache.set(f'old{i:06d}', i)
+        per_shard[cache.shard_of(f'old{i:06d}')] += 1
+    filled = sum(per_shard)
+    unreached = sum(per_shard[stalled_on:])
+    removed: list[int] = []
+    errors: list[BaseException] = []
+
+    def clearing() -> None:
+        try:
+            removed.append(cache.clear())
+        except BaseException as ex:
+            errors.append(ex)
+
+    def child() -> None:
+        mine = one_key_per_shard(cache, 'child-')
+        for key in mine.values():
+            assert cache.set(key, 'child') is True
+            assert cache.get(key) == 'child'
+        assert len(list(cache.iterkeys(prefix='child-'))) == shards
+
+    failures: list[str] = []
+    with SqlitePeer(directory / f'{stalled_on:03d}' / 'diskcache-oxide.sqlite') as peer:
+        peer.begin('IMMEDIATE')
+        thread = threading.Thread(target=clearing)
+        thread.start()
+        deadline = time.monotonic() + TIMEOUT
+        while len(cache) != unreached and time.monotonic() < deadline:
+            time.sleep(0.005)
+        left_at_fork = len(cache)
+        started = time.monotonic()
+        pid = fork(child)
+        latency = time.monotonic() - started
+        time.sleep(0.2)  # The child is now waiting for shard 5, too.
+        peer.rollback()
+        code = wait(pid)
+        thread.join(CHILD_DEADLINE)
+
+    failures += [f'clear() failed: {ex!r}' for ex in errors]
+    if left_at_fork != unreached:
+        failures.append(f'the fork did not land with clear() on shard {stalled_on} ({left_at_fork} keys left)')
+    if latency > 0.25:
+        failures.append(f'fork took {latency:.3f}s while clear() waited for a shard')
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if removed != [filled]:
+        failures.append(f'clear() removed {removed}, expected exactly the {filled} keys it started with')
+    survivors = sorted(cache.iterkeys())
+    if len(survivors) != shards or not all(k.startswith('child-') for k in survivors):
+        failures.append(f"after clear(), expected the child's {shards} keys, found {survivors[:10]}")
+    cache.close()
+    return failures
+
+
 SCENARIOS = {
     'd020': d020,
     'transact-fork-from-the-owner': transact_fork_from_the_owner,
@@ -492,6 +736,9 @@ SCENARIOS = {
     'parent-closes-after-fork': parent_closes_after_fork,
     'shared-iterator-while-a-fork-waits': shared_iterator_while_a_fork_waits,
     'fanout-fork-while-writing': fanout_fork_while_writing,
+    'fanout-fork-mid-merge': fanout_fork_mid_merge,
+    'fanout-close-after-fork': fanout_close_after_fork,
+    'fanout-fork-mid-clear': fanout_fork_mid_clear,
 }
 
 
