@@ -145,3 +145,69 @@ Note (2026-11-05, from plan 12 step 3d): `Caches.__getitem__` and its helpers ar
 - 2026-11-05: 13h done. `Caches.register(name, shards=N, ...)` (any `shards=`, even None) registers a FanoutCache with the same settings (`shards` is per-cache, rejected as a registry default). Typing: `caches[name]` stays `TransactionalCacheLike` and raises `TypeError` for a sharded name; the new `caches.fanout(name) -> FanoutCache | NullCache` is the sharded lookup (and raises `TypeError` for a plain name). Chosen over a union or a generic parameter because a name's kind isn't visible to the type checker, and a union return would break `caches[name].transact()`. Failed-open retry, `disable`/`enable` (`NullCache(invalidate=real)`), `stats`, `clear`, `expire_all`, `close_all` cover both kinds. `NullCache.transact` already took `key`. FanoutCache satisfies `CacheLike` (runtime and ty, params match the protocol); `CacheLike.__iter__` docstring now says every key once. For 13k: `caches.fanout(name).transact(key=...)` type-checks once `FanoutCache.transact` exists (the ty probe in `test_cache_api.py` omits it until then).
 - 2026-11-05: 13h review follow-ups. A layout mismatch now degrades like any bad open: the new public `LayoutMismatchError(FormatMismatchError, ValueError)` (so it is a `RuntimeError` that `Caches` already treats as an open failure, and still a `ValueError` for code that caught that) is raised for `Error::RoleMismatch` and for the new `Error::ShardCountMismatch { stored, requested }` (split out of `InvalidSetting`, so only the count mismatch maps to it). `create_exception!` takes one base, so the class is built with `type()` once and kept in a `PyOnceLock`. Through the registry, a wrong `shards=`, a plain `register` on a fanout root and a plain cache at shard `000` each give a `NullCache`, one `on_open_error`, a remembered failure and a retry after `retry_open_after`. D-032 and D-038 name the new type. `register(name, shards=None)` is documented loudly as a FanoutCache, not "unsharded", and tested (8 shards, `000`-`007`).
 - For 13k (from the 13h review): make `FanoutCache.transact`'s `key` keyword-only, to match `NullCache.transact(retry=False, *, key=None)`; otherwise `caches.fanout(n).transact('k')` on a `NullCache` silently binds `'k'` to `retry`. Also consider a `ShardedCacheLike` protocol (`CacheLike` plus `transact(*, key, retry)`) as `Caches.fanout()`'s return type, so protocol-typed fakes work.
+
+## Benchmark results (13i, 2026-11-05)
+
+`bench/fanout.py` (run as `python -m bench.fanout` from the repo root; `bench/scaling/linux_fanout.sh` runs it in the `dco-linux-dev` container). Release builds only (it refuses a debug build). Each round runs every variant in a fresh process, with the variant order rotating between rounds; the numbers are medians over 3 rounds (5 for the small-read case), and the percentage is (max - min) / median across rounds. Machine: Mac17,8, 18 cores, AC power, load 2.5 to 5 before each round from background processes (mds_stores, a menu-bar app), no cargo, rustc or pytest running. The Linux VM is OrbStack, 8 CPUs, Ubuntu 26.04, Python 3.14t, a `--release` wheel; it shows behavior, not production performance. Raw results: `bench/results/fanout-3.14.10{,t}-mk-mac.json` (all cases, 3 rounds), `bench/results/fanout-small-3.14.10t-mk-mac.json`, `bench/results/linux/fanout-small-3.14t-linux-vm.json` and `bench/results/linux/fanout-threads-3.14t-linux-vm.json`.
+
+Variants: `Cache` and `FanoutCache(8)` are diskcache-oxide's, at the default connection budget (8 in all, so one per shard) and at `max_connections=16` or 32; `stock` is diskcache 5.6.3's `Cache` and `FanoutCache(8)`.
+
+### Free-threaded small reads (4 threads, 6-byte values, 700 keys; reads/s)
+
+This is `bench/scaling/scale_probe.py`'s case. "separate" is four instances of the variant, one directory and one thread each.
+
+| Python 3.14t | 1 thread | 4 threads, one shared handle | 4 threads, four separate handles |
+|---|---|---|---|
+| Mac: oxide `Cache` | 926k | 846k (6%) | 1,875k |
+| Mac: oxide `FanoutCache(8)` | 904k | 804k (5%) | 1,856k |
+| Mac: oxide `FanoutCache(8)`, `max_connections=16` | 909k | 984k (1%) | 1,853k |
+| Mac: oxide `FanoutCache(8)`, `max_connections=32` | 904k | 1,229k (3%) | 1,828k |
+| Mac: stock `Cache` / stock `FanoutCache(8)` | 522k / 455k | 777k / 895k | 1,338k / 1,225k |
+| Linux VM: oxide `Cache` | 1,087k | 1,458k (4%) | 3,451k |
+| Linux VM: oxide `FanoutCache(8)` | 1,066k | 1,052k (3%) | 3,424k |
+| Linux VM: oxide `FanoutCache(8)`, `max_connections=16` | 1,068k | 1,084k (2%) | 3,413k |
+| Linux VM: oxide `FanoutCache(8)`, `max_connections=32` | 1,071k | 1,284k (7%) | 3,397k |
+| Linux VM: stock `Cache` / stock `FanoutCache(8)` | 499k / 427k | 960k / 858k | 1,544k / 1,347k |
+
+Four threads on one shared oxide handle get no faster than one thread on the Mac (846k against 926k) and about 1.3x on Linux (1.46M against 1.09M); four separate handles get 2.0x and 3.2x. This reproduces plan 11's numbers (Linux about 1.5M shared against 3.4M separate; macOS about 770k against 1.83M). FanoutCache does not close that gap: at the default budget it is no better than a plain `Cache` on the Mac and worse on Linux (1.05M against 1.46M). It gets better only as the connection budget grows (Mac 804k, 984k, 1,229k at 8, 16 and 32 connections), and even at 32 it reaches about two thirds of the separate-handle number on the Mac and well under half on Linux. A plain `Cache` with 32 connections is no better than with 8 (824k and 1,272k), so the budget alone is not the whole ceiling, and four separate `FanoutCache(8)` handles scale as well as four separate `Cache`s (1,856k and 3,424k). Whatever limits the shared case is in what threads on one handle share (the connection checkout and the per-handle state, or the Python object itself), which separate handles don't share. It is not simply SQLite's per-file mutex, since 8 shard files didn't help at the default budget.
+
+### The 99:1 get:set mix, threads in one process (ops/s, 1,000 keys, 1 KB values)
+
+Uniform keys; Zipf (s = 1.0) is within a few percent of these for every variant. Medians of 3 rounds, spread 1 to 9%.
+
+| Variant | Python | 1 | 2 | 4 | 8 |
+|---|---|---|---|---|---|
+| oxide `Cache` | 3.14 | 634k | 665k | 657k | 653k |
+| oxide `FanoutCache(8)` | 3.14 | 728k | 729k | 729k | 725k |
+| oxide `FanoutCache(8)`, `max_connections=16` | 3.14 | 731k | 729k | 725k | 725k |
+| stock `Cache` | 3.14 | 410k | 236k | 89k | 19k |
+| stock `FanoutCache(8)` | 3.14 | 377k | 151k | 64k | 18k |
+| oxide `Cache` | 3.14t | 640k | 592k | 735k | 591k |
+| oxide `FanoutCache(8)` | 3.14t | 727k | 655k | 658k | 688k |
+| oxide `FanoutCache(8)`, `max_connections=16` | 3.14t | 701k | 752k | 855k | 943k |
+| stock `Cache` | 3.14t | 441k | 377k | 439k | 469k |
+| stock `FanoutCache(8)` | 3.14t | 400k | 388k | 409k | 306k |
+| Linux VM: oxide `Cache` | 3.14t | 701k | 642k | 659k | 672k |
+| Linux VM: oxide `FanoutCache(8)` | 3.14t | 796k | 786k | 783k | 761k |
+| Linux VM: oxide `FanoutCache(8)`, `max_connections=16` | 3.14t | 743k | 802k | 821k | 821k |
+| Linux VM: stock `Cache` / `FanoutCache(8)` | 3.14t | 411k / 377k | 391k / 481k | 399k / 514k | 446k / 545k |
+
+On GIL builds every oxide variant is flat from 1 to 8 threads, as the GIL says it must be; stock diskcache collapses (19k at 8 threads). On 3.14t, none of the oxide variants scales with threads on this mix either: a plain `Cache` holds about 600 to 740k, FanoutCache(8) at the default budget about 660 to 730k, and only `max_connections=16` climbs (701k to 943k from 1 to 8 threads on the Mac, 743k to 821k on Linux). FanoutCache is about 10 to 15% ahead of `Cache` at one thread (the single-thread mix includes the 1% writes; read-only latency is the same, see the small-read table), and ahead of stock FanoutCache by 1.6x to 2.3x on 3.14t and by up to 40x on 3.14 with the GIL.
+
+### The 99:1 mix, processes (spawned, each opens the directory; uniform keys, ops/s summed over processes, Mac)
+
+| Variant | 1 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| oxide `Cache` | 660k | 713k | 607k | 262k |
+| oxide `FanoutCache(8)` | 714k | 1,039k | 1,553k | 1,496k |
+| oxide `FanoutCache(8)`, `max_connections=16` | 697k | 1,042k | 1,549k | 1,474k |
+| stock `Cache` | 429k | 521k | 603k | 489k |
+| stock `FanoutCache(8)` | 396k | 639k | 987k | 1,238k |
+
+This is where sharding wins, and clearly. Across processes a plain oxide `Cache` peaks at two processes and then falls (262k at 8, a quarter of its one-process rate), because 1% of operations are writes and every writer queues on the one write lock. FanoutCache(8) rises to 1.5M at 4 processes and holds 1.5M at 8, 5.7x a plain `Cache` at 8 processes, and 1.2x stock FanoutCache at 8 (stock FanoutCache catches up as processes increase, at 1,238k, but is 1.6x slower at 4 processes). Zipf keys give the same shape (FanoutCache 1,313k at 8 processes against 266k for `Cache`). The connection budget makes no difference here because each process has its own connections. The same on 3.14 and 3.14t within noise.
+
+### Conclusions and things worth knowing
+
+- FanoutCache removes the multi-process write-lock ceiling (5.7x at 8 processes on a 99:1 mix) and so earns its place for Talk Python's several worker processes.
+- FanoutCache at the default budget does not remove the free-threaded multi-thread read ceiling: shared-handle reads at 4 threads stay at or below a plain `Cache` (Mac 804k against 846k, Linux 1.05M against 1.46M), where separate handles get 2 to 3x. A larger `max_connections` helps, but not to the separate-handle level. If a threaded deployment wants reads to scale, the default of one connection per shard is the first thing to revisit (2 or 4 per shard), and the shared per-handle path is the second; plan 12 step 6 is where that gets investigated.
+- Run `python -m bench.fanout --only small --variant-list oxide-cache oxide-fanout8 oxide-fanout8-c32 ...` to reproduce the small-read case in a few minutes; `oxide-cache-c32` and `oxide-fanout8-c32` are outside the default variant list.
