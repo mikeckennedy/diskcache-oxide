@@ -45,12 +45,54 @@
 - [Cache.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__exit__.html)
 - [Cache.get](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.get.html)
 
+#### FanoutCache
+> A cache sharded over several SQLite databases, so writers in many processes stop queueing on one write lock.
+
+- [FanoutCache](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.html): A disk cache split over several SQLite databases (shards), so reads and writes on different
+
+#### FanoutCache Methods
+> Methods for the FanoutCache class
+
+- [FanoutCache.directory](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.directory.html)
+- [FanoutCache.timeout](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.timeout.html)
+- [FanoutCache.shards](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.shards.html)
+- [FanoutCache.size_limit](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.size_limit.html)
+- [FanoutCache.cull_limit](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.cull_limit.html)
+- [FanoutCache.enabled](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.enabled.html)
+- [FanoutCache.shard_of](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.shard_of.html)
+- [FanoutCache.transact](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.transact.html)
+- [FanoutCache.set](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.set.html)
+- [FanoutCache.add](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.add.html)
+- [FanoutCache.delete](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.delete.html)
+- [FanoutCache.pop](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.pop.html)
+- [FanoutCache.touch](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.touch.html)
+- [FanoutCache.incr](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.incr.html)
+- [FanoutCache.decr](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.decr.html)
+- [FanoutCache.volume](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.volume.html)
+- [FanoutCache.expire](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.expire.html)
+- [FanoutCache.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.clear.html)
+- [FanoutCache.cull](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.cull.html)
+- [FanoutCache.checkpoint](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.checkpoint.html)
+- [FanoutCache.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.iterkeys.html)
+- [FanoutCache.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__iter__.html)
+- [FanoutCache.close](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.close.html)
+- [FanoutCache.__getitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__getitem__.html)
+- [FanoutCache.__setitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__setitem__.html)
+- [FanoutCache.__delitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__delitem__.html)
+- [FanoutCache.__contains__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__contains__.html)
+- [FanoutCache.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__len__.html)
+- [FanoutCache.__bool__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__bool__.html)
+- [FanoutCache.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__enter__.html)
+- [FanoutCache.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__exit__.html)
+- [FanoutCache.get](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.get.html)
+
 #### NullCache
 > Switched-off cache behaving as if every entry expires instantly.
 
 - [NullCache](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.html): A switched-off cache, so app code needs no `if cache is None` checks
-- [CacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.html): What application code can rely on from a `Cache` or a `NullCache`
+- [CacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.html): What application code can rely on from a `Cache`, a `FanoutCache` or a `NullCache`
 - [TransactionalCacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/TransactionalCacheLike.html): A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have
+- [ShardedCacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/ShardedCacheLike.html): A `CacheLike` with a sharded cache's `transact(*, key, retry=False)`, which `FanoutCache` and
 
 #### NullCache Methods
 > Methods for the NullCache class
@@ -136,6 +178,7 @@
 - [Caches.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__len__.html)
 - [Caches.directory](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.directory.html)
 - [Caches.__getitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__getitem__.html)
+- [Caches.fanout](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.fanout.html)
 - [Caches.disable](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.disable.html)
 - [Caches.enable](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.enable.html)
 - [Caches.enabled](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.enabled.html)
@@ -155,6 +198,7 @@
 - [CorruptValueError](https://mkennedy.codes/docs/diskcache-oxide/reference/CorruptValueError.html): A stored value couldn't be decoded: an unknown mode, or bytes that don't parse
 - [ForeignValueError](https://mkennedy.codes/docs/diskcache-oxide/reference/ForeignValueError.html): A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote it), or a time zone missing from this host
 - [FormatMismatchError](https://mkennedy.codes/docs/diskcache-oxide/reference/FormatMismatchError.html): The cache directory holds a database in a format this version doesn't support
+- [LayoutMismatchError](https://mkennedy.codes/docs/diskcache-oxide/reference/LayoutMismatchError.html): The directory's layout doesn't match how it was opened: a plain Cache on a FanoutCache root or shard, a FanoutCache on a plain Cache's directory, or shards= that differs from the stored count. Also a ValueError
 
 #### SQLite and System
 > Information about the bundled SQLite and environment.
@@ -176,6 +220,7 @@
 - [Serialization](https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html)
 - [NullCache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html)
 - [Caches: named caches](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html)
+- [FanoutCache: sharded caches](https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html)
 - [Transactions](https://mkennedy.codes/docs/diskcache-oxide/user-guide/transactions.html)
 - [Concurrency and forks](https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html)
 - [Storage and WAL](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html)

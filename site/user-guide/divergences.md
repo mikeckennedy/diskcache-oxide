@@ -36,10 +36,19 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-025 | A key iterator used by two threads at once | `ValueError` from the generator | `ValueError`, from a native iterator with no `send()` or [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) |
 | D-026 | [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) of a value it can't read | Row is deleted, then the decode fails | Decodes first, so the row stays unless no build could read it |
 | D-027 | A call behind a pending fork | Never waits: there's no fork barrier | Waits within its [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout), then raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) |
-| D-028 | An outage on a single-key call | [Cache](../reference/Cache.md#diskcache_oxide.Cache) raises; `FanoutCache` answers [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) alone as a miss | Raises by default; `durable=True` answers it as a miss or `False`, and reports it |
+| D-028 | An outage on a single-key call | [Cache](../reference/Cache.md#diskcache_oxide.Cache) raises; [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) answers [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) alone as a miss | Raises by default; `durable=True` answers it as a miss or `False`, and reports it |
 | D-029 | `with cache.transact() as tx:` | `tx` is `None`; a second handle's [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) inside waits out the timeout | `tx` is the cache; every handle on the directory joins the outer transaction |
 | D-030 | A transaction on a second, busy cache | Waits for the timeout; `retry=True` loops on any `OperationalError` | [TransactionBusy](../reference/TransactionBusy.md#diskcache_oxide.TransactionBusy) at once; `retry=True` retries only [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) |
 | D-031 | Ending a transaction on another thread | "May not be shared between threads" | Allowed, within its [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout); the owner's exit raises unless it committed |
+| D-032 | [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) shard count | Not recorded; a different `shards=` quietly misroutes keys | Recorded in a manifest; a different `shards=` raises [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) |
+| D-033 | Which shard a key lives in | adler32; no [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) | XXH3-64, frozen in the format; `shard_of(key)`; [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) merges the shards in sorted order |
+| D-034 | A busy shard on a single-key call | Swallows [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) (10 ms default); [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) swallows any `OperationalError` | Raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout); `durable=True` answers it as a miss and reports it |
+| D-035 | [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) over the shards | Retries each shard forever | One [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) for the call; raises with `failed_shards` and `removed` |
+| D-036 | [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) | Divided as a float, no minimum; reads shard 0's share | Split as integers, 1 MiB per shard minimum; reads back as the total |
+| D-037 | `max_connections` | One connection per thread per shard (264 fds at 64 threads) | A total across the shards; fds within `2 × max_connections + 2 × shards` |
+| D-038 | [Cache](../reference/Cache.md#diskcache_oxide.Cache) and [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) on each other's directory | Quietly creates or reuses a database | [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError), creating nothing |
+| D-039 | [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) constructor and features | `FanoutCache(path, 4)`; sub-collections, tags, [stats()](../reference/Caches.stats.md#diskcache_oxide.Caches.stats), `check()` and more | [shards](../reference/FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) is keyword-only; those features aren't there yet |
+| D-040 | [FanoutCache.transact()](../reference/FanoutCache.transact.md#diskcache_oxide.FanoutCache.transact) | Locks every shard; `tx` is `None` | `transact(*, key)` locks one shard and refuses other shards' keys |
 
 
 # Safety
@@ -156,6 +165,20 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
 - **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.md#a-cache-that-cant-take-a-request-down).
 - **D-025:** `iter(cache)` and [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
+
+
+## FanoutCache (D-032 to D-040)
+
+These are covered together in [FanoutCache: sharded caches](fanoutcache.md), and listed against diskcache's in [Switching from python-diskcache](switching-from-diskcache.md#fanoutcache).
+
+- **D-032:** the shard count is part of where every key lives, so it's recorded, and a different `shards=` is an error instead of a quiet loss of data and atomicity.
+- **D-033:** the hash is fixed by its definition and part of the format, and `iterkeys(prefix=)` gives [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) the ordered listing [Cache](../reference/Cache.md#diskcache_oxide.Cache) has.
+- **D-034:** a silently dropped write and a hang are both worse than an error the caller chose how to handle; `durable=True` is that choice.
+- **D-035:** a maintenance job must finish in bounded time, and when it can't, it must say what it did.
+- **D-036 and D-037:** budgets (size, connections, file descriptors) follow configuration, not the number of threads or shards.
+- **D-038:** a typo shouldn't leave a directory that neither kind of cache can open, or a shard written behind the [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)'s back.
+- **D-039:** the missing stock features each need their own design across shards, so they arrive with Phase 6a and 6d rather than as copies.
+- **D-040:** holding every shard's lock would serialize the whole cache behind one transaction, which is what sharding exists to avoid.
 
 
 # diskcache-community

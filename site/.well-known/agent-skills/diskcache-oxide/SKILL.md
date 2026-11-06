@@ -59,13 +59,57 @@ Methods for the Cache class
 - `Cache.__exit__`
 - `Cache.get`
 
+### FanoutCache
+
+A cache sharded over several SQLite databases, so writers in many processes stop queueing on one write lock.
+
+- `FanoutCache`: A disk cache split over several SQLite databases (shards), so reads and writes on different
+
+### FanoutCache Methods
+
+Methods for the FanoutCache class
+
+- `FanoutCache.directory`
+- `FanoutCache.timeout`
+- `FanoutCache.shards`
+- `FanoutCache.size_limit`
+- `FanoutCache.cull_limit`
+- `FanoutCache.enabled`
+- `FanoutCache.shard_of`
+- `FanoutCache.transact`
+- `FanoutCache.set`
+- `FanoutCache.add`
+- `FanoutCache.delete`
+- `FanoutCache.pop`
+- `FanoutCache.touch`
+- `FanoutCache.incr`
+- `FanoutCache.decr`
+- `FanoutCache.volume`
+- `FanoutCache.expire`
+- `FanoutCache.clear`
+- `FanoutCache.cull`
+- `FanoutCache.checkpoint`
+- `FanoutCache.iterkeys`
+- `FanoutCache.__iter__`
+- `FanoutCache.close`
+- `FanoutCache.__getitem__`
+- `FanoutCache.__setitem__`
+- `FanoutCache.__delitem__`
+- `FanoutCache.__contains__`
+- `FanoutCache.__len__`
+- `FanoutCache.__bool__`
+- `FanoutCache.__enter__`
+- `FanoutCache.__exit__`
+- `FanoutCache.get`
+
 ### NullCache
 
 Switched-off cache behaving as if every entry expires instantly.
 
 - `NullCache`: A switched-off cache, so app code needs no `if cache is None` checks
-- `CacheLike`: What application code can rely on from a `Cache` or a `NullCache`
+- `CacheLike`: What application code can rely on from a `Cache`, a `FanoutCache` or a `NullCache`
 - `TransactionalCacheLike`: A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have
+- `ShardedCacheLike`: A `CacheLike` with a sharded cache's `transact(*, key, retry=False)`, which `FanoutCache` and
 
 ### NullCache Methods
 
@@ -155,6 +199,7 @@ Methods for the Caches class
 - `Caches.__len__`
 - `Caches.directory`
 - `Caches.__getitem__`
+- `Caches.fanout`
 - `Caches.disable`
 - `Caches.enable`
 - `Caches.enabled`
@@ -175,6 +220,7 @@ Exceptions raised by cache operations.
 - `CorruptValueError`: A stored value couldn't be decoded: an unknown mode, or bytes that don't parse
 - `ForeignValueError`: A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote it), or a time zone missing from this host
 - `FormatMismatchError`: The cache directory holds a database in a format this version doesn't support
+- `LayoutMismatchError`: The directory's layout doesn't match how it was opened: a plain Cache on a FanoutCache root or shard, a FanoutCache on a plain Cache's directory, or shards= that differs from the stored count. Also a ValueError
 
 ### SQLite and System
 
@@ -205,6 +251,7 @@ Information about the bundled SQLite and environment.
 - Call cache.checkpoint() at shutdown or from a maintenance job to empty the write-ahead log after write bursts; it returns False rather than raising when other processes keep it busy.
 - Leave wal_size_limit and sqlite_cache_size at their defaults unless tuning for extreme read-heavy or memory-constrained workloads.
 - Use Cache(..., on_decode_error='miss') (or a reporting function) so a value that can't be decoded, such as a pickled class that moved, is a miss instead of an exception.
+- For several worker processes that write often, use FanoutCache(directory, shards=8) (or Caches.register(name, shards=8), read with caches.fanout(name)); shards= is keyword-only and permanent for a directory, and transact(key=...) covers only that key's shard.
 - Register an app's caches once in a Caches registry and look them up by name (caches['general']); a cache that can't open becomes a NullCache and is retried after 10 seconds.
 
 ## What diskcache-oxide is

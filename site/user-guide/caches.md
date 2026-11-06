@@ -46,6 +46,18 @@ A [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) at open means busy,
 A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead.
 
 
+# Sharded caches
+
+Pass `shards=` to [register](../reference/Caches.register.md#diskcache_oxide.Caches.register) to open a [`FanoutCache`](fanoutcache.md) instead of a [Cache](../reference/Cache.md#diskcache_oxide.Cache). It takes the same settings, and `max_connections` is then a total across the shards.
+
+``` python
+caches.register('rate_limits', shards=8)
+caches.fanout('rate_limits').incr('ip:203.0.113.7')
+```
+
+A plain cache is read with `caches[name]` and a sharded one with `caches.fanout(name)`, typed `FanoutCache | NullCache`, because its [transact](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) takes a key. Reading a name the wrong way raises `TypeError`. Passing [shards](../reference/FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) at all picks the kind, even `shards=None`, so a config file that writes `shards: null` for "none" would register a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache): leave it out. A directory that holds the other kind of cache, or another shard count, fails to open with [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError), and the lookup returns a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) like any failed open. Everything else on this page ([disable](../reference/Caches.disable.md#diskcache_oxide.Caches.disable), [stats](../reference/Caches.stats.md#diskcache_oxide.Caches.stats), [clear](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire_all](../reference/Caches.expire_all.md#diskcache_oxide.Caches.expire_all), [close_all](../reference/Caches.close_all.md#diskcache_oxide.Caches.close_all)) works the same for both kinds.
+
+
 # Switching caches off
 
 ``` python

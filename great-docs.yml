@@ -64,6 +64,7 @@ user_guide:
       - serialization.qmd
       - null-cache.qmd
       - caches.qmd
+      - fanoutcache.qmd
       - transactions.qmd
       - concurrency-and-forks.qmd
       - storage-and-wal.qmd
@@ -98,6 +99,7 @@ skill:
     - "Call cache.checkpoint() at shutdown or from a maintenance job to empty the write-ahead log after write bursts; it returns False rather than raising when other processes keep it busy."
     - "Leave wal_size_limit and sqlite_cache_size at their defaults unless tuning for extreme read-heavy or memory-constrained workloads."
     - "Use Cache(..., on_decode_error='miss') (or a reporting function) so a value that can't be decoded, such as a pickled class that moved, is a miss instead of an exception."
+    - "For several worker processes that write often, use FanoutCache(directory, shards=8) (or Caches.register(name, shards=8), read with caches.fanout(name)); shards= is keyword-only and permanent for a directory, and transact(key=...) covers only that key's shard."
     - "Register an app's caches once in a Caches registry and look them up by name (caches['general']); a cache that can't open becomes a NullCache and is retried after 10 seconds."
 
 include_in_header:
@@ -116,19 +118,24 @@ authors:
 reference:
   title: "API Reference"
   desc: >-
-    The public API of diskcache-oxide: Cache, NullCache, the CacheLike and TransactionalCacheLike protocols,
+    The public API of diskcache-oxide: Cache, FanoutCache, NullCache, the CacheLike, TransactionalCacheLike and ShardedCacheLike protocols,
     the Caches registry, exceptions, and SQLite utilities.
   sections:
     - title: Cache
       desc: "Disk-backed cache backed by SQLite, shared safely across threads and processes."
       contents:
         - Cache
+    - title: FanoutCache
+      desc: "A cache sharded over several SQLite databases, so writers in many processes stop queueing on one write lock."
+      contents:
+        - FanoutCache
     - title: NullCache
       desc: "Switched-off cache behaving as if every entry expires instantly."
       contents:
         - NullCache
         - CacheLike
         - TransactionalCacheLike
+        - ShardedCacheLike
     - title: Caches
       desc: "A registry of named caches under one base directory."
       contents:
@@ -143,6 +150,7 @@ reference:
         - CorruptValueError
         - ForeignValueError
         - FormatMismatchError
+        - LayoutMismatchError
     - title: SQLite and System
       desc: "Information about the bundled SQLite and environment."
       contents:

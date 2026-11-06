@@ -251,6 +251,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Transactions</span></a>
   </div>
@@ -320,6 +326,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#it-doesnt-bound-time" id="toc-it-doesnt-bound-time" class="nav-link" data-scroll-target="#it-doesnt-bound-time">It doesn’t bound time</a></li>
   <li><a href="#reporting" id="toc-reporting" class="nav-link" data-scroll-target="#reporting">Reporting</a></li>
   </ul></li>
+  <li><a href="#more-than-one-process-writing" id="toc-more-than-one-process-writing" class="nav-link" data-scroll-target="#more-than-one-process-writing">More than one process writing</a></li>
   <li><a href="#shutting-down" id="toc-shutting-down" class="nav-link" data-scroll-target="#shutting-down">Shutting down</a></li>
   <li><a href="#testing-code-that-uses-a-cache" id="toc-testing-code-that-uses-a-cache" class="nav-link" data-scroll-target="#testing-code-that-uses-a-cache">Testing code that uses a cache</a></li>
   </ul>
@@ -633,6 +640,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Each group logs its first failure at once, then at most once a minute per cache handle, with counts by operation since its last line: <code>get: 1204, set: 37</code>. An outage can be thousands of failures a second, and that’s one line a minute. Failures after a group’s last line stay counted until its next one, or until you call <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a>, which logs what’s left. Dropping a handle without <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> doesn’t. An outage that ends within the minute can therefore show only its first failure until then, which is why each line says more may follow. A hook outage on a read is reported once per stored version, as in the <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> table above, and counted here as busy for a timeout and failing otherwise, with no line of its own: the group’s next line includes it. Time comes from the failing call’s clock, so <code>clock=</code> drives it in tests. <code>cache._durable_stats()</code> has the running totals by group and operation, the place to look for “how many invalidations did we lose?”. It’s a private hook for now, like <code>_wal_stats()</code>.</p>
 <p>The limit is per handle, so a <code>with Cache(...)</code> per request logs on every request during an outage. A handle from <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> is opened once, so it isn’t affected.</p>
 </section>
+</section>
+<section id="more-than-one-process-writing" class="level1">
+<h1>More than one process writing</h1>
+<p>A single <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> has one write lock per directory, so many processes that all write queue on it. If your app runs several worker processes that write often (counters, rate limits, job claims), open a <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> instead: it spreads the keys over several databases, and in the repository’s benchmark it holds its rate at 8 processes where a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> falls to about 40% of its one-process rate. For one process, or mostly reads, a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is the simpler choice.</p>
 </section>
 <section id="shutting-down" class="level1">
 <h1>Shutting down</h1>

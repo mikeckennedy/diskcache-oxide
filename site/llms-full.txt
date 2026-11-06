@@ -131,6 +131,149 @@ __exit__(self, exc_type, exc, tb, /)
 get(self, /, key, default=None, *, expire_time=False)
 
 
+## FanoutCache
+
+A cache sharded over several SQLite databases, so writers in many processes stop queueing on one write lock.
+
+
+FanoutCache(directory, timeout=None, *, shards=None, size_limit=None, cull_limit=None, serializer='msgpack', pickle=False, clock=None, max_connections=None, sqlite_cache_size=None, wal_size_limit=None, wal_checkpoint='manual', on_decode_error=None, durable=False)
+
+A disk cache split over several SQLite databases (shards), so reads and writes on different
+keys don't share one file's locks.
+
+
+## FanoutCache Methods
+
+Methods for the FanoutCache class
+
+
+directory
+
+The root directory.
+
+timeout
+
+shards
+
+How many shards the root has, as its manifest records.
+
+size_limit
+
+The sum of every shard's stored `size_limit`.
+
+cull_limit
+
+Shard 0's stored `cull_limit`. Every shard is opened with the same one, so this is every
+shard's only while they were all created, and last set, under the same settings.
+
+enabled
+
+Always True for a real cache (a `NullCache` is False).
+
+shard_of(self, /, key)
+
+The shard `key` lives in, `0 <= shard_of(key) < shards`: the same in every process and every
+release. Keys with the same shard can share a `transact(key=...)`.
+
+transact(self, /, *, key, retry=False)
+
+A write transaction on the shard `key` lives in: `with cache.transact(key='total') as tx:`.
+It is `Cache.transact()` on that shard's store (the same `Transaction`, reentrancy,
+`TransactionBusy` and aborted exits), and `tx` is this `FanoutCache`. Inside the block, this
+thread's calls on any other shard's key raise `ValueError`, reads included, through any
+handle on the root, and so does a `transact` on another shard; `shard_of` says which keys
+share one. `key` is keyword-only, so a switched-off cache's `NullCache.transact(key=...)`
+takes the same spelling.
+
+set(self, /, key, value, expire=None)
+
+add(self, /, key, value, expire=None)
+
+delete(self, /, key)
+
+pop(self, /, key, default=None)
+
+touch(self, /, key, expire=None)
+
+incr(self, /, key, delta=Ellipsis, default=Ellipsis)
+
+decr(self, /, key, delta=Ellipsis, default=Ellipsis)
+
+volume(self, /)
+
+The sum of every shard's volume.
+
+expire(self, /, *, timeout=None)
+
+Removes every expired entry from every shard. Returns how many it removed. `timeout`
+overrides the cache's for this call: one budget for the whole call (see `remove_everywhere`).
+
+clear(self, /, *, timeout=None)
+
+Removes every entry stored before the call. Returns how many it removed. `timeout` as for
+`expire`.
+
+cull(self, /, *, timeout=None)
+
+Removes expired entries, then evicts each shard until it's under its share of `size_limit`.
+Returns how many it removed. `timeout` as for `expire`.
+
+checkpoint(self, /, *, timeout=None)
+
+Checkpoints every shard's write-ahead log and truncates it (D-024), retrying busy ones until
+one deadline of `timeout` for the whole call; a shard reached after it gets one try. True only
+if every shard's WAL was reset. A real error (a full disk) raises once every shard was tried.
+
+iterkeys(self, /, *, prefix=None, reverse=False)
+
+Keys in sorted order (code-point order, like `sorted()`, the same order a `Cache` gives),
+optionally only those starting with `prefix`: a merge of every shard's sorted pages. Each
+shard keeps a small page buffered (see `merge_page`), so the first `next()` reads every shard
+once; no connection is held between `next()` calls.
+
+__iter__(self, /)
+
+Implement iter(self).
+
+close(self, /, *, checkpoint=True)
+
+Releases this handle on every shard, as `Cache.close()` does for its one store, but with
+one budget for the whole close: the checkpoints of large WALs share at most 1 s (or
+`timeout`, if shorter), and behind a pending fork every release together waits at most 1 s
+before it's left for the end of the fork (D-027). Never raises. Using the cache again
+reopens the shards it touches. Closing twice is harmless.
+
+__getitem__(self, key, /)
+
+Return self[key].
+
+__setitem__(self, key, value, /)
+
+Set self[key] to value.
+
+__delitem__(self, key, /)
+
+Delete self[key].
+
+__contains__(self, key, /)
+
+Return bool(key in self).
+
+__len__(self, /)
+
+Return len(self).
+
+__bool__(self, /)
+
+True if self else False
+
+__enter__(self, /)
+
+__exit__(self, exc_type, exc, tb, /)
+
+get(self, /, key, default=None, *, expire_time=False)
+
+
 ## NullCache
 
 Switched-off cache behaving as if every entry expires instantly.
@@ -154,9 +297,9 @@ Args:
 
 CacheLike(*args, **kwargs)
 
-What application code can rely on from a `Cache` or a `NullCache`.
+What application code can rely on from a `Cache`, a `FanoutCache` or a `NullCache`.
 
-`Cache` and `NullCache` both satisfy it, so a factory can return either and callers never need
+All three satisfy it, so a factory can return either and callers never need
 to check which one they got. A test keeps the three signatures identical.
 
 TransactionalCacheLike(*args, **kwargs)
@@ -165,6 +308,16 @@ A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have.
 
 On a `Cache`, `with cache.transact() as tx:` runs the block's calls on this thread in one write
 transaction; `tx` is the cache. On a `NullCache` it's a no-op that yields the `NullCache`.
+
+ShardedCacheLike(*args, **kwargs)
+
+A `CacheLike` with a sharded cache's `transact(*, key, retry=False)`, which `FanoutCache` and
+`NullCache` both have.
+
+On a `FanoutCache`, `with cache.transact(key='total') as tx:` runs the block's calls on this
+thread for keys on `key`'s shard in one write transaction, and refuses keys on other shards
+(`ValueError`); `tx` is the cache. On a `NullCache` it's a no-op that yields the `NullCache`.
+`key` is keyword-only, so `transact('total')` is a type error rather than a `retry` of 'total'.
 
 
 ## NullCache Methods
@@ -425,7 +578,7 @@ True if caching is on, so `if cache:` reads naturally.
 
 __iter__(self) -> 'Iterator[str]'
 
-Iterate over keys in insertion order.
+Iterate over every key once. A `Cache` yields them in insertion order.
 
 __enter__(self) -> 'Self'
 
@@ -481,13 +634,18 @@ Args:
         `base_dir`, so it must be a plain name: no path separators, not `.` or `..`.
     directory: Put this cache somewhere else.
     **settings: `Cache` settings for this cache, over the registry's defaults. A callable
-        `on_decode_error` is called as `(name, key, exc)`, as at the registry level.
+        `on_decode_error` is called as `(name, key, exc)`, as at the registry level. Adding
+        `shards=` registers a `FanoutCache` instead, which takes the same settings; read it
+        with `fanout(name)`. Passing the key at all is what picks the kind, so `shards=None`
+        is NOT "not sharded": it is a `FanoutCache` with the stored shard count, or 8 for a
+        new root. Leave `shards` out for a plain cache (a config file that writes
+        `shards: null` for "none" would register a FanoutCache).
 
 Raises:
     ValueError: The name is taken or isn't a plain directory name, or another registered
         cache already uses that directory (two names would share one store, and the last
         one opened would quietly set its `size_limit`).
-    TypeError: An unknown `Cache` setting.
+    TypeError: An unknown `Cache` (or `FanoutCache`) setting.
 
 __contains__(self, name: 'object') -> 'bool'
 
@@ -503,14 +661,35 @@ Where the named cache lives.
 
 __getitem__(self, name: 'N') -> 'TransactionalCacheLike'
 
-The named cache: opened on first use, then the same object every time.
+The named plain cache: opened on first use, then the same object every time.
 
 A `NullCache` while it can't be opened (see the class docs), or `NullCache(invalidate=real)`
-while it's disabled.
+while it's disabled. The type is `TransactionalCacheLike`, so `caches[name].transact()` checks;
+a cache registered with `shards=` is read with `fanout()`, whose `transact` takes a key.
 
 Raises:
     KeyError: No cache by that name is registered.
-    TypeError, ValueError: Its settings are invalid.
+    TypeError: The cache was registered with `shards=` (use `fanout(name)`), or its settings
+        are invalid.
+    ValueError: Its settings are invalid.
+
+fanout(self, name: 'N') -> 'FanoutCache | NullCache'
+
+The named sharded cache (one registered with `shards=`), looked up as `caches[name]` is.
+
+A `NullCache` while it can't be opened or is disabled, exactly as for a plain cache. That
+includes a directory whose layout doesn't match the registration (`LayoutMismatchError`: a
+different shard count, or a plain cache's directory): reported through `on_open_error`,
+remembered, and retried after `retry_open_after`. Its `transact(retry=False, *, key=None)`
+accepts the `key=` a `FanoutCache` needs, so `caches.fanout(name).transact(key=k)` runs
+whether the cache is on or off. Both kinds satisfy `ShardedCacheLike`, so code (or a test
+fake) can be typed against that; the return stays the union so `shard_of` and `shards`
+still type-check on it when it's a `FanoutCache`.
+
+Raises:
+    KeyError: No cache by that name is registered.
+    TypeError: The cache is a plain one (use `caches[name]`), or its settings are invalid.
+    ValueError: Its settings are invalid.
 
 disable(self, *names: 'N') -> 'None'
 
@@ -583,6 +762,10 @@ A stored value this build can't read but another might: an unknown mode, tag or 
 FormatMismatchError
 
 The cache directory holds a database in a format this version doesn't support.
+
+LayoutMismatchError
+
+The directory's layout doesn't match how it was opened: a plain Cache on a FanoutCache root or shard, a FanoutCache on a plain Cache's directory, or shards= that differs from the stored count. Also a ValueError.
 
 
 ## SQLite and System
@@ -854,6 +1037,10 @@ Each group logs its first failure at once, then at most once a minute per cache 
 
 The limit is per handle, so a `with Cache(...)` per request logs on every request during an outage. A handle from `Caches` is opened once, so it isn't affected.
 
+## More than one process writing
+
+A single `Cache` has one write lock per directory, so many processes that all write queue on it. If your app runs several worker processes that write often (counters, rate limits, job claims), open a [`FanoutCache`](fanoutcache.qmd) instead: it spreads the keys over several databases, and in the repository's benchmark it holds its rate at 8 processes where a plain `Cache` falls to about 40% of its one-process rate. For one process, or mostly reads, a plain `Cache` is the simpler choice.
+
 ## Shutting down
 
 Call `cache.checkpoint()` at shutdown if you can. It isn't required. With readers in other processes, a burst of writes (a big fill, or a `clear()`) can leave SQLite's write-ahead log much larger than the database, and SQLite only shrinks it when it gets a moment with no readers. `checkpoint()` makes that moment: it waits briefly for in-flight reads, copies the log into the database, and truncates it. It returns `False` instead of raising if other processes keep it busy.
@@ -906,7 +1093,8 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
 | `disk=`, `eviction_policy=` | Supported | Not supported (eviction policies are coming) |
 | `transact()` | `tx` is `None` | `tx` is the cache; see [`transact()`](#transact) below |
-| Tags, `memoize`, `FanoutCache` | Supported | Coming in later phases |
+| `FanoutCache` | Supported | Supported, with differences; see [`FanoutCache`](#fanoutcache) below |
+| Tags, `memoize` | Supported | Coming in later phases |
 
 ## Values: no pickle unless you ask
 
@@ -943,6 +1131,21 @@ Only `str` keys are accepted today; anything else raises `TypeError`. Keys are a
 - **Forking inside your own transaction** poisons the child's copy, whose writes raise `RuntimeError` at once, instead of stalling for the timeout (D-020).
 - **It belongs to a thread, not an asyncio task**, as in diskcache: don't `await` inside the block.
 
+## `FanoutCache`
+
+`FanoutCache` is covered in full in [FanoutCache: sharded caches](fanoutcache.qmd). The differences from diskcache's, each with an entry in [Divergences](divergences.qmd):
+
+- **`shards` is keyword-only** (`FanoutCache(path, shards=4)`). `FanoutCache(path, 4)` is a four-second `timeout` here. The constructor is `FanoutCache(directory, timeout=None, *, shards=None, ...)`, and `directory` is required (D-039).
+- **The shard count is recorded**, and a different `shards=` raises `LayoutMismatchError` instead of silently sending keys to other shards. `shards=None` uses the stored count, or creates 8 (D-032).
+- **A plain `Cache` and a `FanoutCache` refuse each other's directories** with `LayoutMismatchError`, and nothing is created by the refused open (D-038).
+- **Shards are chosen by XXH3, not adler32**, so which shard a key lands in differs from diskcache's, and `shard_of(key)` tells you. Iteration goes shard by shard, and `iterkeys(prefix=, reverse=)` gives the merged sorted order. There's no `reversed()` yet (D-033).
+- **A busy shard raises `Timeout`** after `timeout` (60 seconds by default) instead of silently giving False or the default after 10 ms. `durable=True` gives the miss answers, and logs them (D-034).
+- **Maintenance shares one `timeout`** across the shards, doesn't retry forever, and reports partial progress: a failure raises with `failed_shards` and `removed` (D-035).
+- **`size_limit` is a total**, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0's share (D-036).
+- **`max_connections` is a total** across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least `shards` (D-037).
+- **`transact()` takes a key** and covers one shard: `with cache.transact(key=k):` where diskcache's `with cache.transact():` locks every shard. Calls for keys on other shards inside the block raise `ValueError`, reads included. A ported bare `transact()` raises `TypeError` (D-040).
+- **Not there yet:** `cache()`, `deque()` and `index()`, `stats()`, `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, `retry=`, `read=` and `tag=` arguments, settings as attributes, and pickling (D-039).
+
 ## Truthiness
 
 In diskcache, an empty cache is falsy, so `if cache:` quietly skips caching right after every deploy, when the cache is empty. In diskcache-oxide, `bool(Cache)` is always True and `bool(NullCache)` is always False, so `if cache:` means "is caching on?". Both have an `enabled` property that says the same thing.
@@ -967,7 +1170,7 @@ You don't have to change anything for these:
 - Reads take about half the time, and threaded throughput no longer collapses as threads are added. See [Performance](performance.qmd).
 - A child process forked while another thread was writing can always write. In diskcache it can stall for the full 60-second timeout.
 - `clear()` keeps writes that land while it runs, `expire()` removes every expired entry, and a read during an overwrite never misses.
-- File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache.
+- File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache. A `FanoutCache` bounds them for the whole root, not per shard.
 - Opening a cache and reading from it never writes to the database.
 
 
@@ -1011,6 +1214,7 @@ The same Rust core, served over HTTP to many clients: a Redis-style central cach
 - Bounded connections and memory, and a target size for the write-ahead log.
 - `NullCache`, the `CacheLike` protocol, `py.typed`.
 - [`transact()`](transactions.qmd), ahead of the rest of Phase 6, with `TransactionBusy` and the `TransactionalCacheLike` protocol.
+- [`FanoutCache`](fanoutcache.qmd) (Phase 6c), sharding across several databases, with `Caches.register(name, shards=...)` and `ShardedCacheLike`. It removes the multi-process write-lock ceiling; making threads that share one handle scale on free-threaded Python is part of Phase 4.
 
 ### Now: concurrency review and soak (Phase 2.5)
 
@@ -1025,7 +1229,7 @@ The concurrency core is where serious bugs hide, so it gets its own phase before
 | **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. |
 | **6a. Cache options** | More eviction policies (LRU, LFU, none), tags and `evict(tag)`, statistics, `memoize`, `peek`/`pull`/`push`, `check()`, `retry=`, and non-`str` keys. |
 | **6b. `transact()`** | Multi-operation transactions. Done early: see [Transactions](transactions.qmd). |
-| **6c. `FanoutCache`** | Sharding across several databases, so writers stop queueing on one write lock. A strong candidate for the recommended default in threaded apps. |
+| **6c. `FanoutCache`** | Done: see [FanoutCache](fanoutcache.qmd). |
 | **6d. `Deque` and `Index`** | diskcache's persistent collections. |
 | **6e. Recipes** | `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, and stampede-proof `memoize`. |
 | **7. Network server** | Stage 3, above. |
@@ -1241,7 +1445,7 @@ A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `Cach
 
 With `invalidate=`, it never opens a transaction on the real cache: a switched-off cache must never take a write lock or raise `Timeout`. So removals forwarded inside the block land at once, and an exception in the block doesn't undo them.
 
-`CacheLike` has no `transact()`. To accept either class and call it, annotate with `TransactionalCacheLike`, which adds it. See [Transactions](transactions.qmd#typing-transactionalcachelike).
+`CacheLike` has no `transact()`. To accept either class and call it, annotate with `TransactionalCacheLike`, which adds it. See [Transactions](transactions.qmd#typing-transactionalcachelike). A [`FanoutCache`](fanoutcache.qmd)'s `transact` takes a key, so for code that accepts a `FanoutCache` or a `NullCache` use `ShardedCacheLike` instead (see [Typing](fanoutcache.qmd#typing)); the `key=` a `NullCache` ignores is what lets it satisfy both.
 
 
 ### Caches: named caches
@@ -1288,6 +1492,17 @@ The failure is remembered for `retry_open_after` seconds (10 by default), so a b
 A `Timeout` at open means busy, not broken: another process holding the lock, or a first lookup that collided with a fork. It's remembered for at most 1 second, and the default report is a `WARNING` with no traceback. A custom `on_open_error` still gets the exception. Lookups of a cache that's already open never touch any of this.
 
 A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead.
+
+## Sharded caches
+
+Pass `shards=` to `register` to open a [`FanoutCache`](fanoutcache.qmd) instead of a `Cache`. It takes the same settings, and `max_connections` is then a total across the shards.
+
+```python
+caches.register('rate_limits', shards=8)
+caches.fanout('rate_limits').incr('ip:203.0.113.7')
+```
+
+A plain cache is read with `caches[name]` and a sharded one with `caches.fanout(name)`, typed `FanoutCache | NullCache`, because its `transact` takes a key. Reading a name the wrong way raises `TypeError`. Passing `shards` at all picks the kind, even `shards=None`, so a config file that writes `shards: null` for "none" would register a `FanoutCache`: leave it out. A directory that holds the other kind of cache, or another shard count, fails to open with `LayoutMismatchError`, and the lookup returns a `NullCache` like any failed open. Everything else on this page (`disable`, `stats`, `clear`, `expire_all`, `close_all`) works the same for both kinds.
 
 ## Switching caches off
 
@@ -1351,6 +1566,154 @@ The library's self-healing read is safer than the wrapper's in three ways:
 - **It doesn't hide outages.** The wrapper catches every exception, so a lock `Timeout` also became a silent miss. In the library, `Timeout`, I/O errors and `MemoryError` still raise by default, and so does reading a pickled value from a cache without `pickle=True`, which is a configuration mistake. `durable=True` is how you choose a miss for an outage, and it counts each one and logs them, at most once a minute, rather than staying silent; `MemoryError` and that mistake raise regardless.
 
 What stays in the app: reading its settings file and environment variables (pass the result as `base_dir`), its purposes and their on/off flags, descriptions for the admin page, and wiring the reporting functions to Sentry or logbook.
+
+
+### FanoutCache: sharded caches
+
+A `FanoutCache` is one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key, so writes to different keys can go to different files and stop queueing on one write lock. It has the same methods as `Cache` for single keys, and it's one directory, shared by any number of threads and processes.
+
+```python
+from diskcache_oxide import FanoutCache
+
+cache = FanoutCache('/var/cache/my-app-rate-limits', shards=8)
+
+cache.set('ip:203.0.113.7', 1, expire=60)
+cache.incr('ip:203.0.113.7')
+cache.shard_of('ip:203.0.113.7')   # 0 to 7, the same in every process and every release
+```
+
+## Should you use it?
+
+Use `FanoutCache` when **several processes write to the same cache**. Use a plain [`Cache`](getting-started.qmd) when they don't. The honest picture, from the benchmark in the repository (`bench/fanout.py`, release builds, a 99:1 get:set mix with 1 KB values on a Mac with 18 cores):
+
+| Processes | Plain `Cache` | `FanoutCache(shards=8)` | Stock diskcache `FanoutCache(8)` |
+|---|---|---|---|
+| 1 | 660k ops/s | 714k | 396k |
+| 4 | 607k | 1,553k | 987k |
+| 8 | 262k | 1,496k | 1,238k |
+
+- **It removes the multi-process write-lock ceiling.** A plain `Cache` peaks at two processes and then falls, because the 1% of operations that are writes all queue on one database file's write lock. A `FanoutCache` keeps climbing and holds its rate: 5.7x a plain `Cache` at 8 processes, and 1.2x stock `FanoutCache`. If your app runs a pre-forking server with a worker per core and writes often (counters, rate limits, job claims), this is the case it's for.
+- **It does not yet make threads sharing one handle scale on free-threaded Python.** Four threads on one `FanoutCache` handle read no faster than, and on Linux slower than, four threads on a plain `Cache`, and well short of four separate handles. A larger `max_connections` helps but doesn't close the gap. This is a limit in what threads on one handle share, it's being worked on, and no numbers are promised here. If your concern is read throughput from many threads in one process, a `FanoutCache` doesn't fix it today.
+- **On GIL builds, threads are flat for every diskcache-oxide cache,** as the GIL says they must be, and a `FanoutCache` is about 10 to 15% ahead of a plain `Cache` on that mix at one thread. It's well ahead of stock diskcache, which collapses as threads are added.
+- **A single process with a few threads and few writes gains little.** You pay the cost of more files (below) for a benefit you won't see.
+
+Single-key reads and writes cost the same as on `Cache` plus the hash, which is about the cost of one more string hash, while no transaction is open in the process (see `transact(key=)` below).
+
+## The layout and the hash
+
+A `FanoutCache` directory looks like this:
+
+```
+my-app-rate-limits/
+  diskcache-oxide-fanout          the manifest
+  000/diskcache-oxide.sqlite      shard 0
+  001/diskcache-oxide.sqlite      shard 1
+  ...
+```
+
+Each shard is an ordinary diskcache-oxide database. The manifest records the shard count and the hash. A key's shard is XXH3-64 (seed 0) of its type byte and its UTF-8 bytes, mapped onto the shard count. **That hash is part of the on-disk format and is frozen**: pinned by golden vectors in the test suite, so every process and every release sends a key to the same place. A future scheme would get a new format number, never a change in place.
+
+Because the shard count decides where every key lives, it's recorded, and a different `shards=` is an error instead of a quiet loss of data:
+
+```python
+FanoutCache('/var/cache/my-app-rate-limits', shards=16)
+# LayoutMismatchError: the root has 8 shards, not 16
+```
+
+`shards=None` (the default) uses the stored count, or creates 8. Changing the count means a new directory. Creating the manifest uses a hard link, so a filesystem without them (FAT, exFAT, SMB, some FUSE mounts) raises `OSError` saying so.
+
+### Plain `Cache` and `FanoutCache` directories don't mix
+
+A `Cache` opened on a `FanoutCache`'s directory, or on one of its shard directories, raises `LayoutMismatchError`, and so does a `FanoutCache` opened on a plain `Cache`'s directory. The refused open creates nothing, so a typo doesn't leave a directory that neither kind can open. `LayoutMismatchError` is both a `ValueError` and a `FormatMismatchError`. If a registry hits it, the lookup returns a [`NullCache`](null-cache.qmd) and reports it like any failed open.
+
+## Choosing `shards` and `max_connections`
+
+**`shards`** is 1 to 256. Eight is a good start: the benchmark's write scaling is already flat by 4 processes at 8 shards. More shards spread writes further but cost file descriptors (below) and give each shard a smaller share of `size_limit`. Pick it once, because it's permanent for the directory.
+
+**`max_connections`** is the most SQLite connections the process opens for the whole `FanoutCache`, split across the shards (`max_connections // shards` each, with the first `max_connections % shards` getting one more). It must be at least `shards`, and the default is one per shard with a floor of 8 in all, so SQLite's memory stays where a default `Cache` has it. A busy shard only gets its share, so if a measurement shows one hot shard waiting for a connection, raise it. It doesn't matter across processes, since each process has its own connections.
+
+**File descriptors.** Each connection holds its shard's database and WAL open, and each shard adds its `-shm` file and a pin. The descriptors inside the root stay within `2 × max_connections + 2 × shards`, however many threads you run: 32 at the defaults, measured at 32 with 64 threads, where stock diskcache's FanoutCache holds 264. `close()` leaves none. Opening needs about 4 per shard, so 256 shards need more than 1,024, Linux's usual default `ulimit -n`. If there aren't enough, opening raises `OSError` with `errno` `EMFILE`, and a message giving the shard count, the descriptors needed, the limit and how many are already open. A failed open leaves no descriptor behind.
+
+**`size_limit`** is a total. Each shard gets `floor(size_limit / shards)` and culls on its own, and each needs at least 1 MiB, so the total must be at least `shards` MiB (`ValueError` otherwise). A new root with none given gets 1 GiB in all. `cache.size_limit` reads back the total (the sum of the shards' floored shares). A key that happens to land in a full shard evicts from that shard, even if the others have room.
+
+## `shard_of` and `transact(key=)`
+
+`cache.shard_of(key)` says which shard a key lives in. It's how you find out which keys can share a transaction.
+
+`transact` on a `FanoutCache` is not stock's. Stock's takes every shard's lock, so one transaction stalls every writer in every process. Here it's a transaction on **one shard**, named by a key:
+
+```python
+with cache.transact(key='totals:2026-11') as tx:
+    n = tx.get('totals:2026-11', 0)
+    tx.set('totals:2026-11', n + 1)
+```
+
+- **Only that shard is locked.** Writes to other shards, from other threads and processes, carry on.
+- **`key` is required and keyword-only.** A ported `with cache.transact():` raises `TypeError`, and so does `transact('k')`, so a key can't be mistaken for `retry`.
+- **Other shards' keys are refused, reads included.** On the thread inside the block, a call for a key on any other shard raises `ValueError` naming both shards, through any handle on the same directory. Entering a second `transact` for a key on another shard is refused too. A nested `transact` for a key on the same shard joins the outer one. A read on another shard is refused because it would see a value the block's writes can't be atomic with, so a block that mixes shards is a mistake either way, and it's caught on the first call.
+- **Whole-cache calls aren't refused.** `len()`, `volume()`, iteration and the maintenance calls run on the transaction's shard inside it, and on the others outside it.
+- Everything else is as in [Transactions](transactions.qmd): commit on exit, roll back on an exception, `retry=`, `TransactionBusy`, and `durable=True` still raising.
+
+If you need related keys in one transaction, give them a shared prefix scheme and check with `shard_of` that they land together, or keep them in one value. There is no transaction across shards.
+
+A `FanoutCache` isn't a `TransactionalCacheLike`, because its `transact` needs a key. It and `NullCache` are both [`ShardedCacheLike`](#typing).
+
+## Maintenance: one budget, partial failures
+
+`clear()`, `expire()`, `cull()` and `checkpoint()` run over every shard. Their `timeout=` (default: the handle's) bounds **the whole call**, not each shard. The handle's timeout also bounds opening, `len()` and `volume()` as one budget, and `close()` uses at most 1 s of it for checkpoints. A shard reached after the deadline still gets one try with no wait, so idle shards are always done.
+
+A shard that fails doesn't stop the others. Afterwards the call raises the first failure's own type, so `except Timeout` works, with attributes saying how far it got:
+
+```python
+try:
+    cache.clear(timeout=5)
+except Timeout as exc:
+    exc.failed_shards   # (3,): the indexes of the shards that failed
+    exc.removed         # entries removed in all, including what a failed shard removed before it failed
+```
+
+`removed` is the total removed in all, including what a failed shard removed before it failed, except for `checkpoint()`, which has none; `checkpoint()` returns True only if every shard's log was reset. Writes made while a removal runs survive on every shard, as on `Cache`. `durable=True` doesn't swallow any of these.
+
+## Timeouts on single keys
+
+On a `FanoutCache`, stock diskcache silently turns a busy shard into a dropped write: `set` gives False after 10 ms. diskcache-oxide behaves as `Cache` does: a busy shard raises `Timeout` after `timeout` (60 seconds by default), and so do `cache[k]`, `cache[k] = v` and `del cache[k]`. If you want a miss instead, say so with [`durable=True`](getting-started.qmd#a-cache-that-cant-take-a-request-down), which also logs and counts the failures, with one report for the whole `FanoutCache`.
+
+## Iteration order
+
+`iter(cache)` yields every key once, shard 0 to the last, each shard in its insertion order. That is not the cache's insertion order, and not stock's, since the shards hold different keys. `iterkeys(prefix=, reverse=)` merges the shards into one sorted order, the same order a plain `Cache` gives, and holds no connection between yields. Neither is a snapshot: a concurrent write may or may not be seen, never twice. There's no `reversed()` yet.
+
+## In a `Caches` registry
+
+Pass `shards=` to `register` and the name opens a `FanoutCache`, with the same settings as any other cache:
+
+```python
+caches = Caches('/var/cache/my-app', timeout=1.0, durable=True)
+caches.register('general')
+caches.register('rate_limits', shards=8, max_connections=16)
+
+caches['general'].get('greeting')
+caches.fanout('rate_limits').incr('ip:203.0.113.7')
+```
+
+Plain caches are read with `caches[name]` and sharded ones with `caches.fanout(name)`, because their `transact` takes a key. Reading a name the wrong way raises `TypeError`. Passing `shards` at all is what picks the kind, so `shards=None` still registers a `FanoutCache`; leave it out for a plain cache. A failed open becomes a `NullCache`, `disable()`, `stats()`, `clear()` and `close_all()` work the same, and `fanout(name)` is typed `FanoutCache | NullCache`. See [Caches](caches.qmd).
+
+## Typing
+
+`ShardedCacheLike` is a protocol for "a `CacheLike` whose `transact` takes `key=`". Both `FanoutCache` and `NullCache` satisfy it, so code that works with either a sharded cache or a switched-off one can be annotated with it:
+
+```python
+from diskcache_oxide import ShardedCacheLike
+
+def bump(cache: ShardedCacheLike, key: str) -> None:
+    with cache.transact(key=key) as tx:
+        tx.set(key, tx.get(key, 0) + 1)
+```
+
+## What `FanoutCache` doesn't have yet
+
+Stock's `FanoutCache` also has `cache()`, `deque()` and `index()` sub-collections, `stats()`, `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, the `retry=`, `read=` and `tag=` arguments, settings read as attributes, and pickling. None of those exist yet; the ones that belong to a feature come with Phase 6a and 6d, each designed across shards rather than copied. `directory` is required and there's no `disk=`, as for `Cache`.
+
+The constructor takes `shards` as a keyword: stock's `FanoutCache(path, 4)` means four shards, but here the second argument is `timeout`, so write `shards=4`.
 
 
 ### Transactions
@@ -1446,7 +1809,7 @@ def count(cache: TransactionalCacheLike, path: str) -> None:
         tx.incr(f'requests:{path}')
 ```
 
-On a `NullCache`, `transact()` is a no-op that yields the `NullCache`. `CacheLike` itself has no `transact()`, so a cache whose transactions need more than `retry=` (a sharded cache's `transact(key=...)`) can still be a `CacheLike`. A [`Caches`](caches.qmd) lookup is a `TransactionalCacheLike`, so `caches['general'].transact()` type-checks, and a disabled cache's `transact()` is the `NullCache` one.
+On a `NullCache`, `transact()` is a no-op that yields the `NullCache`. A [`FanoutCache`](fanoutcache.qmd) is not a `TransactionalCacheLike`: its `transact(*, key)` covers only the shard that `key` lives in, and refuses calls for keys on other shards inside the block. Annotate with `ShardedCacheLike` to accept a `FanoutCache` or a `NullCache`. `CacheLike` itself has no `transact()`, so a cache whose transactions need more than `retry=` (a sharded cache's `transact(key=...)`) can still be a `CacheLike`. A [`Caches`](caches.qmd) lookup is a `TransactionalCacheLike`, so `caches['general'].transact()` type-checks, and a disabled cache's `transact()` is the `NullCache` one.
 
 
 ### Concurrency and forks
@@ -1481,6 +1844,7 @@ Any number of processes can open the same directory, each with its own `Cache`. 
 - **Atomic across processes.** `add()`, `incr()`, `decr()` and every other write is a single transaction. Two processes can't both win an `add()`, and two `incr()` calls never lose an update. `pop()` is a read and then a transaction that deletes exactly the version it read, so two processes can't both get the same value.
 - **Maintenance that doesn't destroy work.** Every write gets a new sequence number. `clear()` and `expire()` note the latest number when they start and only touch older rows, so writes from other processes that land while they run are kept.
 - **Large values are always whole.** A process reading a large value while another overwrites it gets the old value or the new one, never a miss. (diskcache's standalone reproduction of that race sees about 40 misses in every 325,000 reads.)
+- **One write lock per database file.** Every writer to a directory queues on its lock, so with many processes writing often a plain `Cache` stops scaling at a couple of processes. A [`FanoutCache`](fanoutcache.qmd) has one lock per shard and keeps scaling (5.7x a plain `Cache` at 8 processes on a 99:1 read/write mix). It doesn't change the thread picture below: threads sharing one handle on free-threaded Python are not lifted by it today.
 - **Opening never writes.** Opening a cache with unchanged settings and reading from it never takes the write lock or touches the database file, so a read-mostly worker costs the writers nothing.
 
 ## Forks
@@ -1517,7 +1881,7 @@ CPython won't let a library refuse a fork, so the barrier can't wait for a [tran
 
 ## Free-threaded performance today
 
-On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that's only about 1.6× its single-thread number, so threads don't scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is the goal of Phase 4. See [Performance](performance.qmd).
+On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that's only about 1.6× its single-thread number, so threads don't scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is the goal of Phase 4. A [`FanoutCache`](fanoutcache.qmd) doesn't remove it for threads sharing one handle either; that is being worked on. See [Performance](performance.qmd).
 
 
 ### Storage and WAL
@@ -1680,7 +2044,7 @@ Profiling a cached `get` shows that about 60% of its time is one system call: SQ
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;
 - cheaper reference counting on shared `Cache` objects in free-threaded builds;
-- `FanoutCache`, if sharding across database files turns out to be the answer for threaded writers.
+- Making threads that share one handle scale. [`FanoutCache`](fanoutcache.qmd) is built and removes the multi-process write-lock ceiling, but at its default settings it doesn't lift this read ceiling, so the shared per-handle path is being worked on.
 
 Past that, the [network server](roadmap.qmd) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. Measured reads drop from 1.18 µs to 0.69 µs.
 
@@ -1726,6 +2090,15 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-029 | `with cache.transact() as tx:` | `tx` is `None`; a second handle's `transact()` inside waits out the timeout | `tx` is the cache; every handle on the directory joins the outer transaction |
 | D-030 | A transaction on a second, busy cache | Waits for the timeout; `retry=True` loops on any `OperationalError` | `TransactionBusy` at once; `retry=True` retries only `Timeout` |
 | D-031 | Ending a transaction on another thread | "May not be shared between threads" | Allowed, within its `timeout`; the owner's exit raises unless it committed |
+| D-032 | `FanoutCache` shard count | Not recorded; a different `shards=` quietly misroutes keys | Recorded in a manifest; a different `shards=` raises `LayoutMismatchError` |
+| D-033 | Which shard a key lives in | adler32; no `iterkeys()` | XXH3-64, frozen in the format; `shard_of(key)`; `iterkeys()` merges the shards in sorted order |
+| D-034 | A busy shard on a single-key call | Swallows `Timeout` (10 ms default); `get` swallows any `OperationalError` | Raises `Timeout`; `durable=True` answers it as a miss and reports it |
+| D-035 | `clear()`, `expire()`, `cull()` over the shards | Retries each shard forever | One `timeout` for the call; raises with `failed_shards` and `removed` |
+| D-036 | `size_limit` | Divided as a float, no minimum; reads shard 0's share | Split as integers, 1 MiB per shard minimum; reads back as the total |
+| D-037 | `max_connections` | One connection per thread per shard (264 fds at 64 threads) | A total across the shards; fds within `2 × max_connections + 2 × shards` |
+| D-038 | `Cache` and `FanoutCache` on each other's directory | Quietly creates or reuses a database | `LayoutMismatchError`, creating nothing |
+| D-039 | `FanoutCache` constructor and features | `FanoutCache(path, 4)`; sub-collections, tags, `stats()`, `check()` and more | `shards` is keyword-only; those features aren't there yet |
+| D-040 | `FanoutCache.transact()` | Locks every shard; `tx` is `None` | `transact(*, key)` locks one shard and refuses other shards' keys |
 
 ## Safety
 
@@ -1819,6 +2192,19 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
 - **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.qmd#a-cache-that-cant-take-a-request-down).
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
+
+### FanoutCache (D-032 to D-040)
+
+These are covered together in [FanoutCache: sharded caches](fanoutcache.qmd), and listed against diskcache's in [Switching from python-diskcache](switching-from-diskcache.qmd#fanoutcache).
+
+- **D-032:** the shard count is part of where every key lives, so it's recorded, and a different `shards=` is an error instead of a quiet loss of data and atomicity.
+- **D-033:** the hash is fixed by its definition and part of the format, and `iterkeys(prefix=)` gives `FanoutCache` the ordered listing `Cache` has.
+- **D-034:** a silently dropped write and a hang are both worse than an error the caller chose how to handle; `durable=True` is that choice.
+- **D-035:** a maintenance job must finish in bounded time, and when it can't, it must say what it did.
+- **D-036 and D-037:** budgets (size, connections, file descriptors) follow configuration, not the number of threads or shards.
+- **D-038:** a typo shouldn't leave a directory that neither kind of cache can open, or a shard written behind the `FanoutCache`'s back.
+- **D-039:** the missing stock features each need their own design across shards, so they arrive with Phase 6a and 6d rather than as copies.
+- **D-040:** holding every shard's lock would serialize the whole cache behind one transaction, which is what sharding exists to avoid.
 
 ## diskcache-community
 

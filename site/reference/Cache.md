@@ -84,5 +84,8 @@ An argument has the wrong type, including a `bool` for [timeout](Cache.timeout.m
 `FormatMismatchError`  
 The directory holds a database in a format this version can't read.
 
+`LayoutMismatchError`  
+The directory is a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache) root or one of its shards. Also a `ValueError`, and a [FormatMismatchError](FormatMismatchError.md#diskcache_oxide.FormatMismatchError).
+
 `Timeout`  
 Another process held the database locked, or a fork stayed pending, for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).

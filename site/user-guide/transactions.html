@@ -73,7 +73,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
 <link href="../user-guide/concurrency-and-forks.html" rel="next">
-<link href="../user-guide/caches.html" rel="prev">
+<link href="../user-guide/fanoutcache.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
@@ -252,6 +252,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link active">
  <span class="menu-text">Transactions</span></a>
   </div>
@@ -415,7 +421,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">with</span> cache.transact() <span class="im">as</span> tx:</span>
 <span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>        tx.incr(<span class="st">'requests'</span>)</span>
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>        tx.incr(<span class="ss">f'requests:</span><span class="sc">{</span>path<span class="sc">}</span><span class="ss">'</span>)</span></code></pre></div>
-<p>On a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> is a no-op that yields the <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> itself has no <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>, so a cache whose transactions need more than <code>retry=</code> (a sharded cache’s <code>transact(key=...)</code>) can still be a <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a>. A <a href="../user-guide/caches.html"><code>Caches</code></a> lookup is a <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a>, so <code>caches['general'].transact()</code> type-checks, and a disabled cache’s <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> is the <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> one.</p>
+<p>On a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> is a no-op that yields the <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. A <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> is not a <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a>: its <code>transact(*, key)</code> covers only the shard that <code>key</code> lives in, and refuses calls for keys on other shards inside the block. Annotate with <a href="../reference/ShardedCacheLike.html#diskcache_oxide.ShardedCacheLike" class="gdls-link gdls-code">ShardedCacheLike</a> to accept a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> or a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> itself has no <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>, so a cache whose transactions need more than <code>retry=</code> (a sharded cache’s <code>transact(key=...)</code>) can still be a <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a>. A <a href="../user-guide/caches.html"><code>Caches</code></a> lookup is a <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a>, so <code>caches['general'].transact()</code> type-checks, and a disabled cache’s <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> is the <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> one.</p>
 
 
 </section>
@@ -837,8 +843,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   </script>
 <nav class="page-navigation" aria-label="Page">
   <div class="nav-page nav-page-previous">
-      <a href="../user-guide/caches.html" class="pagination-link" aria-label="Caches: named caches">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Caches: named caches</span>
+      <a href="../user-guide/fanoutcache.html" class="pagination-link" aria-label="FanoutCache: sharded caches">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">FanoutCache: sharded caches</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">

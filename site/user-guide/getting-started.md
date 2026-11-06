@@ -249,6 +249,11 @@ Each group logs its first failure at once, then at most once a minute per cache 
 The limit is per handle, so a `with Cache(...)` per request logs on every request during an outage. A handle from [Caches](../reference/Caches.md#diskcache_oxide.Caches) is opened once, so it isn't affected.
 
 
+# More than one process writing
+
+A single [Cache](../reference/Cache.md#diskcache_oxide.Cache) has one write lock per directory, so many processes that all write queue on it. If your app runs several worker processes that write often (counters, rate limits, job claims), open a [`FanoutCache`](fanoutcache.md) instead: it spreads the keys over several databases, and in the repository's benchmark it holds its rate at 8 processes where a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) falls to about 40% of its one-process rate. For one process, or mostly reads, a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) is the simpler choice.
+
+
 # Shutting down
 
 Call `cache.checkpoint()` at shutdown if you can. It isn't required. With readers in other processes, a burst of writes (a big fill, or a [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear)) can leave SQLite's write-ahead log much larger than the database, and SQLite only shrinks it when it gets a moment with no readers. [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) makes that moment: it waits briefly for in-flight reads, copies the log into the database, and truncates it. It returns `False` instead of raising if other processes keep it busy.

@@ -1,0 +1,11 @@
+## FanoutCache.\_\_bool\_\_()
+
+
+Always True, even when empty, so `if cache:` means "caching is on".
+
+
+Usage
+
+``` python
+FanoutCache.__bool__()
+```

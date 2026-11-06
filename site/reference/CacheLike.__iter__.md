@@ -1,7 +1,7 @@
 ## CacheLike.\_\_iter\_\_()
 
 
-Iterate over keys in insertion order.
+Iterate over every key once. A [Cache](Cache.md#diskcache_oxide.Cache) yields them in insertion order.
 
 
 Usage

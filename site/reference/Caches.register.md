@@ -26,7 +26,7 @@ The cache's name. Without [directory](Cache.directory.md#diskcache_oxide.Cache.d
 Put this cache somewhere else.
 
 `**settings: Any`  
-[Cache](Cache.md#diskcache_oxide.Cache) settings for this cache, over the registry's defaults. A callable `on_decode_error` is called as `(name, key, exc)`, as at the registry level.
+[Cache](Cache.md#diskcache_oxide.Cache) settings for this cache, over the registry's defaults. A callable `on_decode_error` is called as `(name, key, exc)`, as at the registry level. Adding `shards=` registers a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache) instead, which takes the same settings; read it with `fanout(name)`. Passing the key at all is what picks the kind, so `shards=None` is NOT "not sharded": it is a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache) with the stored shard count, or 8 for a new root. Leave [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) out for a plain cache (a config file that writes `shards: null` for "none" would register a FanoutCache).
 
 
 ## Raises
@@ -36,4 +36,4 @@ Put this cache somewhere else.
 The name is taken or isn't a plain directory name, or another registered cache already uses that directory (two names would share one store, and the last one opened would quietly set its [size_limit](Cache.size_limit.md#diskcache_oxide.Cache.size_limit)).
 
 `TypeError`  
-An unknown [Cache](Cache.md#diskcache_oxide.Cache) setting.
+An unknown [Cache](Cache.md#diskcache_oxide.Cache) (or [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache)) setting.

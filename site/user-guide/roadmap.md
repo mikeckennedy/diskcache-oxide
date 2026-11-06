@@ -46,6 +46,7 @@ The same Rust core, served over HTTP to many clients: a Redis-style central cach
 - Bounded connections and memory, and a target size for the write-ahead log.
 - [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), the [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) protocol, `py.typed`.
 - [`transact()`](transactions.md), ahead of the rest of Phase 6, with [TransactionBusy](../reference/TransactionBusy.md#diskcache_oxide.TransactionBusy) and the [TransactionalCacheLike](../reference/TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike) protocol.
+- [`FanoutCache`](fanoutcache.md) (Phase 6c), sharding across several databases, with `Caches.register(name, shards=...)` and [ShardedCacheLike](../reference/ShardedCacheLike.md#diskcache_oxide.ShardedCacheLike). It removes the multi-process write-lock ceiling; making threads that share one handle scale on free-threaded Python is part of Phase 4.
 
 
 ## Now: concurrency review and soak (Phase 2.5)
@@ -62,7 +63,7 @@ The concurrency core is where serious bugs hide, so it gets its own phase before
 | **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. |
 | **6a. Cache options** | More eviction policies (LRU, LFU, none), tags and `evict(tag)`, statistics, `memoize`, `peek`/`pull`/`push`, `check()`, `retry=`, and non-`str` keys. |
 | **6b. [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact)** | Multi-operation transactions. Done early: see [Transactions](transactions.md). |
-| **6c. `FanoutCache`** | Sharding across several databases, so writers stop queueing on one write lock. A strong candidate for the recommended default in threaded apps. |
+| **6c. [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)** | Done: see [FanoutCache](fanoutcache.md). |
 | **6d. `Deque` and `Index`** | diskcache's persistent collections. |
 | **6e. Recipes** | `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, and stampede-proof `memoize`. |
 | **7. Network server** | Stage 3, above. |

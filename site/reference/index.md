@@ -1,7 +1,7 @@
 # API Reference
 
 
-The public API of diskcache-oxide: Cache, NullCache, the CacheLike and TransactionalCacheLike protocols, the Caches registry, exceptions, and SQLite utilities.
+The public API of diskcache-oxide: Cache, FanoutCache, NullCache, the CacheLike, TransactionalCacheLike and ShardedCacheLike protocols, the Caches registry, exceptions, and SQLite utilities.
 
 
 ## Cache
@@ -111,6 +111,119 @@ Close the cache, as `close()` does.
 Return the value stored for `key`, or `default` if it's missing or expired.
 
 
+## FanoutCache
+
+
+A cache sharded over several SQLite databases, so writers in many processes stop queueing on one write lock.
+
+
+[FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache)  
+A disk cache split over several SQLite databases (shards), so reads and writes on different keys
+
+
+## FanoutCache Methods
+
+
+Methods for the FanoutCache class
+
+
+[FanoutCache.directory](FanoutCache.directory.md#diskcache_oxide.FanoutCache.directory)  
+The root directory, as given to the constructor.
+
+[FanoutCache.timeout](FanoutCache.timeout.md#diskcache_oxide.FanoutCache.timeout)  
+Seconds a call waits for a lock or a pending fork before raising `Timeout`.
+
+[FanoutCache.shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards)  
+How many shards the root has.
+
+[FanoutCache.size_limit](FanoutCache.size_limit.md#diskcache_oxide.FanoutCache.size_limit)  
+The disk budget in bytes: the sum of every shard's.
+
+[FanoutCache.cull_limit](FanoutCache.cull_limit.md#diskcache_oxide.FanoutCache.cull_limit)  
+The most entries a single `set()` evicts from its shard when that shard is over its share.
+
+[FanoutCache.enabled](FanoutCache.enabled.md#diskcache_oxide.FanoutCache.enabled)  
+Always True for a real cache; False for a `NullCache`.
+
+[FanoutCache.shard_of()](FanoutCache.shard_of.md#diskcache_oxide.FanoutCache.shard_of)  
+The shard `key` lives in, from 0 to `shards - 1`: the same in every process and release.
+
+[FanoutCache.transact()](FanoutCache.transact.md#diskcache_oxide.FanoutCache.transact)  
+A write transaction on the shard `key` lives in, for `with cache.transact(key='total') as tx:`.
+
+[FanoutCache.set()](FanoutCache.set.md#diskcache_oxide.FanoutCache.set)  
+As `Cache.set`, on the key's shard.
+
+[FanoutCache.add()](FanoutCache.add.md#diskcache_oxide.FanoutCache.add)  
+As `Cache.add`, on the key's shard: atomic across threads and processes.
+
+[FanoutCache.delete()](FanoutCache.delete.md#diskcache_oxide.FanoutCache.delete)  
+As `Cache.delete`, on the key's shard.
+
+[FanoutCache.pop()](FanoutCache.pop.md#diskcache_oxide.FanoutCache.pop)  
+As `Cache.pop`, on the key's shard.
+
+[FanoutCache.touch()](FanoutCache.touch.md#diskcache_oxide.FanoutCache.touch)  
+As `Cache.touch`, on the key's shard.
+
+[FanoutCache.incr()](FanoutCache.incr.md#diskcache_oxide.FanoutCache.incr)  
+As `Cache.incr`, on the key's shard: atomic across threads and processes.
+
+[FanoutCache.decr()](FanoutCache.decr.md#diskcache_oxide.FanoutCache.decr)  
+As `Cache.decr`, on the key's shard.
+
+[FanoutCache.volume()](FanoutCache.volume.md#diskcache_oxide.FanoutCache.volume)  
+The total disk use in bytes of every shard (databases plus value files).
+
+[FanoutCache.expire()](FanoutCache.expire.md#diskcache_oxide.FanoutCache.expire)  
+Remove every expired entry from every shard, and its value file, as `Cache.expire` does.
+
+[FanoutCache.clear()](FanoutCache.clear.md#diskcache_oxide.FanoutCache.clear)  
+Remove every entry that existed when the call started, from every shard.
+
+[FanoutCache.cull()](FanoutCache.cull.md#diskcache_oxide.FanoutCache.cull)  
+Remove expired entries, then evict the least recently stored from each shard until it's
+
+[FanoutCache.checkpoint()](FanoutCache.checkpoint.md#diskcache_oxide.FanoutCache.checkpoint)  
+Checkpoint every shard's write-ahead log and truncate it to zero, as `Cache.checkpoint` does.
+
+[FanoutCache.iterkeys()](FanoutCache.iterkeys.md#diskcache_oxide.FanoutCache.iterkeys)  
+Iterate over keys in sorted order, optionally only those starting with `prefix`.
+
+[FanoutCache.__iter__()](FanoutCache.__iter__.md#diskcache_oxide.FanoutCache.__iter__)  
+Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on.
+
+[FanoutCache.close()](FanoutCache.close.md#diskcache_oxide.FanoutCache.close)  
+Close this handle on every shard, as `Cache.close()` does for one.
+
+[FanoutCache.__getitem__()](FanoutCache.__getitem__.md#diskcache_oxide.FanoutCache.__getitem__)  
+`cache[key]`, as on `Cache`.
+
+[FanoutCache.__setitem__()](FanoutCache.__setitem__.md#diskcache_oxide.FanoutCache.__setitem__)  
+`cache[key] = value`, as on `Cache`.
+
+[FanoutCache.__delitem__()](FanoutCache.__delitem__.md#diskcache_oxide.FanoutCache.__delitem__)  
+`del cache[key]`, as on `Cache`.
+
+[FanoutCache.__contains__()](FanoutCache.__contains__.md#diskcache_oxide.FanoutCache.__contains__)  
+`key in cache`, as on `Cache`.
+
+[FanoutCache.__len__()](FanoutCache.__len__.md#diskcache_oxide.FanoutCache.__len__)  
+The number of entries in every shard, including expired entries not yet removed.
+
+[FanoutCache.__bool__()](FanoutCache.__bool__.md#diskcache_oxide.FanoutCache.__bool__)  
+Always True, even when empty, so `if cache:` means "caching is on".
+
+[FanoutCache.__enter__()](FanoutCache.__enter__.md#diskcache_oxide.FanoutCache.__enter__)  
+Return the cache, for `with FanoutCache(...) as cache:`.
+
+[FanoutCache.__exit__()](FanoutCache.__exit__.md#diskcache_oxide.FanoutCache.__exit__)  
+Close the cache, as `close()` does.
+
+[FanoutCache.get()](FanoutCache.get.md#diskcache_oxide.FanoutCache.get)  
+As `Cache.get`, on the key's shard.
+
+
 ## NullCache
 
 
@@ -121,10 +234,13 @@ Switched-off cache behaving as if every entry expires instantly.
 A switched-off cache, so app code needs no `if cache is None` checks.
 
 [CacheLike](CacheLike.md#diskcache_oxide.CacheLike)  
-What application code can rely on from a `Cache` or a `NullCache`.
+What application code can rely on from a `Cache`, a `FanoutCache` or a `NullCache`.
 
 [TransactionalCacheLike](TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike)  
 A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have.
+
+[ShardedCacheLike](ShardedCacheLike.md#diskcache_oxide.ShardedCacheLike)  
+A `CacheLike` with a sharded cache's `transact(*, key, retry=False)`, which `FanoutCache` and
 
 
 ## NullCache Methods
@@ -312,7 +428,7 @@ The number of entries.
 True if caching is on, so `if cache:` reads naturally.
 
 [CacheLike.__iter__()](CacheLike.__iter__.md#diskcache_oxide.CacheLike.__iter__)  
-Iterate over keys in insertion order.
+Iterate over every key once. A `Cache` yields them in insertion order.
 
 [CacheLike.__enter__()](CacheLike.__enter__.md#diskcache_oxide.CacheLike.__enter__)  
 Return the cache, for use in a `with` block.
@@ -356,7 +472,10 @@ The registered names, in registration order.
 Where the named cache lives.
 
 [Caches.__getitem__()](Caches.__getitem__.md#diskcache_oxide.Caches.__getitem__)  
-The named cache: opened on first use, then the same object every time.
+The named plain cache: opened on first use, then the same object every time.
+
+[Caches.fanout()](Caches.fanout.md#diskcache_oxide.Caches.fanout)  
+The named sharded cache (one registered with `shards=`), looked up as `caches[name]` is.
 
 [Caches.disable()](Caches.disable.md#diskcache_oxide.Caches.disable)  
 Later lookups of these caches return `NullCache(invalidate=real)`.
@@ -407,6 +526,9 @@ A stored value this build can't read but another might: an unknown mode, tag or 
 
 [FormatMismatchError](FormatMismatchError.md#diskcache_oxide.FormatMismatchError)  
 The cache directory holds a database in a format this version doesn't support.
+
+[LayoutMismatchError](LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError)  
+The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
 
 
 ## SQLite and System

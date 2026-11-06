@@ -216,6 +216,12 @@ ul.task-list li input[type="checkbox"] {
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Transactions</span></a>
   </div>
@@ -297,7 +303,10 @@ ul.task-list li input[type="checkbox"] {
   <li><a href="#d-023-bounded-sqlite-memory" id="toc-d-023-bounded-sqlite-memory" class="nav-link" data-scroll-target="#d-023-bounded-sqlite-memory">D-023: bounded SQLite memory</a></li>
   <li><a href="#d-024-a-wal-that-shrinks" id="toc-d-024-a-wal-that-shrinks" class="nav-link" data-scroll-target="#d-024-a-wal-that-shrinks">D-024: a WAL that shrinks</a></li>
   </ul></li>
-  <li><a href="#api-differences" id="toc-api-differences" class="nav-link" data-scroll-target="#api-differences">API differences</a></li>
+  <li><a href="#api-differences" id="toc-api-differences" class="nav-link" data-scroll-target="#api-differences">API differences</a>
+  <ul class="collapse">
+  <li><a href="#fanoutcache-d-032-to-d-040" id="toc-fanoutcache-d-032-to-d-040" class="nav-link" data-scroll-target="#fanoutcache-d-032-to-d-040">FanoutCache (D-032 to D-040)</a></li>
+  </ul></li>
   <li><a href="#diskcache-community" id="toc-diskcache-community" class="nav-link" data-scroll-target="#diskcache-community">diskcache-community</a></li>
   </ul>
 </nav>
@@ -503,7 +512,7 @@ ul.task-list li input[type="checkbox"] {
 <tr class="even">
 <td>D-028</td>
 <td>An outage on a single-key call</td>
-<td><a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> raises; <code>FanoutCache</code> answers <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> alone as a miss</td>
+<td><a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> raises; <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> answers <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> alone as a miss</td>
 <td>Raises by default; <code>durable=True</code> answers it as a miss or <code>False</code>, and reports it</td>
 </tr>
 <tr class="odd">
@@ -523,6 +532,60 @@ ul.task-list li input[type="checkbox"] {
 <td>Ending a transaction on another thread</td>
 <td>“May not be shared between threads”</td>
 <td>Allowed, within its <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>; the owner’s exit raises unless it committed</td>
+</tr>
+<tr class="even">
+<td>D-032</td>
+<td><a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> shard count</td>
+<td>Not recorded; a different <code>shards=</code> quietly misroutes keys</td>
+<td>Recorded in a manifest; a different <code>shards=</code> raises <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a></td>
+</tr>
+<tr class="odd">
+<td>D-033</td>
+<td>Which shard a key lives in</td>
+<td>adler32; no <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a></td>
+<td>XXH3-64, frozen in the format; <code>shard_of(key)</code>; <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> merges the shards in sorted order</td>
+</tr>
+<tr class="even">
+<td>D-034</td>
+<td>A busy shard on a single-key call</td>
+<td>Swallows <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> (10 ms default); <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> swallows any <code>OperationalError</code></td>
+<td>Raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>; <code>durable=True</code> answers it as a miss and reports it</td>
+</tr>
+<tr class="odd">
+<td>D-035</td>
+<td><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>, <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> over the shards</td>
+<td>Retries each shard forever</td>
+<td>One <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> for the call; raises with <code>failed_shards</code> and <code>removed</code></td>
+</tr>
+<tr class="even">
+<td>D-036</td>
+<td><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a></td>
+<td>Divided as a float, no minimum; reads shard 0’s share</td>
+<td>Split as integers, 1 MiB per shard minimum; reads back as the total</td>
+</tr>
+<tr class="odd">
+<td>D-037</td>
+<td><code>max_connections</code></td>
+<td>One connection per thread per shard (264 fds at 64 threads)</td>
+<td>A total across the shards; fds within <code>2 × max_connections + 2 × shards</code></td>
+</tr>
+<tr class="even">
+<td>D-038</td>
+<td><a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> on each other’s directory</td>
+<td>Quietly creates or reuses a database</td>
+<td><a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a>, creating nothing</td>
+</tr>
+<tr class="odd">
+<td>D-039</td>
+<td><a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> constructor and features</td>
+<td><code>FanoutCache(path, 4)</code>; sub-collections, tags, <a href="../reference/Caches.stats.html#diskcache_oxide.Caches.stats" class="gdls-link gdls-code">stats()</a>, <code>check()</code> and more</td>
+<td><a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> is keyword-only; those features aren’t there yet</td>
+</tr>
+<tr class="even">
+<td>D-040</td>
+<td><a href="../reference/FanoutCache.transact.html#diskcache_oxide.FanoutCache.transact" class="gdls-link gdls-code">FanoutCache.transact()</a></td>
+<td>Locks every shard; <code>tx</code> is <code>None</code></td>
+<td><code>transact(*, key)</code> locks one shard and refuses other shards’ keys</td>
 </tr>
 </tbody>
 </table>
@@ -625,6 +688,20 @@ ul.task-list li input[type="checkbox"] {
 <li><strong>D-028:</strong> <code>Cache(..., durable=True)</code> has no counterpart in diskcache. It answers an outage on a single-key call as a miss or <code>False</code>, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See <a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">A cache that can’t take a request down</a>.</li>
 <li><strong>D-025:</strong> <code>iter(cache)</code> and <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> return a native iterator, not a generator. Two threads calling <code>next()</code> on the same one at once get <code>ValueError</code> at once, as with a shared generator.</li>
 </ul>
+<section id="fanoutcache-d-032-to-d-040" class="level2">
+<h2 class="anchored" data-anchor-id="fanoutcache-d-032-to-d-040">FanoutCache (D-032 to D-040)</h2>
+<p>These are covered together in <a href="../user-guide/fanoutcache.html">FanoutCache: sharded caches</a>, and listed against diskcache’s in <a href="../user-guide/switching-from-diskcache.html#fanoutcache">Switching from python-diskcache</a>.</p>
+<ul>
+<li><strong>D-032:</strong> the shard count is part of where every key lives, so it’s recorded, and a different <code>shards=</code> is an error instead of a quiet loss of data and atomicity.</li>
+<li><strong>D-033:</strong> the hash is fixed by its definition and part of the format, and <code>iterkeys(prefix=)</code> gives <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> the ordered listing <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> has.</li>
+<li><strong>D-034:</strong> a silently dropped write and a hang are both worse than an error the caller chose how to handle; <code>durable=True</code> is that choice.</li>
+<li><strong>D-035:</strong> a maintenance job must finish in bounded time, and when it can’t, it must say what it did.</li>
+<li><strong>D-036 and D-037:</strong> budgets (size, connections, file descriptors) follow configuration, not the number of threads or shards.</li>
+<li><strong>D-038:</strong> a typo shouldn’t leave a directory that neither kind of cache can open, or a shard written behind the <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s back.</li>
+<li><strong>D-039:</strong> the missing stock features each need their own design across shards, so they arrive with Phase 6a and 6d rather than as copies.</li>
+<li><strong>D-040:</strong> holding every shard’s lock would serialize the whole cache behind one transaction, which is what sharding exists to avoid.</li>
+</ul>
+</section>
 </section>
 <section id="diskcache-community" class="level1">
 <h1>diskcache-community</h1>

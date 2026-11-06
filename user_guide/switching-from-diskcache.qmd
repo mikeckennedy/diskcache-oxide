@@ -34,7 +34,8 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
 | `disk=`, `eviction_policy=` | Supported | Not supported (eviction policies are coming) |
 | `transact()` | `tx` is `None` | `tx` is the cache; see [`transact()`](#transact) below |
-| Tags, `memoize`, `FanoutCache` | Supported | Coming in later phases |
+| `FanoutCache` | Supported | Supported, with differences; see [`FanoutCache`](#fanoutcache) below |
+| Tags, `memoize` | Supported | Coming in later phases |
 
 ## Values: no pickle unless you ask
 
@@ -71,6 +72,21 @@ Only `str` keys are accepted today; anything else raises `TypeError`. Keys are a
 - **Forking inside your own transaction** poisons the child's copy, whose writes raise `RuntimeError` at once, instead of stalling for the timeout (D-020).
 - **It belongs to a thread, not an asyncio task**, as in diskcache: don't `await` inside the block.
 
+## `FanoutCache`
+
+`FanoutCache` is covered in full in [FanoutCache: sharded caches](fanoutcache.qmd). The differences from diskcache's, each with an entry in [Divergences](divergences.qmd):
+
+- **`shards` is keyword-only** (`FanoutCache(path, shards=4)`). `FanoutCache(path, 4)` is a four-second `timeout` here. The constructor is `FanoutCache(directory, timeout=None, *, shards=None, ...)`, and `directory` is required (D-039).
+- **The shard count is recorded**, and a different `shards=` raises `LayoutMismatchError` instead of silently sending keys to other shards. `shards=None` uses the stored count, or creates 8 (D-032).
+- **A plain `Cache` and a `FanoutCache` refuse each other's directories** with `LayoutMismatchError`, and nothing is created by the refused open (D-038).
+- **Shards are chosen by XXH3, not adler32**, so which shard a key lands in differs from diskcache's, and `shard_of(key)` tells you. Iteration goes shard by shard, and `iterkeys(prefix=, reverse=)` gives the merged sorted order. There's no `reversed()` yet (D-033).
+- **A busy shard raises `Timeout`** after `timeout` (60 seconds by default) instead of silently giving False or the default after 10 ms. `durable=True` gives the miss answers, and logs them (D-034).
+- **Maintenance shares one `timeout`** across the shards, doesn't retry forever, and reports partial progress: a failure raises with `failed_shards` and `removed` (D-035).
+- **`size_limit` is a total**, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0's share (D-036).
+- **`max_connections` is a total** across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least `shards` (D-037).
+- **`transact()` takes a key** and covers one shard: `with cache.transact(key=k):` where diskcache's `with cache.transact():` locks every shard. Calls for keys on other shards inside the block raise `ValueError`, reads included. A ported bare `transact()` raises `TypeError` (D-040).
+- **Not there yet:** `cache()`, `deque()` and `index()`, `stats()`, `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, `retry=`, `read=` and `tag=` arguments, settings as attributes, and pickling (D-039).
+
 ## Truthiness
 
 In diskcache, an empty cache is falsy, so `if cache:` quietly skips caching right after every deploy, when the cache is empty. In diskcache-oxide, `bool(Cache)` is always True and `bool(NullCache)` is always False, so `if cache:` means "is caching on?". Both have an `enabled` property that says the same thing.
@@ -95,5 +111,5 @@ You don't have to change anything for these:
 - Reads take about half the time, and threaded throughput no longer collapses as threads are added. See [Performance](performance.qmd).
 - A child process forked while another thread was writing can always write. In diskcache it can stall for the full 60-second timeout.
 - `clear()` keeps writes that land while it runs, `expire()` removes every expired entry, and a read during an overwrite never misses.
-- File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache.
+- File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache. A `FanoutCache` bounds them for the whole root, not per shard.
 - Opening a cache and reading from it never writes to the database.

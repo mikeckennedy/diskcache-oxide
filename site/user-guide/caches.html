@@ -72,7 +72,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../user-guide/transactions.html" rel="next">
+<link href="../user-guide/fanoutcache.html" rel="next">
 <link href="../user-guide/null-cache.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
@@ -252,6 +252,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Transactions</span></a>
   </div>
@@ -302,6 +308,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <ul class="collapse">
   <li><a href="#lookups" id="toc-lookups" class="nav-link active" data-scroll-target="#lookups">Lookups</a></li>
   <li><a href="#when-a-cache-cant-open" id="toc-when-a-cache-cant-open" class="nav-link" data-scroll-target="#when-a-cache-cant-open">When a cache can’t open</a></li>
+  <li><a href="#sharded-caches" id="toc-sharded-caches" class="nav-link" data-scroll-target="#sharded-caches">Sharded caches</a></li>
   <li><a href="#switching-caches-off" id="toc-switching-caches-off" class="nav-link" data-scroll-target="#switching-caches-off">Switching caches off</a></li>
   <li><a href="#admin-and-shutdown" id="toc-admin-and-shutdown" class="nav-link" data-scroll-target="#admin-and-shutdown">Admin and shutdown</a></li>
   <li><a href="#coming-from-durablecache" id="toc-coming-from-durablecache" class="nav-link" data-scroll-target="#coming-from-durablecache">Coming from <code>DurableCache</code></a></li>
@@ -359,27 +366,34 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>A <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> at open means busy, not broken: another process holding the lock, or a first lookup that collided with a fork. It’s remembered for at most 1 second, and the default report is a <code>WARNING</code> with no traceback. A custom <code>on_open_error</code> still gets the exception. Lookups of a cache that’s already open never touch any of this.</p>
 <p>A bad <em>setting</em> (<code>size_limit=True</code>, <code>serializer='yaml'</code>) is a bug, not an outage, so it raises on lookup instead.</p>
 </section>
+<section id="sharded-caches" class="level1">
+<h1>Sharded caches</h1>
+<p>Pass <code>shards=</code> to <a href="../reference/Caches.register.html#diskcache_oxide.Caches.register" class="gdls-link gdls-code">register</a> to open a <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> instead of a <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. It takes the same settings, and <code>max_connections</code> is then a total across the shards.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'rate_limits'</span>, shards<span class="op">=</span><span class="dv">8</span>)</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>caches.fanout(<span class="st">'rate_limits'</span>).incr(<span class="st">'ip:203.0.113.7'</span>)</span></code></pre></div>
+<p>A plain cache is read with <code>caches[name]</code> and a sharded one with <code>caches.fanout(name)</code>, typed <code>FanoutCache | NullCache</code>, because its <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact</a> takes a key. Reading a name the wrong way raises <code>TypeError</code>. Passing <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> at all picks the kind, even <code>shards=None</code>, so a config file that writes <code>shards: null</code> for “none” would register a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>: leave it out. A directory that holds the other kind of cache, or another shard count, fails to open with <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a>, and the lookup returns a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> like any failed open. Everything else on this page (<a href="../reference/Caches.disable.html#diskcache_oxide.Caches.disable" class="gdls-link gdls-code">disable</a>, <a href="../reference/Caches.stats.html#diskcache_oxide.Caches.stats" class="gdls-link gdls-code">stats</a>, <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear</a>, <a href="../reference/Caches.expire_all.html#diskcache_oxide.Caches.expire_all" class="gdls-link gdls-code">expire_all</a>, <a href="../reference/Caches.close_all.html#diskcache_oxide.Caches.close_all" class="gdls-link gdls-code">close_all</a>) works the same for both kinds.</p>
+</section>
 <section id="switching-caches-off" class="level1">
 <h1>Switching caches off</h1>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>caches.disable(<span class="st">'pages'</span>)   <span class="co"># later lookups return NullCache(invalidate=real)</span></span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>caches.enable(<span class="st">'pages'</span>)</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>caches.enabled(<span class="st">'pages'</span>)   <span class="co"># False while it's off</span></span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>caches.disable(<span class="st">'pages'</span>)   <span class="co"># later lookups return NullCache(invalidate=real)</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>caches.enable(<span class="st">'pages'</span>)</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>caches.enabled(<span class="st">'pages'</span>)   <span class="co"># False while it's off</span></span></code></pre></div>
 <p>While a cache is disabled, its lookups return <code>NullCache(invalidate=real)</code>: reads miss and writes are dropped, but <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> and <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear</a> still reach the real cache, so entries you invalidate by removing them aren’t served stale when it comes back on. Invalidating by writing doesn’t survive: an overwriting <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> or a version-bump <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> is dropped like any other write, and the old value is served again (see <a href="../user-guide/null-cache.html#keep-invalidating-while-caching-is-off-invalidate">Keep invalidating while caching is off</a>). Switches only change later lookups. Code that already holds the real <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> keeps using it, so set them at startup, before you hand caches out.</p>
 <p>If your app has its own names for what it caches (Talk Python calls them purposes), map them onto registered caches in your own code. It’s a few lines:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>PURPOSES <span class="op">=</span> {<span class="st">'rss_feed'</span>: <span class="st">'general'</span>, <span class="st">'episode_html'</span>: <span class="st">'episodes'</span>}</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>off <span class="op">=</span> {<span class="st">'rss_feed'</span>}  <span class="co"># from your settings file</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache_for(purpose: <span class="bu">str</span>) <span class="op">-&gt;</span> CacheLike:</span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    real <span class="op">=</span> caches[PURPOSES[purpose]]</span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> NullCache(invalidate<span class="op">=</span>real) <span class="cf">if</span> purpose <span class="kw">in</span> off <span class="cf">else</span> real</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>PURPOSES <span class="op">=</span> {<span class="st">'rss_feed'</span>: <span class="st">'general'</span>, <span class="st">'episode_html'</span>: <span class="st">'episodes'</span>}</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>off <span class="op">=</span> {<span class="st">'rss_feed'</span>}  <span class="co"># from your settings file</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache_for(purpose: <span class="bu">str</span>) <span class="op">-&gt;</span> CacheLike:</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    real <span class="op">=</span> caches[PURPOSES[purpose]]</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> NullCache(invalidate<span class="op">=</span>real) <span class="cf">if</span> purpose <span class="kw">in</span> off <span class="cf">else</span> real</span></code></pre></div>
 <p>Build the wrapper on each call rather than memoizing it: <code>caches[...]</code> is already cheap, and a memoized <code>NullCache(invalidate=...)</code> wrapped around a cache that had failed to open would never pick up its recovery.</p>
 </section>
 <section id="admin-and-shutdown" class="level1">
 <h1>Admin and shutdown</h1>
-<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>caches.stats()                      <span class="co"># {name: CacheStats(name, directory, enabled, count, volume, error)}</span></span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>caches.clear(<span class="st">'pages'</span>, timeout<span class="op">=</span><span class="dv">10</span>)   <span class="co"># works on a disabled cache too</span></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>caches.expire_all(timeout<span class="op">=</span><span class="dv">10</span>)       <span class="co"># {name: removed, or None if it failed}</span></span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>caches.close_all()                  <span class="co"># at shutdown; `with Caches(...) as caches:` does it too</span></span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>caches.stats()                      <span class="co"># {name: CacheStats(name, directory, enabled, count, volume, error)}</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>caches.clear(<span class="st">'pages'</span>, timeout<span class="op">=</span><span class="dv">10</span>)   <span class="co"># works on a disabled cache too</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>caches.expire_all(timeout<span class="op">=</span><span class="dv">10</span>)       <span class="co"># {name: removed, or None if it failed}</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>caches.close_all()                  <span class="co"># at shutdown; `with Caches(...) as caches:` does it too</span></span></code></pre></div>
 <ul>
 <li><a href="../reference/Caches.stats.html#diskcache_oxide.Caches.stats" class="gdls-link gdls-code">stats()</a> opens every registered cache and never raises: a cache that can’t be read has its <code>error</code> set.</li>
 <li><code>clear(name)</code> raises if the cache can’t be opened, so an admin page doesn’t report “0 cleared” for a failure.</li>
@@ -877,8 +891,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../user-guide/transactions.html" class="pagination-link" aria-label="Transactions">
-        <span class="nav-page-text">Transactions</span> <i class="bi bi-arrow-right-short"></i>
+      <a href="../user-guide/fanoutcache.html" class="pagination-link" aria-label="FanoutCache: sharded caches">
+        <span class="nav-page-text">FanoutCache: sharded caches</span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

@@ -252,6 +252,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Transactions</span></a>
   </div>
@@ -305,6 +311,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#values-no-pickle-unless-you-ask" id="toc-values-no-pickle-unless-you-ask" class="nav-link" data-scroll-target="#values-no-pickle-unless-you-ask">Values: no pickle unless you ask</a></li>
   <li><a href="#string-keys" id="toc-string-keys" class="nav-link" data-scroll-target="#string-keys">String keys</a></li>
   <li><a href="#transact" id="toc-transact" class="nav-link" data-scroll-target="#transact"><code>transact()</code></a></li>
+  <li><a href="#fanoutcache" id="toc-fanoutcache" class="nav-link" data-scroll-target="#fanoutcache"><code>FanoutCache</code></a></li>
   <li><a href="#truthiness" id="toc-truthiness" class="nav-link" data-scroll-target="#truthiness">Truthiness</a></li>
   <li><a href="#tests-that-patch-time.time" id="toc-tests-that-patch-time.time" class="nav-link" data-scroll-target="#tests-that-patch-time.time">Tests that patch <code>time.time</code></a></li>
   <li><a href="#things-that-just-get-better" id="toc-things-that-just-get-better" class="nav-link" data-scroll-target="#things-that-just-get-better">Things that just get better</a></li>
@@ -411,7 +418,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td><code>tx</code> is the cache; see <a href="#transact"><code>transact()</code></a> below</td>
 </tr>
 <tr class="even">
-<td>Tags, <code>memoize</code>, <code>FanoutCache</code></td>
+<td><a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a></td>
+<td>Supported</td>
+<td>Supported, with differences; see <a href="#fanoutcache"><code>FanoutCache</code></a> below</td>
+</tr>
+<tr class="odd">
+<td>Tags, <code>memoize</code></td>
 <td>Supported</td>
 <td>Coming in later phases</td>
 </tr>
@@ -445,6 +457,22 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <li><strong>It belongs to a thread, not an asyncio task</strong>, as in diskcache: don’t <code>await</code> inside the block.</li>
 </ul>
 </section>
+<section id="fanoutcache" class="level1">
+<h1><a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a></h1>
+<p><a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> is covered in full in <a href="../user-guide/fanoutcache.html">FanoutCache: sharded caches</a>. The differences from diskcache’s, each with an entry in <a href="../user-guide/divergences.html">Divergences</a>:</p>
+<ul>
+<li><strong><a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> is keyword-only</strong> (<code>FanoutCache(path, shards=4)</code>). <code>FanoutCache(path, 4)</code> is a four-second <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> here. The constructor is <code>FanoutCache(directory, timeout=None, *, shards=None, ...)</code>, and <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a> is required (D-039).</li>
+<li><strong>The shard count is recorded</strong>, and a different <code>shards=</code> raises <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> instead of silently sending keys to other shards. <code>shards=None</code> uses the stored count, or creates 8 (D-032).</li>
+<li><strong>A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> refuse each other’s directories</strong> with <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a>, and nothing is created by the refused open (D-038).</li>
+<li><strong>Shards are chosen by XXH3, not adler32</strong>, so which shard a key lands in differs from diskcache’s, and <code>shard_of(key)</code> tells you. Iteration goes shard by shard, and <code>iterkeys(prefix=, reverse=)</code> gives the merged sorted order. There’s no <code>reversed()</code> yet (D-033).</li>
+<li><strong>A busy shard raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></strong> after <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> (60 seconds by default) instead of silently giving False or the default after 10 ms. <code>durable=True</code> gives the miss answers, and logs them (D-034).</li>
+<li><strong>Maintenance shares one <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a></strong> across the shards, doesn’t retry forever, and reports partial progress: a failure raises with <code>failed_shards</code> and <code>removed</code> (D-035).</li>
+<li><strong><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> is a total</strong>, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0’s share (D-036).</li>
+<li><strong><code>max_connections</code> is a total</strong> across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> (D-037).</li>
+<li><strong><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> takes a key</strong> and covers one shard: <code>with cache.transact(key=k):</code> where diskcache’s <code>with cache.transact():</code> locks every shard. Calls for keys on other shards inside the block raise <code>ValueError</code>, reads included. A ported bare <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> raises <code>TypeError</code> (D-040).</li>
+<li><strong>Not there yet:</strong> <code>cache()</code>, <code>deque()</code> and <code>index()</code>, <a href="../reference/Caches.stats.html#diskcache_oxide.Caches.stats" class="gdls-link gdls-code">stats()</a>, <code>evict()</code> and tags, <code>check()</code>, <code>reset()</code>, <code>read()</code>, <code>reversed()</code>, <code>retry=</code>, <code>read=</code> and <code>tag=</code> arguments, settings as attributes, and pickling (D-039).</li>
+</ul>
+</section>
 <section id="truthiness" class="level1">
 <h1>Truthiness</h1>
 <p>In diskcache, an empty cache is falsy, so <code>if cache:</code> quietly skips caching right after every deploy, when the cache is empty. In diskcache-oxide, <code>bool(Cache)</code> is always True and <code>bool(NullCache)</code> is always False, so <code>if cache:</code> means “is caching on?”. Both have an <a href="../reference/Cache.enabled.html#diskcache_oxide.Cache.enabled" class="gdls-link gdls-code">enabled</a> property that says the same thing.</p>
@@ -466,7 +494,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <li>Reads take about half the time, and threaded throughput no longer collapses as threads are added. See <a href="../user-guide/performance.html">Performance</a>.</li>
 <li>A child process forked while another thread was writing can always write. In diskcache it can stall for the full 60-second timeout.</li>
 <li><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> keeps writes that land while it runs, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes every expired entry, and a read during an overwrite never misses.</li>
-<li>File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache.</li>
+<li>File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> bounds them for the whole root, not per shard.</li>
 <li>Opening a cache and reading from it never writes to the database.</li>
 </ul>
 

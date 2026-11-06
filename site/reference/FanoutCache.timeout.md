@@ -1,0 +1,7 @@
+## FanoutCache.timeout
+
+
+Seconds a call waits for a lock or a pending fork before raising [Timeout](Timeout.md#diskcache_oxide.Timeout).
+
+
+`FanoutCache.timeout: float`

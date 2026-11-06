@@ -252,6 +252,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Transactions</span></a>
   </div>
@@ -464,7 +470,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <h1><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> and <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a></h1>
 <p><a href="../reference/NullCache.transact.html#diskcache_oxide.NullCache.transact" class="gdls-link gdls-code">NullCache.transact()</a> is a no-op context manager that yields the <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, so code written as <code>with cache.transact() as tx:</code> runs unchanged with caching off. There’s nothing to commit or roll back. It accepts <code>retry=</code> as <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">Cache.transact()</a> does, and a keyword-only <code>key=</code>, which it ignores.</p>
 <p>With <code>invalidate=</code>, it never opens a transaction on the real cache: a switched-off cache must never take a write lock or raise <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>. So removals forwarded inside the block land at once, and an exception in the block doesn’t undo them.</p>
-<p><a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> has no <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>. To accept either class and call it, annotate with <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a>, which adds it. See <a href="../user-guide/transactions.html#typing-transactionalcachelike">Transactions</a>.</p>
+<p><a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> has no <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>. To accept either class and call it, annotate with <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a>, which adds it. See <a href="../user-guide/transactions.html#typing-transactionalcachelike">Transactions</a>. A <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a>’s <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact</a> takes a key, so for code that accepts a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> or a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> use <a href="../reference/ShardedCacheLike.html#diskcache_oxide.ShardedCacheLike" class="gdls-link gdls-code">ShardedCacheLike</a> instead (see <a href="../user-guide/fanoutcache.html#typing">Typing</a>); the <code>key=</code> a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> ignores is what lets it satisfy both.</p>
 
 
 </section>

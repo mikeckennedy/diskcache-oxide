@@ -217,6 +217,12 @@ ul.task-list li input[type="checkbox"] {
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Transactions</span></a>
   </div>
@@ -362,6 +368,7 @@ ul.task-list li input[type="checkbox"] {
 <li>Bounded connections and memory, and a target size for the write-ahead log.</li>
 <li><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, the <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> protocol, <code>py.typed</code>.</li>
 <li><a href="../user-guide/transactions.html"><code>transact()</code></a>, ahead of the rest of Phase 6, with <a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a> and the <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a> protocol.</li>
+<li><a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> (Phase 6c), sharding across several databases, with <code>Caches.register(name, shards=...)</code> and <a href="../reference/ShardedCacheLike.html#diskcache_oxide.ShardedCacheLike" class="gdls-link gdls-code">ShardedCacheLike</a>. It removes the multi-process write-lock ceiling; making threads that share one handle scale on free-threaded Python is part of Phase 4.</li>
 </ul>
 </section>
 <section id="now-concurrency-review-and-soak-phase-2.5" class="level2">
@@ -399,8 +406,8 @@ ul.task-list li input[type="checkbox"] {
 <td>Multi-operation transactions. Done early: see <a href="../user-guide/transactions.html">Transactions</a>.</td>
 </tr>
 <tr class="even">
-<td><strong>6c. <code>FanoutCache</code></strong></td>
-<td>Sharding across several databases, so writers stop queueing on one write lock. A strong candidate for the recommended default in threaded apps.</td>
+<td><strong>6c. <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a></strong></td>
+<td>Done: see <a href="../user-guide/fanoutcache.html">FanoutCache</a>.</td>
 </tr>
 <tr class="odd">
 <td><strong>6d. <code>Deque</code> and <code>Index</code></strong></td>

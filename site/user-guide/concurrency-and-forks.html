@@ -252,6 +252,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Transactions</span></a>
   </div>
@@ -361,6 +367,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <li><strong>Atomic across processes.</strong> <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a>, <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a>, <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr()</a> and every other write is a single transaction. Two processes can’t both win an <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a>, and two <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> calls never lose an update. <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> is a read and then a transaction that deletes exactly the version it read, so two processes can’t both get the same value.</li>
 <li><strong>Maintenance that doesn’t destroy work.</strong> Every write gets a new sequence number. <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> and <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> note the latest number when they start and only touch older rows, so writes from other processes that land while they run are kept.</li>
 <li><strong>Large values are always whole.</strong> A process reading a large value while another overwrites it gets the old value or the new one, never a miss. (diskcache’s standalone reproduction of that race sees about 40 misses in every 325,000 reads.)</li>
+<li><strong>One write lock per database file.</strong> Every writer to a directory queues on its lock, so with many processes writing often a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops scaling at a couple of processes. A <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> has one lock per shard and keeps scaling (5.7x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 8 processes on a 99:1 read/write mix). It doesn’t change the thread picture below: threads sharing one handle on free-threaded Python are not lifted by it today.</li>
 <li><strong>Opening never writes.</strong> Opening a cache with unchanged settings and reading from it never takes the write lock or touches the database file, so a read-mostly worker costs the writers nothing.</li>
 </ul>
 </section>
@@ -391,7 +398,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </section>
 <section id="free-threaded-performance-today" class="level1">
 <h1>Free-threaded performance today</h1>
-<p>On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that’s only about 1.6× its single-thread number, so threads don’t scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is the goal of Phase 4. See <a href="../user-guide/performance.html">Performance</a>.</p>
+<p>On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that’s only about 1.6× its single-thread number, so threads don’t scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is the goal of Phase 4. A <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> doesn’t remove it for threads sharing one handle either; that is being worked on. See <a href="../user-guide/performance.html">Performance</a>.</p>
 
 
 </section>

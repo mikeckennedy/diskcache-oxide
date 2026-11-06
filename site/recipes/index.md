@@ -26,4 +26,4 @@ Practical patterns for the jobs a shared cache does in a real app. The examples 
 
 # Coming later
 
-More recipes will arrive with the features they need: `FanoutCache` for write-heavy threaded apps, `memoize` with stampede protection, tags, [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact), cross-process locks and throttles, and `AsyncCache` for asyncio apps. See the [roadmap](../user-guide/roadmap.md).
+More recipes will arrive with the features they need: [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) for write-heavy threaded apps, `memoize` with stampede protection, tags, [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact), cross-process locks and throttles, and `AsyncCache` for asyncio apps. See the [roadmap](../user-guide/roadmap.md).

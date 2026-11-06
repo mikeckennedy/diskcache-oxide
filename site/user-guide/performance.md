@@ -58,6 +58,6 @@ Profiling a cached [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) sh
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;
 - cheaper reference counting on shared [Cache](../reference/Cache.md#diskcache_oxide.Cache) objects in free-threaded builds;
-- `FanoutCache`, if sharding across database files turns out to be the answer for threaded writers.
+- Making threads that share one handle scale. [`FanoutCache`](fanoutcache.md) is built and removes the multi-process write-lock ceiling, but at its default settings it doesn't lift this read ceiling, so the shared per-handle path is being worked on.
 
 Past that, the [network server](roadmap.md) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. Measured reads drop from 1.18 µs to 0.69 µs.
