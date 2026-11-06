@@ -795,7 +795,7 @@ fn row_9_the_automatic_checkpoint_never_waits_behind_a_fork() {
     })
     .unwrap();
     // A reader's open snapshot keeps the WAL from resetting under the burst.
-    let reader = Connection::open(open::db_path(tmp.path())).unwrap();
+    let reader = crate::sqlite::open(&open::db_path(tmp.path())).unwrap();
     reader.execute_batch("BEGIN; SELECT count(*) FROM cache;").unwrap();
     let data = vec![b'x'; 2 << 10];
     for i in 0..1024 {
@@ -1312,7 +1312,7 @@ fn a_fork_arriving_mid_round_stops_the_tries_and_counts_as_fork_pending() {
     let tmp = TempDir::new("fork-mid-round");
     let store = open_store(tmp.path());
     put(&store, "k0");
-    let peer = Connection::open(open::db_path(tmp.path())).unwrap();
+    let peer = crate::sqlite::open(&open::db_path(tmp.path())).unwrap();
     peer.execute_batch("BEGIN; SELECT count(*) FROM cache;").unwrap();
     put(&store, "k1");
     let window = lockwait::ATTACHED_WINDOW;
@@ -1359,7 +1359,7 @@ fn a_reader_that_outlasts_a_few_windows_doesnt_fail_the_round() {
     let mut outcomes = Vec::new();
     for _ in 0..20 {
         assert!(matches!(store.checkpoint_once(Instant::now() + T), crate::wal::Outcome::Done));
-        let peer = Connection::open(open::db_path(tmp.path())).unwrap();
+        let peer = crate::sqlite::open(&open::db_path(tmp.path())).unwrap();
         peer.execute_batch("BEGIN; SELECT count(*) FROM cache;").unwrap();
         put(&store, "k1");
         let (outcome, started, released) = std::thread::scope(|s| {

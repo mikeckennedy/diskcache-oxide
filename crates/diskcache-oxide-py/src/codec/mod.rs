@@ -382,13 +382,13 @@ pub fn _decode(py: Python<'_>, mode: i64, payload: &Bound<'_, PyAny>, allow_pick
 
 #[cfg(test)]
 mod tests {
-    use rusqlite::Connection;
+    use diskcache_oxide_core::sqlite;
 
     /// Design section 5: mode 7 stores -0.0 natively only if SQLite keeps its sign. The `value`
     /// column has BLOB affinity, so SQLite must not turn an integral REAL into an INTEGER.
     #[test]
     fn negative_zero_survives_real() {
-        let conn = Connection::open_in_memory().unwrap();
+        let conn = sqlite::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE cache (mode INTEGER NOT NULL, value BLOB)").unwrap();
         for v in [-0.0_f64, 0.0, f64::MIN_POSITIVE / 4.0, -f64::MAX, 1e300, -1.5] {
             conn.execute("DELETE FROM cache", []).unwrap();
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn i64_bounds_survive_integer() {
-        let conn = Connection::open_in_memory().unwrap();
+        let conn = sqlite::open_in_memory().unwrap();
         for v in [i64::MIN, -1, 0, i64::MAX] {
             let back: i64 = conn.query_row("SELECT ?1", [v], |r| r.get(0)).unwrap();
             assert_eq!(back, v);

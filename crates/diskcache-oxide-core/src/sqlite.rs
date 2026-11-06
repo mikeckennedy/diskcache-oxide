@@ -1,10 +1,36 @@
-//! Facts about the SQLite library compiled into this build.
+//! The bundled SQLite: the one entry point every connection is opened through, and facts about the
+//! library compiled into this build.
 
+use std::path::Path;
 use std::time::Duration;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
+use crate::sqlite_mutex;
 use crate::{Error, Result};
+
+/// Opens a connection to the database at `path`, read-write and created if missing.
+///
+/// Every SQLite open in both crates, tests included, goes through this module (pinned by
+/// `tests::every_open_goes_through_the_entry_point`), because each one first installs this crate's
+/// mutex methods ([`sqlite_mutex::ensure_installed`]). A direct rusqlite open would initialize
+/// SQLite itself, and one racing the install is heap corruption, not a fallback.
+pub fn open(path: &Path) -> rusqlite::Result<Connection> {
+    sqlite_mutex::ensure_installed();
+    Connection::open(path)
+}
+
+/// [`open`], with explicit open flags.
+pub fn open_with_flags(path: &Path, flags: OpenFlags) -> rusqlite::Result<Connection> {
+    sqlite_mutex::ensure_installed();
+    Connection::open_with_flags(path, flags)
+}
+
+/// [`open`], for a private in-memory database.
+pub fn open_in_memory() -> rusqlite::Result<Connection> {
+    sqlite_mutex::ensure_installed();
+    Connection::open_in_memory()
+}
 
 /// The SQLite version the bundled library was compiled from (the `SQLITE_VERSION` macro).
 #[must_use]
@@ -22,7 +48,7 @@ pub fn runtime_version() -> &'static str {
 /// The compile-time options of the linked SQLite, as reported by `PRAGMA compile_options`.
 pub fn compile_options() -> Result<Vec<String>> {
     let read = || -> rusqlite::Result<Vec<String>> {
-        let conn = Connection::open_in_memory()?;
+        let conn = open_in_memory()?;
         let mut stmt = conn.prepare("PRAGMA compile_options")?;
         stmt.query_map([], |row| row.get::<_, String>(0))?.collect()
     };
@@ -43,5 +69,58 @@ mod tests {
     fn compile_options_are_listed() {
         let options = compile_options().unwrap();
         assert!(options.iter().any(|o| o.starts_with("THREADSAFE=")), "{options:?}");
+    }
+
+    /// Every SQLite open in `crates/` goes through this module, which installs the mutex methods
+    /// first, and no other code calls SQLite's C API directly: several raw calls initialize SQLite
+    /// (`sqlite3_vfs_find`, `sqlite3_soft_heap_limit64`, `sqlite3_randomness`,
+    /// `sqlite3_mutex_alloc`), which is the same race as a direct open. Never widen the allowlist
+    /// casually: a call racing the install corrupts the heap.
+    #[test]
+    fn every_open_goes_through_the_entry_point() {
+        /// (file, the only raw calls it may make). An empty list allows the whole file.
+        const ALLOWED: &[(&str, &[&str])] = &[
+            ("diskcache-oxide-core/src/sqlite.rs", &[]),
+            ("diskcache-oxide-core/src/sqlite_mutex.rs", &[]),
+            // `_sqlite_memory` (a test hook): the memory counters don't initialize SQLite.
+            ("diskcache-oxide-py/src/lib.rs", &["sqlite3_memory_used", "sqlite3_memory_highwater"]),
+        ];
+        fn allowed(path: &Path, code: &str) -> bool {
+            ALLOWED.iter().any(|(file, calls)| {
+                path.ends_with(file)
+                    && (calls.is_empty()
+                        || code.match_indices("sqlite3_").all(|(i, _)| calls.iter().any(|c| code[i..].starts_with(c))))
+            })
+        }
+        fn scan(dir: &Path, found: &mut Vec<String>, seen: &mut usize) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|n| n != "target") {
+                        scan(&path, found, seen);
+                    }
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    for (n, line) in text.lines().enumerate() {
+                        let code = line.trim_start();
+                        let raw = code.contains("Connection::open")
+                            || code.contains("ffi::sqlite3_")
+                            || code.contains("sqlite3_open");
+                        if !raw || code.starts_with("//") {
+                            continue;
+                        }
+                        *seen += 1;
+                        if !allowed(&path, code) {
+                            found.push(format!("{}:{}: {code}", path.display(), n + 1));
+                        }
+                    }
+                }
+            }
+        }
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let (mut stray, mut seen) = (Vec::new(), 0);
+        scan(crates, &mut stray, &mut seen);
+        assert!(stray.is_empty(), "open SQLite through diskcache_oxide_core::sqlite::open*, not directly: {stray:#?}");
+        assert!(seen >= 5, "the scan should see the allowed calls, {seen} seen");
     }
 }

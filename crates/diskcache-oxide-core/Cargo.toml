@@ -9,6 +9,8 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# SQLite's mutex methods (src/sqlite_mutex.rs) are pthread mutexes.
+libc.workspace = true
 rusqlite.workspace = true
 thiserror.workspace = true
 xxhash-rust.workspace = true

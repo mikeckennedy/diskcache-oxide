@@ -304,7 +304,7 @@ mod tests {
     // are exercised through reset_if_stale and hand-tagged connections.
 
     fn memory() -> Result<Connection> {
-        Connection::open_in_memory().map_err(|e| crate::Error::from_sqlite(e, std::time::Duration::ZERO))
+        crate::sqlite::open_in_memory().map_err(|e| crate::Error::from_sqlite(e, std::time::Duration::ZERO))
     }
 
     #[test]
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn a_stale_pool_forgets_its_idle_connections_and_count() {
-        let conn = Connection::open_in_memory().unwrap();
+        let conn = crate::sqlite::open_in_memory().unwrap();
         let mut state = PoolState {
             idle: vec![PooledConn { conn, generation: 7, applied: Applied::default() }],
             generation: 7,

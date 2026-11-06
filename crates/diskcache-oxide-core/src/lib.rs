@@ -3,7 +3,7 @@
 //! Deals only in keys, modes and bytes (or value files). Converting Python objects to and from
 //! bytes lives in the `diskcache-oxide-py` crate, so this crate never depends on `PyO3`.
 
-// deny, not forbid, so that `stack` alone can allow it.
+// deny, not forbid, so that `stack` and `sqlite_mutex` alone can allow it.
 #![deny(unsafe_code)]
 
 mod error;
@@ -20,6 +20,7 @@ pub mod rows;
 pub mod schema;
 pub mod spill;
 pub mod sqlite;
+pub mod sqlite_mutex;
 mod stack;
 pub mod store;
 mod sync;

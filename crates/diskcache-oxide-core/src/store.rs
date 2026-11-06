@@ -46,7 +46,7 @@ use crate::poison::HoldGuard;
 use crate::pool::{Pool, PooledConn};
 use crate::rows::{Removed, RowWriter};
 use crate::stack::TakeAllStack;
-use crate::{Error, Result, lockwait};
+use crate::{Error, Result, lockwait, sqlite};
 
 /// Default `max_connections` (04-design.md section 2).
 pub const DEFAULT_MAX_CONNECTIONS: u64 = 8;
@@ -1807,7 +1807,7 @@ fn open_pin(_gate: &SharedGuard<'_>, db_path: &Path) -> Result<(FilePin, FileId)
             .map_err(|source| Error::Io { path: db_path.to_path_buf(), source })
     };
     let before = id()?;
-    let pin = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
+    let pin = sqlite::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
         .map_err(|e| Error::from_sqlite(e, Duration::ZERO))?;
     let after = id()?;
     if before != after {
@@ -2681,7 +2681,7 @@ mod tests {
         let tmp = TempDir::new("store-wal-tries");
         let store = Store::open(&options(tmp.path())).unwrap();
         put(&store, "k0", b"v");
-        let peer = Connection::open(open::db_path(tmp.path())).unwrap();
+        let peer = crate::sqlite::open(&open::db_path(tmp.path())).unwrap();
         peer.execute_batch("BEGIN; SELECT count(*) FROM Cache;").unwrap();
         put(&store, "k1", b"v");
 
@@ -2711,7 +2711,7 @@ mod tests {
         let store = Store::open(&options(tmp.path())).unwrap();
         put(&store, "k", b"v");
         store.pool.clear(&GATE.enter_shared_blocking());
-        let peer = Connection::open(open::db_path(tmp.path())).unwrap();
+        let peer = crate::sqlite::open(&open::db_path(tmp.path())).unwrap();
         peer.execute_batch("PRAGMA locking_mode = EXCLUSIVE; SELECT count(*) FROM Cache;").unwrap();
         let release = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(200));

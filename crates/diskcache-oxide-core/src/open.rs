@@ -13,9 +13,9 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 
 use crate::fanout::{HASH_IDENTITY, MAX_SHARDS, MIN_SHARDS, parse_decimal};
-use crate::lockwait;
 use crate::schema::{CREATE, DB_FILENAME, DEFAULT_CULL_LIMIT, DEFAULT_SIZE_LIMIT, FORMAT_VERSION, MIN_SIZE_LIMIT};
 use crate::{Error, Result};
+use crate::{lockwait, sqlite};
 
 /// Settings a caller passed explicitly. `None` keeps whatever is stored (or the default for a new
 /// cache), so a reopen that doesn't mention a setting never overwrites another opener's value.
@@ -188,7 +188,7 @@ pub fn ensure_directory(directory: &Path) -> Result<()> {
 /// Opens one connection to the database and applies the per-connection settings. Writes nothing.
 pub fn connect(directory: &Path, timeout: Duration) -> Result<Connection> {
     let path = db_path(directory);
-    let mut conn = Connection::open(&path).map_err(|e| Error::from_sqlite(e, timeout))?;
+    let mut conn = sqlite::open(&path).map_err(|e| Error::from_sqlite(e, timeout))?;
     // Busy waits happen only inside an open `AttachedWindow`; see `lockwait`.
     lockwait::install(&mut conn).map_err(|e| Error::from_sqlite(e, timeout))?;
     // Room for every statement the core caches (about 30), so a mixed workload never evicts one

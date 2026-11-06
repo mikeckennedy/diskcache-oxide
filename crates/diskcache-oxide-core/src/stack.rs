@@ -6,7 +6,8 @@
 //! There is no pop of a single node, so the ABA problem can't arise: a node is only freed by the
 //! thread that swapped the whole list out, after which nobody else can reach it.
 //!
-//! The only module in core that may use `unsafe` (see `tests::only_this_module_allows_unsafe`).
+//! One of two modules in core that may use `unsafe`, with `sqlite_mutex` (see
+//! `tests::only_these_modules_allow_unsafe`).
 
 #![allow(unsafe_code)]
 #![warn(clippy::undocumented_unsafe_blocks)]
@@ -147,10 +148,10 @@ mod tests {
         assert_eq!(got, (0..THREADS * EACH).collect::<Vec<_>>());
     }
 
-    /// Core is `deny(unsafe_code)`, and this module is the one exception. A second one is a design
-    /// change, so it should fail here first.
+    /// Core is `deny(unsafe_code)`, and this module and `sqlite_mutex` (SQLite's mutex methods, plan
+    /// 12 step 5a) are the exceptions. Another one is a design change, so it should fail here first.
     #[test]
-    fn only_this_module_allows_unsafe() {
+    fn only_these_modules_allow_unsafe() {
         fn scan(dir: &Path, found: &mut Vec<String>) {
             for entry in std::fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
@@ -168,8 +169,12 @@ mod tests {
         let mut found = Vec::new();
         scan(&src, &mut found);
         found.sort();
-        let expected = [src.join("lib.rs"), src.join("stack.rs")].map(|p| p.display().to_string());
-        assert_eq!(found, expected, "only lib.rs (the deny) and stack.rs (the allow) may name unsafe_code");
+        let expected =
+            [src.join("lib.rs"), src.join("sqlite_mutex.rs"), src.join("stack.rs")].map(|p| p.display().to_string());
+        assert_eq!(
+            found, expected,
+            "only lib.rs (the deny), sqlite_mutex.rs and stack.rs (the allows) may name unsafe_code"
+        );
     }
 }
 

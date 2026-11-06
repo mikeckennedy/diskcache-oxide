@@ -77,6 +77,7 @@ dependencies = [
 name = "diskcache-oxide-core"
 version = "0.1.0-dev.2"
 dependencies = [
+ "libc",
  "rusqlite",
  "shuttle",
  "thiserror",
