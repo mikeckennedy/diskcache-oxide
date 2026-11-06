@@ -128,7 +128,7 @@ The best arm, 100 tries, gives the shared `Cache` +2.6% at 8 CPUs and +3.6% at 4
 
 ## htz (x86-64): pending (Michael)
 
-`bench/scaling/htz_m2.sh` runs everything above on a Linux host through Docker (the repo's `dco-linux-dev` image, built from `docker/linux-dev.Dockerfile` if missing): it checks out the two commits as worktrees, builds the wheels, runs the probe at `--cpus 8` and `--cpus 4` (7 rounds), profiles with perf in a privileged throwaway container, and runs the `bench/fanout.py` A/B (5 rounds), writing everything to one directory. On htz, from a clone at `6bfe945` or later, on a quiet hour:
+`bench/scaling/htz_m2.sh` runs everything above on a Linux host through Docker (the repo's `dco-linux-dev` image, built from `docker/linux-dev.Dockerfile` if missing): it checks out the two commits as worktrees, builds the wheels, runs the probe at `--cpus 8` and `--cpus 4` (7 rounds), with `M2_PROFILE=1` profiles with perf in a privileged throwaway container, and runs the `bench/fanout.py` A/B (5 rounds), writing everything to one directory. On htz, from a clone at `6bfe945` or later, on a quiet hour:
 
 ```bash
 bench/scaling/htz_m2.sh ~/m2-htz          # about an hour; M2_SKIP_FANOUT=1 for the probe and profile only
