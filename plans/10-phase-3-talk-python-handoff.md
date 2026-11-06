@@ -1,6 +1,6 @@
 # Phase 3 handoff: moving Talk Python to diskcache-oxide
 
-Where things stood on 2026-10-30, with the library's status (sections 1, 3 and 8) updated on 2026-11-03, and everything needed to pick up the port without the conversation that produced it. Read sections 1-3 to get oriented, and use the rest as reference while working.
+Where things stood on 2026-10-30, with the library's status (sections 1, 3 and 8) updated on 2026-11-03, and section 1 again on 2026-11-06, and everything needed to pick up the port without the conversation that produced it. Read sections 1-3 to get oriented, and use the rest as reference while working.
 
 Paths: `LIB` = `~/github/mk/diskcache-oxide`. `APP` = `~/github/talk-python/talk-python-to-me/src/talk_python_to_me_com`. `PKG` = `APP/talk_python_to_me_com`. Line numbers were read on 2026-10-30 and will drift. The Talk Python branch is `diskcache-oxide-cache`, and **nothing has been changed on it yet**.
 
@@ -13,12 +13,14 @@ Paths: `LIB` = `~/github/mk/diskcache-oxide`. `APP` = `~/github/talk-python/talk
 | Plan 09 step 1: `pop` keeps values it can't read | Built and reviewed (`a79f895`; step 1b, timeouts behind a pending fork, `58508b8`) |
 | Plan 09 step 2: `Cache(durable=True)` | Built (`9751682`; step 2b, forced-checkpoint retries, `5b2ea85`). The deep review of `5b2ea85` found four bugs, all fixed (`08e00f2`, `81aa84d`, `ae48524`) |
 | Plan 09 step 3: `pop` in the soak kit, then a fresh 24-hour run | Done. The kit has the plan 09 lanes (`08e00f2`) |
-| 24-hour soak on the mini | **PASS on `ae48524`** (section 8). Since then: comments, docs, tests and formatting, plus the finding 3 follow-up to the deferred-owner lock and its child-hook refinement (a forked child frees a holder that held only the stamp), paths the soak didn't reach |
-| PGO wheels | Rebuilt 2026-11-04 on `07ed13d` plus the child-hook refinement into `LIB/dist/`, macOS arm64 only (section 4) |
-| Linux wheel | **Doesn't exist.** Production installs from a wheel, not PyPI (Michael). Version is still `0.0.0`. Blocks production, not local work |
-| Port plan | Written: `APP/plans/084-diskcache-oxide-port.plan.md` (plan 084) |
+| 24-hour soak on the mini | **PASS on `ae48524`** (section 8). An 8-hour run on `c99afb7` (the lock-free deferred-owner stack) also passed on 2026-11-05: 0 problems, no leak or drift flags, 46,999 forks with 0 failures, get p99 68 µs at the end. Neither covers plan 12, whose steps 1, 3 and 5 change `incr`, held transactions and locking, so production needs a fresh 24 hours on the final commit (`soak/README.md`) |
+| PGO wheels | `0.1.0.dev2` (`2aaa803`, plan 12 step 4) for macOS 3.14 and 3.15 and Linux amd64 `cp314`, in Talk Python's `wheels/` (local only, Michael 2026-11-05). `0.1.0.dev1` (`c99afb7`) is retired. Plan 12 step 7 measured fresh PGO wheels of `6f9f32a` |
+| Linux wheel | Built under emulation by `scripts/linux-check.sh --platform linux/amd64 --out DIR --exec 'scripts/build_pgo.sh $PY && cp dist/*.whl /out/'` (`9a7c2ba`), `manylinux_2_34_x86_64`. The full amd64 check passed on all four interpreters on 2026-11-04. Not yet run on real x86-64 (Michael's `talk-python-htz` test) |
+| Port plan | `APP/plans/084-diskcache-oxide-port.plan.md`. Steps 0-11 done on `diskcache-oxide-cache` (`616565fc5`), unpushed until Michael says. Plan 085 (rate-limit settings into `core.sqlite`) is live in production. Left: Step 12 (production build) and Step 13 (cutover) |
 | Unsafe check of the deferred-owner stack (`cf74d92`) | Clean (2026-11-04): Miri, 16 seeds, on the `stack` tests; ThreadSanitizer on those plus `row_5_concurrent_deferrals_leak_nothing_with_or_without_a_fork` |
-| Whole-codebase sanitizer pass | **Not done.** Required before production (section 3, item 6) |
+| Plan 12, the performance work | Steps 1, 3, 4, 5 (5a, 5b; 5a-2 swept and not shipped; 5c not built) and 7 done; step 6 is plan 13 (FanoutCache). Open for Michael: FanoutCache's default connection budget (recommended: two per shard) and two small Mac-only regressions (`plans/12-performance-work.md`, Progress) |
+| PyPI | The name is Michael's: `0.0.1` placeholder live, `0.1.0.dev1` yanked (2026-11-04). Real releases go there from `0.1.0` |
+| Whole-codebase sanitizer pass | **Not done.** Required before production (section 3, item 6), and now also covers `sqlite_mutex.rs` (25 `unsafe` blocks of pthread FFI, plan 12 step 5a), which Miri can't run: ThreadSanitizer and AddressSanitizer, with the bundled SQLite built under them, are the check |
 
 Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency work), `plans/08` (what's built, with the reasoning), `plans/09` (built, including the review's required changes). `reviews/deep-review-5b2ea85-2026-10-31.md` has the deep review of plan 09 and the status of each finding.
 
