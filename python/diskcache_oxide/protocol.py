@@ -1,4 +1,4 @@
-"""`CacheLike`: the interface `Cache` and `NullCache` share, for typing code that accepts either.
+"""`CacheLike`: the interface `Cache`, `FanoutCache` and `NullCache` share, for typing code that accepts either.
 
 `TransactionalCacheLike` adds `transact()`. It's a separate protocol so a cache whose transactions
 need more than `retry` (a sharded cache's `transact(key=...)`) can still be a `CacheLike`.
@@ -15,9 +15,9 @@ from typing import Any, Literal, Protocol, Self, overload, runtime_checkable
 
 @runtime_checkable
 class CacheLike(Protocol):
-    """What application code can rely on from a `Cache` or a `NullCache`.
+    """What application code can rely on from a `Cache`, a `FanoutCache` or a `NullCache`.
 
-    `Cache` and `NullCache` both satisfy it, so a factory can return either and callers never need
+    All three satisfy it, so a factory can return either and callers never need
     to check which one they got. A test keeps the three signatures identical.
     """
 
@@ -109,7 +109,7 @@ class CacheLike(Protocol):
         """True if caching is on, so `if cache:` reads naturally."""
 
     def __iter__(self) -> Iterator[str]:
-        """Iterate over keys in insertion order."""
+        """Iterate over every key once. A `Cache` yields them in insertion order."""
 
     def __enter__(self) -> Self:
         """Return the cache, for use in a `with` block."""

@@ -8,10 +8,17 @@ An app registers its caches once, by name, then looks them up wherever it needs 
 
     caches['general'].set('key', 'value')
 
+**Sharded caches.** `register('rate_limits', shards=8)` registers a `FanoutCache`, which takes the same
+settings. Plain caches are read with `caches[name]` (typed `TransactionalCacheLike`, so
+`caches[name].transact()` checks); sharded ones with `caches.fanout(name)` (typed
+`FanoutCache | NullCache`), because their `transact` takes a key. Reading a name the wrong way raises
+`TypeError`. Everything else (failed opens, `disable`, `stats`, `clear`, `close_all`) works the same.
+
 **Lookups.** A cache opens on its first lookup and the same object comes back every time after
 that. A lookup is one dict read, with no lock, so it's cheap enough to do on every request.
 
 **When a cache can't open** (a permissions problem, a database in a format this version can't read,
+a directory that holds the other kind of cache or another shard count (`LayoutMismatchError`),
 another process holding the lock past `timeout`), the lookup returns a `NullCache` instead of
 raising, reports the error through `on_open_error`, and tries again after `retry_open_after` seconds.
 A bad setting (`size_limit=True`) is a bug, not an outage, so that still raises. With `durable=True`
@@ -38,23 +45,27 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, cast
 
-from diskcache_oxide._core import Cache, Timeout
+from diskcache_oxide._core import Cache, FanoutCache, Timeout
 from diskcache_oxide.null import NullCache
-from diskcache_oxide.protocol import TransactionalCacheLike
+from diskcache_oxide.protocol import CacheLike, TransactionalCacheLike
 
 __all__ = ['CacheStats', 'Caches']
 
 
 log = logging.getLogger('diskcache_oxide')
 
-# The keywords `Cache` accepts, so a misspelled setting fails at registration, not on first use.
+# The keywords `Cache` and `FanoutCache` accept, so a misspelled setting fails at registration, not on
+# first use. `shards` is the one a FanoutCache adds; it picks the kind, so it's per-cache, never a default.
 _CACHE_SETTINGS = frozenset(inspect.signature(Cache).parameters) - {'directory'}
+_FANOUT_SETTINGS = frozenset(inspect.signature(FanoutCache).parameters) - {'directory'}
 
 # Errors that mean "this cache can't open right now", as opposed to a bug in its settings.
-# `Timeout` is an `OSError`. `RuntimeError` covers `FormatMismatchError`, the not-WAL error, and a
-# child forked mid-transaction that can't write the file (D-020): a NullCache is right for all.
+# `Timeout` is an `OSError`. `RuntimeError` covers `FormatMismatchError` and its subclass
+# `LayoutMismatchError` (a directory that holds another kind of cache, or another shard count), the
+# not-WAL error, and a child forked mid-transaction that can't write the file (D-020): a NullCache
+# is right for all.
 _OPEN_ERRORS = (OSError, RuntimeError)
 
 # The longest a `Timeout` at open is remembered: it means busy (a fork, a peer holding the lock), not
@@ -74,8 +85,8 @@ class CacheStats:
     error: str | None = None
 
 
-def _check_settings(settings: dict[str, Any]) -> None:
-    unknown = sorted(settings.keys() - _CACHE_SETTINGS)
+def _check_settings(settings: dict[str, Any], allowed: frozenset[str] = _CACHE_SETTINGS) -> None:
+    unknown = sorted(settings.keys() - allowed)
     if unknown:
         raise TypeError(f'unknown Cache setting{"s" if len(unknown) > 1 else ""}: {", ".join(unknown)}')
     report = settings.get('on_decode_error')
@@ -138,9 +149,11 @@ class Caches[N: str = str]:
         # What `caches[name]` returns, filled on first lookup. Read without a lock: a lookup that
         # races another opens a second handle, and the loser is closed (handles on one directory
         # share one store, so that's cheap and safe).
-        self._resolved: dict[N, TransactionalCacheLike] = {}
+        self._resolved: dict[N, CacheLike] = {}
         # The real handles, opened on demand.
-        self._opened: dict[N, Cache] = {}
+        self._opened: dict[N, Cache | FanoutCache] = {}
+        # The names registered with `shards=`: they open a FanoutCache and are read with `fanout()`.
+        self._fanout: set[N] = set()
         # name -> (retry after this monotonic time, the NullCache handed out until then).
         self._failed: dict[N, tuple[float, NullCache]] = {}
 
@@ -163,19 +176,25 @@ class Caches[N: str = str]:
                 `base_dir`, so it must be a plain name: no path separators, not `.` or `..`.
             directory: Put this cache somewhere else.
             **settings: `Cache` settings for this cache, over the registry's defaults. A callable
-                `on_decode_error` is called as `(name, key, exc)`, as at the registry level.
+                `on_decode_error` is called as `(name, key, exc)`, as at the registry level. Adding
+                `shards=` registers a `FanoutCache` instead, which takes the same settings; read it
+                with `fanout(name)`. Passing the key at all is what picks the kind, so `shards=None`
+                is NOT "not sharded": it is a `FanoutCache` with the stored shard count, or 8 for a
+                new root. Leave `shards` out for a plain cache (a config file that writes
+                `shards: null` for "none" would register a FanoutCache).
 
         Raises:
             ValueError: The name is taken or isn't a plain directory name, or another registered
                 cache already uses that directory (two names would share one store, and the last
                 one opened would quietly set its `size_limit`).
-            TypeError: An unknown `Cache` setting.
+            TypeError: An unknown `Cache` (or `FanoutCache`) setting.
         """
         if not isinstance(name, str) or not name:
             raise ValueError(f'a cache name must be a non-empty str, got {name!r}')
         if name in self._specs:
             raise ValueError(f'a cache named {name!r} is already registered')
-        _check_settings(settings)
+        fanout = 'shards' in settings
+        _check_settings(settings, _FANOUT_SETTINGS if fanout else _CACHE_SETTINGS)
         if directory is None:
             if name in ('.', '..') or os.sep in name or (os.altsep and os.altsep in name) or os.path.isabs(name):
                 raise ValueError(f'{name!r} is not a plain directory name; pass directory= to place it elsewhere')
@@ -191,6 +210,8 @@ class Caches[N: str = str]:
             if same(other_path, path):
                 raise ValueError(f'caches {other!r} and {name!r} would share the directory {path}')
         self._specs[name] = (path, self._defaults | settings)
+        if fanout:
+            self._fanout.add(name)
 
     def __contains__(self, name: object) -> bool:
         return name in self._specs
@@ -209,21 +230,49 @@ class Caches[N: str = str]:
     # -- lookup ----------------------------------------------------------------------------------
 
     def __getitem__(self, name: N) -> TransactionalCacheLike:
-        """The named cache: opened on first use, then the same object every time.
+        """The named plain cache: opened on first use, then the same object every time.
 
         A `NullCache` while it can't be opened (see the class docs), or `NullCache(invalidate=real)`
-        while it's disabled.
+        while it's disabled. The type is `TransactionalCacheLike`, so `caches[name].transact()` checks;
+        a cache registered with `shards=` is read with `fanout()`, whose `transact` takes a key.
 
         Raises:
             KeyError: No cache by that name is registered.
-            TypeError, ValueError: Its settings are invalid.
+            TypeError: The cache was registered with `shards=` (use `fanout(name)`), or its settings
+                are invalid.
+            ValueError: Its settings are invalid.
         """
+        if name in self._fanout:
+            raise TypeError(f'cache {name!r} was registered with shards=; read it with fanout({name!r})')
         try:
-            return self._resolved[name]
+            return cast(TransactionalCacheLike, self._resolved[name])
         except KeyError:
-            return self._resolve(name)
+            return cast(TransactionalCacheLike, self._resolve(name))
 
-    def _resolve(self, name: N) -> TransactionalCacheLike:
+    def fanout(self, name: N) -> FanoutCache | NullCache:
+        """The named sharded cache (one registered with `shards=`), looked up as `caches[name]` is.
+
+        A `NullCache` while it can't be opened or is disabled, exactly as for a plain cache. That
+        includes a directory whose layout doesn't match the registration (`LayoutMismatchError`: a
+        different shard count, or a plain cache's directory): reported through `on_open_error`,
+        remembered, and retried after `retry_open_after`. Its `transact(retry=False, *, key=None)`
+        accepts the `key=` a `FanoutCache` needs, so `caches.fanout(name).transact(key=k)` runs
+        whether the cache is on or off.
+
+        Raises:
+            KeyError: No cache by that name is registered.
+            TypeError: The cache is a plain one (use `caches[name]`), or its settings are invalid.
+            ValueError: Its settings are invalid.
+        """
+        if name not in self._fanout:
+            self._spec(name)
+            raise TypeError(f'cache {name!r} was not registered with shards=; read it with caches[{name!r}]')
+        try:
+            return cast(FanoutCache | NullCache, self._resolved[name])
+        except KeyError:
+            return cast(FanoutCache | NullCache, self._resolve(name))
+
+    def _resolve(self, name: N) -> CacheLike:
         self._spec(name)
         failed = self._failed.get(name)
         if failed is not None and self._monotonic() < failed[0]:
@@ -240,7 +289,7 @@ class Caches[N: str = str]:
             return null
         self._failed.pop(name, None)
         disabled = name in self._disabled
-        result: TransactionalCacheLike = NullCache(invalidate=real) if disabled else real
+        result: CacheLike = NullCache(invalidate=real) if disabled else real
         stored = self._resolved.setdefault(name, result)
         # A switch or close_all that ran between the checks above and the store would otherwise
         # leave a stale answer in place for good: drop it, so the next lookup resolves afresh.
@@ -248,13 +297,14 @@ class Caches[N: str = str]:
             self._resolved.pop(name, None)
         return stored
 
-    def _open(self, name: N) -> Cache:
+    def _open(self, name: N) -> Cache | FanoutCache:
         """The real handle for `name`, opening it if needed. Raises if it can't open."""
         opened = self._opened.get(name)
         if opened is not None:
             return opened
         path, settings = self._spec(name)
-        cache = Cache(path, **self._bind_reporter(name, settings))
+        kind = FanoutCache if name in self._fanout else Cache
+        cache = kind(path, **self._bind_reporter(name, settings))
         winner = self._opened.setdefault(name, cache)
         if winner is not cache:
             cache.close(checkpoint=False)

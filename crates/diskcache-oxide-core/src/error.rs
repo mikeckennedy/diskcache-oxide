@@ -58,9 +58,16 @@ pub enum Error {
     /// A directory holds the other kind of cache than the one opening it (plan 13, section 1): a
     /// plain `Cache` on a `FanoutCache` root or shard, a `FanoutCache` on a plain `Cache`'s directory,
     /// or a shard opened as another index or count than its stamp says (a renamed or copied shard
-    /// directory). Python `ValueError`.
+    /// directory). Python `LayoutMismatchError`.
     #[error("{path}: {reason}")]
     RoleMismatch { path: PathBuf, reason: String },
+
+    /// A `FanoutCache` was opened with a `shards=` that differs from the count its root records.
+    /// Python `LayoutMismatchError`, like [`Error::RoleMismatch`].
+    #[error(
+        "this FanoutCache has {stored} shards but shards={requested} was requested; changing the count needs a new directory"
+    )]
+    ShardCountMismatch { stored: u32, requested: u32 },
 
     /// SQLite refused WAL mode, e.g. on a network filesystem.
     #[error("the cache requires WAL journal mode, but SQLite is using {mode:?}")]
@@ -170,6 +177,7 @@ impl Error {
             Self::FormatMismatch { .. }
             | Self::ManifestInvalid { .. }
             | Self::RoleMismatch { .. }
+            | Self::ShardCountMismatch { .. }
             | Self::NotWal { .. }
             | Self::InvalidSetting(_)
             | Self::Closed
@@ -250,6 +258,7 @@ mod tests {
             Error::FormatMismatch { found: 2, expected: 1, path: None },
             Error::ManifestInvalid { path: PathBuf::from("x"), reason: "y".into() },
             Error::RoleMismatch { path: PathBuf::from("x"), reason: "y".into() },
+            Error::ShardCountMismatch { stored: 8, requested: 16 },
             Error::NotWal { mode: "delete".into() },
             Error::Closed,
             Error::KeyMissing,

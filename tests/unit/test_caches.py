@@ -13,7 +13,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from diskcache_oxide import Cache, Caches, CacheStats, FormatMismatchError, NullCache
+from diskcache_oxide import (
+    Cache,
+    Caches,
+    CacheStats,
+    FanoutCache,
+    FormatMismatchError,
+    LayoutMismatchError,
+    NullCache,
+)
 
 
 class Clock:
@@ -453,3 +461,189 @@ def test_a_child_forked_during_lookups_can_use_the_registry(base: Path) -> None:
         for t in threads:
             t.join()
     caches.close_all()
+
+
+# -- sharded caches (plan 13, step 13h) -------------------------------------------------------------
+
+
+def test_shards_registers_a_fanout_cache_read_with_fanout(base: Path) -> None:
+    caches = Caches(base, timeout=1.0)
+    caches.register('rate', shards=4, size_limit=8 * 2**20)
+    caches.register('plain')
+    rate = caches.fanout('rate')
+    assert isinstance(rate, FanoutCache) and rate.shards == 4
+    assert caches.fanout('rate') is rate
+    rate.set('k', 1)
+    assert rate.get('k') == 1
+    assert isinstance(caches['plain'], Cache)
+    caches.close_all()
+
+
+def test_reading_a_cache_the_wrong_way_raises_type_error(base: Path) -> None:
+    caches = Caches(base)
+    caches.register('rate', shards=2)
+    caches.register('plain')
+    with pytest.raises(TypeError, match='fanout'):
+        caches['rate']
+    with pytest.raises(TypeError, match='shards='):
+        caches.fanout('plain')
+    with pytest.raises(KeyError):
+        caches.fanout('missing')
+    caches.close_all()
+
+
+def test_shards_is_per_cache_and_settings_are_checked(base: Path) -> None:
+    with pytest.raises(TypeError, match='shards'):
+        Caches(base, shards=4)
+    caches = Caches(base)
+    with pytest.raises(TypeError, match='bogus'):
+        caches.register('x', shards=2, bogus=1)
+    caches.register('ok', shards=2, durable=True)
+
+
+def test_a_sharded_cache_takes_the_registry_defaults(base: Path) -> None:
+    seen: list[tuple[str, str]] = []
+    caches = Caches(base, on_decode_error=lambda name, key, exc: seen.append((name, key)), timeout=2.0)
+    caches.register('rate', shards=2)
+    assert caches.fanout('rate').timeout == 2.0
+    caches.close_all()
+
+
+def test_a_disabled_sharded_cache_is_a_null_cache_that_still_invalidates(base: Path) -> None:
+    caches = Caches(base)
+    caches.register('rate', shards=2)
+    real = caches.fanout('rate')
+    real.set('k', 1)
+    caches.disable('rate')
+    off = caches.fanout('rate')
+    assert isinstance(off, NullCache) and not off.enabled
+    assert off.get('k') is None
+    with off.transact(key='k') as tx:
+        assert tx is off
+    off.delete('k')
+    caches.enable('rate')
+    assert caches.fanout('rate').get('k') is None
+    caches.close_all()
+
+
+def test_a_sharded_cache_that_cant_open_is_a_null_cache_then_retried(base: Path) -> None:
+    clock = Clock()
+    errors: list[str] = []
+    caches = Caches(base, on_open_error=lambda name, exc: errors.append(name), retry_open_after=10.0, _monotonic=clock)
+    caches.register('rate', shards=2)
+    (base / 'rate').parent.mkdir(parents=True, exist_ok=True)
+    (base / 'rate').write_text('a file, not a directory')
+    failed = caches.fanout('rate')
+    assert isinstance(failed, NullCache)
+    assert caches.fanout('rate') is failed and errors == ['rate']
+    (base / 'rate').unlink()
+    clock.now += 11
+    assert isinstance(caches.fanout('rate'), FanoutCache)
+    caches.close_all()
+
+
+def test_shards_none_registers_a_fanout_cache_with_the_default_eight_shards(base: Path) -> None:
+    caches = Caches(base)
+    caches.register('rate', shards=None)
+    rate = caches.fanout('rate')
+    assert isinstance(rate, FanoutCache) and rate.shards == 8
+    assert sorted(p.name for p in (base / 'rate').iterdir() if p.is_dir()) == [f'{i:03d}' for i in range(8)]
+    caches.close_all()
+    again = Caches(base)
+    again.register('rate', shards=None)
+    reopened = again.fanout('rate')
+    assert isinstance(reopened, FanoutCache) and reopened.shards == 8, 'a root that exists keeps its stored count'
+    again.close_all()
+
+
+def _fanout_root(directory: Path) -> None:
+    FanoutCache(directory, shards=8).close()
+
+
+def _wrong_shard_count(base: Path, caches: Caches) -> tuple[str, bool]:
+    _fanout_root(base / 'rl')
+    caches.register('rl', shards=16)
+    return 'rl', True
+
+
+def _plain_on_a_root(base: Path, caches: Caches) -> tuple[str, bool]:
+    _fanout_root(base / 'rl')
+    caches.register('rl')
+    return 'rl', False
+
+
+def _plain_on_a_shard(base: Path, caches: Caches) -> tuple[str, bool]:
+    _fanout_root(base / 'rl')
+    caches.register('shard', directory=base / 'rl' / '000')
+    return 'shard', False
+
+
+@pytest.mark.parametrize('arrange', [_wrong_shard_count, _plain_on_a_root, _plain_on_a_shard])
+def test_a_layout_mismatch_is_a_null_cache_reported_remembered_and_retried(base: Path, arrange: Any) -> None:
+    clock = Clock()
+    errors: list[tuple[str, Exception]] = []
+    caches = Caches(
+        base, on_open_error=lambda name, exc: errors.append((name, exc)), retry_open_after=10.0, _monotonic=clock
+    )
+    name, sharded = arrange(base, caches)
+
+    def lookup() -> object:
+        return caches.fanout(name) if sharded else caches[name]
+
+    first = lookup()
+    assert isinstance(first, NullCache)
+    [(reported, exc)] = errors
+    assert reported == name and isinstance(exc, LayoutMismatchError)
+
+    clock.now += 9.9
+    assert lookup() is first and len(errors) == 1, 'remembered: no second open inside the window'
+    clock.now += 0.2
+    retried = lookup()
+    assert isinstance(retried, NullCache) and retried is not first
+    assert len(errors) == 2, 'tried again after retry_open_after'
+    caches.close_all()
+
+
+def test_a_layout_mismatch_raised_directly_is_still_a_value_error(base: Path) -> None:
+    _fanout_root(base / 'rl')
+    attempts = [
+        lambda: FanoutCache(base / 'rl', shards=16),
+        lambda: Cache(base / 'rl'),
+        lambda: Cache(base / 'rl' / '000'),
+    ]
+    for attempt in attempts:
+        with pytest.raises(LayoutMismatchError) as caught:
+            attempt()
+        assert isinstance(caught.value, ValueError)
+        assert isinstance(caught.value, FormatMismatchError)
+        assert isinstance(caught.value, RuntimeError)
+    assert LayoutMismatchError.__module__ == 'diskcache_oxide'
+    assert [c.__name__ for c in LayoutMismatchError.__mro__[:4]] == [
+        'LayoutMismatchError',
+        'FormatMismatchError',
+        'RuntimeError',
+        'ValueError',
+    ]
+
+
+def test_stats_clear_expire_and_close_cover_sharded_caches(base: Path) -> None:
+    caches = Caches(base)
+    caches.register('rate', shards=2)
+    caches.register('plain')
+    for n in range(10):
+        caches.fanout('rate').set(f'k{n}', n)
+    stats = caches.stats()
+    assert stats['rate'].count == 10 and stats['rate'].error is None
+    assert caches.expire_all() == {'rate': 0, 'plain': 0}
+    assert caches.clear('rate') == 10
+    assert len(caches.fanout('rate')) == 0
+    caches.close_all()
+    assert caches.fanout('rate').set('again', 1) is True
+    caches.close_all()
+
+
+def test_a_sharded_cache_cannot_share_a_directory_with_another(base: Path) -> None:
+    caches = Caches(base)
+    caches.register('rate', shards=2)
+    with pytest.raises(ValueError, match='share the directory'):
+        caches.register('other', directory=base / 'rate')

@@ -199,3 +199,16 @@ def test_transact_with_invalidate_opens_no_transaction_on_the_real_cache(tmp_pat
     assert real.get('stale') is None and real.get('also-stale') is None, 'the exception undid a removal'
     assert real.get('other') == 2
     real.close()
+
+
+def test_null_cache_stands_in_for_a_switched_off_fanout_cache(tmp_path: Path) -> None:
+    from diskcache_oxide import FanoutCache
+
+    with FanoutCache(tmp_path / 'f', shards=2, size_limit=4 * 2**20) as real:
+        real.set('k', 1)
+        off = NullCache(invalidate=real)
+        assert off.get('k') is None
+        with off.transact(key='k') as tx:
+            assert tx is off
+            off.delete('k')
+        assert 'k' not in real

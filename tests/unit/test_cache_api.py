@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from diskcache_oxide import Cache, CacheLike, NullCache, TransactionalCacheLike
+from diskcache_oxide import Cache, CacheLike, FanoutCache, NullCache, TransactionalCacheLike
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -59,10 +59,11 @@ def test_constructors_take_the_same_arguments() -> None:
 def test_ty_sees_both_classes_as_cache_like(tmp_path: Path) -> None:
     probe = tmp_path / 'probe.py'
     probe.write_text(
-        'from diskcache_oxide import Cache, CacheLike, NullCache\n'
+        'from diskcache_oxide import Cache, CacheLike, FanoutCache, NullCache\n'
         "real: CacheLike = Cache('/tmp/x')\n"
         'null: CacheLike = NullCache()\n'
         'forwarding: CacheLike = NullCache(invalidate=real)\n'
+        "sharded: CacheLike = FanoutCache('/tmp/z')\n"
     )
     result = subprocess.run(
         [sys.executable, '-m', 'ty', 'check', '--python', sys.prefix, str(probe)],
@@ -432,3 +433,35 @@ def test_a_key_iterator_in_a_reference_cycle_is_collected_and_releases_its_handl
     gc.collect()
     assert keeper._handle_count() == 1, 'collecting the cycle released it'
     keeper.close()
+
+
+def test_fanout_cache_satisfies_cache_like_at_runtime(tmp_path: Path) -> None:
+    with FanoutCache(tmp_path / 'f', shards=2, size_limit=4 * 2**20) as sharded:
+        assert isinstance(sharded, CacheLike)
+
+
+@pytest.mark.parametrize('name', protocol_methods())
+def test_every_protocol_method_has_the_same_parameters_on_fanout_cache(name: str) -> None:
+    if name.startswith('__') and name not in {'__enter__', '__exit__'}:
+        return
+    assert params(getattr(FanoutCache, name)) == params(getattr(CacheLike, name)), f'FanoutCache.{name}'
+
+
+def test_ty_types_each_kind_of_lookup(tmp_path: Path) -> None:
+    result = _ty(
+        tmp_path,
+        'from typing import Literal\n'
+        'from diskcache_oxide import CacheLike, Caches, FanoutCache, NullCache, TransactionalCacheLike\n'
+        "caches = Caches[Literal['a', 'b']]('/tmp/y')\n"
+        "caches.register('a')\n"
+        "caches.register('b', shards=4)\n"
+        "plain: TransactionalCacheLike = caches['a']\n"
+        "with caches['a'].transact(retry=True) as tx:\n"
+        "    tx.set('k', 1)\n"
+        "sharded: FanoutCache | NullCache = caches.fanout('b')\n"
+        "as_like: CacheLike = caches.fanout('b')\n"
+        "caches['c']\n",
+    )
+    assert result.returncode != 0
+    # Only the misspelled name is an error; the rest of the probe type-checks.
+    assert result.stdout.count('error[') == 1 and "'c'" in result.stdout, result.stdout

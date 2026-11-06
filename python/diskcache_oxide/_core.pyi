@@ -23,6 +23,7 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     '_gate_stats',
     '_sqlite_error',
     'FormatMismatchError',
+    'LayoutMismatchError',
     'Cache',
     'FanoutCache',
     'Transaction',
@@ -53,6 +54,11 @@ class ForeignValueError(CorruptValueError):
 
 class FormatMismatchError(RuntimeError):
     """The cache directory holds a database in a format this version doesn't support."""
+
+class LayoutMismatchError(FormatMismatchError, ValueError):
+    """The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
+    `FanoutCache` on a plain `Cache`'s directory, a shard opened as another index or count than it records, or a
+    `shards=` that differs from the stored count. Also a `ValueError`, which is what these raised before."""
 
 def sqlite_version() -> str:
     """The SQLite version reported at runtime by `sqlite3_libversion()`."""
@@ -137,6 +143,8 @@ class Cache:
         ValueError: A setting is out of range, such as a `size_limit` under 1 MiB.
         TypeError: An argument has the wrong type, including a `bool` for `timeout`.
         FormatMismatchError: The directory holds a database in a format this version can't read.
+        LayoutMismatchError: The directory is a `FanoutCache` root or one of its shards. Also a
+            `ValueError`, and a `FormatMismatchError`.
         Timeout: Another process held the database locked, or a fork stayed pending, for longer
             than `timeout`.
     """
@@ -489,7 +497,7 @@ class FanoutCache:
             `cull()`, `checkpoint()` and `close()` share one `timeout` across every shard, not one
             each.
         shards: How many shards, 1 to 256. `None` (the default) uses the count the root records, or
-            8 for a new root. A count that differs from the recorded one raises `ValueError`:
+            8 for a new root. A count that differs from the recorded one raises `LayoutMismatchError` (a `ValueError`):
             changing it needs a new directory. Each shard takes about 4 file descriptors to open,
             and 2 more per connection it opens in use, so 256 shards need over 1,024: more than
             Linux's default `ulimit -n`. Too few raises `OSError` (`EMFILE`) with the numbers.
@@ -511,8 +519,9 @@ class FanoutCache:
             report covers every shard, named by the root directory.
 
     Raises:
-        ValueError: A setting is out of range, `shards` differs from the root's, `max_connections` is
-            below `shards`, or the directory belongs to a plain `Cache` (or a shard of it does).
+        ValueError: A setting is out of range, or `max_connections` is below `shards`.
+        LayoutMismatchError: `shards` differs from the root's, or the directory belongs to a plain
+            `Cache` (or a shard of it does). Also a `ValueError`, and a `FormatMismatchError`.
         TypeError: An argument has the wrong type, including a `bool` for `timeout` or `shards`.
         FormatMismatchError: The root's manifest, or a shard's database, is in a format this version
             can't read.

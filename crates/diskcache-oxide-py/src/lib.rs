@@ -17,7 +17,8 @@ use pyo3::exceptions::{
     PyMemoryError, PyOSError, PyRuntimeError, PyRuntimeWarning, PyTimeoutError, PyTypeError, PyValueError,
 };
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyDict, PyType};
 
 // Created under the public package name so instances pickle across multiprocessing as
 // `diskcache_oxide.Timeout`; `diskcache_oxide/__init__.py` re-exports them.
@@ -71,6 +72,34 @@ fn sqlite_compile_options() -> PyResult<Vec<String>> {
     sqlite::compile_options().map_err(to_py_err)
 }
 
+/// `LayoutMismatchError(FormatMismatchError, ValueError)`: a directory whose layout doesn't match
+/// how it was opened. `create_exception!` takes one base, so the class is built with `type()`.
+static LAYOUT_MISMATCH: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+
+fn layout_mismatch_type(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
+    let class = LAYOUT_MISMATCH.get_or_try_init(py, || -> PyResult<Py<PyType>> {
+        let bases = (py.get_type::<FormatMismatchError>(), py.get_type::<PyValueError>());
+        let namespace = PyDict::new(py);
+        namespace.set_item("__module__", "diskcache_oxide")?;
+        namespace.set_item(
+            "__doc__",
+            "The directory's layout doesn't match how it was opened: a plain Cache on a FanoutCache root or \
+             shard, a FanoutCache on a plain Cache's directory, or shards= that differs from the stored count. \
+             Also a ValueError.",
+        )?;
+        let class = py.get_type::<PyType>().call1(("LayoutMismatchError", bases, namespace))?;
+        Ok(class.cast_into::<PyType>()?.unbind())
+    })?;
+    Ok(class.bind(py))
+}
+
+fn layout_mismatch(message: String) -> PyErr {
+    Python::attach(|py| match layout_mismatch_type(py) {
+        Ok(class) => PyErr::from_type(class.clone(), message),
+        Err(err) => err,
+    })
+}
+
 /// Maps a core error to the Python exception the public API documents.
 pub(crate) fn to_py_err(error: Error) -> PyErr {
     let message = error.to_string();
@@ -93,7 +122,8 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
         | Error::EndInsideOperation
         | Error::TransactionAborted => PyRuntimeError::new_err(message),
         Error::FormatMismatch { .. } | Error::ManifestInvalid { .. } => FormatMismatchError::new_err(message),
-        Error::InvalidSetting(_) | Error::RoleMismatch { .. } => PyValueError::new_err(message),
+        Error::RoleMismatch { .. } | Error::ShardCountMismatch { .. } => layout_mismatch(message),
+        Error::InvalidSetting(_) => PyValueError::new_err(message),
         Error::KeyMissing => pyo3::exceptions::PyKeyError::new_err(message),
         Error::NotNumeric => PyTypeError::new_err(message),
         Error::Overflow => pyo3::exceptions::PyOverflowError::new_err(message),
@@ -296,6 +326,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_gate_stats, m)?)?;
     m.add_function(wrap_pyfunction!(_sqlite_error, m)?)?;
     m.add("FormatMismatchError", py.get_type::<FormatMismatchError>())?;
+    m.add("LayoutMismatchError", layout_mismatch_type(py)?)?;
     m.add_class::<cache::Cache>()?;
     m.add_class::<cache::FanoutCache>()?;
     m.add_class::<cache::Transaction>()?;

@@ -191,7 +191,7 @@ pub fn read_manifest(root: &Path) -> Result<Option<Manifest>> {
 /// none, otherwise reads and validates it. Returns the manifest in force.
 ///
 /// `shards: None` takes the stored count, or [`DEFAULT_SHARDS`] for a new root. An explicit count
-/// that differs from the stored one is `InvalidSetting` naming both. When this returns, the
+/// that differs from the stored one is [`Error::ShardCountMismatch`] naming both. When this returns, the
 /// manifest is durable (the root directory is `fsync`ed), so the caller may create shards.
 /// Concurrent creators (threads or processes) agree on one manifest: the first `link` wins.
 pub fn open_manifest(root: &Path, shards: Option<u32>) -> Result<Manifest> {
@@ -220,10 +220,7 @@ fn open_or_create(root: &Path, requested: Option<Manifest>) -> Result<Manifest> 
     if let Some(requested) = requested
         && requested != stored
     {
-        return Err(Error::InvalidSetting(format!(
-            "this FanoutCache has {} shards but shards={} was requested; changing the count needs a new directory",
-            stored.shards, requested.shards
-        )));
+        return Err(Error::ShardCountMismatch { stored: stored.shards, requested: requested.shards });
     }
     Ok(stored)
 }
@@ -528,7 +525,8 @@ mod tests {
         assert_eq!(open_manifest(&root, None).unwrap().shards(), 64);
         assert_eq!(open_manifest(&root, Some(64)).unwrap().shards(), 64);
         let err = open_manifest(&root, Some(8)).unwrap_err();
-        let Error::InvalidSetting(message) = err else { panic!("{err:?}") };
+        assert!(matches!(err, Error::ShardCountMismatch { stored: 64, requested: 8 }), "{err:?}");
+        let message = err.to_string();
         assert!(message.contains("64") && message.contains('8'), "{message}");
         assert!(matches!(open_manifest(&root, Some(0)), Err(Error::InvalidSetting(_))));
         assert!(matches!(open_manifest(&root, Some(300)), Err(Error::InvalidSetting(_))));
@@ -600,7 +598,7 @@ mod tests {
             let agreed: BTreeSet<u32> = results.iter().filter_map(|r| r.as_ref().ok()).map(|m| m.shards()).collect();
             assert_eq!(agreed, BTreeSet::from([winner.shards()]), "every success reports the winner's count");
             for result in &results {
-                assert!(matches!(result, Ok(_) | Err(Error::InvalidSetting(_))), "{result:?}");
+                assert!(matches!(result, Ok(_) | Err(Error::ShardCountMismatch { .. })), "{result:?}");
             }
             if same_count {
                 assert!(results.iter().all(Result::is_ok));
