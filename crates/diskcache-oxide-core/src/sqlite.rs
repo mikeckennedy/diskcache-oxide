@@ -84,6 +84,12 @@ mod tests {
             ("diskcache-oxide-core/src/sqlite_mutex.rs", &[]),
             // `_sqlite_memory` (a test hook): the memory counters don't initialize SQLite.
             ("diskcache-oxide-py/src/lib.rs", &["sqlite3_memory_used", "sqlite3_memory_highwater"]),
+            // The install test checks that config is refused after init; neither call initializes
+            // (`sqlite3_mutex_methods` is the type GETMUTEX writes to).
+            (
+                "diskcache-oxide-core/tests/sqlite_mutex.rs",
+                &["sqlite3_config", "sqlite3_threadsafe", "sqlite3_mutex_methods"],
+            ),
         ];
         fn allowed(path: &Path, code: &str) -> bool {
             ALLOWED.iter().any(|(file, calls)| {

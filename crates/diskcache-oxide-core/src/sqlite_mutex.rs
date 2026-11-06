@@ -26,7 +26,6 @@ use std::cell::UnsafeCell;
 use std::ffi::c_int;
 use std::hint;
 use std::mem::MaybeUninit;
-use std::num::NonZero;
 use std::ptr;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -37,9 +36,25 @@ use rusqlite::ffi;
 /// hints, not of tries: the gaps between tries grow 1, 2, 4, ... up to [`MAX_GAP`], so a try count
 /// would hide how long the spin really is (on x86 a `pause` is roughly 100-140 cycles).
 ///
-/// Provisional: plan 12 step 5's sweep (0/256/1,024/4,096, on arm64 and x86-64 Linux) picks the
-/// final value.
+/// Chosen by plan 12 step 5's sweep over 0/256/1,024/4,096 (`bench/results/spin-sweep-2026-11-05.md`):
+/// within 3% of the best budget wherever spinning helps, without 4,096's loss when oversubscribed.
+/// Measured on arm64 (the Mac and a Linux VM); the x86-64 run is still to come. Not used at 2 or
+/// fewer CPUs (see [`MIN_SPIN_CPUS`]).
 const SPIN_HINTS: u32 = 1024;
+
+/// The fewest CPUs at which a contended enter spins. Below it the budget is 0, today's plain
+/// blocking. In the Linux VM at a 2-CPU quota (`--cpus 2`), every budget was 13-16% slower than none
+/// for four threads on one shared `Cache`, and slower at eight too: the spinners used up the
+/// quota, which then throttled the holder. A spinner on one CPU only delays the holder. At 3 and 4
+/// CPUs four threads gain from the spin, so the cutoff is 3; eight threads on those quotas lose,
+/// which is oversubscription, not the CPU count (`bench/results/spin-sweep-2026-11-05.md`).
+const MIN_SPIN_CPUS: usize = 3;
+
+/// The spin budget for a host with `cpus` CPUs (`available_parallelism()`, which on Linux honors
+/// a cgroup quota). An unknown count keeps the spin.
+fn budget_for(cpus: Option<usize>) -> u32 {
+    if cpus.is_some_and(|n| n < MIN_SPIN_CPUS) { 0 } else { SPIN_HINTS }
+}
 
 /// The longest gap between two tries, in hints.
 const MAX_GAP: u32 = 64;
@@ -116,13 +131,54 @@ pub fn status() -> Option<MutexStatus> {
 /// Set by our `xMutexInit`, so it's true only if SQLite really initialized with these methods.
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 
-/// [`SPIN_HINTS`], or 0 on a single-CPU host, where a spinner only delays the holder. Read once at
-/// install.
+/// [`SPIN_HINTS`], or 0 at 2 or fewer CPUs ([`budget_for`]). Read once at install.
 static SPIN_BUDGET: AtomicU32 = AtomicU32::new(0);
 
+/// The spin budget in force, for the sweep's harness to confirm its override took. Only in a sweep
+/// build (`--cfg dco_spin_sweep`).
+#[cfg(dco_spin_sweep)]
+#[doc(hidden)]
+#[must_use]
+pub fn sweep_spin_budget() -> u32 {
+    SPIN_BUDGET.load(Ordering::Relaxed)
+}
+
+/// The spin sweep's overrides (plan 12 step 5, build-order step 2), compiled in only under
+/// `RUSTFLAGS="--cfg dco_spin_sweep"`, a benchmark build. A shipped build has no environment knob:
+/// there these return the built-in values.
+mod sweep {
+    use std::ffi::c_int;
+
+    /// The spin budget: `DCO_SPIN_HINTS` if set and a number, otherwise `default`.
+    #[cfg(dco_spin_sweep)]
+    pub(super) fn budget(default: u32) -> u32 {
+        std::env::var("DCO_SPIN_HINTS").ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    }
+
+    #[cfg(not(dco_spin_sweep))]
+    pub(super) fn budget(default: u32) -> u32 {
+        default
+    }
+
+    /// The pthread type of a FAST mutex: the default, or glibc's adaptive (spinning) type when the
+    /// sweep sets `DCO_SPIN_ADAPTIVE=1`. Read once.
+    #[cfg(all(dco_spin_sweep, target_os = "linux", target_env = "gnu"))]
+    pub(super) fn fast_kind() -> Option<c_int> {
+        static ADAPTIVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        ADAPTIVE
+            .get_or_init(|| std::env::var("DCO_SPIN_ADAPTIVE").is_ok_and(|v| v == "1"))
+            .then_some(libc::PTHREAD_MUTEX_ADAPTIVE_NP)
+    }
+
+    #[cfg(not(all(dco_spin_sweep, target_os = "linux", target_env = "gnu")))]
+    pub(super) fn fast_kind() -> Option<c_int> {
+        None
+    }
+}
+
 fn install() -> MutexStatus {
-    let single_cpu = std::thread::available_parallelism().is_ok_and(|n| n == NonZero::<usize>::MIN);
-    SPIN_BUDGET.store(if single_cpu { 0 } else { SPIN_HINTS }, Ordering::Relaxed);
+    let budget = budget_for(std::thread::available_parallelism().ok().map(std::num::NonZero::get));
+    SPIN_BUDGET.store(sweep::budget(budget), Ordering::Relaxed);
     // SAFETY: SQLITE_CONFIG_MUTEX takes one `sqlite3_mutex_methods*`, which SQLite copies; METHODS
     // is a 'static of exactly that type. Config only reads SQLite's global config before init, and
     // it's called once, under the OnceLock, before any connection this crate opens.
@@ -213,7 +269,7 @@ fn is_static(p: *const SpinMutex) -> bool {
 
 /// Allocates and initializes a dynamic mutex, or returns null (on OOM or a pthread failure), as
 /// SQLite expects.
-fn new_dynamic(recursive: bool) -> *mut ffi::sqlite3_mutex {
+fn new_dynamic(kind: Option<c_int>) -> *mut ffi::sqlite3_mutex {
     let layout = Layout::new::<SpinMutex>();
     // SAFETY: `SpinMutex` has a non-zero size, so the layout is valid for `alloc`.
     #[expect(clippy::cast_ptr_alignment, reason = "allocated with `SpinMutex`'s own layout")]
@@ -230,7 +286,7 @@ fn new_dynamic(recursive: bool) -> *mut ffi::sqlite3_mutex {
             (&raw mut (*p).owner).write(std::sync::atomic::AtomicUsize::new(0));
             (&raw mut (*p).depth).write(AtomicU32::new(0));
         }
-        init_pthread_mutex((&raw mut (*p).raw).cast::<libc::pthread_mutex_t>(), recursive)
+        init_pthread_mutex((&raw mut (*p).raw).cast::<libc::pthread_mutex_t>(), kind)
     };
     if !ok {
         // SAFETY: `p` came from `alloc` with this layout and holds no initialized pthread mutex.
@@ -242,17 +298,17 @@ fn new_dynamic(recursive: bool) -> *mut ffi::sqlite3_mutex {
     p.cast()
 }
 
-/// Initializes the pthread mutex at `raw`, recursive or default. False if any pthread call fails,
-/// in which case `raw` holds no initialized mutex.
+/// Initializes the pthread mutex at `raw`, of type `kind` (`None` is the default attribute). False
+/// if any pthread call fails, in which case `raw` holds no initialized mutex.
 ///
 /// # Safety
 ///
 /// `raw` must be valid for writes, aligned, not an initialized mutex, and never moved afterwards.
-unsafe fn init_pthread_mutex(raw: *mut libc::pthread_mutex_t, recursive: bool) -> bool {
-    if !recursive {
+unsafe fn init_pthread_mutex(raw: *mut libc::pthread_mutex_t, kind: Option<c_int>) -> bool {
+    let Some(kind) = kind else {
         // SAFETY: the caller's contract; a null attribute means the default (non-recursive) type.
         return unsafe { libc::pthread_mutex_init(raw, ptr::null()) } == 0;
-    }
+    };
     let mut attr = MaybeUninit::<libc::pthread_mutexattr_t>::uninit();
     // SAFETY: `attr` is a local, valid for writes; init is what makes it a valid attribute.
     if unsafe { libc::pthread_mutexattr_init(attr.as_mut_ptr()) } != 0 {
@@ -260,7 +316,7 @@ unsafe fn init_pthread_mutex(raw: *mut libc::pthread_mutex_t, recursive: bool) -
     }
     // SAFETY: `attr` was initialized above, and `raw` is the caller's contract.
     let ok = unsafe {
-        libc::pthread_mutexattr_settype(attr.as_mut_ptr(), libc::PTHREAD_MUTEX_RECURSIVE) == 0
+        libc::pthread_mutexattr_settype(attr.as_mut_ptr(), kind) == 0
             && libc::pthread_mutex_init(raw, attr.as_ptr()) == 0
     };
     // A failed destroy leaks nothing that matters: the mutex, if made, doesn't depend on `attr`.
@@ -296,8 +352,8 @@ extern "C" fn mutex_end() -> c_int {
 
 extern "C" fn mutex_alloc(id: c_int) -> *mut ffi::sqlite3_mutex {
     match id {
-        ffi::SQLITE_MUTEX_FAST => new_dynamic(false),
-        ffi::SQLITE_MUTEX_RECURSIVE => new_dynamic(true),
+        ffi::SQLITE_MUTEX_FAST => new_dynamic(sweep::fast_kind()),
+        ffi::SQLITE_MUTEX_RECURSIVE => new_dynamic(Some(libc::PTHREAD_MUTEX_RECURSIVE)),
         FIRST_STATIC..=LAST_STATIC => usize::try_from(id - FIRST_STATIC)
             .ok()
             .and_then(|i| STATICS.get(i))
@@ -492,6 +548,15 @@ mod tests {
         assert_eq!(status(), Some(MutexStatus::Installed));
         crate::sqlite::open_in_memory().unwrap();
         assert_eq!(status(), Some(MutexStatus::Installed));
+    }
+
+    #[test]
+    fn no_spin_at_two_or_fewer_cpus() {
+        assert_eq!(budget_for(Some(1)), 0);
+        assert_eq!(budget_for(Some(2)), 0);
+        assert_eq!(budget_for(Some(3)), SPIN_HINTS);
+        assert_eq!(budget_for(Some(18)), SPIN_HINTS);
+        assert_eq!(budget_for(None), SPIN_HINTS, "an unknown count keeps the spin");
     }
 
     #[test]

@@ -92,6 +92,16 @@ sync_env() {  # sync_env <python> <env>
     uv pip install --quiet --python "$2/bin/python" setproctitle || true
 }
 
+check_symbols() {  # check_symbols <env>
+    local so defined undefined
+    so="$("$1/bin/python" -c 'import diskcache_oxide._core as c; print(c.__file__)')" || return 1
+    defined="$(nm -D --defined-only "$so" | grep -c sqlite3_)"
+    undefined="$(nm -D --undefined-only "$so" | grep -c sqlite3_)"
+    printf '%s: %s sqlite3_ symbols exported, %s imported\n' "$(basename "$so")" "$defined" "$undefined"
+    nm -D --defined-only "$so" | grep -q ' PyInit__core$' || { echo "PyInit__core is not exported" >&2; return 1; }
+    [[ "$defined" == 0 && "$undefined" == 0 ]]
+}
+
 IFS=',' read -r -a PYS <<< "$PYTHONS"
 for py in "${PYS[@]}"; do
     env="$(env_dir "$py")"
@@ -119,6 +129,11 @@ assert "ENABLE_STAT4" not in opts and "DEFAULT_MEMSTATUS=0" in opts, f"built wit
 build = "free-threaded" if not sys._is_gil_enabled() else "GIL"
 print(f"diskcache_oxide {d.__version__} on {sys.version.split()[0]} ({build}), SQLite {d.sqlite_version()}")
 '
+    # The bundled SQLite stays private to _core.so (plan 12 step 5a: its mutex methods must be the
+    # only ones, and Python's sqlite3 must not see them): no sqlite3_ symbol exported, and none
+    # imported either, which would mean a system SQLite was linked instead of the bundled one.
+    step "exported symbols on Python $py"
+    run "nm $py" check_symbols "$env"
     step "ty on Python $py"
     run "ty $py" "$env/bin/ty" check --python "$env" python/diskcache_oxide
     # The suite against diskcache 5.6.3 (the behavior oracle), then against diskcache-oxide.

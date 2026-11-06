@@ -11,10 +11,12 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use diskcache_oxide_core::sqlite_mutex::{self, MutexStatus};
 use diskcache_oxide_core::{Error, gate, sqlite, store};
 use pyo3::create_exception;
 use pyo3::exceptions::{
-    PyMemoryError, PyOSError, PyRuntimeError, PyRuntimeWarning, PyTimeoutError, PyTypeError, PyValueError,
+    PyImportError, PyMemoryError, PyOSError, PyRuntimeError, PyRuntimeWarning, PyTimeoutError, PyTypeError,
+    PyValueError,
 };
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -293,6 +295,51 @@ fn _sqlite_memory(reset: bool) -> (i64, i64) {
     unsafe { (rusqlite::ffi::sqlite3_memory_used(), rusqlite::ffi::sqlite3_memory_highwater(i32::from(reset))) }
 }
 
+/// Test hook: whether SQLite runs on this crate's mutex methods, as `MutexStatus::as_str` names it
+/// (`"installed"`, `"too_late"`, `"raced"` or `"init_failed"`). Live: `init_failed` becomes
+/// `installed` once a later initialization ran them. Not part of the public API.
+#[pyfunction]
+fn _sqlite_mutex_status() -> &'static str {
+    sqlite_mutex::status().map_or("not_attempted", MutexStatus::as_str)
+}
+
+/// Installs SQLite's mutex methods before anything else in the module can reach SQLite (plan 12
+/// step 5a): the module init is the earliest point, so no other thread can be opening a cache.
+///
+/// - `Raced` refuses the import: SQLite was initialized concurrently with the install, and two mutex
+///   implementations now coexist, which ends in heap corruption.
+/// - `TooLate` (SQLite was initialized before, outside this crate) is safe but unspun, and is logged
+///   once, as a warning on the `diskcache_oxide` logger. Nothing in these crates can cause it.
+/// - `InitFailed` (`sqlite3_initialize` failed, in practice out of memory) is logged and the import
+///   goes on. It's sound: our methods stay configured, every open retries the initialization with
+///   them, and an open that still can't initialize fails with the SQLite error at that call.
+fn install_sqlite_mutex(py: Python<'_>) -> PyResult<()> {
+    let status = sqlite_mutex::ensure_installed();
+    let message = match status {
+        MutexStatus::Installed => return Ok(()),
+        MutexStatus::Raced => {
+            return Err(PyImportError::new_err(
+                "diskcache_oxide: SQLite was initialized concurrently with the install of its mutex \
+                 methods, so this process's SQLite state is unsound; refusing to load",
+            ));
+        }
+        MutexStatus::TooLate => {
+            "SQLite was already initialized when diskcache_oxide loaded, so it runs on SQLite's own \
+             mutexes (correct, without the spin)"
+        }
+        MutexStatus::InitFailed => {
+            "SQLite failed to initialize when diskcache_oxide loaded; each open will retry, and fail \
+             with SQLite's error if it still can't"
+        }
+    };
+    // A failure to log must not fail the import: the status is still readable through the hook.
+    let log = py.import("logging").and_then(|logging| logging.call_method1("getLogger", ("diskcache_oxide",)));
+    if let Ok(log) = log {
+        let _ = log.call_method1("warning", (message,));
+    }
+    Ok(())
+}
+
 /// The crate version in the PEP 440 form the wheel's metadata has. maturin derives the wheel's
 /// version from Cargo's, turning a semver pre-release such as `0.1.0-dev.1` into `0.1.0.dev1`; this
 /// does the same, so `__version__` matches what pip and `importlib.metadata` report
@@ -315,6 +362,11 @@ fn pep440_version() -> String {
 #[pymodule(gil_used = false)]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
+    // First, before anything here can reach SQLite (`_sqlite_memory` takes its MEM static mutex).
+    install_sqlite_mutex(py)?;
+    // Only in a spin-sweep benchmark build (plan 12 step 5): the budget the sweep's override set.
+    #[cfg(dco_spin_sweep)]
+    m.add("_SWEEP_SPIN_BUDGET", sqlite_mutex::sweep_spin_budget())?;
     m.add("__version__", pep440_version())?;
     m.add("BUNDLED_SQLITE_VERSION", sqlite::compile_version())?;
     // Lets benchmarks refuse to measure an unoptimized build.
@@ -333,6 +385,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_gate_stats, m)?)?;
     m.add_function(wrap_pyfunction!(_sqlite_error, m)?)?;
     m.add_function(wrap_pyfunction!(_held_stores, m)?)?;
+    m.add_function(wrap_pyfunction!(_sqlite_mutex_status, m)?)?;
     m.add("FormatMismatchError", py.get_type::<FormatMismatchError>())?;
     m.add("LayoutMismatchError", layout_mismatch_type(py)?)?;
     m.add_class::<cache::Cache>()?;
