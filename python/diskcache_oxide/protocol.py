@@ -21,6 +21,21 @@ class CacheLike(Protocol):
 
     All three satisfy it, so a factory can return either and callers never need
     to check which one they got. A test keeps the three signatures identical.
+
+    Examples:
+        ```python
+        from diskcache_oxide import Cache, CacheLike, NullCache
+
+        def make_cache(enabled: bool) -> CacheLike:
+            return Cache('/var/cache/my-app') if enabled else NullCache()
+
+        def load_user(cache: CacheLike, user_id: str) -> dict:
+            if (user := cache.get(f'user:{user_id}')) is not None:
+                return user
+            user = db.load_user(user_id)
+            cache.set(f'user:{user_id}', user, expire=300)
+            return user
+        ```
     """
 
     @property
@@ -132,6 +147,16 @@ class TransactionalCacheLike(CacheLike, Protocol):
 
     On a `Cache`, `with cache.transact() as tx:` runs the block's calls on this thread in one write
     transaction; `tx` is the cache. On a `NullCache` it's a no-op that yields the `NullCache`.
+
+    Examples:
+        ```python
+        from diskcache_oxide import TransactionalCacheLike
+
+        def count(cache: TransactionalCacheLike, path: str) -> None:
+            with cache.transact() as tx:
+                tx.incr('requests')
+                tx.incr(f'requests:{path}')
+        ```
     """
 
     def transact(self, retry: bool = False) -> AbstractContextManager[Self]:
@@ -147,6 +172,15 @@ class ShardedCacheLike(CacheLike, Protocol):
     thread for keys on `key`'s shard in one write transaction, and refuses keys on other shards
     (`ValueError`); `tx` is the cache. On a `NullCache` it's a no-op that yields the `NullCache`.
     `key` is keyword-only, so `transact('total')` is a type error rather than a `retry` of 'total'.
+
+    Examples:
+        ```python
+        from diskcache_oxide import ShardedCacheLike
+
+        def bump(cache: ShardedCacheLike, key: str) -> None:
+            with cache.transact(key=key) as tx:
+                tx.set(key, tx.get(key, 0) + 1)
+        ```
     """
 
     def transact(self, *, key: str, retry: bool = False) -> AbstractContextManager[Self]:

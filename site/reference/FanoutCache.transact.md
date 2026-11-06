@@ -39,3 +39,12 @@ As for [Cache.transact()](Cache.transact.md#diskcache_oxide.Cache.transact).
 
 `TypeError`  
 `key` isn't a `str`, or `retry` isn't a `bool`.
+
+
+## Examples
+
+``` python
+with cache.transact(key='totals:2026-11') as tx:
+    n = tx.get('totals:2026-11', 0)
+    tx.set('totals:2026-11', n + 1)
+```

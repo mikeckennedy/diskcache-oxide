@@ -58,6 +58,7 @@ user_guide:
     contents:
       - getting-started.qmd
       - switching-from-diskcache.qmd
+      - errors.qmd
       - roadmap.qmd
   - section: "Core Features"
     contents:
@@ -79,28 +80,12 @@ sections:
     index: true
     navbar_after: User Guide
 
+# The agent skill is hand-written (skills/diskcache-oxide/SKILL.md). Great Docs copies it verbatim to
+# skill.md, .well-known/agent-skills/diskcache-oxide/SKILL.md (with index.json from its frontmatter)
+# and .well-known/skills/default/SKILL.md, so every link in it is absolute. scripts/build_docs.py
+# fails the build if the copy isn't the hand-written file.
 skill:
-  extra_body: skill_extra_body.md
-  gotchas:
-    - "diskcache-oxide accepts only str keys for now; non-string keys raise TypeError."
-    - "pickle is disabled by default: storing unrepresentable types raises TypeError at set time unless Cache(..., pickle=True) is passed."
-    - "Reading pickled data with a pickle=False cache raises UnsafeValueError (a TypeError subclass) rather than executing arbitrary unpickle code."
-    - "bool(Cache) is always True and Cache.enabled is True (unlike python-diskcache where an empty cache is falsy). bool(NullCache) is False."
-    - "diskcache-oxide uses diskcache-oxide.sqlite (not cache.db); it does not read existing diskcache files."
-    - "size_limit must be at least 1 MiB (MIN_SIZE_LIMIT); passing smaller raises ValueError."
-    - "Timeout inherits from TimeoutError (unlike python-diskcache which only inherits from Exception)."
-    - "NullCache behaves as if every entry expires the moment it is written and is instantly swept: get() returns default, set() returns True, volume() is 0."
-    - "NullCache(invalidate=real_cache) forwards deletes and clears to the underlying cache while keeping caching off."
-  best_practices:
-    - "Always use a context manager (with Cache(...) as cache:) or call cache.close() to cleanly return SQLite connections."
-    - "Use serializer='msgpack' (the default) for maximum performance and compactness, or serializer='json' if human inspection in SQLite is desired."
-    - "Use NullCache in tests or local dev environments to disable caching cleanly without adding conditional checks in application code."
-    - "Type application functions that accept either cache type with CacheLike from diskcache_oxide.protocol."
-    - "Call cache.checkpoint() at shutdown or from a maintenance job to empty the write-ahead log after write bursts; it returns False rather than raising when other processes keep it busy."
-    - "Leave wal_size_limit and sqlite_cache_size at their defaults unless tuning for extreme read-heavy or memory-constrained workloads."
-    - "Use Cache(..., on_decode_error='miss') (or a reporting function) so a value that can't be decoded, such as a pickled class that moved, is a miss instead of an exception."
-    - "For several worker processes that write often, use FanoutCache(directory, shards=8) (or Caches.register(name, shards=8), read with caches.fanout(name)); shards= is keyword-only and permanent for a directory, and transact(key=...) covers only that key's shard."
-    - "Register an app's caches once in a Caches registry and look them up by name (caches['general']); a cache that can't open becomes a NullCache and is retried after 10 seconds."
+  file: skills/diskcache-oxide/SKILL.md
 
 include_in_header:
   - text: |

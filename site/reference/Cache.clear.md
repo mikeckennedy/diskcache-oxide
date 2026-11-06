@@ -29,3 +29,10 @@ Seconds each chunk may wait for the write lock (another thread's or another proc
 
 `int`  
 How many entries were removed.
+
+
+## Examples
+
+``` python
+cache.clear(timeout=10.0)   # safe while other processes keep writing
+```

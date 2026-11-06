@@ -43,7 +43,7 @@ The failure is remembered for `retry_open_after` seconds (10 by default), so a b
 
 A `Timeout` at open means busy, not broken: another process holding the lock, or a first lookup that collided with a fork. It's remembered for at most 1 second, and the default report is a `WARNING` with no traceback. A custom `on_open_error` still gets the exception. Lookups of a cache that's already open never touch any of this.
 
-A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead.
+A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead. What each open error means, and the fix, is in [Errors and what to do about them](errors.qmd).
 
 ## Sharded caches
 

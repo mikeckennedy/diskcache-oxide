@@ -12,7 +12,6 @@ import pytest
 
 from diskcache_oxide import Cache
 
-
 @pytest.fixture
 def cache(tmp_path):
     with Cache(tmp_path / 'cache') as cache:
@@ -26,7 +25,6 @@ For tests that exercise your app rather than its caching, a cached value from an
 
 ``` python
 from diskcache_oxide import NullCache
-
 
 @pytest.fixture
 def app_cache(monkeypatch):
@@ -46,7 +44,6 @@ import tempfile
 
 from diskcache_oxide import Cache
 
-
 class FakeClock:
     def __init__(self, now: float = 1_000_000.0) -> None:
         self.now = now
@@ -56,7 +53,6 @@ class FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
-
 
 clock = FakeClock()
 cache = Cache(tempfile.mkdtemp(), clock=clock)
@@ -80,12 +76,10 @@ As a fixture:
 def clock():
     return FakeClock()
 
-
 @pytest.fixture
 def cache(tmp_path, clock):
     with Cache(tmp_path / 'cache', clock=clock) as cache:
         yield cache
-
 
 def test_sessions_expire(cache, clock):
     cache.set('session:abc', {'user': 42}, expire=30)
@@ -103,11 +97,9 @@ Code that relies on the cache being shared, like a job claim or a rate limit, ca
 ``` python
 import multiprocessing
 
-
 def claim(directory: str) -> bool:
     with Cache(directory) as cache:
         return cache.add('job:nightly', 'claimed', expire=60)
-
 
 def test_only_one_worker_claims_the_job(tmp_path):
     with multiprocessing.Pool(8) as pool:

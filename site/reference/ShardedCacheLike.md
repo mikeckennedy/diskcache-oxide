@@ -16,6 +16,17 @@ ShardedCacheLike()
 On a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache), `with cache.transact(key='total') as tx:` runs the block's calls on this thread for keys on `key`'s shard in one write transaction, and refuses keys on other shards (`ValueError`); `tx` is the cache. On a [NullCache](NullCache.md#diskcache_oxide.NullCache) it's a no-op that yields the [NullCache](NullCache.md#diskcache_oxide.NullCache). `key` is keyword-only, so `transact('total')` is a type error rather than a `retry` of 'total'.
 
 
+## Examples
+
+``` python
+from diskcache_oxide import ShardedCacheLike
+
+def bump(cache: ShardedCacheLike, key: str) -> None:
+    with cache.transact(key=key) as tx:
+        tx.set(key, tx.get(key, 0) + 1)
+```
+
+
 ## Methods
 
 | Name | Description |

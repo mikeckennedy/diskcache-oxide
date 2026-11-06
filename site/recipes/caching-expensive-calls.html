@@ -289,7 +289,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>The most common use of a cache: before doing something slow (a database query, an API call, rendering a big page), check whether the answer is already cached. If it is, use it. If not, compute it and store it for next time. Every worker process on the machine shares the result, and it survives restarts.</p>
 <section id="cache-aside" class="level1">
 <h1>Cache-aside</h1>
-<div id="d13024d1" class="cell" data-execution_count="1">
+<div id="66ac5162" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -317,7 +317,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>    popular_episodes()</span>
 <span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f'cached:      </span><span class="sc">{</span>(time.perf_counter() <span class="op">-</span> start) <span class="op">*</span> <span class="dv">1000</span><span class="sc">:.1f}</span><span class="ss"> µs per call'</span>)  <span class="co"># 1000 calls, so ms total = µs each</span></span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>first call:  208.9 ms
+<pre><code>first call:  200.5 ms
 cached:      1.2 µs per call</code></pre>
 </div>
 </div>
@@ -336,7 +336,7 @@ cached:      1.2 µs per call</code></pre>
 <section id="a-caching-decorator" class="level1">
 <h1>A caching decorator</h1>
 <p>The same pattern wrapped up for reuse. The key is the function’s full name plus its arguments, encoded as JSON so that different arguments always give different keys.</p>
-<div id="c6d4b16e" class="cell" data-execution_count="2">
+<div id="c2d6bfdc" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> functools</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> json</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> collections.abc <span class="im">import</span> Callable</span>

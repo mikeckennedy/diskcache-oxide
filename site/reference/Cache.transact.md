@@ -28,3 +28,13 @@ Keep trying to begin while it times out, instead of raising [Timeout](Timeout.md
 
 `TypeError`  
 `retry` isn't a `bool`.
+
+
+## Examples
+
+``` python
+with cache.transact() as tx:     # all three land together, or none do
+    tx.incr('requests')
+    tx.incr(f'requests:{path}')
+    tx.set('last_request', now)
+```

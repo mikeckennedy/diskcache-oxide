@@ -63,7 +63,14 @@ class LayoutMismatchError(FormatMismatchError, ValueError):
     `shards=` that differs from the stored count. Also a `ValueError`, which is what these raised before."""
 
 def sqlite_version() -> str:
-    """The SQLite version reported at runtime by `sqlite3_libversion()`."""
+    """The SQLite version reported at runtime by `sqlite3_libversion()`.
+
+    Examples:
+        ```python
+        import diskcache_oxide
+        diskcache_oxide.sqlite_version()   # '3.54.1', the bundled library, whatever the system has
+        ```
+    """
 
 def sqlite_compile_options() -> list[str]:
     """The compile-time options of the linked SQLite (`PRAGMA compile_options`)."""
@@ -155,6 +162,20 @@ class Cache:
             `ValueError`, and a `FormatMismatchError`.
         Timeout: Another process held the database locked, or a fork stayed pending, for longer
             than `timeout`.
+
+    Examples:
+        ```python
+        from diskcache_oxide import Cache
+
+        cache = Cache('/var/cache/my-app', timeout=1.0)  # every worker opens the same directory
+
+        cache.set('user:42', {'name': 'Sam', 'roles': {'admin'}}, expire=300)
+        cache.get('user:42')             # the dict, with roles still a set; None on a miss
+        cache['greeting'] = 'hello'      # never expires
+        if cache.add('job:nightly', 1, expire=3600):  # exactly one process wins
+            run_nightly_job()
+        cache.close()                    # or `with Cache(...) as cache:`
+        ```
     """
 
     def __new__(
@@ -209,6 +230,13 @@ class Cache:
             CorruptValueError: The stored bytes can't be decoded.
             Timeout: Reading a large value kept losing to concurrent overwrites until `timeout`, or
                 a pending fork outlasted it. `durable=True` returns `default` instead.
+
+        Examples:
+            ```python
+            user = cache.get('user:42')                     # None on a miss
+            user = cache.get('user:42', default={})         # {} on a miss
+            value, expires_at = cache.get('user:42', expire_time=True)
+            ```
         """
     @overload
     def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
@@ -230,6 +258,12 @@ class Cache:
         Raises:
             TypeError: The value can't be stored exactly without pickle, or `expire` is a `bool`.
             Timeout: Another process held the write lock for longer than `timeout`.
+
+        Examples:
+            ```python
+            cache.set('episodes:popular', episodes, expire=300)   # expires in 5 minutes
+            cache.set('config', {'retries': 3})                   # never expires
+            ```
         """
     def add(self, key: str, value: Any, expire: float | None = None) -> bool:
         """Store `value` only if `key` is missing or expired.
@@ -250,6 +284,12 @@ class Cache:
         Raises:
             TypeError: The value can't be stored exactly without pickle, or `expire` is a `bool`.
             Timeout: Another process held the write lock for longer than `timeout`.
+
+        Examples:
+            ```python
+            if cache.add('job:hourly-cleanup', os.getpid(), expire=55 * 60):
+                remove_stale_sessions()   # only the worker whose add() returned True gets here
+            ```
         """
     def delete(self, key: str) -> bool:
         """Remove `key`.
@@ -262,6 +302,13 @@ class Cache:
 
         Raises:
             Timeout: Another process held the write lock for longer than `timeout`.
+
+        Examples:
+            ```python
+            cache.delete('user:42')        # True if it was there
+            for key in cache.iterkeys(prefix='user:42:'):
+                cache.delete(key)          # safe while iterating
+            ```
         """
     def pop(self, key: str, default: Any = None) -> Any:
         """Remove `key` and return its value, delivering it to exactly one caller.
@@ -290,6 +337,11 @@ class Cache:
             Timeout: Another process held the write lock for longer than `timeout`, or `timeout` ran
                 out after losing a race to another writer. This `pop` deletes nothing, and whatever
                 the other writer left stays.
+
+        Examples:
+            ```python
+            token = cache.pop('reset-token:abc')   # None if it was missing or already used
+            ```
         """
     def touch(self, key: str, expire: float | None = None) -> bool:
         """Change the expiry of an existing entry without rewriting its value.
@@ -304,6 +356,11 @@ class Cache:
 
         Raises:
             Timeout: Another process held the write lock for longer than `timeout`.
+
+        Examples:
+            ```python
+            cache.touch('session:xyz', expire=1800)   # 30 more minutes, if it's still there
+            ```
         """
     # Defaults are delta=1, default=0; PyO3 reports them as `...` at runtime.
     def incr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
@@ -328,6 +385,13 @@ class Cache:
                 failed and `default` is None.
             TypeError: The stored value isn't a number.
             Timeout: Another process held the write lock for longer than `timeout`.
+
+        Examples:
+            ```python
+            cache.incr('page_views')                       # 1 on a missing key, then 2, 3, ...
+            cache.add('rate:203.0.113.7:1731', 0, expire=120)   # a windowed counter: create it with an expiry,
+            allowed = cache.incr('rate:203.0.113.7:1731') <= 100  # then count; incr keeps the expiry
+            ```
         """
     def decr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
         """Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
@@ -350,6 +414,13 @@ class Cache:
 
         Returns:
             An iterator of keys.
+
+        Examples:
+            ```python
+            for key in cache.iterkeys(prefix='user:42:'):   # an indexed range scan, sorted
+                cache.delete(key)
+            newest_first = cache.iterkeys(reverse=True)
+            ```
         """
     def expire(self, *, timeout: float | None = None) -> int:
         """Remove every expired entry, and its value file.
@@ -363,6 +434,11 @@ class Cache:
 
         Returns:
             How many entries were removed.
+
+        Examples:
+            ```python
+            removed = cache.expire(timeout=10.0)   # from a scheduled job, with its own timeout
+            ```
         """
     def clear(self, *, timeout: float | None = None) -> int:
         """Remove every entry that existed when the call started.
@@ -377,6 +453,11 @@ class Cache:
 
         Returns:
             How many entries were removed.
+
+        Examples:
+            ```python
+            cache.clear(timeout=10.0)   # safe while other processes keep writing
+            ```
         """
     def cull(self, *, timeout: float | None = None) -> int:
         """Remove expired entries, then evict the least recently stored until under `size_limit`.
@@ -405,6 +486,11 @@ class Cache:
         Returns:
             True if the log was reset, False if readers or writers in other processes, or a
             pending fork, kept it busy. It never raises for a busy database.
+
+        Examples:
+            ```python
+            cache.checkpoint()   # at shutdown, or after a big fill; False means "still busy, try later"
+            ```
         """
     def close(self, *, checkpoint: bool = True) -> None:
         """Close this handle and return its connections.
@@ -419,6 +505,13 @@ class Cache:
             checkpoint: If this is the process's last handle and the write-ahead log is over half
                 of `wal_size_limit`, checkpoint it first, waiting at most 1 second. A small log
                 costs nothing extra.
+
+        Examples:
+            ```python
+            with Cache('/var/cache/my-app') as cache:   # closed at the end of the block
+                cache.set('k', 'v')
+            cache.close(checkpoint=False)                # skip the checkpoint, for a quick exit
+            ```
         """
     def _wal_stats(self) -> dict[str, int]:
         """Test hook: forced WAL checkpoint counters (checks, attempts, successes, busy, errors, no_slot, fork_pending,
@@ -447,6 +540,14 @@ class Cache:
 
         Raises:
             TypeError: `retry` isn't a `bool`.
+
+        Examples:
+            ```python
+            with cache.transact() as tx:     # all three land together, or none do
+                tx.incr('requests')
+                tx.incr(f'requests:{path}')
+                tx.set('last_request', now)
+            ```
         """
     def __getitem__(self, key: str, /) -> Any:
         """`cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under
@@ -536,6 +637,17 @@ class FanoutCache:
         OSError: The filesystem doesn't support hard links, which creating the manifest needs, or
             the process can't open enough files for every shard (`ulimit -n`).
         Timeout: A shard stayed locked, or a fork stayed pending, for longer than `timeout`.
+
+    Examples:
+        ```python
+        from diskcache_oxide import FanoutCache
+
+        cache = FanoutCache('/var/cache/my-app-counters', shards=8)   # shards is keyword-only
+        cache.incr('ip:203.0.113.7')          # as on Cache, on the key's shard
+        cache.shard_of('ip:203.0.113.7')      # 0 to 7, the same in every process and release
+        with cache.transact(key='totals') as tx:   # one shard's write lock, not all of them
+            tx.set('totals', tx.get('totals', 0) + 1)
+        ```
     """
 
     def __new__(
@@ -578,7 +690,13 @@ class FanoutCache:
     def enabled(self) -> bool:
         """Always True for a real cache; False for a `NullCache`."""
     def shard_of(self, key: str) -> int:
-        """The shard `key` lives in, from 0 to `shards - 1`: the same in every process and release."""
+        """The shard `key` lives in, from 0 to `shards - 1`: the same in every process and release.
+
+        Examples:
+            ```python
+            cache.shard_of('user:42') == cache.shard_of('user:42:profile')   # usually False: no grouping by prefix
+            ```
+        """
     def transact(self, *, key: str, retry: bool = False) -> Transaction[FanoutCache]:
         """A write transaction on the shard `key` lives in, for `with cache.transact(key='total') as tx:`.
 
@@ -606,6 +724,13 @@ class FanoutCache:
 
         Raises:
             TypeError: `key` isn't a `str`, or `retry` isn't a `bool`.
+
+        Examples:
+            ```python
+            with cache.transact(key='totals:2026-11') as tx:
+                n = tx.get('totals:2026-11', 0)
+                tx.set('totals:2026-11', n + 1)
+            ```
         """
     @overload
     def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
@@ -648,6 +773,14 @@ class FanoutCache:
             Timeout: Some shard stayed locked past `timeout`; the others were still done. It carries
                 `removed` and `failed_shards` (see the class docs), as any failure here does, under
                 `durable=True` too.
+
+        Examples:
+            ```python
+            try:
+                cache.expire(timeout=5.0)
+            except Timeout as exc:
+                exc.failed_shards, exc.removed   # which shards were skipped, and how many entries went anyway
+            ```
         """
     def clear(self, *, timeout: float | None = None) -> int:
         """Remove every entry that existed when the call started, from every shard.
@@ -763,6 +896,13 @@ class Transaction[C]:
 
     It may be exited on another thread: that thread commits or rolls back the owner's transaction
     within its `timeout`, and a commit that can't run in time raises `Timeout` and rolls back.
+
+    Examples:
+        ```python
+        with cache.transact() as tx:   # tx is the cache; the block commits on exit, rolls back on an exception
+            tx.set('a', 1)
+            tx.set('b', 2)
+        ```
     """
 
     def __enter__(self) -> C:

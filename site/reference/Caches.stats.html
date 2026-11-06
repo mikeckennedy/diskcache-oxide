@@ -1267,8 +1267,14 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </nav>
 <div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
 <!-- margin-sidebar -->
-    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar zindex-bottom">
-        
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" aria-labelledby="toc-title" class="toc-active">
+    <h3 id="toc-title">On this page</h3>
+   
+  <ul class="collapse">
+  <li><a href="#examples" id="toc-examples" class="nav-link active" data-scroll-target="#examples">Examples</a></li>
+  </ul>
+</nav>
     </div>
 <!-- main -->
 <main class="content" id="quarto-document-content" tabindex="-1">
@@ -1297,7 +1303,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/caches.py#L378-L389" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/caches.py#L407-L425" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Caches</span><span class="op">.</span><span class="sig-name">stats</span>()</span></code></pre></div>
@@ -1305,8 +1311,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <div class="doc-text">
 <p>that can’t be read: its <code>error</code> says why.</p>
 </div>
+<section id="examples" class="level2 doc-examples">
+<h2 class="doc-examples">Examples</h2>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, stat <span class="kw">in</span> caches.stats().items():</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(name, stat.count, stat.volume, stat.error <span class="kw">or</span> <span class="st">'ok'</span>)</span></code></pre></div>
 
 
+</section>
 
 </main>
 <hr style="padding: 0; margin: 0;">

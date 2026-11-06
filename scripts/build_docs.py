@@ -7,21 +7,30 @@ directory that is regenerated on every build. For git-push static hosting we kee
 committed copy of the site at the repo root in ``site/`` (which nginx serves at the
 subpath; ``docs/`` or ``plans/`` hold the design documents). This script runs the build,
 mirrors ``_site/`` into ``site/`` (full replace), then applies post-processing fixes (see
-``_postprocess`` below).
+``_postprocess`` below), and fails if ``llms.txt``, ``llms-full.txt`` or the hand-written
+skill is missing from the output (see ``_check_outputs``).
 
-Run it with the project's virtualenv interpreter, e.g.::
+Great Docs writes ``llms-full.txt`` by importing the package and reading each object's
+``__doc__`` and signature. The compiled extension carries one-line docstrings and bare
+signatures; the full ones live in ``_core.pyi``, which the reference pages already use through
+griffe. ``_install_stub_twins`` swaps the stub's classes in for the compiled ones in this
+process only, so ``llms-full.txt`` shows the same docstrings, Examples included, as the reference.
+
+Run it with the project's virtualenv interpreter (``uv sync --group docs`` installs Great Docs
+into it), e.g.::
 
     venv/bin/python scripts/build_docs.py
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shutil
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import griffe
@@ -31,6 +40,11 @@ PKG_DIR = _SCRIPTS.parent  # dir holding pyproject.toml + great-docs.yml
 REPO_ROOT = PKG_DIR  # the package lives at the git root (single-tier)
 SITE = PKG_DIR / 'great-docs' / '_site'
 DEST = REPO_ROOT / 'site'
+SKILL = PKG_DIR / 'skills' / 'diskcache-oxide' / 'SKILL.md'
+# The files an agent reads, and the paths Great Docs publishes the skill to. Each must exist after
+# a build, and each skill copy must be the hand-written file, or the build failed quietly.
+REQUIRED = ('llms.txt', 'llms-full.txt', 'skill.md')
+SKILL_COPIES = ('skill.md', '.well-known/agent-skills/diskcache-oxide/SKILL.md', '.well-known/skills/default/SKILL.md')
 
 
 def _site_url() -> str:
@@ -120,6 +134,45 @@ def _append_llms_sections(dest: Path, base: str) -> None:
     print('  llms.txt: appended User Guide, custom sections, and skill links')
 
 
+def _describe_llms_entries(dest: Path) -> None:
+    """Give each bare ``- [Name](url)`` line in ``llms.txt`` its docstring's first line.
+
+    great-docs 0.13.0 describes the classes and functions in ``llms.txt`` but not their methods, so an
+    agent reading the index sees ``Cache.set`` with nothing after it. The first line of each
+    docstring is read from the imported package, where ``_install_stub_twins`` has already put the
+    stub's docstrings in place of the compiled extension's.
+    """
+    import inspect
+
+    import diskcache_oxide
+
+    llms = dest / 'llms.txt'
+    if not llms.is_file():
+        return
+    described = 0
+    lines = llms.read_text(encoding='utf-8').splitlines()
+    for i, line in enumerate(lines):
+        m = re.fullmatch(r'- \[([\w.]+)\]\(([^)]+)\)', line)
+        if not m:
+            continue
+        obj: object = diskcache_oxide
+        try:
+            for part in m.group(1).split('.'):
+                obj = getattr(obj, part)
+        except AttributeError:
+            continue
+        doc = inspect.getdoc(obj) or ''
+        if isinstance(obj, property) and obj.fget is not None:
+            doc = inspect.getdoc(obj.fget) or doc
+        first = doc.strip().split('\n', 1)[0].strip()
+        if first and not first.startswith('str(object='):  # a bare `str` constant has `str`'s docstring
+            lines[i] = f'{line}: {first.rstrip(".")}'
+            described += 1
+    if described:
+        llms.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        print(f'  llms.txt: described {described} method entries from their docstrings')
+
+
 def _postprocess(dest: Path) -> None:
     """Work around great-docs 0.13.0 issues in the mirrored site.
 
@@ -131,6 +184,7 @@ def _postprocess(dest: Path) -> None:
        canonical element. We add one per page, taking the exact URL from sitemap.xml so it
        matches the sitemap.
     3. Append User Guide, custom sections, and skill links to ``llms.txt``.
+    4. Describe the method entries in ``llms.txt``, which great-docs leaves bare.
     """
     # 1) Prune search.json entries that point at missing files.
     search = dest / 'search.json'
@@ -173,6 +227,85 @@ def _postprocess(dest: Path) -> None:
 
     # 3) Append User Guide and skill links to llms.txt.
     _append_llms_sections(dest, base)
+
+    # 4) One-line descriptions for the method entries.
+    _describe_llms_entries(dest)
+
+
+def _check_outputs(dest: Path) -> list[str]:
+    """What's missing or wrong in the mirrored site. Empty when the build is good."""
+    problems = [f'{name} is missing from {dest}' for name in REQUIRED if not (dest / name).is_file()]
+    if not SKILL.is_file():
+        problems.append(f'the hand-written skill {SKILL} is missing')
+        return problems
+    expected = SKILL.read_text(encoding='utf-8')
+    for rel in SKILL_COPIES:
+        copy = dest / rel
+        if not copy.is_file():
+            problems.append(f'{rel} is missing from {dest}')
+        elif copy.read_text(encoding='utf-8') != expected:
+            problems.append(f'{rel} is not the hand-written skill (Great Docs generated one instead)')
+    index = dest / '.well-known' / 'agent-skills' / 'index.json'
+    if index.is_file():
+        try:
+            names = [s.get('name') for s in json.loads(index.read_text(encoding='utf-8')).get('skills', [])]
+        except ValueError as exc:
+            problems.append(f'{index.relative_to(dest)} is not JSON: {exc}')
+        else:
+            if names != ['diskcache-oxide']:
+                problems.append(f'{index.relative_to(dest)} lists {names}, not ["diskcache-oxide"]')
+    else:
+        problems.append(f'.well-known/agent-skills/index.json is missing from {dest}')
+    return problems
+
+
+def _install_stub_twins() -> None:
+    """Replace the compiled classes in the imported ``diskcache_oxide`` with ones built from ``_core.pyi``.
+
+    The stub is valid Python: classes whose methods are ``...`` with docstrings. Executing it gives
+    classes with the stub's signatures and docstrings, which is what ``llms-full.txt`` reads. Two
+    adjustments: an ``@overload``-only method keeps its first overload, undecorated, so ``get`` is a
+    real function with its docstring rather than ``typing``'s placeholder; and ``__new__`` stays,
+    so ``inspect.signature(Cache)`` shows the constructor. tests/unit/test_stubs.py keeps the stub's
+    signatures equal to the compiled module's, so nothing shown here differs from the runtime.
+
+    Only this process sees the twins. Quarto runs the recipes' code in its own kernel, against the
+    real extension.
+    """
+    import diskcache_oxide
+
+    stub_path = Path(diskcache_oxide.__file__).parent / '_core.pyi'
+    tree = ast.parse(stub_path.read_text(encoding='utf-8'), filename=str(stub_path))
+
+    def is_overload(node: ast.AST) -> bool:
+        return isinstance(node, ast.FunctionDef) and any(is_overload_decorator(d) for d in node.decorator_list)
+
+    for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+        body: list[ast.stmt] = []
+        seen: set[str] = set()
+        for node in cls.body:
+            if is_overload(node):
+                assert isinstance(node, ast.FunctionDef)
+                if node.name in seen:
+                    continue
+                seen.add(node.name)
+                node.decorator_list = [d for d in node.decorator_list if not is_overload_decorator(d)]
+            body.append(node)
+        cls.body = body
+    namespace: dict[str, object] = {'__name__': 'diskcache_oxide._core', '__file__': str(stub_path)}
+    exec(compile(tree, str(stub_path), 'exec'), namespace)  # noqa: S102 (the project's own stub)
+
+    swapped = []
+    for name in diskcache_oxide.__all__:
+        twin = namespace.get(name)
+        if isinstance(twin, type) and getattr(getattr(diskcache_oxide, name), '__module__', '') == 'diskcache_oxide':
+            setattr(diskcache_oxide, name, twin)
+            swapped.append(name)
+    print(f'  llms-full.txt reads docstrings from _core.pyi for: {", ".join(swapped)}')
+
+
+def is_overload_decorator(d: ast.expr) -> bool:
+    return (isinstance(d, ast.Name) and d.id == 'overload') or (isinstance(d, ast.Attribute) and d.attr == 'overload')
 
 
 def _stub_extension() -> griffe.Extension:
@@ -247,7 +380,7 @@ def main() -> int:
     _orig_init = GriffeLoader.__init__
     stub_fixes = _stub_extension()
 
-    def _safe_init(self: GriffeLoader, *args: object, **kwargs: object) -> None:
+    def _safe_init(self: GriffeLoader, *args: Any, **kwargs: Any) -> None:
         kwargs['allow_inspection'] = False
         extensions = kwargs.get('extensions')
         if not isinstance(extensions, griffe.Extensions):
@@ -257,6 +390,7 @@ def main() -> int:
         _orig_init(self, *args, **kwargs)
 
     GriffeLoader.__init__ = _safe_init
+    _install_stub_twins()
 
     from great_docs.cli import main as gd_main
 
@@ -279,6 +413,11 @@ def main() -> int:
     shutil.copytree(SITE, DEST)
     _postprocess(DEST)
     print(f'Mirrored -> {DEST} ({sum(1 for p in DEST.rglob("*") if p.is_file())} files)')
+    problems = _check_outputs(DEST)
+    if problems:
+        for problem in problems:
+            print(f'build output check failed: {problem}', file=sys.stderr)
+        return 1
     return 0
 
 

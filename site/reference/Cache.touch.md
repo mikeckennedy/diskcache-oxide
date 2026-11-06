@@ -38,3 +38,10 @@ True if the entry existed and was updated, False if it was missing or expired, o
 
 `Timeout`  
 Another process held the write lock for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
+
+
+## Examples
+
+``` python
+cache.touch('session:xyz', expire=1800)   # 30 more minutes, if it's still there
+```

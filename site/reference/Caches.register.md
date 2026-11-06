@@ -37,3 +37,12 @@ The name is taken or isn't a plain directory name, or another registered cache a
 
 `TypeError`  
 An unknown [Cache](Cache.md#diskcache_oxide.Cache) (or [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache)) setting.
+
+
+## Examples
+
+``` python
+caches.register('pages', size_limit=2 * 2**30)      # /var/cache/my-app/pages
+caches.register('objects', pickle=True, directory='/mnt/fast/objects')
+caches.register('rate_limits', shards=8)            # a FanoutCache; read with fanout()
+```

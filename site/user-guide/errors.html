@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+<link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html">
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.11.9">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>Errors and what to do about them – diskcache-oxide | diskcache-oxide</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../">
+<link href="../user-guide/roadmap.html" rel="next">
+<link href="../user-guide/switching-from-diskcache.html" rel="prev">
+<link href="../favicon.ico" rel="icon">
+<script src="../site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="../site_libs/quarto-html/scrollable-regions/scrollable-regions.js" type="module"></script>
+<script src="../site_libs/quarto-html/popper.min.js"></script>
+<script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-63b5708e65d6cd79cd7618c58d0c21e7.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../site_libs/bootstrap/bootstrap-4c995cf1e5ce428d9c201124d003f5da.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+<script async="" src="https://uma.mkennedy.codes/script.js" data-website-id="fc9b6770-3b44-4073-944e-4a4f0e79f66a"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'termshow.css'}));</script>
+<meta name="gd-logo-dark" content="diskcache-oxide-logo-dark.png">
+<link rel="icon" type="image/x-icon" href="https://mkennedy.codes/docs/diskcache-oxide/favicon.ico" sizes="48x48">
+<link rel="icon" type="image/png" sizes="32x32" href="https://mkennedy.codes/docs/diskcache-oxide/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="https://mkennedy.codes/docs/diskcache-oxide/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="https://mkennedy.codes/docs/diskcache-oxide/apple-touch-icon.png">
+<script src="../theme-init.js"></script>
+
+
+  <meta name="description" content="diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that except clauses you already have keep working:...">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Errors and what to do about them – diskcache-oxide | diskcache-oxide">
+  <meta property="og:description" content="diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that except clauses you already have keep working:...">
+  <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html">
+  <meta property="og:site_name" content="diskcache-oxide">
+  <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Errors and what to do about them – diskcache-oxide | diskcache-oxide">
+  <meta name="twitter:description" content="diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that except clauses you already have keep working:...">
+  <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
+</head>
+
+<body class="nav-sidebar floating nav-fixed quarto-light"><a id="quarto-skip-link" class="visually-hidden-focusable" href="#quarto-document-content">Skip to main content</a>
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark" aria-label="Site">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a href="../index.html" class="navbar-brand navbar-brand-logo">
+    <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo light-content">
+    <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
+    </a>
+    <a class="navbar-brand" href="../index.html">
+    <span class="navbar-title">diskcache-oxide</span>
+    </a>
+  </div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link active" href="../user-guide/getting-started.html" aria-current="page"> 
+<span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../reference/index.html"> 
+<span class="menu-text">API Reference</span></a>
+  </li>  
+</ul>
+            <ul class="navbar-nav navbar-nav-scroll ms-auto">
+  <li class="nav-item">
+    <span class="nav-link">
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide"></div>
+    </span>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+</div>
+            <div id="quarto-search" class=""></div>
+      </div> <!-- /container-fluid -->
+    </nav>
+  <nav class="quarto-secondary-nav" aria-label="Toolbar">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <h1 class="quarto-secondary-nav-title no-breadcrumbs">Errors and what to do about them</h1>
+        <a class="flex-grow-1" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto" aria-label="Section">
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" aria-controls="quarto-sidebar-section-1" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-1-label">Get started</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-1" aria-labelledby="quarto-sidebar-section-1-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/getting-started.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Getting started</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/switching-from-diskcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Switching from python-diskcache</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/errors.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">Errors and what to do about them</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Vision and roadmap</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" aria-controls="quarto-sidebar-section-2" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-2-label">Core Features</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-2" aria-labelledby="quarto-sidebar-section-2-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/serialization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Serialization</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/null-cache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">NullCache</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/caches.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caches: named caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Transactions</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Concurrency and forks</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/storage-and-wal.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Storage and WAL</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" aria-controls="quarto-sidebar-section-3" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-3-label">Background &amp; Reference</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-3" aria-labelledby="quarto-sidebar-section-3-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/performance.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Performance</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/divergences.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Divergences from python-diskcache</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" aria-labelledby="toc-title" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul class="collapse">
+  <li><a href="#typeerror-at-set-a-value-that-cant-be-stored" id="toc-typeerror-at-set-a-value-that-cant-be-stored" class="nav-link active" data-scroll-target="#typeerror-at-set-a-value-that-cant-be-stored"><code>TypeError</code> at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>: a value that can’t be stored</a></li>
+  <li><a href="#typeerror-for-keys-and-booleans" id="toc-typeerror-for-keys-and-booleans" class="nav-link" data-scroll-target="#typeerror-for-keys-and-booleans"><code>TypeError</code> for keys and booleans</a></li>
+  <li><a href="#timeout-a-lock-or-a-fork-outlasted-timeout" id="toc-timeout-a-lock-or-a-fork-outlasted-timeout" class="nav-link" data-scroll-target="#timeout-a-lock-or-a-fork-outlasted-timeout"><code>Timeout</code>: a lock or a fork outlasted <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a></a></li>
+  <li><a href="#transactionbusy-two-caches-in-one-transaction" id="toc-transactionbusy-two-caches-in-one-transaction" class="nav-link" data-scroll-target="#transactionbusy-two-caches-in-one-transaction"><code>TransactionBusy</code>: two caches in one transaction</a></li>
+  <li><a href="#runtimeerror-from-a-transaction" id="toc-runtimeerror-from-a-transaction" class="nav-link" data-scroll-target="#runtimeerror-from-a-transaction"><code>RuntimeError</code> from a transaction</a></li>
+  <li><a href="#unsafevalueerror-a-pickled-value-read-without-pickletrue" id="toc-unsafevalueerror-a-pickled-value-read-without-pickletrue" class="nav-link" data-scroll-target="#unsafevalueerror-a-pickled-value-read-without-pickletrue"><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>: a pickled value, read without <code>pickle=True</code></a></li>
+  <li><a href="#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" id="toc-corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" class="nav-link" data-scroll-target="#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded"><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> and <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>: a value that can’t be decoded</a></li>
+  <li><a href="#formatmismatcherror-a-database-this-version-cant-read" id="toc-formatmismatcherror-a-database-this-version-cant-read" class="nav-link" data-scroll-target="#formatmismatcherror-a-database-this-version-cant-read"><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>: a database this version can’t read</a></li>
+  <li><a href="#layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory" id="toc-layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory" class="nav-link" data-scroll-target="#layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory"><a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a>: the wrong kind of cache for the directory</a></li>
+  <li><a href="#runtimeerror-the-filesystem-cant-run-sqlite-in-wal-mode" id="toc-runtimeerror-the-filesystem-cant-run-sqlite-in-wal-mode" class="nav-link" data-scroll-target="#runtimeerror-the-filesystem-cant-run-sqlite-in-wal-mode"><code>RuntimeError</code>: the filesystem can’t run SQLite in WAL mode</a></li>
+  <li><a href="#oserror" id="toc-oserror" class="nav-link" data-scroll-target="#oserror"><code>OSError</code></a></li>
+  <li><a href="#valueerror" id="toc-valueerror" class="nav-link" data-scroll-target="#valueerror"><code>ValueError</code></a></li>
+  <li><a href="#keyerror" id="toc-keyerror" class="nav-link" data-scroll-target="#keyerror"><code>KeyError</code></a></li>
+  <li><a href="#memoryerror" id="toc-memoryerror" class="nav-link" data-scroll-target="#memoryerror"><code>MemoryError</code></a></li>
+  <li><a href="#log-lines-when-the-library-was-told-not-to-raise" id="toc-log-lines-when-the-library-was-told-not-to-raise" class="nav-link" data-scroll-target="#log-lines-when-the-library-was-told-not-to-raise">Log lines, when the library was told not to raise</a></li>
+  <li><a href="#if-it-looks-like-a-bug-in-diskcache-oxide" id="toc-if-it-looks-like-a-bug-in-diskcache-oxide" class="nav-link" data-scroll-target="#if-it-looks-like-a-bug-in-diskcache-oxide">If it looks like a bug in diskcache-oxide</a></li>
+  </ul>
+</nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content" tabindex="-1">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title d-none d-lg-block">Errors and what to do about them</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p>diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that <code>except</code> clauses you already have keep working: <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> is a <code>TimeoutError</code>, <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> is a <code>TypeError</code>, <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> is a <code>ValueError</code>. This page goes through every one, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise.</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Exception</th>
+<th>Base classes</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
+<td><code>TimeoutError</code> (so <code>OSError</code>)</td>
+<td>any call that waits for a lock or a fork</td>
+</tr>
+<tr class="even">
+<td><a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a></td>
+<td><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
+<td><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> on a second cache</td>
+</tr>
+<tr class="odd">
+<td><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a></td>
+<td><code>TypeError</code></td>
+<td>reading a pickled value without <code>pickle=True</code></td>
+</tr>
+<tr class="even">
+<td><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a></td>
+<td><code>ValueError</code></td>
+<td>reading a value no build could decode</td>
+</tr>
+<tr class="odd">
+<td><a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a></td>
+<td><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a></td>
+<td>reading a value another version or host could decode</td>
+</tr>
+<tr class="even">
+<td><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a></td>
+<td><code>RuntimeError</code></td>
+<td>opening a database or manifest this version can’t read</td>
+</tr>
+<tr class="odd">
+<td><a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a></td>
+<td><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>, <code>ValueError</code></td>
+<td>opening a directory as the wrong kind of cache</td>
+</tr>
+<tr class="even">
+<td><code>TypeError</code>, <code>ValueError</code>, <code>KeyError</code>, <code>RuntimeError</code>, <code>OSError</code>, <code>MemoryError</code></td>
+<td>built-in</td>
+<td>described below</td>
+</tr>
+</tbody>
+</table>
+<section id="typeerror-at-set-a-value-that-cant-be-stored" class="level1">
+<h1><code>TypeError</code> at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>: a value that can’t be stored</h1>
+<pre class="text"><code>TypeError: values of type Episode can't be stored without pickle (only exact built-in types round-trip)</code></pre>
+<p>The value isn’t one the msgpack or JSON format can represent exactly, so it’s refused where it was created rather than three requests later when something reads it. Only exact built-in types round-trip: <code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code>, and <code>list</code>, <code>tuple</code>, <code>dict</code>, <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> and <code>datetime</code> made of those. A dataclass, an ORM row, a <code>dict</code> subclass or a class of your own doesn’t.</p>
+<p>Fix it in this order:</p>
+<ol type="1">
+<li>Store a plain structure instead: a dict from <code>dataclasses.asdict()</code> or a model’s <code>model_dump()</code>, and rebuild the object on the way out. This is the right answer for almost every cache entry, and it keeps pickle out of the directory.</li>
+<li>If you really need arbitrary objects, open a separate cache for them with <code>Cache('/var/cache/my-app-objects', pickle=True)</code>. Don’t turn <code>pickle=True</code> on for a cache that other code shares just to make the error go away: every reader of that directory then runs <code>pickle.loads</code> on whatever is written there. See <a href="../user-guide/serialization.html">Serialization</a>.</li>
+</ol>
+</section>
+<section id="typeerror-for-keys-and-booleans" class="level1">
+<h1><code>TypeError</code> for keys and booleans</h1>
+<pre class="text"><code>TypeError: cache keys must be str, not int
+TypeError: expire must be a number of seconds or None, not bool</code></pre>
+<p>Keys are <code>str</code> only for now; build them yourself (<code>f'user:{user_id}'</code>). Other key types are planned and won’t need a format change. A <code>bool</code> where a number of seconds belongs (<code>expire=True</code>, <code>timeout=True</code>) is almost always an argument in the wrong position, so it’s refused rather than treated as <code>1</code>, which is what diskcache does.</p>
+</section>
+<section id="timeout-a-lock-or-a-fork-outlasted-timeout" class="level1">
+<h1><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>: a lock or a fork outlasted <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a></h1>
+<pre class="text"><code>diskcache_oxide.Timeout: timed out after 1 s waiting for a lock or a pending fork</code></pre>
+<p>The call waited the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> (60 s by default, or the <code>timeout=</code> passed to that call) and gave up. Something held what it needed:</p>
+<ul>
+<li><strong>Another writer held the write lock</strong> that long. One process at a time commits to a database file, and a burst of writes, a <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> from a maintenance script, or a long <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block holds it. Reads never wait for writers, so a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> on a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> is one of the next two cases.</li>
+<li><strong>A fork was pending.</strong> Before a fork, every cache call in the process waits for in-flight writes and then for the fork itself, and that counts against <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>. A fork takes about a millisecond in a quiet process and tens to hundreds of milliseconds beside busy threads on a GIL build. A <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> below that sees <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> during ordinary forks. See <a href="../user-guide/concurrency-and-forks.html#how-long-a-call-waits-for-a-fork">How long a call waits for a fork</a>.</li>
+<li><strong>Reading a large value kept losing to overwrites</strong> of the same key until <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>. Rare, and only on a key that’s rewritten flat out.</li>
+</ul>
+<p>What to do:</p>
+<ul>
+<li><strong>In a request path, catch it and skip the cache.</strong> Give the cache a short <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> (<code>Cache(path, timeout=1.0)</code>), and treat <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> as “don’t cache this time”: the value is a copy, and the request can go to the source of truth. <a href="../recipes/web-workers.html">Sharing a cache across web workers</a> has the pattern.</li>
+<li><strong>Give maintenance its own timeout.</strong> <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> and <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> take <code>timeout=</code> for that call, and bound each chunk’s wait, so an admin page can pass <code>clear(timeout=10)</code> on a cache whose requests use 1 second. Run them from one scheduled job rather than from every worker.</li>
+<li><strong>Keep <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> blocks short</strong>, and never <code>await</code> inside one.</li>
+<li><strong>If many processes write often, use a <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a>.</strong> A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> has one write lock per directory, and eight workers that all write queue on it. Sharding gives each shard its own.</li>
+<li><strong>Let the library answer it as a miss</strong> with <a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down"><code>durable=True</code></a>: single-key calls then return their miss value instead of raising, and the failure is counted and logged. Pair it with a small <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, since it doesn’t bound time on its own.</li>
+<li><a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> never raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>: it returns <code>False</code> when other processes keep it busy. Call it again later, or at shutdown.</li>
+</ul>
+</section>
+<section id="transactionbusy-two-caches-in-one-transaction" class="level1">
+<h1><a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a>: two caches in one transaction</h1>
+<p>Inside one cache’s <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block, beginning a transaction on a second cache whose write lock another thread holds raises <a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a> at once instead of waiting. That thread could be waiting for the lock you hold, and then neither would ever finish. It’s a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> subclass, so existing handlers catch it, and <code>retry=True</code> never retries it.</p>
+<p>Nest the two caches in the same order everywhere in your app. When <a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a> reaches you, leave the outer block, so your lock is released, and try the whole thing again. See <a href="../user-guide/transactions.html#two-caches-at-once-transactionbusy">Transactions</a>.</p>
+</section>
+<section id="runtimeerror-from-a-transaction" class="level1">
+<h1><code>RuntimeError</code> from a transaction</h1>
+<pre class="text"><code>RuntimeError: the write transaction was rolled back after an error; nothing in it can commit</code></pre>
+<p>A <code>with cache.transact():</code> block never exits cleanly when its writes are gone. One of its operations failed in a way that left the transaction unusable (a full disk, an I/O error), another thread rolled it back, or it was ended from inside one of its own operations. Nothing in the block was kept. Treat it as you would the original failure: log it, and run the block again if the work is idempotent.</p>
+<pre class="text"><code>RuntimeError: this database can't be written in a process forked inside a transaction</code></pre>
+<p>A process forked while the forking thread itself held a <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block, and this is the child. The parent’s transaction carries on and commits; the child’s copy is poisoned, and its writes to that database raise this instead of stalling for a minute. Don’t fork from inside a transaction: start worker processes before the block, or after it. See <a href="../user-guide/concurrency-and-forks.html#forking-from-inside-your-own-transaction">Forking from inside your own transaction</a>.</p>
+</section>
+<section id="unsafevalueerror-a-pickled-value-read-without-pickletrue" class="level1">
+<h1><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>: a pickled value, read without <code>pickle=True</code></h1>
+<pre class="text"><code>UnsafeValueError: this value was stored with pickle; open the cache with pickle=True to read it</code></pre>
+<p>A handle opened without <code>pickle=True</code> found a row that a <code>pickle=True</code> handle wrote, and refused to unpickle it. The row is left in place for the handle that can read it. This is a configuration mismatch between two openers of one directory, not damage, so it raises under every <code>on_decode_error</code> policy and under <code>durable=True</code> too.</p>
+<p>Decide which the directory is for. If it holds pickled objects on purpose, open every handle on it with <code>pickle=True</code>. If it shouldn’t, find the writer that passed <code>pickle=True</code> and give it its own directory, then <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> this one. It’s a <code>TypeError</code>, like the error at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> above, because both come from the same decision: what this cache is allowed to hold.</p>
+</section>
+<section id="corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" class="level1">
+<h1><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> and <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>: a value that can’t be decoded</h1>
+<pre class="text"><code>ForeignValueError: ...
+CorruptValueError: ...</code></pre>
+<p><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> means no build of diskcache-oxide could read the stored bytes: they’re malformed, or a pickled class has been removed since it was stored. <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>, its subclass, means this build can’t read them but another might: a newer version wrote a mode or tag this one doesn’t know, or the value needs a time zone this host doesn’t have.</p>
+<p>By default a read raises these, as diskcache does. A cache holds copies, so most apps would rather treat them as a miss:</p>
+<ul>
+<li><code>Cache(..., on_decode_error='miss')</code> returns the default, logs a warning on the <code>diskcache_oxide</code> logger, and deletes a row no build could read. A foreign row is kept, since the build that wrote it can still read it. <code>durable=True</code> turns this on by default.</li>
+<li>Pass a function instead to report it yourself: <code>on_decode_error=lambda key, exc: sentry.capture(exc)</code>. From a <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry it’s called as <code>(name, key, exc)</code>.</li>
+<li>For a <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a> that keeps coming back, upgrade the older readers to the version that wrote the value, or stop the newer writer from sharing the directory. For a missing time zone, install the host’s zone data.</li>
+</ul>
+<p>The full table of what each policy does with each failure is in <a href="../user-guide/getting-started.html#values-that-cant-be-read">Values that can’t be read</a>.</p>
+</section>
+<section id="formatmismatcherror-a-database-this-version-cant-read" class="level1">
+<h1><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>: a database this version can’t read</h1>
+<pre class="text"><code>FormatMismatchError: cache format version 3 is not supported (this build uses version 2) at /var/cache/my-app</code></pre>
+<p>The directory holds a database, or a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> manifest, written in a format this build doesn’t know, usually by a newer diskcache-oxide. Nothing is read or changed. Upgrade this process to match the writer, or point it at a different directory. If the directory should be reset, stop every process using it and delete it; a cache starts cold without harm.</p>
+</section>
+<section id="layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory" class="level1">
+<h1><a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a>: the wrong kind of cache for the directory</h1>
+<pre class="text"><code>LayoutMismatchError: the root has 8 shards, not 16</code></pre>
+<p>The directory’s layout doesn’t match how it was opened: a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> root or one of its shard directories, a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> on a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>’s directory, or a <code>shards=</code> count that differs from the one the root records. The refused open creates nothing, so a typo doesn’t leave a directory neither kind can open. It’s both a <code>ValueError</code> and a <a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>.</p>
+<p>Use the class the directory was created with, and for a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> either leave <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> out (the stored count is used) or pass the stored one. A different shard count means a new directory: the count decides where every key lives, so it can’t change in place. See <a href="../user-guide/fanoutcache.html#the-layout-and-the-hash">The layout and the hash</a>. In a <a href="../user-guide/caches.html"><code>Caches</code></a> registry, a lookup that hits this returns a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and reports it like any failed open.</p>
+</section>
+<section id="runtimeerror-the-filesystem-cant-run-sqlite-in-wal-mode" class="level1">
+<h1><code>RuntimeError</code>: the filesystem can’t run SQLite in WAL mode</h1>
+<pre class="text"><code>RuntimeError: the cache requires WAL journal mode, but SQLite is using "delete"</code></pre>
+<p>SQLite refused write-ahead logging, which diskcache-oxide requires for readers and a writer to work at the same time. That happens on network filesystems (NFS, SMB) and some FUSE mounts. The cache has to live on a local disk: <code>/var/cache/&lt;app&gt;</code>, or a Docker volume on the host’s disk. See <a href="../recipes/web-workers.html#pick-a-directory">Pick a directory</a>.</p>
+</section>
+<section id="oserror" class="level1">
+<h1><code>OSError</code></h1>
+<ul>
+<li><strong>Too many open files (<code>errno</code> <code>EMFILE</code>) opening a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>.</strong> Each shard takes about 4 file descriptors to open, so 256 shards need more than Linux’s usual <code>ulimit -n</code> of 1,024. The message gives the shard count, the descriptors needed, the limit and how many are already open. Raise the limit, or use fewer shards; eight is plenty for most apps. A failed open leaves nothing behind.</li>
+<li><strong>No hard links.</strong> Creating a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> manifest uses a hard link, so a filesystem without them (FAT, exFAT, SMB, some FUSE mounts) raises <code>OSError</code> saying so. Use a local disk.</li>
+<li><strong>Disk full, or an I/O error.</strong> The write didn’t happen and the cache is unchanged. Under <code>durable=True</code> a single-key call answers it as a miss or <code>False</code> and logs it; otherwise it raises. <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> is an <code>OSError</code> too, so an <code>except OSError</code> around a cache call catches both.</li>
+</ul>
+</section>
+<section id="valueerror" class="level1">
+<h1><code>ValueError</code></h1>
+<ul>
+<li><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> below 1 MiB. In diskcache a tiny limit silently evicts every value, including the one just stored; here it’s refused. For a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> the total must be at least <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> MiB, since each shard needs 1 MiB.</li>
+<li><code>max_connections</code> below <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>. Each shard needs at least one connection.</li>
+<li>A key on another shard inside <code>transact(key=...)</code>. The block covers one shard, and a call for a key elsewhere, reads included, can’t be atomic with it. Check with <a href="../reference/FanoutCache.shard_of.html#diskcache_oxide.FanoutCache.shard_of" class="gdls-link gdls-code">shard_of()</a> that the keys share a shard, or keep them in one value.</li>
+<li>A <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> name that’s taken, isn’t a plain directory name, or would share a directory with another registered cache.</li>
+</ul>
+</section>
+<section id="keyerror" class="level1">
+<h1><code>KeyError</code></h1>
+<ul>
+<li><code>cache[key]</code> and <code>del cache[key]</code> for a missing or expired key, as with a dict. Use <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get()</a> and <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete()</a> for the “might not be there” cases.</li>
+<li><code>incr(key, default=None)</code> and <code>decr(key, default=None)</code> on a missing key. With the default <code>default=0</code>, a missing key starts counting from 0 instead.</li>
+<li>Every <code>NullCache[key]</code>, since nothing is ever present.</li>
+</ul>
+</section>
+<section id="memoryerror" class="level1">
+<h1><code>MemoryError</code></h1>
+<p>It always raises, under <code>durable=True</code> too, including when SQLite runs out of memory. A <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> lookup raises it as well, rather than handing out a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>.</p>
+</section>
+<section id="log-lines-when-the-library-was-told-not-to-raise" class="level1">
+<h1>Log lines, when the library was told not to raise</h1>
+<p>Three settings turn failures into log lines on the <code>diskcache_oxide</code> logger instead of exceptions. Make sure that logger reaches your logging setup, since the line is then the only signal.</p>
+<ul>
+<li><strong><code>on_decode_error='miss'</code></strong> logs a warning for each stored version it couldn’t read, once per cache handle, and deletes the row if no build could read it.</li>
+<li><strong><code>durable=True</code></strong> counts every swallowed failure in one of three groups and logs each group’s first failure at once, then at most once a minute per cache handle, with counts by operation since its last line (<code>get: 1204, set: 37</code>). Busy (a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>) logs at <code>WARNING</code>, failing (a full disk, an I/O error, a damaged database) at <code>ERROR</code>, and lost invalidations (any failed <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, whose entry can now be served stale) at <code>ERROR</code>. An outage that ends within the minute shows only its first failure until the next line, so each line says more may follow. <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> logs what’s left.</li>
+<li><strong><a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a></strong> logs <code>could not open cache 'pages' at /var/cache/my-app/pages; using a NullCache, retrying in 10 s</code> at <code>ERROR</code> with the traceback when a cache can’t open, and the same at <code>WARNING</code> without one when the open merely timed out (that’s retried after at most 1 s). Pass <code>on_open_error=</code> to send it to Sentry instead.</li>
+</ul>
+</section>
+<section id="if-it-looks-like-a-bug-in-diskcache-oxide" class="level1">
+<h1>If it looks like a bug in diskcache-oxide</h1>
+<p>Open an <a href="https://github.com/mikeckennedy/diskcache-oxide/issues">issue</a> with <code>diskcache_oxide.__version__</code>, <a href="../reference/sqlite_version.html#diskcache_oxide.sqlite_version" class="gdls-link gdls-code">diskcache_oxide.sqlite_version()</a>, the interpreter (<code>python -VV</code> says whether it’s free-threaded), the platform and filesystem, how many processes and threads share the directory, and the full traceback. Every deliberate difference from diskcache is listed in <a href="../user-guide/divergences.html">Divergences</a>, so check there first if the surprise is a behavior rather than an error.</p>
+
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp("https:\/\/mkennedy\.codes\/docs\/diskcache-oxide\/");
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+      window.quartoDecorateExternalLinks = function (root) {
+     var links = (root || window.document).querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+          if (!link.classList.contains('no-external-icon')) {
+          }
+        }
+      }
+      };
+      window.quartoDecorateExternalLinks(window.document);
+    // Esc closes the popup (WCAG 1.4.13) and focus leaving both trigger and
+    // popup closes it (WCAG 2.4.11); tippy handles neither for interactive popups.
+    const hideOnEscAndFocusOut = {
+      name: 'hideOnEscAndFocusOut',
+      defaultValue: true,
+      fn(instance) {
+        const dismiss = () => {
+          // A show scheduled by the trigger delay would otherwise reopen it
+          instance.clearDelayTimeouts();
+          instance.hide();
+        };
+        const onKeyDown = (event) => {
+          if (event.key !== 'Escape') {
+            return;
+          }
+          // Keep Esc from also reaching page handlers (e.g. reveal.js overview),
+          // except an open reveal.js slide menu, which Esc should close too.
+          // The menu handles keys only when its keyboard option is on.
+          const menuHandlesEsc = window.Reveal?.getPlugin?.('menu')?.isOpen() &&
+            window.Reveal.getConfig().menu?.keyboard !== false;
+          if (!menuHandlesEsc) {
+            event.stopPropagation();
+          }
+          if (instance.popper.contains(window.document.activeElement)) {
+            // Disabled while refocusing so the focus trigger does not reopen it
+            instance.disable();
+            instance.reference.focus();
+            instance.enable();
+          }
+          dismiss();
+        };
+        const onFocusOut = (event) => {
+          const target = event.relatedTarget;
+          if (target && !instance.reference.contains(target) &&
+              !instance.popper.contains(target)) {
+            dismiss();
+          }
+        };
+        // On the trigger too: a click trigger (code-annotations: select) has no
+        // blur handling. Attached for the instance's lifetime so leaving the
+        // trigger also cancels a show still pending on the trigger delay.
+        instance.reference.addEventListener('focusout', onFocusOut);
+        return {
+          onShow() {
+            window.document.addEventListener('keydown', onKeyDown, true);
+            instance.popper.addEventListener('focusout', onFocusOut);
+          },
+          onHide() {
+            window.document.removeEventListener('keydown', onKeyDown, true);
+            instance.popper.removeEventListener('focusout', onFocusOut);
+          },
+          onDestroy() {
+            instance.reference.removeEventListener('focusout', onFocusOut);
+          },
+        };
+      },
+    };
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+        plugins: [hideOnEscAndFocusOut],
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          // Each band is positioned against its own containing block, which is
+          // not the offsetParent of the lines, so place it from client rects.
+          const placeBand = (band, firstEl, lastEl, codeBlock) => {
+            const container = band.offsetParent;
+            if (container === null) {
+              return;
+            }
+            const containerRect = container.getBoundingClientRect();
+            // Reveal.js scales slides with a transform, so convert client
+            // pixels back to the CSS pixels of the container.
+            const scale = containerRect.height / container.offsetHeight || 1;
+            const firstRect = firstEl.getBoundingClientRect();
+            const lastRect = lastEl.getBoundingClientRect();
+            const top = (firstRect.top - containerRect.top) / scale - container.clientTop + container.scrollTop;
+            const height = (lastRect.bottom - firstRect.top) / scale;
+            band.style.top = top - 2 + "px";
+            band.style.height = height + 4 + "px";
+            if (codeBlock) {
+              // Without the copy button wrapper, the containing block is wider
+              // than the code block, so span the code block explicitly.
+              const blockRect = codeBlock.getBoundingClientRect();
+              band.style.left = (blockRect.left - containerRect.left) / scale - container.clientLeft + container.scrollLeft + "px";
+              band.style.width = blockRect.width / scale + "px";
+            }
+          };
+          if (lineIds.length > 0) {
+            const el = window.document.getElementById(lineIds[0]);
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const parent = el.parentElement.parentElement;
+            // cook up a div (if necessary) and position it
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            placeBand(div, el, lastEl, parent.closest("div.sourceCode") || parent);
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            placeBand(gutterDiv, el, lastEl);
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+  <script type="application/javascript">
+  window.quartoScrollableRegionsLabels = {"code":"Scrollable code","output":"Scrollable output"};
+  </script>
+<nav class="page-navigation" aria-label="Page">
+  <div class="nav-page nav-page-previous">
+      <a href="../user-guide/switching-from-diskcache.html" class="pagination-link" aria-label="Switching from python-diskcache">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Switching from python-diskcache</span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="../user-guide/roadmap.html" class="pagination-link" aria-label="Vision and roadmap">
+        <span class="nav-page-text">Vision and roadmap</span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav>
+</div> <!-- /content -->
+<footer class="footer">
+  <div class="nav-footer">
+<div class="nav-footer-center">
+<p>Developed by <a href="https://mkennedy.codes"><strong>Michael&nbsp;Kennedy</strong></a>.<br>Site created with <strong>Great&nbsp;Docs</strong>.</p>
+</div>
+</div>
+</footer>
+<script src="../github-widget.js"></script>
+<script src="../copy-page.js"></script>
+<script src="../sidebar-wrap.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'sidebar-float.js';document.body.appendChild(s);})();</script>
+<script src="../sidebar-filter.js"></script>
+<script src="../dark-mode-toggle.js"></script>
+<script src="../back-to-top.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'on-this-page.js';document.body.appendChild(s);})();</script>
+<script src="../keyboard-nav.js"></script>
+<script src="../copy-code.js"></script>
+<script src="../details.js"></script>
+<script src="../mermaid-renderer.js"></script>
+<script src="../tooltips.js"></script>
+<script>(function(){var s=document.createElement('script');s.src=(document.querySelector('link[rel="canonical"]')||{href:location.href}).href.replace(/\/[^\/]*$/,'').replace(/\/[^\/]*$/,'')+'/color-swatch.js';var h=document.currentScript;h.parentNode.insertBefore(s,h.nextSibling);})()</script>
+<script src="../responsive-tables.js"></script>
+<script src="video-embed.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'termshow.js';document.body.appendChild(s);})();</script>
+<script src="../navbar-widgets.js"></script>
+
+
+
+
+</body></html>

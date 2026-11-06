@@ -14,11 +14,9 @@ from diskcache_oxide import Cache
 
 cache = Cache(tempfile.mkdtemp())
 
-
 def load_popular_episodes() -> list[dict]:
     time.sleep(0.2)  # stands in for a slow database query
     return [{'id': 512, 'title': 'Rust for Python developers'}]
-
 
 def popular_episodes() -> list[dict]:
     episodes = cache.get('episodes:popular')
@@ -26,7 +24,6 @@ def popular_episodes() -> list[dict]:
         episodes = load_popular_episodes()
         cache.set('episodes:popular', episodes, expire=300)
     return episodes
-
 
 start = time.perf_counter()
 popular_episodes()
@@ -39,7 +36,7 @@ print(f'cached:      {(time.perf_counter() - start) * 1000:.1f} µs per call')  
 ```
 
 
-    first call:  208.9 ms
+    first call:  200.5 ms
     cached:      1.2 µs per call
 
 
@@ -75,7 +72,6 @@ from diskcache_oxide import CacheLike
 
 MISSING = object()
 
-
 def cached(cache: CacheLike, expire: float | None = None) -> Callable:
     """Cache a function's results, keyed by its arguments."""
 
@@ -95,16 +91,13 @@ def cached(cache: CacheLike, expire: float | None = None) -> Callable:
 
     return decorator
 
-
 calls = 0
-
 
 @cached(cache, expire=600)
 def episode_details(episode_id: int, *, include_transcript: bool = False) -> dict:
     global calls
     calls += 1
     return {'id': episode_id, 'transcript': include_transcript}
-
 
 episode_details(512)
 episode_details(512)

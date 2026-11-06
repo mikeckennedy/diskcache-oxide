@@ -94,6 +94,20 @@ class NullCache:
             so invalidation by removal still lands while caching is off. Writes aren't forwarded:
             an overwriting `set` or a version-bump `incr` is dropped, and the old value is served
             once caching is back on.
+
+    Examples:
+        ```python
+        from diskcache_oxide import Cache, NullCache
+
+        cache = NullCache()
+        cache.set('k', 1)        # True, and nothing is stored
+        cache.get('k', 'miss')   # 'miss'
+        cache.add('job', 1)      # True: don't claim jobs on a cache that might be off
+
+        real = Cache('/var/cache/my-app')
+        off = NullCache(invalidate=real)
+        off.delete('user:42')    # removed from `real`; off.get('user:42') is still None
+        ```
     """
 
     __slots__ = ('_cull_limit', '_directory', '_invalidate', '_size_limit', '_timeout')

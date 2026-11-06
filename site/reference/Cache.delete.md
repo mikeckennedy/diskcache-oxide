@@ -29,3 +29,12 @@ line is the only signal.
 
 `Timeout`  
 Another process held the write lock for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
+
+
+## Examples
+
+``` python
+cache.delete('user:42')        # True if it was there
+for key in cache.iterkeys(prefix='user:42:'):
+    cache.delete(key)          # safe while iterating
+```

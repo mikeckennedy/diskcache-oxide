@@ -35,3 +35,19 @@ Seconds before a cache that failed to open is tried again (default 10). Lookups 
 
 `**defaults: Any`  
 [Cache](Cache.md#diskcache_oxide.Cache) settings for every cache, such as `timeout=1.0`, `durable=True` or `on_decode_error='miss'`. [register](Caches.register.md#diskcache_oxide.Caches.register) can override them. A callable `on_decode_error` here is called as `(name, key, exc)`, so one reporter can tell the caches apart.
+
+
+## Examples
+
+``` python
+from diskcache_oxide import Caches
+
+caches = Caches('/var/cache/my-app', timeout=1.0, on_decode_error='miss')
+caches.register('general')
+caches.register('pages', size_limit=2 * 2**30)
+caches.register('rate_limits', shards=8)
+
+caches['general'].set('greeting', 'hello')
+caches.fanout('rate_limits').incr('ip:203.0.113.7')
+caches.stats()['pages'].count
+```

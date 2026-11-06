@@ -36,7 +36,7 @@ if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
 diskcache-oxide is being built in three stages. The first is working today.
 
 1. **A better diskcache.** The `Cache` you already know, rebuilt in Rust: about half the read latency, many times the threaded throughput, safe across `fork()`, safe on free-threaded Python, and no pickle by default. *This is the core that exists now.*
-2. **The complete local caching toolkit.** `FanoutCache` sharding for write-heavy and threaded apps, a native `AsyncCache` for FastAPI, Litestar and friends, `memoize`, tags, more eviction policies, transactions, `Deque` and `Index`, and the coordination recipes (locks, semaphores, throttles, stampede protection) that make a shared cache useful as more than a cache.
+2. **The complete local caching toolkit.** A native `AsyncCache` for FastAPI, Litestar and friends, `memoize`, tags, more eviction policies, `Deque` and `Index`, and the coordination recipes (locks, semaphores, throttles, stampede protection) that make a shared cache useful as more than a cache. Two pieces of this stage are already in: [`FanoutCache`](user-guide/fanoutcache.qmd) sharding for apps with many writing processes, and [`transact()`](user-guide/transactions.qmd).
 3. **A cache server.** The same Rust engine served over the network: a Redis-style central cache for a fleet of machines, with SQLite underneath instead of RAM. As the only owner of its files, the server can use SQLite's exclusive locking mode, which already measures about 40% faster reads than the shared-directory library.
 
 See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
@@ -50,23 +50,25 @@ See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
 - **[Predictable memory and disk.](user-guide/storage-and-wal.qmd)** A bounded connection pool, a 1 MiB page cache per connection, a write-ahead log that trims itself back down, and a `checkpoint()` you can call when you want it empty.
 - **[Correct under pressure.](user-guide/divergences.qmd)** `clear()` never deletes writes that landed while it ran, `expire()` removes every expired entry, and a reader racing an overwrite gets the old value or the new one, never a spurious miss. Each of these is a bug in diskcache with a reproduction in the repo.
 - **[A real off switch.](user-guide/null-cache.qmd)** `NullCache` turns caching off without a single `if cache is not None:` in your code, and can still forward invalidations to the real cache while it's off.
-- **Typed.** Ships `py.typed` and a `CacheLike` protocol that both `Cache` and `NullCache` satisfy.
+- **[Named caches with an off switch.](user-guide/caches.qmd)** `Caches` registers an app's caches once, opens each on first use, hands out a `NullCache` while one can't open, and gives an admin page its counts and sizes.
+- **[Errors you can act on.](user-guide/errors.qmd)** Every exception says what went wrong, and the errors page says what to do about it.
+- **Typed.** Ships `py.typed` and a `CacheLike` protocol that `Cache`, `FanoutCache` and `NullCache` all satisfy.
 
 ## Status
 
 ::: {.callout-warning}
-**Pre-release: not on PyPI yet, and not yet in production.** The core `Cache` is complete. It passes a conformance suite that runs the same tests against real diskcache 5.6.3, apart from the [documented divergences](user-guide/divergences.qmd). It's now in a deep concurrency review and 24-hour soak runs, and then it goes into production at [Talk Python](https://talkpython.fm). `FanoutCache`, `AsyncCache`, `transact()`, tags, non-`str` keys and the recipes come in later phases.
+**Pre-release: version 0.1.0.dev2, not yet on PyPI or in production.** The core `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. They pass a conformance suite that runs the same tests against real diskcache 5.6.3, apart from the [documented divergences](user-guide/divergences.qmd), and a 24-hour soak with many processes, threads and forks. Two gates remain before it goes into production at [Talk Python](https://talkpython.fm) and `0.1.0` is released: a sanitizer pass over the whole codebase and a fresh soak on the final commit. `AsyncCache`, `memoize`, tags, non-`str` keys and the coordination recipes come in later phases. See [Vision and roadmap](user-guide/roadmap.qmd).
 :::
 
 ## Install
 
-Until the first release, build it from source (needs a Rust toolchain):
+Until `0.1.0` is released, build it from source (needs a Rust toolchain):
 
 ```bash
 uv pip install git+https://github.com/mikeckennedy/diskcache-oxide
 ```
 
-It supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t and 3.15t), on macOS and Linux. Windows support is planned. Release wheels will include the compiled engine and a bundled SQLite, so there's nothing else to install.
+The `diskcache-oxide` name on PyPI holds a `0.0.1` placeholder with no code in it, so `pip install diskcache-oxide` isn't the way in yet. It supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t and 3.15t), on macOS and Linux. Windows support is planned. Release wheels will include the compiled engine and a bundled SQLite, so there's nothing else to install.
 
 ## Coming from diskcache?
 
@@ -83,9 +85,18 @@ cache = Cache('/var/cache/my-app-oxide')
 
 ## Where to next
 
-- [Getting started](user-guide/getting-started.qmd): create a cache, store and read values, expiry, counters and eviction.
+- [Getting started](user-guide/getting-started.qmd): create a cache, store and read values, expiry, counters, eviction, timeouts and `durable=True`.
 - [Switching from diskcache](user-guide/switching-from-diskcache.qmd): what changes, and why.
-- [Recipes](recipes/index.qmd): caching expensive calls, invalidation, job claims, rate limiting, deployment and testing.
+- [Errors and what to do about them](user-guide/errors.qmd): every exception the library raises, what it means and the fix.
 - [Vision and roadmap](user-guide/roadmap.qmd): what exists today and what's coming.
+- [Serialization](user-guide/serialization.qmd): msgpack and JSON with exact types, and why pickle is opt-in.
+- [NullCache](user-guide/null-cache.qmd): caching switched off without changing call sites.
+- [Caches](user-guide/caches.qmd): a registry of named caches for an app with several.
+- [FanoutCache](user-guide/fanoutcache.qmd): sharding for many processes that write.
+- [Transactions](user-guide/transactions.qmd): several writes that land together.
 - [Concurrency and forks](user-guide/concurrency-and-forks.qmd): threads, processes, free-threading and the fork barrier.
+- [Storage and WAL](user-guide/storage-and-wal.qmd): what's on disk, memory bounds, and the write-ahead log.
 - [Performance](user-guide/performance.qmd): the measured numbers, and where the next speedups come from.
+- [Divergences](user-guide/divergences.qmd): every deliberate difference from diskcache, with the reason.
+- [Recipes](recipes/index.qmd): caching expensive calls, invalidation, job claims, rate limiting, deployment and testing.
+- [Agent skill](skills.qmd): a cheat sheet for AI coding agents, with [llms.txt](llms.txt) and [llms-full.txt](llms-full.txt) alongside.

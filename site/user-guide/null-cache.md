@@ -7,7 +7,6 @@ Sooner or later you need to turn caching off: in tests, in local development, or
 ``` python
 from diskcache_oxide import Cache, CacheLike, NullCache
 
-
 def make_cache(settings) -> CacheLike:
     if settings.cache_enabled:
         return Cache(settings.cache_dir)
@@ -65,12 +64,12 @@ Turning caching off creates a trap. While it's off, your app keeps changing data
 real = Cache('/var/cache/my-app')
 cache = NullCache(invalidate=real)
 
-cache.set('user:42', profile)  # not cached
-cache.get('user:42')  # None
-cache.delete('user:42')  # deleted from the real cache
-cache.pop('user:42')  # deleted from the real cache; returns the default
-cache.clear()  # clears the real cache
-cache.iterkeys(prefix='user:')  # the real cache's keys, so list-then-delete still works
+cache.set('user:42', profile)    # not cached
+cache.get('user:42')             # None
+cache.delete('user:42')          # deleted from the real cache
+cache.pop('user:42')             # deleted from the real cache; returns the default
+cache.clear()                    # clears the real cache
+cache.iterkeys(prefix='user:')   # the real cache's keys, so list-then-delete still works
 ```
 
 When caching comes back on, nothing you invalidated by removing it is waiting.
@@ -78,10 +77,10 @@ When caching comes back on, nothing you invalidated by removing it is waiting.
 Only removals are forwarded, so invalidating by *writing* is lost while caching is off. Overwriting the stale value with a fresh [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), or bumping a version key with [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) so readers build a new key, does nothing, and the old value is served once caching is back on:
 
 ``` python
-cache = NullCache(invalidate=real)  # real holds 'user:42' = old_profile, and 'users:version' = 3
+cache = NullCache(invalidate=real)   # real holds 'user:42' = old_profile, and 'users:version' = 3
 
-cache.set('user:42', new_profile)  # dropped: real still has old_profile
-cache.incr('users:version')  # dropped: still 3, so readers keep reading the old keys
+cache.set('user:42', new_profile)    # dropped: real still has old_profile
+cache.incr('users:version')          # dropped: still 3, so readers keep reading the old keys
 ```
 
 If your app invalidates that way, delete the entry instead (or as well), or [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) the real cache when you turn caching back on.
@@ -93,7 +92,6 @@ If your app invalidates that way, delete the entry instead (or as well), or [cle
 
 ``` python
 from diskcache_oxide import CacheLike
-
 
 def load_user(user_id: str, cache: CacheLike) -> dict:
     if (user := cache.get(f'user:{user_id}')) is not None:

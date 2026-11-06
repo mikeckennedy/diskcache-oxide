@@ -1273,6 +1273,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
    
   <ul class="collapse">
   <li><a href="#parameters" id="toc-parameters" class="nav-link active" data-scroll-target="#parameters">Parameters</a></li>
+  <li><a href="#examples" id="toc-examples" class="nav-link" data-scroll-target="#examples">Examples</a></li>
   </ul>
 </nav>
     </div>
@@ -1303,7 +1304,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/null.py#L83-L329" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/null.py#L83-L343" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">NullCache</span>(</span>
@@ -1341,6 +1342,19 @@ A real cache to forward removals to (<a href="Cache.delete.html#diskcache_oxide.
 </dd>
 </dl>
 </div>
+</section>
+<section id="examples" class="level2 doc-examples">
+<h2 class="doc-examples">Examples</h2>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, NullCache</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> NullCache()</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'k'</span>, <span class="dv">1</span>)        <span class="co"># True, and nothing is stored</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>cache.get(<span class="st">'k'</span>, <span class="st">'miss'</span>)   <span class="co"># 'miss'</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>cache.add(<span class="st">'job'</span>, <span class="dv">1</span>)      <span class="co"># True: don't claim jobs on a cache that might be off</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>real <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>)</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>off <span class="op">=</span> NullCache(invalidate<span class="op">=</span>real)</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>off.delete(<span class="st">'user:42'</span>)    <span class="co"># removed from `real`; off.get('user:42') is still None</span></span></code></pre></div>
 
 
 </section>

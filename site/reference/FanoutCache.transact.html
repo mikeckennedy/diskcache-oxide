@@ -1274,6 +1274,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <ul class="collapse">
   <li><a href="#parameters" id="toc-parameters" class="nav-link active" data-scroll-target="#parameters">Parameters</a></li>
   <li><a href="#raises" id="toc-raises" class="nav-link" data-scroll-target="#raises">Raises</a></li>
+  <li><a href="#examples" id="toc-examples" class="nav-link" data-scroll-target="#examples">Examples</a></li>
   </ul>
 </nav>
     </div>
@@ -1304,7 +1305,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L582-L609" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L700-L734" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">FanoutCache</span><span class="op">.</span><span class="sig-name">transact</span>(
@@ -1344,6 +1345,12 @@ As for <a href="Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-
 </dd>
 </dl>
 </div>
+</section>
+<section id="examples" class="level2 doc-examples">
+<h2 class="doc-examples">Examples</h2>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> cache.transact(key<span class="op">=</span><span class="st">'totals:2026-11'</span>) <span class="im">as</span> tx:</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    n <span class="op">=</span> tx.get(<span class="st">'totals:2026-11'</span>, <span class="dv">0</span>)</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    tx.<span class="bu">set</span>(<span class="st">'totals:2026-11'</span>, n <span class="op">+</span> <span class="dv">1</span>)</span></code></pre></div>
 
 
 </section>

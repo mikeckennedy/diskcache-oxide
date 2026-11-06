@@ -1274,6 +1274,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <ul class="collapse">
   <li><a href="#parameters" id="toc-parameters" class="nav-link active" data-scroll-target="#parameters">Parameters</a></li>
   <li><a href="#raises" id="toc-raises" class="nav-link" data-scroll-target="#raises">Raises</a></li>
+  <li><a href="#examples" id="toc-examples" class="nav-link" data-scroll-target="#examples">Examples</a></li>
   </ul>
 </nav>
     </div>
@@ -1304,7 +1305,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L93-L481" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L100-L582" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">Cache</span>(</span>
@@ -1412,6 +1413,19 @@ Another process held the database locked, or a fork stayed pending, for longer t
 </dd>
 </dl>
 </div>
+</section>
+<section id="examples" class="level2 doc-examples">
+<h2 class="doc-examples">Examples</h2>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)  <span class="co"># every worker opens the same directory</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'user:42'</span>, {<span class="st">'name'</span>: <span class="st">'Sam'</span>, <span class="st">'roles'</span>: {<span class="st">'admin'</span>}}, expire<span class="op">=</span><span class="dv">300</span>)</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>cache.get(<span class="st">'user:42'</span>)             <span class="co"># the dict, with roles still a set; None on a miss</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>cache[<span class="st">'greeting'</span>] <span class="op">=</span> <span class="st">'hello'</span>      <span class="co"># never expires</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> cache.add(<span class="st">'job:nightly'</span>, <span class="dv">1</span>, expire<span class="op">=</span><span class="dv">3600</span>):  <span class="co"># exactly one process wins</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>    run_nightly_job()</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>cache.close()                    <span class="co"># or `with Cache(...) as cache:`</span></span></code></pre></div>
 
 
 </section>

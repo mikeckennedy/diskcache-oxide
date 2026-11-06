@@ -5,7 +5,7 @@ A [Cache](../reference/Cache.md#diskcache_oxide.Cache) is a directory. Open the 
 
 # Install
 
-diskcache-oxide isn't on PyPI yet. Until the first release, build it from source, which needs a Rust toolchain:
+diskcache-oxide isn't released yet: the version in the repository is `0.1.0.dev2`, and the `diskcache-oxide` name on PyPI holds a `0.0.1` placeholder with no code in it. Until `0.1.0`, build it from source, which needs a Rust toolchain:
 
 ``` bash
 uv pip install git+https://github.com/mikeckennedy/diskcache-oxide
@@ -44,7 +44,7 @@ with Cache('/var/cache/my-app') as cache:
 ``` python
 cache.set('user:42', {'name': 'Sam', 'roles': {'admin', 'editor'}}, expire=600)
 
-user = cache.get('user:42')  # the dict, with roles still a set
+user = cache.get('user:42')                 # the dict, with roles still a set
 missing = cache.get('user:99', default={})  # {}
 
 value, expires_at = cache.get('user:42', expire_time=True)
@@ -61,15 +61,15 @@ value, expires_at = cache.get('user:42', expire_time=True)
 cache['alpha'] = 100
 assert 'alpha' in cache
 assert cache['alpha'] == 100
-del cache['alpha']  # KeyError if it's missing, like a dict
+del cache['alpha']        # KeyError if it's missing, like a dict
 ```
 
 
 ## Remove values
 
 ``` python
-cache.delete('user:42')  # True if it was there
-value = cache.pop('session:7')  # the value, or the default if it was missing
+cache.delete('user:42')             # True if it was there
+value = cache.pop('session:7')      # the value, or the default if it was missing
 ```
 
 
@@ -83,9 +83,9 @@ if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
     refresh_feeds()
 
 # Counters. incr() keeps the entry's existing expiry.
-cache.incr('page_views')  # 1
-cache.incr('page_views', 5)  # 6
-cache.decr('page_views', 2)  # 4
+cache.incr('page_views')          # 1
+cache.incr('page_views', 5)       # 6
+cache.decr('page_views', 2)       # 4
 ```
 
 [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) on a missing key starts from `default` (0). Pass `default=None` to get a `KeyError` instead. A key holding a non-number raises `TypeError`.
@@ -108,8 +108,8 @@ for key in cache.iterkeys(prefix='user:'):
 ``` python
 cache = Cache(
     '/var/cache/my-app',
-    size_limit=500 * 1024 * 1024,  # 500 MiB (default 1 GiB, minimum 1 MiB)
-    cull_limit=10,  # entries evicted per set() when over the limit (default 10)
+    size_limit=500 * 1024 * 1024,   # 500 MiB (default 1 GiB, minimum 1 MiB)
+    cull_limit=10,                  # entries evicted per set() when over the limit (default 10)
 )
 ```
 
@@ -140,8 +140,10 @@ Maintenance calls work in chunks, so they take the write lock many times. A requ
 
 ``` python
 cache = Cache('/var/cache/my-app', timeout=1.0)  # for requests
-cache.clear(timeout=10.0)  # for the admin page
+cache.clear(timeout=10.0)                        # for the admin page
 ```
+
+What else [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) can mean, and what to do about every other exception the library raises, is in [Errors and what to do about them](errors.md).
 
 
 # Values that can't be read

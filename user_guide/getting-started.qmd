@@ -6,7 +6,7 @@ A `Cache` is a directory. Open the same directory from any number of threads and
 
 ## Install
 
-diskcache-oxide isn't on PyPI yet. Until the first release, build it from source, which needs a Rust toolchain:
+diskcache-oxide isn't released yet: the version in the repository is `0.1.0.dev2`, and the `diskcache-oxide` name on PyPI holds a `0.0.1` placeholder with no code in it. Until `0.1.0`, build it from source, which needs a Rust toolchain:
 
 ```bash
 uv pip install git+https://github.com/mikeckennedy/diskcache-oxide
@@ -134,6 +134,8 @@ Maintenance calls work in chunks, so they take the write lock many times. A requ
 cache = Cache('/var/cache/my-app', timeout=1.0)  # for requests
 cache.clear(timeout=10.0)                        # for the admin page
 ```
+
+What else `Timeout` can mean, and what to do about every other exception the library raises, is in [Errors and what to do about them](errors.qmd).
 
 ## Values that can't be read
 

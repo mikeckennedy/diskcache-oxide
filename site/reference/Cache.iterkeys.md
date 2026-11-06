@@ -33,3 +33,12 @@ Yield keys in descending order.
 
 `Iterator[str]`  
 An iterator of keys.
+
+
+## Examples
+
+``` python
+for key in cache.iterkeys(prefix='user:42:'):   # an indexed range scan, sorted
+    cache.delete(key)
+newest_first = cache.iterkeys(reverse=True)
+```

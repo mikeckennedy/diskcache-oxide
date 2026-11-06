@@ -52,3 +52,12 @@ The stored bytes can't be decoded.
 
 `Timeout`  
 Reading a large value kept losing to concurrent overwrites until [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), or a pending fork outlasted it. `durable=True` returns `default` instead.
+
+
+## Examples
+
+``` python
+user = cache.get('user:42')                     # None on a miss
+user = cache.get('user:42', default={})         # {} on a miss
+value, expires_at = cache.get('user:42', expire_time=True)
+```

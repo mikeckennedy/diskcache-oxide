@@ -50,3 +50,10 @@ The value was stored with pickle and this cache has `pickle=False`. The row stay
 
 `Timeout`  
 Another process held the write lock for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), or [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) ran out after losing a race to another writer. This [pop](Cache.pop.md#diskcache_oxide.Cache.pop) deletes nothing, and whatever the other writer left stays.
+
+
+## Examples
+
+``` python
+token = cache.pop('reset-token:abc')   # None if it was missing or already used
+```

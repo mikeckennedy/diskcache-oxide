@@ -50,3 +50,11 @@ The value can't be stored exactly without pickle, or [expire](Cache.expire.md#di
 
 `Timeout`  
 Another process held the write lock for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
+
+
+## Examples
+
+``` python
+if cache.add('job:hourly-cleanup', os.getpid(), expire=55 * 60):
+    remove_stale_sessions()   # only the worker whose add() returned True gets here
+```

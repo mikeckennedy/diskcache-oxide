@@ -103,3 +103,16 @@ The filesystem doesn't support hard links, which creating the manifest needs, or
 
 `Timeout`  
 A shard stayed locked, or a fork stayed pending, for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
+
+
+## Examples
+
+``` python
+from diskcache_oxide import FanoutCache
+
+cache = FanoutCache('/var/cache/my-app-counters', shards=8)   # shards is keyword-only
+cache.incr('ip:203.0.113.7')          # as on Cache, on the key's shard
+cache.shard_of('ip:203.0.113.7')      # 0 to 7, the same in every process and release
+with cache.transact(key='totals') as tx:   # one shard's write lock, not all of them
+    tx.set('totals', tx.get('totals', 0) + 1)
+```

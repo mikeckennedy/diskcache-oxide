@@ -43,7 +43,7 @@ The failure is remembered for `retry_open_after` seconds (10 by default), so a b
 
 A [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) at open means busy, not broken: another process holding the lock, or a first lookup that collided with a fork. It's remembered for at most 1 second, and the default report is a `WARNING` with no traceback. A custom `on_open_error` still gets the exception. Lookups of a cache that's already open never touch any of this.
 
-A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead.
+A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead. What each open error means, and the fix, is in [Errors and what to do about them](errors.md).
 
 
 # Sharded caches
@@ -61,9 +61,9 @@ A plain cache is read with `caches[name]` and a sharded one with `caches.fanout(
 # Switching caches off
 
 ``` python
-caches.disable('pages')  # later lookups return NullCache(invalidate=real)
+caches.disable('pages')   # later lookups return NullCache(invalidate=real)
 caches.enable('pages')
-caches.enabled('pages')  # False while it's off
+caches.enabled('pages')   # False while it's off
 ```
 
 While a cache is disabled, its lookups return `NullCache(invalidate=real)`: reads miss and writes are dropped, but [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) and [clear](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) still reach the real cache, so entries you invalidate by removing them aren't served stale when it comes back on. Invalidating by writing doesn't survive: an overwriting [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) or a version-bump [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) is dropped like any other write, and the old value is served again (see [Keep invalidating while caching is off](null-cache.md#keep-invalidating-while-caching-is-off-invalidate)). Switches only change later lookups. Code that already holds the real [Cache](../reference/Cache.md#diskcache_oxide.Cache) keeps using it, so set them at startup, before you hand caches out.
@@ -73,7 +73,6 @@ If your app has its own names for what it caches (Talk Python calls them purpose
 ``` python
 PURPOSES = {'rss_feed': 'general', 'episode_html': 'episodes'}
 off = {'rss_feed'}  # from your settings file
-
 
 def cache_for(purpose: str) -> CacheLike:
     real = caches[PURPOSES[purpose]]
@@ -86,10 +85,10 @@ Build the wrapper on each call rather than memoizing it: `caches[...]` is alread
 # Admin and shutdown
 
 ``` python
-caches.stats()  # {name: CacheStats(name, directory, enabled, count, volume, error)}
-caches.clear('pages', timeout=10)  # works on a disabled cache too
-caches.expire_all(timeout=10)  # {name: removed, or None if it failed}
-caches.close_all()  # at shutdown; `with Caches(...) as caches:` does it too
+caches.stats()                      # {name: CacheStats(name, directory, enabled, count, volume, error)}
+caches.clear('pages', timeout=10)   # works on a disabled cache too
+caches.expire_all(timeout=10)       # {name: removed, or None if it failed}
+caches.close_all()                  # at shutdown; `with Caches(...) as caches:` does it too
 ```
 
 - [stats()](../reference/Caches.stats.md#diskcache_oxide.Caches.stats) opens every registered cache and never raises: a cache that can't be read has its `error` set.

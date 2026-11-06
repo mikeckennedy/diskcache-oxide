@@ -2,7 +2,7 @@
   "skills": [
     {
       "name": "diskcache-oxide",
-      "description": "A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API. Use when writing Python code that uses the diskcache_oxide package.",
+      "description": "Use diskcache-oxide, a shared, durable disk cache for Python with a Rust engine, SQLite storage and python-diskcache's API, built for many threads, many worker processes and free-threaded CPython. Use when adding or configuring diskcache_oxide in an app (Cache, FanoutCache, NullCache, Caches), switching code from diskcache, choosing between Cache and FanoutCache or between raising, missing and switching caching off, writing tests around a cache, or when code raises Timeout, TransactionBusy, UnsafeValueError, CorruptValueError, LayoutMismatchError, FormatMismatchError, or \"can't be stored without pickle\".",
       "files": [
         "SKILL.md"
       ]

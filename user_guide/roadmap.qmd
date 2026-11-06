@@ -44,15 +44,19 @@ The same Rust core, served over HTTP to many clients: a Redis-style central cach
 - [`transact()`](transactions.qmd), ahead of the rest of Phase 6, with `TransactionBusy` and the `TransactionalCacheLike` protocol.
 - [`FanoutCache`](fanoutcache.qmd) (Phase 6c), sharding across several databases, with `Caches.register(name, shards=...)` and `ShardedCacheLike`. It removes the multi-process write-lock ceiling; making threads that share one handle scale on free-threaded Python is part of Phase 4.
 
-### Now: concurrency review and soak (Phase 2.5)
+### Done: concurrency review and soak (Phase 2.5)
 
-The concurrency core is where serious bugs hide, so it gets its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and `clear()` under load, checking for corruption, lost writes, leaks and latency drift. The soak has already paid for itself: it found the unbounded WAL growth that `wal_size_limit` and `checkpoint()` now rein in. The limit is a target, not a bound: several processes writing flat out can still take the log well past it (see [Storage and WAL](storage-and-wal.qmd)).
+The concurrency core is where serious bugs hide, so it got its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and `clear()` under load, checking for corruption, lost writes, leaks and latency drift. The 24-hour soak passed, and it paid for itself along the way: it found the unbounded WAL growth that `wal_size_limit` and `checkpoint()` now rein in. The limit is a target, not a bound: several processes writing flat out can still take the log well past it (see [Storage and WAL](storage-and-wal.qmd)).
+
+### Now: the last gates before production (Phase 3)
+
+The version in the repository is `0.1.0.dev2`. What's left before Talk Python runs it in production and `0.1.0` goes to PyPI: a sanitizer pass over the whole codebase (ThreadSanitizer, AddressSanitizer and Miri, with the bundled SQLite built under them), and a fresh 24-hour soak on the final commit, since the performance work since the last one changed `incr`, held transactions and locking.
 
 ### Next
 
 | Phase | What it delivers |
 |---|---|
-| **3. Production** | diskcache-oxide replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers. First release to PyPI after that. |
+| **3. Production** | diskcache-oxide replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers. `0.1.0` goes to PyPI after that; until then the name there holds a placeholder. |
 | **4. Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
 | **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. |
 | **6a. Cache options** | More eviction policies (LRU, LFU, none), tags and `evict(tag)`, statistics, `memoize`, `peek`/`pull`/`push`, `check()`, `retry=`, and non-`str` keys. |

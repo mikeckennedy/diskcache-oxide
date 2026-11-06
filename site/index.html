@@ -282,7 +282,7 @@ section.level2:first-of-type > h2:first-child,
 <p>diskcache-oxide is being built in three stages. The first is working today.</p>
 <ol type="1">
 <li><strong>A better diskcache.</strong> The <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> you already know, rebuilt in Rust: about half the read latency, many times the threaded throughput, safe across <code>fork()</code>, safe on free-threaded Python, and no pickle by default. <em>This is the core that exists now.</em></li>
-<li><strong>The complete local caching toolkit.</strong> <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> sharding for write-heavy and threaded apps, a native <code>AsyncCache</code> for FastAPI, Litestar and friends, <code>memoize</code>, tags, more eviction policies, transactions, <code>Deque</code> and <code>Index</code>, and the coordination recipes (locks, semaphores, throttles, stampede protection) that make a shared cache useful as more than a cache.</li>
+<li><strong>The complete local caching toolkit.</strong> A native <code>AsyncCache</code> for FastAPI, Litestar and friends, <code>memoize</code>, tags, more eviction policies, <code>Deque</code> and <code>Index</code>, and the coordination recipes (locks, semaphores, throttles, stampede protection) that make a shared cache useful as more than a cache. Two pieces of this stage are already in: <a href="./user-guide/fanoutcache.html"><code>FanoutCache</code></a> sharding for apps with many writing processes, and <a href="./user-guide/transactions.html"><code>transact()</code></a>.</li>
 <li><strong>A cache server.</strong> The same Rust engine served over the network: a Redis-style central cache for a fleet of machines, with SQLite underneath instead of RAM. As the only owner of its files, the server can use SQLite’s exclusive locking mode, which already measures about 40% faster reads than the shared-directory library.</li>
 </ol>
 <p>See <a href="./user-guide/roadmap.html">Vision and roadmap</a> for how each stage breaks down.</p>
@@ -297,7 +297,9 @@ section.level2:first-of-type > h2:first-child,
 <li><strong><a href="./user-guide/storage-and-wal.html">Predictable memory and disk.</a></strong> A bounded connection pool, a 1 MiB page cache per connection, a write-ahead log that trims itself back down, and a <a href="reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> you can call when you want it empty.</li>
 <li><strong><a href="./user-guide/divergences.html">Correct under pressure.</a></strong> <a href="reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> never deletes writes that landed while it ran, <a href="reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes every expired entry, and a reader racing an overwrite gets the old value or the new one, never a spurious miss. Each of these is a bug in diskcache with a reproduction in the repo.</li>
 <li><strong><a href="./user-guide/null-cache.html">A real off switch.</a></strong> <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> turns caching off without a single <code>if cache is not None:</code> in your code, and can still forward invalidations to the real cache while it’s off.</li>
-<li><strong>Typed.</strong> Ships <code>py.typed</code> and a <a href="reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> protocol that both <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> satisfy.</li>
+<li><strong><a href="./user-guide/caches.html">Named caches with an off switch.</a></strong> <a href="reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registers an app’s caches once, opens each on first use, hands out a <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> while one can’t open, and gives an admin page its counts and sizes.</li>
+<li><strong><a href="./user-guide/errors.html">Errors you can act on.</a></strong> Every exception says what went wrong, and the errors page says what to do about it.</li>
+<li><strong>Typed.</strong> Ships <code>py.typed</code> and a <a href="reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> protocol that <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> and <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> all satisfy.</li>
 </ul>
 </section>
 <section id="status" class="level2">
@@ -312,15 +314,15 @@ Warning
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<p><strong>Pre-release: not on PyPI yet, and not yet in production.</strong> The core <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is complete. It passes a conformance suite that runs the same tests against real diskcache 5.6.3, apart from the <a href="./user-guide/divergences.html">documented divergences</a>. It’s now in a deep concurrency review and 24-hour soak runs, and then it goes into production at <a href="https://talkpython.fm">Talk Python</a>. <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, <code>AsyncCache</code>, <a href="reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>, tags, non-<code>str</code> keys and the recipes come in later phases.</p>
+<p><strong>Pre-release: version 0.1.0.dev2, not yet on PyPI or in production.</strong> The core <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, <a href="reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>, <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and <a href="reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> are complete. They pass a conformance suite that runs the same tests against real diskcache 5.6.3, apart from the <a href="./user-guide/divergences.html">documented divergences</a>, and a 24-hour soak with many processes, threads and forks. Two gates remain before it goes into production at <a href="https://talkpython.fm">Talk Python</a> and <code>0.1.0</code> is released: a sanitizer pass over the whole codebase and a fresh soak on the final commit. <code>AsyncCache</code>, <code>memoize</code>, tags, non-<code>str</code> keys and the coordination recipes come in later phases. See <a href="./user-guide/roadmap.html">Vision and roadmap</a>.</p>
 </div>
 </div>
 </section>
 <section id="install" class="level2">
 <h2 class="anchored" data-anchor-id="install">Install</h2>
-<p>Until the first release, build it from source (needs a Rust toolchain):</p>
+<p>Until <code>0.1.0</code> is released, build it from source (needs a Rust toolchain):</p>
 <div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install git+https://github.com/mikeckennedy/diskcache-oxide</span></code></pre></div>
-<p>It supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t and 3.15t), on macOS and Linux. Windows support is planned. Release wheels will include the compiled engine and a bundled SQLite, so there’s nothing else to install.</p>
+<p>The <code>diskcache-oxide</code> name on PyPI holds a <code>0.0.1</code> placeholder with no code in it, so <code>pip install diskcache-oxide</code> isn’t the way in yet. It supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t and 3.15t), on macOS and Linux. Windows support is planned. Release wheels will include the compiled engine and a bundled SQLite, so there’s nothing else to install.</p>
 </section>
 <section id="coming-from-diskcache" class="level2">
 <h2 class="anchored" data-anchor-id="coming-from-diskcache">Coming from diskcache?</h2>
@@ -334,12 +336,21 @@ Warning
 <section id="where-to-next" class="level2">
 <h2 class="anchored" data-anchor-id="where-to-next">Where to next</h2>
 <ul>
-<li><a href="./user-guide/getting-started.html">Getting started</a>: create a cache, store and read values, expiry, counters and eviction.</li>
+<li><a href="./user-guide/getting-started.html">Getting started</a>: create a cache, store and read values, expiry, counters, eviction, timeouts and <code>durable=True</code>.</li>
 <li><a href="./user-guide/switching-from-diskcache.html">Switching from diskcache</a>: what changes, and why.</li>
-<li><a href="./recipes/index.html">Recipes</a>: caching expensive calls, invalidation, job claims, rate limiting, deployment and testing.</li>
+<li><a href="./user-guide/errors.html">Errors and what to do about them</a>: every exception the library raises, what it means and the fix.</li>
 <li><a href="./user-guide/roadmap.html">Vision and roadmap</a>: what exists today and what’s coming.</li>
+<li><a href="./user-guide/serialization.html">Serialization</a>: msgpack and JSON with exact types, and why pickle is opt-in.</li>
+<li><a href="./user-guide/null-cache.html">NullCache</a>: caching switched off without changing call sites.</li>
+<li><a href="./user-guide/caches.html">Caches</a>: a registry of named caches for an app with several.</li>
+<li><a href="./user-guide/fanoutcache.html">FanoutCache</a>: sharding for many processes that write.</li>
+<li><a href="./user-guide/transactions.html">Transactions</a>: several writes that land together.</li>
 <li><a href="./user-guide/concurrency-and-forks.html">Concurrency and forks</a>: threads, processes, free-threading and the fork barrier.</li>
+<li><a href="./user-guide/storage-and-wal.html">Storage and WAL</a>: what’s on disk, memory bounds, and the write-ahead log.</li>
 <li><a href="./user-guide/performance.html">Performance</a>: the measured numbers, and where the next speedups come from.</li>
+<li><a href="./user-guide/divergences.html">Divergences</a>: every deliberate difference from diskcache, with the reason.</li>
+<li><a href="./recipes/index.html">Recipes</a>: caching expensive calls, invalidation, job claims, rate limiting, deployment and testing.</li>
+<li><a href="./skills.html">Agent skill</a>: a cheat sheet for AI coding agents, with <a href="llms.txt">llms.txt</a> and <a href="llms-full.txt">llms-full.txt</a> alongside.</li>
 </ul>
 
 

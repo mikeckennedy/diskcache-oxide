@@ -1272,7 +1272,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <h3 id="toc-title">On this page</h3>
    
   <ul class="collapse">
-  <li><a href="#methods" id="toc-methods" class="nav-link active" data-scroll-target="#methods">Methods</a>
+  <li><a href="#examples" id="toc-examples" class="nav-link active" data-scroll-target="#examples">Examples</a></li>
+  <li><a href="#methods" id="toc-methods" class="nav-link" data-scroll-target="#methods">Methods</a>
   <ul class="collapse">
   <li><a href="#transact" id="toc-transact" class="nav-link" data-scroll-target="#transact"><span class="doc-object-name doc-function doc-label doc-label-method">transact()</span></a></li>
   </ul></li>
@@ -1306,7 +1307,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L141-L153" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L166-L187" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">ShardedCacheLike</span>()</span></code></pre></div>
@@ -1315,6 +1316,14 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p><a href="NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> both have.</p>
 <p>On a <a href="FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, <code>with cache.transact(key='total') as tx:</code> runs the block’s calls on this thread for keys on <code>key</code>‘s shard in one write transaction, and refuses keys on other shards (<code>ValueError</code>); <code>tx</code> is the cache. On a <a href="NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> it’s a no-op that yields the <a href="NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. <code>key</code> is keyword-only, so <code>transact('total')</code> is a type error rather than a <code>retry</code> of ’total’.</p>
 </div>
+<section id="examples" class="level2 doc-examples">
+<h2 class="doc-examples">Examples</h2>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> ShardedCacheLike</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bump(cache: ShardedCacheLike, key: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">with</span> cache.transact(key<span class="op">=</span>key) <span class="im">as</span> tx:</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>        tx.<span class="bu">set</span>(key, tx.get(key, <span class="dv">0</span>) <span class="op">+</span> <span class="dv">1</span>)</span></code></pre></div>
+</section>
 <section id="methods" class="level2 doc-methods">
 <h2 class="doc-methods">Methods</h2>
 <table class="gd-summary-table">
@@ -1347,10 +1356,10 @@ A context manager holding a write transaction on <code>key</code>’s shard for 
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L152-L153" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L186-L187" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
-<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>transact(<span class="op">*</span>, key, retry<span class="op">=</span><span class="va">False</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>transact(<span class="op">*</span>, key, retry<span class="op">=</span><span class="va">False</span>)</span></code></pre></div>
 </div>
 
 

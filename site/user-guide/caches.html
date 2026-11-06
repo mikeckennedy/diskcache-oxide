@@ -220,6 +220,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/errors.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Errors and what to do about them</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Vision and roadmap</span></a>
   </div>
@@ -364,7 +370,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>The failure is remembered for <code>retry_open_after</code> seconds (10 by default), so a broken cache costs one failed open every 10 seconds, not one per request, and the lookup after that tries again. A cache that recovers is picked up without a restart. Under load, several threads may make that retry at the same moment, and each one that fails reports it.</p>
 <p><code>MemoryError</code> isn’t an open failure, so it raises from the lookup, as it would from <code>Cache(...)</code>. That includes SQLite running out of memory while opening (<code>SQLITE_NOMEM</code>), which used to be an <code>OSError</code> and got a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>.</p>
 <p>A <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> at open means busy, not broken: another process holding the lock, or a first lookup that collided with a fork. It’s remembered for at most 1 second, and the default report is a <code>WARNING</code> with no traceback. A custom <code>on_open_error</code> still gets the exception. Lookups of a cache that’s already open never touch any of this.</p>
-<p>A bad <em>setting</em> (<code>size_limit=True</code>, <code>serializer='yaml'</code>) is a bug, not an outage, so it raises on lookup instead.</p>
+<p>A bad <em>setting</em> (<code>size_limit=True</code>, <code>serializer='yaml'</code>) is a bug, not an outage, so it raises on lookup instead. What each open error means, and the fix, is in <a href="../user-guide/errors.html">Errors and what to do about them</a>.</p>
 </section>
 <section id="sharded-caches" class="level1">
 <h1>Sharded caches</h1>

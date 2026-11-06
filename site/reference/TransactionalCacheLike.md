@@ -14,6 +14,18 @@ TransactionalCacheLike()
 On a [Cache](Cache.md#diskcache_oxide.Cache), `with cache.transact() as tx:` runs the block's calls on this thread in one write transaction; `tx` is the cache. On a [NullCache](NullCache.md#diskcache_oxide.NullCache) it's a no-op that yields the [NullCache](NullCache.md#diskcache_oxide.NullCache).
 
 
+## Examples
+
+``` python
+from diskcache_oxide import TransactionalCacheLike
+
+def count(cache: TransactionalCacheLike, path: str) -> None:
+    with cache.transact() as tx:
+        tx.incr('requests')
+        tx.incr(f'requests:{path}')
+```
+
+
 ## Methods
 
 | Name | Description |

@@ -19,7 +19,7 @@ diskcache opens a SQLite connection for every thread that touches the cache and 
 diskcache-oxide shares a pool of connections per database file across every handle in the process:
 
 ``` python
-cache = Cache('/var/cache/my-app', max_connections=8)  # the default
+cache = Cache('/var/cache/my-app', max_connections=8)   # the default
 ```
 
 The pool never holds more than `max_connections` connections, so at most `2 × max_connections + 1` files are open in the cache directory, however many threads you run. A thread that finds every connection busy waits for one, up to the cache's [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout). When the last handle on a directory closes, every connection closes with it, whichever threads used them.

@@ -89,3 +89,19 @@ The directory is a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache) roo
 
 `Timeout`  
 Another process held the database locked, or a fork stayed pending, for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
+
+
+## Examples
+
+``` python
+from diskcache_oxide import Cache
+
+cache = Cache('/var/cache/my-app', timeout=1.0)  # every worker opens the same directory
+
+cache.set('user:42', {'name': 'Sam', 'roles': {'admin'}}, expire=300)
+cache.get('user:42')             # the dict, with roles still a set; None on a miss
+cache['greeting'] = 'hello'      # never expires
+if cache.add('job:nightly', 1, expire=3600):  # exactly one process wins
+    run_nightly_job()
+cache.close()                    # or `with Cache(...) as cache:`
+```

@@ -94,7 +94,6 @@ A fork waits for every transaction other threads hold, with no timeout, so the c
 ``` python
 from diskcache_oxide import TransactionalCacheLike
 
-
 def count(cache: TransactionalCacheLike, path: str) -> None:
     with cache.transact() as tx:
         tx.incr('requests')

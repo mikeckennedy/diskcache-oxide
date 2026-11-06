@@ -12,3 +12,11 @@ Caches.stats()
 
 
 that can't be read: its `error` says why.
+
+
+## Examples
+
+``` python
+for name, stat in caches.stats().items():
+    print(name, stat.count, stat.volume, stat.error or 'ok')
+```

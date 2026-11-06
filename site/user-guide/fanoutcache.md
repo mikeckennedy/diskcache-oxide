@@ -9,7 +9,7 @@ cache = FanoutCache('/var/cache/my-app-rate-limits', shards=8)
 
 cache.set('ip:203.0.113.7', 1, expire=60)
 cache.incr('ip:203.0.113.7')
-cache.shard_of('ip:203.0.113.7')  # 0 to 7, the same in every process and every release
+cache.shard_of('ip:203.0.113.7')   # 0 to 7, the same in every process and every release
 ```
 
 
@@ -102,8 +102,8 @@ A shard that fails doesn't stop the others. Afterwards the call raises the first
 try:
     cache.clear(timeout=5)
 except Timeout as exc:
-    exc.failed_shards  # (3,): the indexes of the shards that failed
-    exc.removed  # entries removed in all, including what a failed shard removed before it failed
+    exc.failed_shards   # (3,): the indexes of the shards that failed
+    exc.removed         # entries removed in all, including what a failed shard removed before it failed
 ```
 
 `removed` is the total removed in all, including what a failed shard removed before it failed, except for [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint), which has none; [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) returns True only if every shard's log was reset. Writes made while a removal runs survive on every shard, as on [Cache](../reference/Cache.md#diskcache_oxide.Cache). `durable=True` doesn't swallow any of these.
@@ -141,7 +141,6 @@ Plain caches are read with `caches[name]` and sharded ones with `caches.fanout(n
 
 ``` python
 from diskcache_oxide import ShardedCacheLike
-
 
 def bump(cache: ShardedCacheLike, key: str) -> None:
     with cache.transact(key=key) as tx:

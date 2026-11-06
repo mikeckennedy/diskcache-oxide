@@ -48,3 +48,11 @@ The value can't be stored exactly without pickle, or [expire](Cache.expire.md#di
 
 `Timeout`  
 Another process held the write lock for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
+
+
+## Examples
+
+``` python
+cache.set('episodes:popular', episodes, expire=300)   # expires in 5 minutes
+cache.set('config', {'retries': 3})                   # never expires
+```

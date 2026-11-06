@@ -53,3 +53,12 @@ The stored value isn't a number.
 
 `Timeout`  
 Another process held the write lock for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
+
+
+## Examples
+
+``` python
+cache.incr('page_views')                       # 1 on a missing key, then 2, 3, ...
+cache.add('rate:203.0.113.7:1731', 0, expire=120)   # a windowed counter: create it with an expiry,
+allowed = cache.incr('rate:203.0.113.7:1731') <= 100  # then count; incr keeps the expiry
+```

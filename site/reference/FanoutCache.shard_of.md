@@ -9,3 +9,10 @@ Usage
 ``` python
 FanoutCache.shard_of(key)
 ```
+
+
+## Examples
+
+``` python
+cache.shard_of('user:42') == cache.shard_of('user:42:profile')   # usually False: no grouping by prefix
+```

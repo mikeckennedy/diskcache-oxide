@@ -219,6 +219,12 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/errors.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Errors and what to do about them</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Vision and roadmap</span></a>
   </div>
@@ -357,7 +363,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>A <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a restart. This page covers installing diskcache-oxide, the everyday operations, and how to shut down cleanly.</p>
 <section id="install" class="level1">
 <h1>Install</h1>
-<p>diskcache-oxide isn’t on PyPI yet. Until the first release, build it from source, which needs a Rust toolchain:</p>
+<p>diskcache-oxide isn’t released yet: the version in the repository is <code>0.1.0.dev2</code>, and the <code>diskcache-oxide</code> name on PyPI holds a <code>0.0.1</code> placeholder with no code in it. Until <code>0.1.0</code>, build it from source, which needs a Rust toolchain:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install git+https://github.com/mikeckennedy/diskcache-oxide</span></code></pre></div>
 <ul>
 <li><strong>Python:</strong> CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).</li>
@@ -453,6 +459,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>Maintenance calls work in chunks, so they take the write lock many times. A request-sized timeout can cut an admin <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> off partway through, so <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> and <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> each take their own <code>timeout=</code> for that call. It bounds each chunk’s wait for the lock, not the whole call:</p>
 <div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)  <span class="co"># for requests</span></span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>cache.clear(timeout<span class="op">=</span><span class="fl">10.0</span>)                        <span class="co"># for the admin page</span></span></code></pre></div>
+<p>What else <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> can mean, and what to do about every other exception the library raises, is in <a href="../user-guide/errors.html">Errors and what to do about them</a>.</p>
 </section>
 <section id="values-that-cant-be-read" class="level1">
 <h1>Values that can’t be read</h1>

@@ -122,6 +122,20 @@ class Caches[N: str = str]:
         **defaults: `Cache` settings for every cache, such as `timeout=1.0`, `durable=True` or
             `on_decode_error='miss'`. `register` can override them. A callable `on_decode_error`
             here is called as `(name, key, exc)`, so one reporter can tell the caches apart.
+
+    Examples:
+        ```python
+        from diskcache_oxide import Caches
+
+        caches = Caches('/var/cache/my-app', timeout=1.0, on_decode_error='miss')
+        caches.register('general')
+        caches.register('pages', size_limit=2 * 2**30)
+        caches.register('rate_limits', shards=8)
+
+        caches['general'].set('greeting', 'hello')
+        caches.fanout('rate_limits').incr('ip:203.0.113.7')
+        caches.stats()['pages'].count
+        ```
     """
 
     def __init__(
@@ -188,6 +202,13 @@ class Caches[N: str = str]:
                 cache already uses that directory (two names would share one store, and the last
                 one opened would quietly set its `size_limit`).
             TypeError: An unknown `Cache` (or `FanoutCache`) setting.
+
+        Examples:
+            ```python
+            caches.register('pages', size_limit=2 * 2**30)      # /var/cache/my-app/pages
+            caches.register('objects', pickle=True, directory='/mnt/fast/objects')
+            caches.register('rate_limits', shards=8)            # a FanoutCache; read with fanout()
+            ```
         """
         if not isinstance(name, str) or not name:
             raise ValueError(f'a cache name must be a non-empty str, got {name!r}')
@@ -353,7 +374,15 @@ class Caches[N: str = str]:
     # -- switches --------------------------------------------------------------------------------
 
     def disable(self, *names: N) -> None:
-        """Later lookups of these caches return `NullCache(invalidate=real)`."""
+        """Later lookups of these caches return `NullCache(invalidate=real)`.
+
+        Examples:
+            ```python
+            caches.disable('pages')       # reads miss, writes are dropped, deletes still land
+            caches['pages'].get('/about') # None
+            caches.enable('pages')
+            ```
+        """
         for name in names:
             self._spec(name)
         for name in names:
@@ -377,7 +406,14 @@ class Caches[N: str = str]:
 
     def stats(self) -> dict[N, CacheStats]:
         """Count and volume for every registered cache, opening each one. Never raises for a cache
-        that can't be read: its `error` says why."""
+        that can't be read: its `error` says why.
+
+        Examples:
+            ```python
+            for name, stat in caches.stats().items():
+                print(name, stat.count, stat.volume, stat.error or 'ok')
+            ```
+        """
         result: dict[N, CacheStats] = {}
         for name, (path, _) in list(self._specs.items()):
             enabled = name not in self._disabled

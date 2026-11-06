@@ -31,3 +31,10 @@ Seconds to keep retrying while other processes or a pending fork are busy (defau
 True if the log was reset, False if readers or writers in other processes, or a
 
 pending fork, kept it busy. It never raises for a busy database.
+
+
+## Examples
+
+``` python
+cache.checkpoint()   # at shutdown, or after a big fill; False means "still busy, try later"
+```

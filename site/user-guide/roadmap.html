@@ -38,7 +38,7 @@ ul.task-list li input[type="checkbox"] {
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
 <link href="../user-guide/serialization.html" rel="next">
-<link href="../user-guide/switching-from-diskcache.html" rel="prev">
+<link href="../user-guide/errors.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
@@ -185,6 +185,12 @@ ul.task-list li input[type="checkbox"] {
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/errors.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Errors and what to do about them</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link active">
  <span class="menu-text">Vision and roadmap</span></a>
   </div>
@@ -280,7 +286,8 @@ ul.task-list li input[type="checkbox"] {
   <li><a href="#where-things-stand" id="toc-where-things-stand" class="nav-link" data-scroll-target="#where-things-stand">Where things stand</a>
   <ul class="collapse">
   <li><a href="#done-the-core-cache" id="toc-done-the-core-cache" class="nav-link" data-scroll-target="#done-the-core-cache">Done: the core <code>Cache</code></a></li>
-  <li><a href="#now-concurrency-review-and-soak-phase-2.5" id="toc-now-concurrency-review-and-soak-phase-2.5" class="nav-link" data-scroll-target="#now-concurrency-review-and-soak-phase-2.5">Now: concurrency review and soak (Phase 2.5)</a></li>
+  <li><a href="#done-concurrency-review-and-soak-phase-2.5" id="toc-done-concurrency-review-and-soak-phase-2.5" class="nav-link" data-scroll-target="#done-concurrency-review-and-soak-phase-2.5">Done: concurrency review and soak (Phase 2.5)</a></li>
+  <li><a href="#now-the-last-gates-before-production-phase-3" id="toc-now-the-last-gates-before-production-phase-3" class="nav-link" data-scroll-target="#now-the-last-gates-before-production-phase-3">Now: the last gates before production (Phase 3)</a></li>
   <li><a href="#next" id="toc-next" class="nav-link" data-scroll-target="#next">Next</a></li>
   </ul></li>
   <li><a href="#further-out" id="toc-further-out" class="nav-link" data-scroll-target="#further-out">Further out</a></li>
@@ -371,9 +378,13 @@ ul.task-list li input[type="checkbox"] {
 <li><a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> (Phase 6c), sharding across several databases, with <code>Caches.register(name, shards=...)</code> and <a href="../reference/ShardedCacheLike.html#diskcache_oxide.ShardedCacheLike" class="gdls-link gdls-code">ShardedCacheLike</a>. It removes the multi-process write-lock ceiling; making threads that share one handle scale on free-threaded Python is part of Phase 4.</li>
 </ul>
 </section>
-<section id="now-concurrency-review-and-soak-phase-2.5" class="level2">
-<h2 class="anchored" data-anchor-id="now-concurrency-review-and-soak-phase-2.5">Now: concurrency review and soak (Phase 2.5)</h2>
-<p>The concurrency core is where serious bugs hide, so it gets its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> under load, checking for corruption, lost writes, leaks and latency drift. The soak has already paid for itself: it found the unbounded WAL growth that <code>wal_size_limit</code> and <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> now rein in. The limit is a target, not a bound: several processes writing flat out can still take the log well past it (see <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>).</p>
+<section id="done-concurrency-review-and-soak-phase-2.5" class="level2">
+<h2 class="anchored" data-anchor-id="done-concurrency-review-and-soak-phase-2.5">Done: concurrency review and soak (Phase 2.5)</h2>
+<p>The concurrency core is where serious bugs hide, so it got its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> under load, checking for corruption, lost writes, leaks and latency drift. The 24-hour soak passed, and it paid for itself along the way: it found the unbounded WAL growth that <code>wal_size_limit</code> and <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> now rein in. The limit is a target, not a bound: several processes writing flat out can still take the log well past it (see <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>).</p>
+</section>
+<section id="now-the-last-gates-before-production-phase-3" class="level2">
+<h2 class="anchored" data-anchor-id="now-the-last-gates-before-production-phase-3">Now: the last gates before production (Phase 3)</h2>
+<p>The version in the repository is <code>0.1.0.dev2</code>. What’s left before Talk Python runs it in production and <code>0.1.0</code> goes to PyPI: a sanitizer pass over the whole codebase (ThreadSanitizer, AddressSanitizer and Miri, with the bundled SQLite built under them), and a fresh 24-hour soak on the final commit, since the performance work since the last one changed <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>, held transactions and locking.</p>
 </section>
 <section id="next" class="level2">
 <h2 class="anchored" data-anchor-id="next">Next</h2>
@@ -387,7 +398,7 @@ ul.task-list li input[type="checkbox"] {
 <tbody>
 <tr class="odd">
 <td><strong>3. Production</strong></td>
-<td>diskcache-oxide replaces diskcache at <a href="https://talkpython.fm">Talk Python</a>, with production latency watched against the old numbers. First release to PyPI after that.</td>
+<td>diskcache-oxide replaces diskcache at <a href="https://talkpython.fm">Talk Python</a>, with production latency watched against the old numbers. <code>0.1.0</code> goes to PyPI after that; until then the name there holds a placeholder.</td>
 </tr>
 <tr class="even">
 <td><strong>4. Free-threaded performance</strong></td>
@@ -866,8 +877,8 @@ ul.task-list li input[type="checkbox"] {
   </script>
 <nav class="page-navigation" aria-label="Page">
   <div class="nav-page nav-page-previous">
-      <a href="../user-guide/switching-from-diskcache.html" class="pagination-link" aria-label="Switching from python-diskcache">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Switching from python-diskcache</span>
+      <a href="../user-guide/errors.html" class="pagination-link" aria-label="Errors and what to do about them">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Errors and what to do about them</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">

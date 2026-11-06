@@ -29,3 +29,10 @@ Seconds each chunk may wait for the write lock (another thread's or another proc
 
 `int`  
 How many entries were removed.
+
+
+## Examples
+
+``` python
+removed = cache.expire(timeout=10.0)   # from a scheduled job, with its own timeout
+```

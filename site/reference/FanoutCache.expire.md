@@ -33,3 +33,13 @@ How many entries were removed.
 
 `Timeout`  
 Some shard stayed locked past [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout); the others were still done. It carries `removed` and `failed_shards` (see the class docs), as any failure here does, under `durable=True` too.
+
+
+## Examples
+
+``` python
+try:
+    cache.expire(timeout=5.0)
+except Timeout as exc:
+    exc.failed_shards, exc.removed   # which shards were skipped, and how many entries went anyway
+```
