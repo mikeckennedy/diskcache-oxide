@@ -837,7 +837,11 @@ mod tests {
         assert!(peak.load(Ordering::SeqCst) <= 2, "more than the cap inside");
         assert_eq!(slots.in_use(), 0);
         let worst = *worst.lock().unwrap();
-        assert!(worst < Duration::from_secs(2), "a waiter waited {worst:?}");
+        // A real-time bound, so native only: Miri's clock follows instructions (or runs about 1000x
+        // slow on the host's), while the cap and the no-timeout checks above hold under it too.
+        if !cfg!(miri) {
+            assert!(worst < Duration::from_secs(2), "a waiter waited {worst:?}");
+        }
     }
 
     #[test]

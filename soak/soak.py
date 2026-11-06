@@ -74,6 +74,10 @@ PQ_KILL_WINDOW = 30.0
 # 1-try build can pass it. Kills can't pull it down: no busy round in those runs, as a dead peer's locks
 # go with it and a dead writer just stops counting, with every writer summed.
 AUTO_MIN_SUCCESS_RATE = 0.95
+# On a 4-CPU host the rate sits lower whatever the load: 90.9% on HEAD and 91.8% before plan 12's spins
+# (721de5a) with 8 readers, 88.2% with 5 (plan 14, the htz rehearsals of 2026-11-06). Fewer CPUs leave a
+# descheduled reader holding its read mark longer. `--auto-min-success-rate` lowers the bar for such a
+# run; the summary records the bar used.
 # Fewer judged rounds than this per store fails the run, per hour once it passes an hour, since a rate
 # from a few rounds is noise. Low on purpose: a busy round costs a second of backoff, so a failing store
 # forces few rounds (76 and 93 in 4.5 minutes, at 41% and 53%). The full shape does about 6,000 an hour.
@@ -1228,14 +1232,14 @@ class Soak:
                 )
             judged = st['successes'] + st['busy']
             # Several writers in several processes outrun the checkpoint: a documented limit (D-024).
-            if st['writers'] == 1 and judged and st['successes'] / judged < AUTO_MIN_SUCCESS_RATE:
+            if st['writers'] == 1 and judged and st['successes'] / judged < self.args.auto_min_success_rate:
                 self.event(
                     'auto-low-success-rate',
                     problem=True,
                     store=store,
                     successes=st['successes'],
                     busy=st['busy'],
-                    threshold=AUTO_MIN_SUCCESS_RATE,
+                    threshold=self.args.auto_min_success_rate,
                 )
         per_python = {
             python: {
@@ -1270,7 +1274,7 @@ class Soak:
             'auto': auto,
             'per_python': per_python,
             'pq': self.pq_result,
-            'auto_min_success_rate': AUTO_MIN_SUCCESS_RATE,
+            'auto_min_success_rate': self.args.auto_min_success_rate,
             'auto_min_rounds': round(need),
             'side_kills': self.counts['side_kills'],
             'side_restarts': self.counts['side_restarts'],
@@ -1609,6 +1613,13 @@ def main() -> int:
         help='Processes running the FanoutCache role on fanout/, on top of --procs (0 turns it off).',
     )
     parser.add_argument('--fanout-threads', type=int, default=4, help='Routed-call threads per fanout process.')
+    parser.add_argument(
+        '--auto-min-success-rate',
+        type=float,
+        default=AUTO_MIN_SUCCESS_RATE,
+        help='The lowest forced-checkpoint success rate a one-writer auto store may have (default 0.95). '
+        'On a 4-CPU host it runs at 88-92%%, so use about 0.85 there.',
+    )
     parser.add_argument(
         '--quiet-after',
         type=float,

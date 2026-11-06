@@ -131,6 +131,21 @@ Each is one commit through `scripts/check.sh` on all four interpreters.
 
 Note (2026-11-05, from plan 12 step 3d): `Caches.__getitem__` and its helpers are typed `TransactionalCacheLike`, which is accurate while a lookup can only return a `Cache` or a `NullCache`. When `Caches` can register a FanoutCache, widen that annotation (a union, or back to `CacheLike`) and keep `caches[name].transact()` type-checking for the plain-cache case.
 
+## 9. Decisions from 2026-11-06 (Michael, through the Talk Python session)
+
+1. **The spin stays off at 2 or fewer CPUs** (`MIN_SPIN_CPUS = 3` in `sqlite_mutex.rs`, and the slot-wait spin's own rule in `genlock.rs`). Already so; nothing to build.
+2. **Inside `FanoutCache.transact(key)`, fan-out calls are refused with `ValueError`:** `len`, `clear`, `volume`, `expire`, `__iter__` and `iterkeys`, as keyed calls on another shard already are (D-040). To build: the refusal, a test per call, and the divergence note.
+3. **`TransactionAborted` becomes a dedicated Python exception class,** after the sanitizer pass (plan 14).
+4. **In the `Caches` registry only, a `LayoutMismatchError` erases the folder and re-creates it with the registered settings,** with a loud `WARNING`, since cache contents are disposable. It's the one place the library would delete a directory, so it's designed first and reviewed by the architect before anything is built. Requirements:
+   - an exclusive lock on the root, so no other process has the old shards open while they're deleted;
+   - rename the folder aside, then delete it;
+   - exactly one opener rebuilds when several race (the manifest's create-or-agree step decides);
+   - only a directory that holds the library's own manifest is ever erased, so a mistyped path can't delete the wrong folder;
+   - a direct `FanoutCache(...)` caller still gets `LayoutMismatchError`;
+   - if the erase fails, fall back to the reported `NullCache`, as today.
+
+Items 2 and 4 change code, so they land before the final 24-hour soak (plan 14, step 5), or the soak reruns. Item 3 follows the sanitizer pass and also comes before that soak.
+
 ## Progress
 
 - 2026-11-05: 13a done. `fanout.rs`: XXH3-64 seed 0 over the key-type byte and the key, multiply-high to the shard, pinned by golden vectors that a second reviewer recomputed independently with Python's `xxhash`; the manifest is created by an `O_EXCL` temp file and a hard link, mode 0644 under the umask so group-shared roots work, with a clear error where hard links aren't supported (including macOS's `ENOTSUP`); its first two lines are frozen in every format. `xxhash-rust` is allowed under BSL-1.0 for that crate only. `scripts/check.sh` passes on all four interpreters.
