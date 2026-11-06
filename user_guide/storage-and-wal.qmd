@@ -2,9 +2,11 @@
 title: "Storage and WAL"
 ---
 
-A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps up until an alert fires. This page covers what diskcache-oxide puts on disk, and the settings that keep memory and disk bounded.
+Nobody restarts a cache. It sits inside a worker process for weeks, and whatever it does to memory and disk, it does slowly and out of sight, until an alert fires at a bad hour. So how much a cache uses has to be something you set, not something you discover. This page covers what diskcache-oxide puts on disk, and the settings that keep memory and disk where you put them.
 
 ## What's in the directory
+
+Open the directory and this is what you find:
 
 ```
 /var/cache/my-app/
@@ -55,7 +57,7 @@ SQLite's memory for a directory stays around `max_connections × sqlite_cache_si
 
 ## The write-ahead log
 
-SQLite's write-ahead log (WAL) is what lets readers and a writer work at the same time. It has a weak spot in multi-process apps: SQLite can only reset the log when it finds a moment with no readers, and with readers in other processes, a burst of writes (a big fill, or a `clear()`) makes the log grow to fit the burst and then stay that size. diskcache-oxide's soak tests saw logs over 1 GiB next to databases of a few MiB.
+SQLite's write-ahead log (WAL) is a ledger of recent changes kept beside the database, and it's what lets readers and a writer work at the same time: the writer appends to the ledger while readers keep reading the book. Every so often SQLite folds the ledger back into the book and starts over. The catch in a multi-process app is that it can only start over when it finds a moment with no readers, and with readers in other processes that moment may never come. A burst of writes (a big fill, or a `clear()`) grows the log to fit the burst, and then it stays that size. diskcache-oxide's soak tests saw logs over 1 GiB next to databases of a few MiB.
 
 diskcache-oxide handles this in layers, from free and always on to explicit.
 

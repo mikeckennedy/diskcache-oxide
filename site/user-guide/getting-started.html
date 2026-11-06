@@ -123,16 +123,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="A Cache is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a...">
+  <meta name="description" content="A Cache is a directory. That’s the whole mental model, and it carries further than it looks: open the same directory from any number of threads and...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Getting started – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A Cache is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a...">
+  <meta property="og:description" content="A Cache is a directory. That’s the whole mental model, and it carries further than it looks: open the same directory from any number of threads and...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Getting started – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A Cache is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a...">
+  <meta name="twitter:description" content="A Cache is a directory. That’s the whole mental model, and it carries further than it looks: open the same directory from any number of threads and...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -360,7 +360,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>A <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a restart. This page covers installing diskcache-oxide, the everyday operations, and how to shut down cleanly.</p>
+<p>A <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is a directory. That’s the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn’t restart. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.</p>
 <section id="install" class="level1">
 <h1>Install</h1>
 <p>diskcache-oxide isn’t released yet: the version in the repository is <code>0.1.0.dev2</code>, and the <code>diskcache-oxide</code> name on PyPI holds a <code>0.0.1</code> placeholder with no code in it. Until <code>0.1.0</code>, build it from source, which needs a Rust toolchain:</p>
@@ -376,7 +376,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>)</span></code></pre></div>
-<p>The directory is required. If it doesn’t exist, diskcache-oxide creates it, readable and writable only by your user (<code>0700</code>), because anyone who can write to a cache directory can poison the cache.</p>
+<p>The directory is required. If it doesn’t exist, diskcache-oxide creates it, readable and writable only by your user (<code>0700</code>). That’s deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.</p>
 <p>Every process that should share the cache opens the same path. Inside one process, opening the same directory twice gives two handles on one shared engine, with one connection pool between them.</p>
 <section id="close-it-or-use-with" class="level2">
 <h2 class="anchored" data-anchor-id="close-it-or-use-with">Close it, or use <code>with</code></h2>
@@ -413,7 +413,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </section>
 <section id="atomic-operations-across-processes" class="level1">
 <h1>Atomic operations across processes</h1>
-<p>These are what make a shared cache useful for coordination, not only for caching. Each one is a single SQLite transaction, so it’s atomic across every thread and process using the directory.</p>
+<p>Picture eight gunicorn workers, each with a scheduler that fires the same hourly job. You want it to run once. There’s no leader, no Redis, and no way for the workers to talk to each other except through the cache. That turns out to be enough. Each call below is a single SQLite transaction, so it’s atomic across every thread and process using the directory, and “store only if absent”, done atomically, is a lock if you squint. These are what make a shared cache useful for coordination, not only for caching.</p>
 <div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Store only if the key is absent (or expired). Exactly one caller wins.</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> cache.add(<span class="st">'job:refresh-feeds'</span>, os.getpid(), expire<span class="op">=</span><span class="dv">3600</span>):</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    refresh_feeds()</span>
@@ -448,7 +448,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </section>
 <section id="timeouts" class="level1">
 <h1>Timeouts</h1>
-<p>When another process holds SQLite’s write lock, a write waits for it, up to the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> (60 seconds by default), then raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">diskcache_oxide.Timeout</a>, a subclass of the built-in <code>TimeoutError</code>:</p>
+<p>One process at a time commits to a database file. When another one is in the middle of doing so, your write waits its turn, up to the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> (60 seconds by default), then gives up and raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">diskcache_oxide.Timeout</a>, a subclass of the built-in <code>TimeoutError</code>:</p>
 <div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, Timeout</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)</span>
@@ -463,7 +463,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </section>
 <section id="values-that-cant-be-read" class="level1">
 <h1>Values that can’t be read</h1>
-<p>A cached value can stop being readable: a class you pickled was moved or renamed, or the bytes were damaged. By default <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> raises, as diskcache does. A cache is only a copy of data you can rebuild, so most apps would rather treat that as a miss. <code>on_decode_error</code> does that:</p>
+<p>A cache outlives the code that filled it. Deploy a rename of a class you pickled, or have a disk hand back damaged bytes, and a row that read fine yesterday raises today. By default <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> raises, as diskcache does. But a cache is only a copy of data you can rebuild, so most apps would rather treat that row as a miss and move on. <code>on_decode_error</code> does that:</p>
 <div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, pickle<span class="op">=</span><span class="va">True</span>, on_decode_error<span class="op">=</span><span class="st">'miss'</span>)</span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>cache.get(<span class="st">'homepage'</span>)  <span class="co"># None if the stored value can't be decoded; the bad row is deleted</span></span></code></pre></div>
 <ul>
@@ -544,7 +544,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </section>
 <section id="a-cache-that-cant-take-a-request-down" class="level1">
 <h1>A cache that can’t take a request down</h1>
-<p>A cache is a copy. If every caller can fall back to its source of truth, an outage in the cache should cost you speed, not a failed request. <code>durable=True</code> does that for the calls a request makes:</p>
+<p>It’s 3 a.m., the disk under <code>/var/cache</code> is full, and every request that writes to the cache is now a 500. Nothing the cache held was precious: it was all a copy of something the database still has. If every caller can fall back to its source of truth, an outage in the cache should cost you speed, not requests. <code>durable=True</code> makes that the rule for the calls a request makes:</p>
 <div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>, durable<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>page <span class="op">=</span> cache.get(<span class="st">'homepage'</span>)  <span class="co"># None if the cache is locked, full, broken or the disk failed</span></span></code></pre></div>
 <p>“Durable” here means the cache keeps your app running. It doesn’t mean what it means in a database, where a durable write survives a crash. This option does the opposite: it can drop writes. It’s off by default.</p>
@@ -650,7 +650,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </section>
 <section id="more-than-one-process-writing" class="level1">
 <h1>More than one process writing</h1>
-<p>A single <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> has one write lock per directory, so many processes that all write queue on it. If your app runs several worker processes that write often (counters, rate limits, job claims), open a <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> instead: it spreads the keys over several databases, and in the repository’s benchmark it holds its rate at 8 processes where a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> falls to about 40% of its one-process rate. For one process, or mostly reads, a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is the simpler choice.</p>
+<p>A single <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> has one write lock per directory. Reads never wait for it, but every write does, so eight worker processes that all bump counters are eight writers lining up for one lock. If your app runs several worker processes that write often (counters, rate limits, job claims), open a <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> instead: it spreads the keys over several databases, each with its own lock, and in the repository’s benchmark it holds its rate at 8 processes where a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> falls to about 40% of its one-process rate. For one process, or mostly reads, a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is the simpler choice.</p>
 </section>
 <section id="shutting-down" class="level1">
 <h1>Shutting down</h1>

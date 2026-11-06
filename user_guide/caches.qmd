@@ -2,7 +2,7 @@
 title: "Caches: named caches"
 ---
 
-An app with more than one cache ends up writing the same code to manage them: map names to directories, open each one once and reuse it, carry on with caching switched off when one can't be opened, turn some off for a load test, and show counts and sizes on an admin page. `Caches` is that code.
+Every app with two caches eventually grows a file called something like `cache_service.py`. It maps names to directories, opens each cache once and hands out the same object afterwards, carries on with caching switched off when a directory can't be opened, lets you turn one off for a load test, and feeds counts and sizes to an admin page. It's the same file in every app, written slightly differently each time. `Caches` is that file, so you don't have to write it again.
 
 ```python
 from diskcache_oxide import Caches

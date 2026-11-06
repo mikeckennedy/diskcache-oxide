@@ -1,6 +1,6 @@
 # FanoutCache: sharded caches
 
-A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) is one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key, so writes to different keys can go to different files and stop queueing on one write lock. It has the same methods as [Cache](../reference/Cache.md#diskcache_oxide.Cache) for single keys, and it's one directory, shared by any number of threads and processes.
+A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) has one write lock per database file, which makes it a shop with one checkout lane: readers walk straight through, but every writer queues, and eight worker processes that all bump counters are eight carts in one lane. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) opens more lanes. It's one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key, so writes to different keys go to different files and stop queueing on one lock. It has the same methods as [Cache](../reference/Cache.md#diskcache_oxide.Cache) for single keys, and it's one directory, shared by any number of threads and processes.
 
 ``` python
 from diskcache_oxide import FanoutCache

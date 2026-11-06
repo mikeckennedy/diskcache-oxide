@@ -124,16 +124,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps...">
+  <meta name="description" content="Nobody restarts a cache. It sits inside a worker process for weeks, and whatever it does to memory and disk, it does slowly and out of sight, until an...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Storage and WAL – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps...">
+  <meta property="og:description" content="Nobody restarts a cache. It sits inside a worker process for weeks, and whatever it does to memory and disk, it does slowly and out of sight, until an...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Storage and WAL – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps...">
+  <meta name="twitter:description" content="Nobody restarts a cache. It sits inside a worker process for weeks, and whatever it does to memory and disk, it does slowly and out of sight, until an...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -350,9 +350,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps up until an alert fires. This page covers what diskcache-oxide puts on disk, and the settings that keep memory and disk bounded.</p>
+<p>Nobody restarts a cache. It sits inside a worker process for weeks, and whatever it does to memory and disk, it does slowly and out of sight, until an alert fires at a bad hour. So how much a cache uses has to be something you set, not something you discover. This page covers what diskcache-oxide puts on disk, and the settings that keep memory and disk where you put them.</p>
 <section id="whats-in-the-directory" class="level1">
 <h1>What’s in the directory</h1>
+<p>Open the directory and this is what you find:</p>
 <pre><code>/var/cache/my-app/
 ├── diskcache-oxide.sqlite        # keys, metadata and small values
 ├── diskcache-oxide.sqlite-wal    # SQLite's write-ahead log
@@ -393,7 +394,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </section>
 <section id="the-write-ahead-log" class="level1">
 <h1>The write-ahead log</h1>
-<p>SQLite’s write-ahead log (WAL) is what lets readers and a writer work at the same time. It has a weak spot in multi-process apps: SQLite can only reset the log when it finds a moment with no readers, and with readers in other processes, a burst of writes (a big fill, or a <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>) makes the log grow to fit the burst and then stay that size. diskcache-oxide’s soak tests saw logs over 1 GiB next to databases of a few MiB.</p>
+<p>SQLite’s write-ahead log (WAL) is a ledger of recent changes kept beside the database, and it’s what lets readers and a writer work at the same time: the writer appends to the ledger while readers keep reading the book. Every so often SQLite folds the ledger back into the book and starts over. The catch in a multi-process app is that it can only start over when it finds a moment with no readers, and with readers in other processes that moment may never come. A burst of writes (a big fill, or a <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>) grows the log to fit the burst, and then it stays that size. diskcache-oxide’s soak tests saw logs over 1 GiB next to databases of a few MiB.</p>
 <p>diskcache-oxide handles this in layers, from free and always on to explicit.</p>
 <section id="always-on-wal_size_limit" class="level2">
 <h2 class="anchored" data-anchor-id="always-on-wal_size_limit">Always on: <code>wal_size_limit</code></h2>

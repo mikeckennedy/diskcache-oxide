@@ -5,6 +5,9 @@ format.quote-style = "single"
 target-version = "py314"
 
 # pycodestyle errors, Pyflakes and import sorting. Ruff's default excludes (venv, .venv, build, dist,
-# caches) and .gitignore cover what shouldn't be checked; target/ (Cargo) and site/ (the built docs) are
-# in .gitignore or hold no Python.
+# caches) and .gitignore cover what shouldn't be checked; target/ (Cargo) is in .gitignore.
 lint.select = ["E", "F", "I"]
+
+# site/ is the built docs, committed. Its generated Markdown companions hold code blocks that ruff
+# would reformat (one blank line between defs), and they're regenerated on every build.
+extend-exclude = ["site"]

@@ -1451,7 +1451,7 @@ This is the User Guide documentation for the package.
 
 ### Getting started
 
-A `Cache` is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a restart. This page covers installing diskcache-oxide, the everyday operations, and how to shut down cleanly.
+A `Cache` is a directory. That's the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn't restart. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.
 
 ## Install
 
@@ -1473,7 +1473,7 @@ from diskcache_oxide import Cache
 cache = Cache('/var/cache/my-app')
 ```
 
-The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`), because anyone who can write to a cache directory can poison the cache.
+The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
 
 Every process that should share the cache opens the same path. Inside one process, opening the same directory twice gives two handles on one shared engine, with one connection pool between them.
 
@@ -1519,7 +1519,7 @@ value = cache.pop('session:7')      # the value, or the default if it was missin
 
 ## Atomic operations across processes
 
-These are what make a shared cache useful for coordination, not only for caching. Each one is a single SQLite transaction, so it's atomic across every thread and process using the directory.
+Picture eight gunicorn workers, each with a scheduler that fires the same hourly job. You want it to run once. There's no leader, no Redis, and no way for the workers to talk to each other except through the cache. That turns out to be enough. Each call below is a single SQLite transaction, so it's atomic across every thread and process using the directory, and "store only if absent", done atomically, is a lock if you squint. These are what make a shared cache useful for coordination, not only for caching.
 
 ```python
 # Store only if the key is absent (or expired). Exactly one caller wins.
@@ -1565,7 +1565,7 @@ Maintenance calls, all safe to run while other processes use the cache:
 
 ## Timeouts
 
-When another process holds SQLite's write lock, a write waits for it, up to the cache's `timeout` (60 seconds by default), then raises `diskcache_oxide.Timeout`, a subclass of the built-in `TimeoutError`:
+One process at a time commits to a database file. When another one is in the middle of doing so, your write waits its turn, up to the cache's `timeout` (60 seconds by default), then gives up and raises `diskcache_oxide.Timeout`, a subclass of the built-in `TimeoutError`:
 
 ```python
 from diskcache_oxide import Cache, Timeout
@@ -1588,7 +1588,7 @@ What else `Timeout` can mean, and what to do about every other exception the lib
 
 ## Values that can't be read
 
-A cached value can stop being readable: a class you pickled was moved or renamed, or the bytes were damaged. By default `get` raises, as diskcache does. A cache is only a copy of data you can rebuild, so most apps would rather treat that as a miss. `on_decode_error` does that:
+A cache outlives the code that filled it. Deploy a rename of a class you pickled, or have a disk hand back damaged bytes, and a row that read fine yesterday raises today. By default `get` raises, as diskcache does. But a cache is only a copy of data you can rebuild, so most apps would rather treat that row as a miss and move on. `on_decode_error` does that:
 
 ```python
 cache = Cache('/var/cache/my-app', pickle=True, on_decode_error='miss')
@@ -1626,7 +1626,7 @@ A value still goes to exactly one caller, because `pop` deletes only the version
 
 ## A cache that can't take a request down
 
-A cache is a copy. If every caller can fall back to its source of truth, an outage in the cache should cost you speed, not a failed request. `durable=True` does that for the calls a request makes:
+It's 3 a.m., the disk under `/var/cache` is full, and every request that writes to the cache is now a 500. Nothing the cache held was precious: it was all a copy of something the database still has. If every caller can fall back to its source of truth, an outage in the cache should cost you speed, not requests. `durable=True` makes that the rule for the calls a request makes:
 
 ```python
 cache = Cache('/var/cache/my-app', timeout=1.0, durable=True)
@@ -1688,7 +1688,7 @@ The limit is per handle, so a `with Cache(...)` per request logs on every reques
 
 ## More than one process writing
 
-A single `Cache` has one write lock per directory, so many processes that all write queue on it. If your app runs several worker processes that write often (counters, rate limits, job claims), open a [`FanoutCache`](fanoutcache.qmd) instead: it spreads the keys over several databases, and in the repository's benchmark it holds its rate at 8 processes where a plain `Cache` falls to about 40% of its one-process rate. For one process, or mostly reads, a plain `Cache` is the simpler choice.
+A single `Cache` has one write lock per directory. Reads never wait for it, but every write does, so eight worker processes that all bump counters are eight writers lining up for one lock. If your app runs several worker processes that write often (counters, rate limits, job claims), open a [`FanoutCache`](fanoutcache.qmd) instead: it spreads the keys over several databases, each with its own lock, and in the repository's benchmark it holds its rate at 8 processes where a plain `Cache` falls to about 40% of its one-process rate. For one process, or mostly reads, a plain `Cache` is the simpler choice.
 
 ## Shutting down
 
@@ -1710,7 +1710,7 @@ cache = Cache(tmp_path, clock=lambda: time.time())
 
 ### Switching from python-diskcache
 
-diskcache-oxide is **API compatible** with [python-diskcache](https://github.com/grantjenks/python-diskcache) 5.6.3's `Cache`, and deliberately **not data compatible**. Keeping diskcache's API makes switching a one-line change. Not keeping its on-disk format is what allowed fixing its design instead of inheriting it.
+diskcache-oxide is **API compatible** with [python-diskcache](https://github.com/grantjenks/python-diskcache) 5.6.3's `Cache`, and deliberately **not data compatible**. Keeping diskcache's API makes switching a one-line change. Not keeping its on-disk format is what made it possible to fix the design instead of inheriting it. So the switch itself is small, and the rest of this page is about what you'll notice afterwards, which is mostly things getting better and now and then things getting stricter.
 
 For most apps, switching looks like this:
 
@@ -1825,7 +1825,7 @@ You don't have to change anything for these:
 
 ### Errors and what to do about them
 
-diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that `except` clauses you already have keep working: `Timeout` is a `TimeoutError`, `UnsafeValueError` is a `TypeError`, `LayoutMismatchError` is a `ValueError`. This page goes through every one, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise.
+Sooner or later a traceback ends in `diskcache_oxide`, and the question is whether it's your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that `except` clauses you already have keep working: `Timeout` is a `TimeoutError`, `UnsafeValueError` is a `TypeError`, `LayoutMismatchError` is a `ValueError`. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you'll get.
 
 | Exception | Base classes | Where |
 |---|---|---|
@@ -1866,7 +1866,7 @@ Keys are `str` only for now; build them yourself (`f'user:{user_id}'`). Other ke
 diskcache_oxide.Timeout: timed out after 1 s waiting for a lock or a pending fork
 ```
 
-The call waited the cache's `timeout` (60 s by default, or the `timeout=` passed to that call) and gave up. Something held what it needed:
+The call waited the cache's `timeout` (60 s by default, or the `timeout=` passed to that call) and gave up. Something held what it needed, and there are three suspects:
 
 - **Another writer held the write lock** that long. One process at a time commits to a database file, and a burst of writes, a `clear()` from a maintenance script, or a long `transact()` block holds it. Reads never wait for writers, so a `Timeout` on a `get` is one of the next two cases.
 - **A fork was pending.** Before a fork, every cache call in the process waits for in-flight writes and then for the fork itself, and that counts against `timeout`. A fork takes about a millisecond in a quiet process and tens to hundreds of milliseconds beside busy threads on a GIL build. A `timeout` below that sees `Timeout` during ordinary forks. See [How long a call waits for a fork](concurrency-and-forks.qmd#how-long-a-call-waits-for-a-fork).
@@ -1907,7 +1907,7 @@ A process forked while the forking thread itself held a `transact()` block, and 
 UnsafeValueError: this value was stored with pickle; open the cache with pickle=True to read it
 ```
 
-A handle opened without `pickle=True` found a row that a `pickle=True` handle wrote, and refused to unpickle it. The row is left in place for the handle that can read it. This is a configuration mismatch between two openers of one directory, not damage, so it raises under every `on_decode_error` policy and under `durable=True` too.
+Two openers of one directory disagree about what it's allowed to hold. A handle opened without `pickle=True` found a row that a `pickle=True` handle wrote, and refused to unpickle it, because unpickling runs whatever code the bytes describe. The row is left in place for the handle that can read it. This is a configuration mismatch, not damage, so it raises under every `on_decode_error` policy and under `durable=True` too.
 
 Decide which the directory is for. If it holds pickled objects on purpose, open every handle on it with `pickle=True`. If it shouldn't, find the writer that passed `pickle=True` and give it its own directory, then `clear()` this one. It's a `TypeError`, like the error at `set()` above, because both come from the same decision: what this cache is allowed to hold.
 
@@ -1987,7 +1987,7 @@ Three settings turn failures into log lines on the `diskcache_oxide` logger inst
 
 ## If it looks like a bug in diskcache-oxide
 
-Open an [issue](https://github.com/mikeckennedy/diskcache-oxide/issues) with `diskcache_oxide.__version__`, `diskcache_oxide.sqlite_version()`, the interpreter (`python -VV` says whether it's free-threaded), the platform and filesystem, how many processes and threads share the directory, and the full traceback. Every deliberate difference from diskcache is listed in [Divergences](divergences.qmd), so check there first if the surprise is a behavior rather than an error.
+If you've read this far and the traceback still doesn't fit, it may be one. Open an [issue](https://github.com/mikeckennedy/diskcache-oxide/issues) with `diskcache_oxide.__version__`, `diskcache_oxide.sqlite_version()`, the interpreter (`python -VV` says whether it's free-threaded), the platform and filesystem, how many processes and threads share the directory, and the full traceback. Every deliberate difference from diskcache is listed in [Divergences](divergences.qmd), so check there first if the surprise is a behavior rather than an error.
 
 
 ## The vision
@@ -2075,7 +2075,7 @@ Ideas being considered, not yet committed to:
 
 ### Serialization
 
-What goes into the cache should come out as exactly what you put in, it should be fast to encode and decode, and reading the cache should never run code someone else left there. diskcache's default, pickle, gets the first two and fails the third. diskcache-oxide gets all three, and pickle becomes something you opt into.
+A serializer has three jobs. What goes into the cache should come out as exactly what you put in. Encoding and decoding should be fast, because they happen on every call. And reading the cache should never run code that someone else left there. diskcache's default, pickle, does the first two well and fails the third by design: unpickling runs whatever the bytes tell it to. diskcache-oxide gets all three, and pickle becomes something you opt into, one cache at a time.
 
 ## Two formats
 
@@ -2161,7 +2161,7 @@ A value whose stored bytes can't be decoded at all raises `CorruptValueError` (a
 
 ### NullCache
 
-Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry. Without help, that means `if cache is not None:` around every call, or a hand-written fake that drifts out of sync with the real API.
+Sooner or later you need to turn caching off. In tests, so each one starts clean. In local development, so you see your change instead of yesterday's. In production, at the worst possible moment, while you chase a bug that might be a stale entry and might not. Without help, that means `if cache is not None:` around every call, or a hand-written fake that drifts a little further from the real API with every release.
 
 `NullCache` is a cache that's switched off. It has the same methods and signatures as `Cache`, so swapping one for the other is a one-line change, and the code that uses it never knows.
 
@@ -2178,7 +2178,7 @@ def make_cache(settings) -> CacheLike:
 
 > **A `NullCache` behaves like a real cache in which every entry expires the instant it's written and is swept straight away.**
 
-Every result follows from that sentence, so you never have to guess:
+Every row of this table follows from that sentence, so you never have to guess, and once it clicks you never have to look it up again:
 
 | Call | Result | Because |
 |---|---|---|
@@ -2270,7 +2270,7 @@ With `invalidate=`, it never opens a transaction on the real cache: a switched-o
 
 ### Caches: named caches
 
-An app with more than one cache ends up writing the same code to manage them: map names to directories, open each one once and reuse it, carry on with caching switched off when one can't be opened, turn some off for a load test, and show counts and sizes on an admin page. `Caches` is that code.
+Every app with two caches eventually grows a file called something like `cache_service.py`. It maps names to directories, opens each cache once and hands out the same object afterwards, carries on with caching switched off when a directory can't be opened, lets you turn one off for a load test, and feeds counts and sizes to an admin page. It's the same file in every app, written slightly differently each time. `Caches` is that file, so you don't have to write it again.
 
 ```python
 from diskcache_oxide import Caches
@@ -2390,7 +2390,7 @@ What stays in the app: reading its settings file and environment variables (pass
 
 ### FanoutCache: sharded caches
 
-A `FanoutCache` is one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key, so writes to different keys can go to different files and stop queueing on one write lock. It has the same methods as `Cache` for single keys, and it's one directory, shared by any number of threads and processes.
+A plain `Cache` has one write lock per database file, which makes it a shop with one checkout lane: readers walk straight through, but every writer queues, and eight worker processes that all bump counters are eight carts in one lane. A `FanoutCache` opens more lanes. It's one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key, so writes to different keys go to different files and stop queueing on one lock. It has the same methods as `Cache` for single keys, and it's one directory, shared by any number of threads and processes.
 
 ```python
 from diskcache_oxide import FanoutCache
@@ -2538,7 +2538,7 @@ The constructor takes `shards` as a keyword: stock's `FanoutCache(path, 4)` mean
 
 ### Transactions
 
-Every write is already its own transaction, atomic across every thread and process using the directory. `transact()` groups several calls into one: they all commit together when the block exits, or none of them do.
+Every write is already its own transaction, atomic across every thread and process using the directory. Sometimes one write at a time isn't enough. A request bumps a total, bumps a per-path counter and records when it happened, and a reader that sees two of those three has seen something that was never true. `transact()` groups several calls into one: they all commit together when the block exits, or none of them do.
 
 ```python
 with cache.transact() as tx:
@@ -2634,7 +2634,7 @@ On a `NullCache`, `transact()` is a no-op that yields the `NullCache`. A [`Fanou
 
 ### Concurrency and forks
 
-A production Python web app is many things at once: several worker processes, often several threads in each, a pre-forking server that creates and recycles those workers, and background jobs and scripts opening the same cache on the side. More and more, it's also free-threaded Python, with threads truly running in parallel. diskcache-oxide is designed for all of that at the same time, and its test suite runs each of these cases on every change.
+A production Python web app is a crowd. Several worker processes, often several threads in each, a pre-forking server that creates and recycles those workers while they're busy, and a cron job or an admin script opening the same cache on the side. More and more, it's also free-threaded Python, where the threads really do run at the same time. diskcache-oxide is designed for all of that at once, and its test suite runs each of these cases on every change, because this is where cache bugs hide: not in `get` and `set`, but in what happens when two of them collide.
 
 ## Threads
 
@@ -2669,15 +2669,15 @@ Any number of processes can open the same directory, each with its own `Cache`. 
 
 ## Forks
 
-Pre-forking servers (gunicorn, Celery's prefork pool, `multiprocessing` with the fork start method) create workers with `fork()`. A fork copies the whole process, including any SQLite lock state that one of its threads held at that moment. In diskcache, a child forked while another thread was in a write transaction inherits a lock nobody in the child will ever release: its first write stalls for the full timeout (60 seconds by default). Under a busy read/write load, that hits 20-50% of forks.
+Pre-forking servers (gunicorn, Celery's prefork pool, `multiprocessing` with the fork start method) create workers with `fork()`, which copies the whole process. Picture a thread halfway through a write at the instant the server forks. The child is a photocopy of the parent, SQLite's note that this process holds the write lock included. But only the forking thread exists in the child, so the thread that was going to release that lock isn't there. In diskcache, that child's first write waits for a ghost: it stalls for the full timeout (60 seconds by default). Under a busy read/write load, that hits 20-50% of forks.
 
-diskcache-oxide prevents it with a **fork barrier**, installed when `diskcache_oxide` is imported:
+diskcache-oxide prevents it with a **fork barrier**, a crossing guard installed when `diskcache_oxide` is imported. It stops traffic in a specific order:
 
 1. **Before the fork,** the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish. Then it closes the idle pooled connections, so the child doesn't inherit SQLite's lock bookkeeping for those files.
 2. **In the parent,** it lets the held-off writes continue.
 3. **In the child,** it drops any connection still inherited without closing it (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.
 
-The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every `Cache` in the process, not just the one you're holding. Your own `os.register_at_fork(after_in_child=...)` hooks can use a cache too, whether they were registered before or after `diskcache_oxide` was imported.
+The result: whatever other threads were doing at the moment of the fork, the child is born with no locks and no debts, and can read and write right away. The barrier covers every `Cache` in the process, not just the one you're holding. Your own `os.register_at_fork(after_in_child=...)` hooks can use a cache too, whether they were registered before or after `diskcache_oxide` was imported.
 
 Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process's last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.
 
@@ -2706,9 +2706,11 @@ On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at ever
 
 ### Storage and WAL
 
-A cache runs for months inside long-lived worker processes, so how much memory and disk it uses has to be predictable, not something that slowly creeps up until an alert fires. This page covers what diskcache-oxide puts on disk, and the settings that keep memory and disk bounded.
+Nobody restarts a cache. It sits inside a worker process for weeks, and whatever it does to memory and disk, it does slowly and out of sight, until an alert fires at a bad hour. So how much a cache uses has to be something you set, not something you discover. This page covers what diskcache-oxide puts on disk, and the settings that keep memory and disk where you put them.
 
 ## What's in the directory
+
+Open the directory and this is what you find:
 
 ```
 /var/cache/my-app/
@@ -2759,7 +2761,7 @@ SQLite's memory for a directory stays around `max_connections × sqlite_cache_si
 
 ## The write-ahead log
 
-SQLite's write-ahead log (WAL) is what lets readers and a writer work at the same time. It has a weak spot in multi-process apps: SQLite can only reset the log when it finds a moment with no readers, and with readers in other processes, a burst of writes (a big fill, or a `clear()`) makes the log grow to fit the burst and then stay that size. diskcache-oxide's soak tests saw logs over 1 GiB next to databases of a few MiB.
+SQLite's write-ahead log (WAL) is a ledger of recent changes kept beside the database, and it's what lets readers and a writer work at the same time: the writer appends to the ledger while readers keep reading the book. Every so often SQLite folds the ledger back into the book and starts over. The catch in a multi-process app is that it can only start over when it finds a moment with no readers, and with readers in other processes that moment may never come. A burst of writes (a big fill, or a `clear()`) grows the log to fit the burst, and then it stays that size. diskcache-oxide's soak tests saw logs over 1 GiB next to databases of a few MiB.
 
 diskcache-oxide handles this in layers, from free and always on to explicit.
 
@@ -2811,7 +2813,7 @@ All of these work in chunks, release the database between chunks so other writer
 
 ### Performance
 
-Web apps call their cache on almost every request, often straight from the asyncio event loop, where a slow call holds up every other request. So diskcache-oxide's performance work starts with read latency, then throughput under many threads, then predictable resource use. Correctness always comes first: every speedup has to keep the conformance suite green.
+Web apps call their cache on almost every request, often straight from the asyncio event loop, where every microsecond the cache spends is a microsecond every other request on that loop waits. So diskcache-oxide's performance work starts with read latency, then throughput under many threads, then predictable resource use. Correctness always comes first: every speedup has to keep the conformance suite green, or it doesn't ship.
 
 ## The numbers
 
@@ -2878,7 +2880,7 @@ Past that, the [network server](roadmap.qmd) can go further still: as the only o
 
 ### Divergences from python-diskcache
 
-diskcache-oxide's test suite is a conformance suite: the same black-box tests run against real diskcache 5.6.3 and against diskcache-oxide. Where they behave differently, it's on purpose, and it's written down here. Most of these differences are diskcache bugs that the suite found, each with a reproduction in the repository's `upstream/` folder.
+diskcache-oxide's test suite is a conformance suite: the same black-box tests run against real diskcache 5.6.3 and against diskcache-oxide. Where they behave differently, it's on purpose, and it's written down here. Running one suite against two implementations turned out to be a bug detector pointed in both directions: most of the differences below are diskcache bugs the suite found, each with a reproduction in the repository's `upstream/` folder.
 
 A divergence is never a way to skip a failing test. The full record, including test names and measurements, is [tests/DIVERGENCES.md](https://github.com/mikeckennedy/diskcache-oxide/blob/main/tests/DIVERGENCES.md).
 

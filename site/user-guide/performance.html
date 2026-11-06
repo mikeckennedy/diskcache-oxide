@@ -89,16 +89,16 @@ ul.task-list li input[type="checkbox"] {
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="Web apps call their cache on almost every request, often straight from the asyncio event loop, where a slow call holds up every other request. So...">
+  <meta name="description" content="Web apps call their cache on almost every request, often straight from the asyncio event loop, where every microsecond the cache spends is a...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Performance – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="Web apps call their cache on almost every request, often straight from the asyncio event loop, where a slow call holds up every other request. So...">
+  <meta property="og:description" content="Web apps call their cache on almost every request, often straight from the asyncio event loop, where every microsecond the cache spends is a...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Performance – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="Web apps call their cache on almost every request, often straight from the asyncio event loop, where a slow call holds up every other request. So...">
+  <meta name="twitter:description" content="Web apps call their cache on almost every request, often straight from the asyncio event loop, where every microsecond the cache spends is a...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -308,7 +308,7 @@ ul.task-list li input[type="checkbox"] {
 </header>
 
 
-<p>Web apps call their cache on almost every request, often straight from the asyncio event loop, where a slow call holds up every other request. So diskcache-oxide’s performance work starts with read latency, then throughput under many threads, then predictable resource use. Correctness always comes first: every speedup has to keep the conformance suite green.</p>
+<p>Web apps call their cache on almost every request, often straight from the asyncio event loop, where every microsecond the cache spends is a microsecond every other request on that loop waits. So diskcache-oxide’s performance work starts with read latency, then throughput under many threads, then predictable resource use. Correctness always comes first: every speedup has to keep the conformance suite green, or it doesn’t ship.</p>
 <section id="the-numbers" class="level1">
 <h1>The numbers</h1>
 <p>Measured with <code>bench/gate.py</code>, which runs diskcache 5.6.3 and diskcache-oxide in the same session on the same machine, in four interleaved rounds. This is the Phase 2 final gate, on Linux (Ubuntu 26.04 LTS in Docker on Apple Silicon), matching Talk Python’s servers. Latencies are p50 in microseconds. Ratios are oxide’s time divided by diskcache’s, so lower is better.</p>

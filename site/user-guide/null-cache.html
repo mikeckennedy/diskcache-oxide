@@ -124,16 +124,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry....">
+  <meta name="description" content="Sooner or later you need to turn caching off. In tests, so each one starts clean. In local development, so you see your change instead of yesterday’s....">
   <meta property="og:type" content="website">
   <meta property="og:title" content="NullCache – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry....">
+  <meta property="og:description" content="Sooner or later you need to turn caching off. In tests, so each one starts clean. In local development, so you see your change instead of yesterday’s....">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="NullCache – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry....">
+  <meta name="twitter:description" content="Sooner or later you need to turn caching off. In tests, so each one starts clean. In local development, so you see your change instead of yesterday’s....">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -345,7 +345,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry. Without help, that means <code>if cache is not None:</code> around every call, or a hand-written fake that drifts out of sync with the real API.</p>
+<p>Sooner or later you need to turn caching off. In tests, so each one starts clean. In local development, so you see your change instead of yesterday’s. In production, at the worst possible moment, while you chase a bug that might be a stale entry and might not. Without help, that means <code>if cache is not None:</code> around every call, or a hand-written fake that drifts a little further from the real API with every release.</p>
 <p><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> is a cache that’s switched off. It has the same methods and signatures as <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, so swapping one for the other is a one-line change, and the code that uses it never knows.</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, CacheLike, NullCache</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
@@ -358,7 +358,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <blockquote class="blockquote">
 <p><strong>A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> behaves like a real cache in which every entry expires the instant it’s written and is swept straight away.</strong></p>
 </blockquote>
-<p>Every result follows from that sentence, so you never have to guess:</p>
+<p>Every row of this table follows from that sentence, so you never have to guess, and once it clicks you never have to look it up again:</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">

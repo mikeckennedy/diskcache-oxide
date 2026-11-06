@@ -346,7 +346,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>diskcache-oxide is <strong>API compatible</strong> with <a href="https://github.com/grantjenks/python-diskcache">python-diskcache</a> 5.6.3’s <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, and deliberately <strong>not data compatible</strong>. Keeping diskcache’s API makes switching a one-line change. Not keeping its on-disk format is what allowed fixing its design instead of inheriting it.</p>
+<p>diskcache-oxide is <strong>API compatible</strong> with <a href="https://github.com/grantjenks/python-diskcache">python-diskcache</a> 5.6.3’s <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, and deliberately <strong>not data compatible</strong>. Keeping diskcache’s API makes switching a one-line change. Not keeping its on-disk format is what made it possible to fix the design instead of inheriting it. So the switch itself is small, and the rest of this page is about what you’ll notice afterwards, which is mostly things getting better and now and then things getting stricter.</p>
 <p>For most apps, switching looks like this:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># from diskcache import Cache, Timeout</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, Timeout</span>

@@ -1,6 +1,6 @@
 # Errors and what to do about them
 
-diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that `except` clauses you already have keep working: [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) is a `TimeoutError`, [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) is a `TypeError`, [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) is a `ValueError`. This page goes through every one, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise.
+Sooner or later a traceback ends in `diskcache_oxide`, and the question is whether it's your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that `except` clauses you already have keep working: [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) is a `TimeoutError`, [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) is a `TypeError`, [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) is a `ValueError`. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you'll get.
 
 | Exception | Base classes | Where |
 |----|----|----|
@@ -44,7 +44,7 @@ Keys are `str` only for now; build them yourself (`f'user:{user_id}'`). Other ke
 diskcache_oxide.Timeout: timed out after 1 s waiting for a lock or a pending fork
 ```
 
-The call waited the cache's [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) (60 s by default, or the `timeout=` passed to that call) and gave up. Something held what it needed:
+The call waited the cache's [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) (60 s by default, or the `timeout=` passed to that call) and gave up. Something held what it needed, and there are three suspects:
 
 - **Another writer held the write lock** that long. One process at a time commits to a database file, and a burst of writes, a [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) from a maintenance script, or a long [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) block holds it. Reads never wait for writers, so a [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) on a [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) is one of the next two cases.
 - **A fork was pending.** Before a fork, every cache call in the process waits for in-flight writes and then for the fork itself, and that counts against [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout). A fork takes about a millisecond in a quiet process and tens to hundreds of milliseconds beside busy threads on a GIL build. A [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) below that sees [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) during ordinary forks. See [How long a call waits for a fork](concurrency-and-forks.md#how-long-a-call-waits-for-a-fork).
@@ -88,7 +88,7 @@ A process forked while the forking thread itself held a [transact()](../referenc
 UnsafeValueError: this value was stored with pickle; open the cache with pickle=True to read it
 ```
 
-A handle opened without `pickle=True` found a row that a `pickle=True` handle wrote, and refused to unpickle it. The row is left in place for the handle that can read it. This is a configuration mismatch between two openers of one directory, not damage, so it raises under every `on_decode_error` policy and under `durable=True` too.
+Two openers of one directory disagree about what it's allowed to hold. A handle opened without `pickle=True` found a row that a `pickle=True` handle wrote, and refused to unpickle it, because unpickling runs whatever code the bytes describe. The row is left in place for the handle that can read it. This is a configuration mismatch, not damage, so it raises under every `on_decode_error` policy and under `durable=True` too.
 
 Decide which the directory is for. If it holds pickled objects on purpose, open every handle on it with `pickle=True`. If it shouldn't, find the writer that passed `pickle=True` and give it its own directory, then [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) this one. It's a `TypeError`, like the error at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) above, because both come from the same decision: what this cache is allowed to hold.
 
@@ -178,4 +178,4 @@ Three settings turn failures into log lines on the `diskcache_oxide` logger inst
 
 # If it looks like a bug in diskcache-oxide
 
-Open an [issue](https://github.com/mikeckennedy/diskcache-oxide/issues) with `diskcache_oxide.__version__`, [diskcache_oxide.sqlite_version()](../reference/sqlite_version.md#diskcache_oxide.sqlite_version), the interpreter (`python -VV` says whether it's free-threaded), the platform and filesystem, how many processes and threads share the directory, and the full traceback. Every deliberate difference from diskcache is listed in [Divergences](divergences.md), so check there first if the surprise is a behavior rather than an error.
+If you've read this far and the traceback still doesn't fit, it may be one. Open an [issue](https://github.com/mikeckennedy/diskcache-oxide/issues) with `diskcache_oxide.__version__`, [diskcache_oxide.sqlite_version()](../reference/sqlite_version.md#diskcache_oxide.sqlite_version), the interpreter (`python -VV` says whether it's free-threaded), the platform and filesystem, how many processes and threads share the directory, and the full traceback. Every deliberate difference from diskcache is listed in [Divergences](divergences.md), so check there first if the surprise is a behavior rather than an error.

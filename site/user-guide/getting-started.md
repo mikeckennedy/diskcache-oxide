@@ -1,6 +1,6 @@
 # Getting started
 
-A [Cache](../reference/Cache.md#diskcache_oxide.Cache) is a directory. Open the same directory from any number of threads and processes and they all share one cache, which is still there after a restart. This page covers installing diskcache-oxide, the everyday operations, and how to shut down cleanly.
+A [Cache](../reference/Cache.md#diskcache_oxide.Cache) is a directory. That's the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn't restart. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.
 
 
 # Install
@@ -24,7 +24,7 @@ from diskcache_oxide import Cache
 cache = Cache('/var/cache/my-app')
 ```
 
-The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`), because anyone who can write to a cache directory can poison the cache.
+The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
 
 Every process that should share the cache opens the same path. Inside one process, opening the same directory twice gives two handles on one shared engine, with one connection pool between them.
 
@@ -75,7 +75,7 @@ value = cache.pop('session:7')      # the value, or the default if it was missin
 
 # Atomic operations across processes
 
-These are what make a shared cache useful for coordination, not only for caching. Each one is a single SQLite transaction, so it's atomic across every thread and process using the directory.
+Picture eight gunicorn workers, each with a scheduler that fires the same hourly job. You want it to run once. There's no leader, no Redis, and no way for the workers to talk to each other except through the cache. That turns out to be enough. Each call below is a single SQLite transaction, so it's atomic across every thread and process using the directory, and "store only if absent", done atomically, is a lock if you squint. These are what make a shared cache useful for coordination, not only for caching.
 
 ``` python
 # Store only if the key is absent (or expired). Exactly one caller wins.
@@ -124,7 +124,7 @@ Maintenance calls, all safe to run while other processes use the cache:
 
 # Timeouts
 
-When another process holds SQLite's write lock, a write waits for it, up to the cache's [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) (60 seconds by default), then raises [diskcache_oxide.Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), a subclass of the built-in `TimeoutError`:
+One process at a time commits to a database file. When another one is in the middle of doing so, your write waits its turn, up to the cache's [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) (60 seconds by default), then gives up and raises [diskcache_oxide.Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), a subclass of the built-in `TimeoutError`:
 
 ``` python
 from diskcache_oxide import Cache, Timeout
@@ -148,7 +148,7 @@ What else [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) can mean, a
 
 # Values that can't be read
 
-A cached value can stop being readable: a class you pickled was moved or renamed, or the bytes were damaged. By default [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) raises, as diskcache does. A cache is only a copy of data you can rebuild, so most apps would rather treat that as a miss. `on_decode_error` does that:
+A cache outlives the code that filled it. Deploy a rename of a class you pickled, or have a disk hand back damaged bytes, and a row that read fine yesterday raises today. By default [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) raises, as diskcache does. But a cache is only a copy of data you can rebuild, so most apps would rather treat that row as a miss and move on. `on_decode_error` does that:
 
 ``` python
 cache = Cache('/var/cache/my-app', pickle=True, on_decode_error='miss')
@@ -187,7 +187,7 @@ A value still goes to exactly one caller, because [pop](../reference/Cache.pop.m
 
 # A cache that can't take a request down
 
-A cache is a copy. If every caller can fall back to its source of truth, an outage in the cache should cost you speed, not a failed request. `durable=True` does that for the calls a request makes:
+It's 3 a.m., the disk under `/var/cache` is full, and every request that writes to the cache is now a 500. Nothing the cache held was precious: it was all a copy of something the database still has. If every caller can fall back to its source of truth, an outage in the cache should cost you speed, not requests. `durable=True` makes that the rule for the calls a request makes:
 
 ``` python
 cache = Cache('/var/cache/my-app', timeout=1.0, durable=True)
@@ -253,7 +253,7 @@ The limit is per handle, so a `with Cache(...)` per request logs on every reques
 
 # More than one process writing
 
-A single [Cache](../reference/Cache.md#diskcache_oxide.Cache) has one write lock per directory, so many processes that all write queue on it. If your app runs several worker processes that write often (counters, rate limits, job claims), open a [`FanoutCache`](fanoutcache.md) instead: it spreads the keys over several databases, and in the repository's benchmark it holds its rate at 8 processes where a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) falls to about 40% of its one-process rate. For one process, or mostly reads, a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) is the simpler choice.
+A single [Cache](../reference/Cache.md#diskcache_oxide.Cache) has one write lock per directory. Reads never wait for it, but every write does, so eight worker processes that all bump counters are eight writers lining up for one lock. If your app runs several worker processes that write often (counters, rate limits, job claims), open a [`FanoutCache`](fanoutcache.md) instead: it spreads the keys over several databases, each with its own lock, and in the repository's benchmark it holds its rate at 8 processes where a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) falls to about 40% of its one-process rate. For one process, or mostly reads, a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) is the simpler choice.
 
 
 # Shutting down

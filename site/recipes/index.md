@@ -1,6 +1,6 @@
 # Recipes
 
-Practical patterns for the jobs a shared cache does in a real app. The examples marked as runnable execute against diskcache-oxide every time these docs are built, so they're known to work.
+A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. These are the patterns for those jobs. The examples marked as runnable execute against diskcache-oxide every time these docs are built, so they're known to work.
 
 
 # Caching

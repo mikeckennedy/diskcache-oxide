@@ -124,16 +124,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="A FanoutCache is one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key,...">
+  <meta name="description" content="A plain Cache has one write lock per database file, which makes it a shop with one checkout lane: readers walk straight through, but every writer...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="FanoutCache: sharded caches – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A FanoutCache is one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key,...">
+  <meta property="og:description" content="A plain Cache has one write lock per database file, which makes it a shop with one checkout lane: readers walk straight through, but every writer...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="FanoutCache: sharded caches – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A FanoutCache is one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key,...">
+  <meta name="twitter:description" content="A plain Cache has one write lock per database file, which makes it a shop with one checkout lane: readers walk straight through, but every writer...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -350,7 +350,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> is one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key, so writes to different keys can go to different files and stop queueing on one write lock. It has the same methods as <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> for single keys, and it’s one directory, shared by any number of threads and processes.</p>
+<p>A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> has one write lock per database file, which makes it a shop with one checkout lane: readers walk straight through, but every writer queues, and eight worker processes that all bump counters are eight carts in one lane. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> opens more lanes. It’s one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key, so writes to different keys go to different files and stop queueing on one lock. It has the same methods as <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> for single keys, and it’s one directory, shared by any number of threads and processes.</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> FanoutCache</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> FanoutCache(<span class="st">'/var/cache/my-app-rate-limits'</span>, shards<span class="op">=</span><span class="dv">8</span>)</span>

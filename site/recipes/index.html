@@ -88,16 +88,16 @@ ul.task-list li input[type="checkbox"] {
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="Practical patterns for the jobs a shared cache does in a real app. The examples marked as runnable execute against diskcache-oxide every time these...">
+  <meta name="description" content="A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, remembers what was invalidated, and stands in for Redis...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Recipes – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="Practical patterns for the jobs a shared cache does in a real app. The examples marked as runnable execute against diskcache-oxide every time these...">
+  <meta property="og:description" content="A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, remembers what was invalidated, and stands in for Redis...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/recipes/">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Recipes – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="Practical patterns for the jobs a shared cache does in a real app. The examples marked as runnable execute against diskcache-oxide every time these...">
+  <meta name="twitter:description" content="A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, remembers what was invalidated, and stands in for Redis...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -245,7 +245,7 @@ ul.task-list li input[type="checkbox"] {
 </header>
 
 
-<p>Practical patterns for the jobs a shared cache does in a real app. The examples marked as runnable execute against diskcache-oxide every time these docs are built, so they’re known to work.</p>
+<p>A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. These are the patterns for those jobs. The examples marked as runnable execute against diskcache-oxide every time these docs are built, so they’re known to work.</p>
 <section id="caching" class="level1">
 <h1>Caching</h1>
 <p><strong><a href="../recipes/caching-expensive-calls.html">Caching expensive calls</a>.</strong> The cache-aside pattern, and a small decorator that turns any function into a cached one, with keys built safely from its arguments.</p>

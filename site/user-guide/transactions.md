@@ -1,6 +1,6 @@
 # Transactions
 
-Every write is already its own transaction, atomic across every thread and process using the directory. [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) groups several calls into one: they all commit together when the block exits, or none of them do.
+Every write is already its own transaction, atomic across every thread and process using the directory. Sometimes one write at a time isn't enough. A request bumps a total, bumps a per-path counter and records when it happened, and a reader that sees two of those three has seen something that was never true. [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) groups several calls into one: they all commit together when the block exits, or none of them do.
 
 ``` python
 with cache.transact() as tx:

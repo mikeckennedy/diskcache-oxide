@@ -89,16 +89,16 @@ ul.task-list li input[type="checkbox"] {
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that except clauses you already have keep working:...">
+  <meta name="description" content="Sooner or later a traceback ends in diskcache_oxide, and the question is whether it’s your bug, an outage, or two processes disagreeing about what a...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Errors and what to do about them – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that except clauses you already have keep working:...">
+  <meta property="og:description" content="Sooner or later a traceback ends in diskcache_oxide, and the question is whether it’s your bug, an outage, or two processes disagreeing about what a...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Errors and what to do about them – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that except clauses you already have keep working:...">
+  <meta name="twitter:description" content="Sooner or later a traceback ends in diskcache_oxide, and the question is whether it’s your bug, an outage, or two processes disagreeing about what a...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -318,7 +318,7 @@ ul.task-list li input[type="checkbox"] {
 </header>
 
 
-<p>diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that <code>except</code> clauses you already have keep working: <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> is a <code>TimeoutError</code>, <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> is a <code>TypeError</code>, <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> is a <code>ValueError</code>. This page goes through every one, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise.</p>
+<p>Sooner or later a traceback ends in <code>diskcache_oxide</code>, and the question is whether it’s your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that <code>except</code> clauses you already have keep working: <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> is a <code>TimeoutError</code>, <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> is a <code>TypeError</code>, <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> is a <code>ValueError</code>. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you’ll get.</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
@@ -389,7 +389,7 @@ TypeError: expire must be a number of seconds or None, not bool</code></pre>
 <section id="timeout-a-lock-or-a-fork-outlasted-timeout" class="level1">
 <h1><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>: a lock or a fork outlasted <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a></h1>
 <pre class="text"><code>diskcache_oxide.Timeout: timed out after 1 s waiting for a lock or a pending fork</code></pre>
-<p>The call waited the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> (60 s by default, or the <code>timeout=</code> passed to that call) and gave up. Something held what it needed:</p>
+<p>The call waited the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> (60 s by default, or the <code>timeout=</code> passed to that call) and gave up. Something held what it needed, and there are three suspects:</p>
 <ul>
 <li><strong>Another writer held the write lock</strong> that long. One process at a time commits to a database file, and a burst of writes, a <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> from a maintenance script, or a long <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block holds it. Reads never wait for writers, so a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> on a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> is one of the next two cases.</li>
 <li><strong>A fork was pending.</strong> Before a fork, every cache call in the process waits for in-flight writes and then for the fork itself, and that counts against <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>. A fork takes about a millisecond in a quiet process and tens to hundreds of milliseconds beside busy threads on a GIL build. A <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> below that sees <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> during ordinary forks. See <a href="../user-guide/concurrency-and-forks.html#how-long-a-call-waits-for-a-fork">How long a call waits for a fork</a>.</li>
@@ -420,7 +420,7 @@ TypeError: expire must be a number of seconds or None, not bool</code></pre>
 <section id="unsafevalueerror-a-pickled-value-read-without-pickletrue" class="level1">
 <h1><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>: a pickled value, read without <code>pickle=True</code></h1>
 <pre class="text"><code>UnsafeValueError: this value was stored with pickle; open the cache with pickle=True to read it</code></pre>
-<p>A handle opened without <code>pickle=True</code> found a row that a <code>pickle=True</code> handle wrote, and refused to unpickle it. The row is left in place for the handle that can read it. This is a configuration mismatch between two openers of one directory, not damage, so it raises under every <code>on_decode_error</code> policy and under <code>durable=True</code> too.</p>
+<p>Two openers of one directory disagree about what it’s allowed to hold. A handle opened without <code>pickle=True</code> found a row that a <code>pickle=True</code> handle wrote, and refused to unpickle it, because unpickling runs whatever code the bytes describe. The row is left in place for the handle that can read it. This is a configuration mismatch, not damage, so it raises under every <code>on_decode_error</code> policy and under <code>durable=True</code> too.</p>
 <p>Decide which the directory is for. If it holds pickled objects on purpose, open every handle on it with <code>pickle=True</code>. If it shouldn’t, find the writer that passed <code>pickle=True</code> and give it its own directory, then <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> this one. It’s a <code>TypeError</code>, like the error at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> above, because both come from the same decision: what this cache is allowed to hold.</p>
 </section>
 <section id="corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" class="level1">
@@ -492,7 +492,7 @@ CorruptValueError: ...</code></pre>
 </section>
 <section id="if-it-looks-like-a-bug-in-diskcache-oxide" class="level1">
 <h1>If it looks like a bug in diskcache-oxide</h1>
-<p>Open an <a href="https://github.com/mikeckennedy/diskcache-oxide/issues">issue</a> with <code>diskcache_oxide.__version__</code>, <a href="../reference/sqlite_version.html#diskcache_oxide.sqlite_version" class="gdls-link gdls-code">diskcache_oxide.sqlite_version()</a>, the interpreter (<code>python -VV</code> says whether it’s free-threaded), the platform and filesystem, how many processes and threads share the directory, and the full traceback. Every deliberate difference from diskcache is listed in <a href="../user-guide/divergences.html">Divergences</a>, so check there first if the surprise is a behavior rather than an error.</p>
+<p>If you’ve read this far and the traceback still doesn’t fit, it may be one. Open an <a href="https://github.com/mikeckennedy/diskcache-oxide/issues">issue</a> with <code>diskcache_oxide.__version__</code>, <a href="../reference/sqlite_version.html#diskcache_oxide.sqlite_version" class="gdls-link gdls-code">diskcache_oxide.sqlite_version()</a>, the interpreter (<code>python -VV</code> says whether it’s free-threaded), the platform and filesystem, how many processes and threads share the directory, and the full traceback. Every deliberate difference from diskcache is listed in <a href="../user-guide/divergences.html">Divergences</a>, so check there first if the surprise is a behavior rather than an error.</p>
 
 
 </section>

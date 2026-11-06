@@ -2,7 +2,7 @@
 title: "Divergences from python-diskcache"
 ---
 
-diskcache-oxide's test suite is a conformance suite: the same black-box tests run against real diskcache 5.6.3 and against diskcache-oxide. Where they behave differently, it's on purpose, and it's written down here. Most of these differences are diskcache bugs that the suite found, each with a reproduction in the repository's `upstream/` folder.
+diskcache-oxide's test suite is a conformance suite: the same black-box tests run against real diskcache 5.6.3 and against diskcache-oxide. Where they behave differently, it's on purpose, and it's written down here. Running one suite against two implementations turned out to be a bug detector pointed in both directions: most of the differences below are diskcache bugs the suite found, each with a reproduction in the repository's `upstream/` folder.
 
 A divergence is never a way to skip a failing test. The full record, including test names and measurements, is [tests/DIVERGENCES.md](https://github.com/mikeckennedy/diskcache-oxide/blob/main/tests/DIVERGENCES.md).
 

@@ -2,7 +2,7 @@
 title: "Concurrency and forks"
 ---
 
-A production Python web app is many things at once: several worker processes, often several threads in each, a pre-forking server that creates and recycles those workers, and background jobs and scripts opening the same cache on the side. More and more, it's also free-threaded Python, with threads truly running in parallel. diskcache-oxide is designed for all of that at the same time, and its test suite runs each of these cases on every change.
+A production Python web app is a crowd. Several worker processes, often several threads in each, a pre-forking server that creates and recycles those workers while they're busy, and a cron job or an admin script opening the same cache on the side. More and more, it's also free-threaded Python, where the threads really do run at the same time. diskcache-oxide is designed for all of that at once, and its test suite runs each of these cases on every change, because this is where cache bugs hide: not in `get` and `set`, but in what happens when two of them collide.
 
 ## Threads
 
@@ -37,15 +37,15 @@ Any number of processes can open the same directory, each with its own `Cache`. 
 
 ## Forks
 
-Pre-forking servers (gunicorn, Celery's prefork pool, `multiprocessing` with the fork start method) create workers with `fork()`. A fork copies the whole process, including any SQLite lock state that one of its threads held at that moment. In diskcache, a child forked while another thread was in a write transaction inherits a lock nobody in the child will ever release: its first write stalls for the full timeout (60 seconds by default). Under a busy read/write load, that hits 20-50% of forks.
+Pre-forking servers (gunicorn, Celery's prefork pool, `multiprocessing` with the fork start method) create workers with `fork()`, which copies the whole process. Picture a thread halfway through a write at the instant the server forks. The child is a photocopy of the parent, SQLite's note that this process holds the write lock included. But only the forking thread exists in the child, so the thread that was going to release that lock isn't there. In diskcache, that child's first write waits for a ghost: it stalls for the full timeout (60 seconds by default). Under a busy read/write load, that hits 20-50% of forks.
 
-diskcache-oxide prevents it with a **fork barrier**, installed when `diskcache_oxide` is imported:
+diskcache-oxide prevents it with a **fork barrier**, a crossing guard installed when `diskcache_oxide` is imported. It stops traffic in a specific order:
 
 1. **Before the fork,** the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish. Then it closes the idle pooled connections, so the child doesn't inherit SQLite's lock bookkeeping for those files.
 2. **In the parent,** it lets the held-off writes continue.
 3. **In the child,** it drops any connection still inherited without closing it (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.
 
-The result: whatever other threads were doing at the moment of the fork, the child can read and write right away. The barrier covers every `Cache` in the process, not just the one you're holding. Your own `os.register_at_fork(after_in_child=...)` hooks can use a cache too, whether they were registered before or after `diskcache_oxide` was imported.
+The result: whatever other threads were doing at the moment of the fork, the child is born with no locks and no debts, and can read and write right away. The barrier covers every `Cache` in the process, not just the one you're holding. Your own `os.register_at_fork(after_in_child=...)` hooks can use a cache too, whether they were registered before or after `diskcache_oxide` was imported.
 
 Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process's last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.
 

@@ -2,7 +2,7 @@
 title: "NullCache"
 ---
 
-Sooner or later you need to turn caching off: in tests, in local development, or in production while you chase a bug that might be a stale entry. Without help, that means `if cache is not None:` around every call, or a hand-written fake that drifts out of sync with the real API.
+Sooner or later you need to turn caching off. In tests, so each one starts clean. In local development, so you see your change instead of yesterday's. In production, at the worst possible moment, while you chase a bug that might be a stale entry and might not. Without help, that means `if cache is not None:` around every call, or a hand-written fake that drifts a little further from the real API with every release.
 
 `NullCache` is a cache that's switched off. It has the same methods and signatures as `Cache`, so swapping one for the other is a one-line change, and the code that uses it never knows.
 
@@ -19,7 +19,7 @@ def make_cache(settings) -> CacheLike:
 
 > **A `NullCache` behaves like a real cache in which every entry expires the instant it's written and is swept straight away.**
 
-Every result follows from that sentence, so you never have to guess:
+Every row of this table follows from that sentence, so you never have to guess, and once it clicks you never have to look it up again:
 
 | Call | Result | Because |
 |---|---|---|

@@ -2,7 +2,7 @@
 title: "Serialization"
 ---
 
-What goes into the cache should come out as exactly what you put in, it should be fast to encode and decode, and reading the cache should never run code someone else left there. diskcache's default, pickle, gets the first two and fails the third. diskcache-oxide gets all three, and pickle becomes something you opt into.
+A serializer has three jobs. What goes into the cache should come out as exactly what you put in. Encoding and decoding should be fast, because they happen on every call. And reading the cache should never run code that someone else left there. diskcache's default, pickle, does the first two well and fails the third by design: unpickling runs whatever the bytes tell it to. diskcache-oxide gets all three, and pickle becomes something you opt into, one cache at a time.
 
 ## Two formats
 

@@ -124,16 +124,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="An app with more than one cache ends up writing the same code to manage them: map names to directories, open each one once and reuse it, carry on with...">
+  <meta name="description" content="Every app with two caches eventually grows a file called something like cache_service.py. It maps names to directories, opens each cache once and hands...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Caches: named caches – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="An app with more than one cache ends up writing the same code to manage them: map names to directories, open each one once and reuse it, carry on with...">
+  <meta property="og:description" content="Every app with two caches eventually grows a file called something like cache_service.py. It maps names to directories, opens each cache once and hands...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Caches: named caches – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="An app with more than one cache ends up writing the same code to manage them: map names to directories, open each one once and reuse it, carry on with...">
+  <meta name="twitter:description" content="Every app with two caches eventually grows a file called something like cache_service.py. It maps names to directories, opens each cache once and hands...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -343,7 +343,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>An app with more than one cache ends up writing the same code to manage them: map names to directories, open each one once and reuse it, carry on with caching switched off when one can’t be opened, turn some off for a load test, and show counts and sizes on an admin page. <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> is that code.</p>
+<p>Every app with two caches eventually grows a file called something like <code>cache_service.py</code>. It maps names to directories, opens each cache once and hands out the same object afterwards, carries on with caching switched off when a directory can’t be opened, lets you turn one off for a load test, and feeds counts and sizes to an admin page. It’s the same file in every app, written slightly differently each time. <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> is that file, so you don’t have to write it again.</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Caches</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>caches <span class="op">=</span> Caches(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>, on_decode_error<span class="op">=</span><span class="st">'miss'</span>)</span>
