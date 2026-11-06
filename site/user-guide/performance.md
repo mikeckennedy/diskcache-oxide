@@ -48,7 +48,15 @@ diskcache's [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.it
 
 # Memory that stays flat
 
-Memory is bounded by configuration, not by how many threads touch the cache: at most `max_connections` connections per database file (default 8), each with a 1 MiB page cache. A separate memory-instrumented build runs `bench/memory.py` and the memory tests under heavy load to hold that bound. See [Storage and WAL](storage-and-wal.md).
+Memory is bounded by configuration, not by how many threads touch the cache: at most `max_connections` connections per database file (default 8), each with a 1 MiB page cache. A [`FanoutCache`](fanoutcache.md) defaults to two per shard for the whole root, about 16 MiB at 8 shards. A separate memory-instrumented build runs `bench/memory.py` and the memory tests under heavy load to hold that bound. See [Storage and WAL](storage-and-wal.md).
+
+
+# Known slow spots
+
+Two oversubscribed cases measure slower than before the SQLite mutex spin and the connection-slot spin went in. Both are known, and neither is in the path of a web app running a few threads per process.
+
+- **A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) with far more threads than cores**, all sharing one handle: 7% slower on an M-series Mac at 36 threads, and 5% in a Linux VM at 32. Faster hand-off lets more threads into SQLite at once.
+- **A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) at `max_connections=32` with 8 threads, on macOS only:** 5-12% slower. The same case on Linux is 41-56% faster.
 
 
 # Next: Phase 4

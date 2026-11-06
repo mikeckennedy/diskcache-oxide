@@ -270,7 +270,7 @@ def test_many_threads_stay_within_the_fd_budget_and_close_leaves_none(
     WAL, and each shard adds its `-shm` and its pin, so the root never holds more than
     `2 × max_connections + 2 × shards` fds, however many threads use it, and none after `close()`."""
     root = tmp_path / 'root'
-    cap = max_connections if max_connections is not None else max(8, shards)
+    cap = max_connections if max_connections is not None else max(8, 2 * shards)  # two per shard (D-037)
     budget = 2 * cap + 2 * shards
     assert fds_inside(tmp_path) == 0
     cache = FanoutCache(root, shards=shards, max_connections=max_connections)

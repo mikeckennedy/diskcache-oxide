@@ -249,11 +249,11 @@ def _fds_held(cache: Any, cache_dir: Path) -> int:
     raises=AssertionError,
 )
 def test_peak_fds_bounded_by_the_shard_budget(make_fanout: Callable[..., Any], cache_dir: Path) -> None:
-    # oxide's default budget at 8 shards: one connection per shard (its database and WAL), plus each
-    # shard's -shm and pin, so 2 * 8 + 2 * 8.
+    # oxide's default budget at 8 shards: two connections per shard (each its database and WAL),
+    # plus each shard's -shm and pin, so 2 * 16 + 2 * 8.
     shards = 8
     peak = _fds_held(make_fanout(cache_dir, shards=shards), cache_dir)
-    assert peak <= 2 * shards + 2 * shards, f'{peak} fds open inside the root with {FD_THREADS} threads'
+    assert peak <= 2 * (2 * shards) + 2 * shards, f'{peak} fds open inside the root with {FD_THREADS} threads'
 
 
 @pytest.mark.diverges(

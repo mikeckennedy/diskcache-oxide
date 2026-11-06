@@ -18,11 +18,13 @@ use crate::{Error, Result, lockwait};
 
 impl Store {
     /// The total `max_connections` a `FanoutCache` with `shards` shards gets when none is asked
-    /// for: one per shard, and never fewer than a plain cache's [`DEFAULT_MAX_CONNECTIONS`]. So the
-    /// default 8 shards keep D-023's memory bound (about `8 × sqlite_cache_size`) unchanged.
+    /// for: two per shard, and never fewer than a plain cache's [`DEFAULT_MAX_CONNECTIONS`]. One
+    /// per shard left threads sharing a handle waiting for a shard's only connection, 16-31% below a
+    /// plain cache (plan 12, M2); two gets 97-98% of 32's read rate. The default 8 shards so take
+    /// 16 connections, and D-023's memory bound for the whole cache is about `16 × sqlite_cache_size`.
     #[must_use]
     pub fn default_total_connections(shards: u32) -> u64 {
-        DEFAULT_MAX_CONNECTIONS.max(u64::from(shards))
+        DEFAULT_MAX_CONNECTIONS.max(2 * u64::from(shards))
     }
 
     /// Opens every shard of the `FanoutCache` whose root manifest is `manifest`, under `deadline`.
@@ -170,10 +172,11 @@ mod tests {
     }
 
     #[test]
-    fn the_default_total_is_eight_or_one_per_shard() {
+    fn the_default_total_is_eight_or_two_per_shard() {
         assert_eq!(Store::default_total_connections(1), 8);
-        assert_eq!(Store::default_total_connections(8), 8);
-        assert_eq!(Store::default_total_connections(64), 64);
+        assert_eq!(Store::default_total_connections(4), 8);
+        assert_eq!(Store::default_total_connections(8), 16);
+        assert_eq!(Store::default_total_connections(64), 128);
     }
 
     #[test]

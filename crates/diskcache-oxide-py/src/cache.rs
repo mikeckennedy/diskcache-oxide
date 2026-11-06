@@ -428,7 +428,7 @@ impl Cache {
 struct Settings {
     timeout: Duration,
     requested: Requested,
-    /// `None` when not given: a `Cache` takes the default, a `FanoutCache` one per shard.
+    /// `None` when not given: a `Cache` takes the default, a `FanoutCache` two per shard.
     max_connections: Option<u64>,
     cache_pages: u64,
     wal_size_limit: u64,

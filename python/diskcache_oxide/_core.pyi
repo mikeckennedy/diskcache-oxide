@@ -518,7 +518,7 @@ class FanoutCache:
         clock: As for `Cache`.
         max_connections: The most SQLite connections this process opens for the whole cache, split
             across the shards (the first `max_connections % shards` get one more). At least `shards`.
-            The default is one per shard, and never fewer than 8 in all.
+            The default is two per shard, and never fewer than 8 in all.
         sqlite_cache_size: As for `Cache`, per connection.
         wal_size_limit: As for `Cache`, per shard (each shard has its own write-ahead log).
         wal_checkpoint: As for `Cache`.

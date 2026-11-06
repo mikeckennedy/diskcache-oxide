@@ -275,6 +275,7 @@ ul.task-list li input[type="checkbox"] {
   <li><a href="#where-the-speed-comes-from" id="toc-where-the-speed-comes-from" class="nav-link" data-scroll-target="#where-the-speed-comes-from">Where the speed comes from</a></li>
   <li><a href="#prefix-scans-at-scale" id="toc-prefix-scans-at-scale" class="nav-link" data-scroll-target="#prefix-scans-at-scale">Prefix scans at scale</a></li>
   <li><a href="#memory-that-stays-flat" id="toc-memory-that-stays-flat" class="nav-link" data-scroll-target="#memory-that-stays-flat">Memory that stays flat</a></li>
+  <li><a href="#known-slow-spots" id="toc-known-slow-spots" class="nav-link" data-scroll-target="#known-slow-spots">Known slow spots</a></li>
   <li><a href="#next-phase-4" id="toc-next-phase-4" class="nav-link" data-scroll-target="#next-phase-4">Next: Phase 4</a></li>
   </ul>
 </nav>
@@ -388,7 +389,15 @@ ul.task-list li input[type="checkbox"] {
 </section>
 <section id="memory-that-stays-flat" class="level1">
 <h1>Memory that stays flat</h1>
-<p>Memory is bounded by configuration, not by how many threads touch the cache: at most <code>max_connections</code> connections per database file (default 8), each with a 1 MiB page cache. A separate memory-instrumented build runs <code>bench/memory.py</code> and the memory tests under heavy load to hold that bound. See <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>.</p>
+<p>Memory is bounded by configuration, not by how many threads touch the cache: at most <code>max_connections</code> connections per database file (default 8), each with a 1 MiB page cache. A <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> defaults to two per shard for the whole root, about 16 MiB at 8 shards. A separate memory-instrumented build runs <code>bench/memory.py</code> and the memory tests under heavy load to hold that bound. See <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>.</p>
+</section>
+<section id="known-slow-spots" class="level1">
+<h1>Known slow spots</h1>
+<p>Two oversubscribed cases measure slower than before the SQLite mutex spin and the connection-slot spin went in. Both are known, and neither is in the path of a web app running a few threads per process.</p>
+<ul>
+<li><strong>A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> with far more threads than cores</strong>, all sharing one handle: 7% slower on an M-series Mac at 36 threads, and 5% in a Linux VM at 32. Faster hand-off lets more threads into SQLite at once.</li>
+<li><strong>A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> at <code>max_connections=32</code> with 8 threads, on macOS only:</strong> 5-12% slower. The same case on Linux is 41-56% faster.</li>
+</ul>
 </section>
 <section id="next-phase-4" class="level1">
 <h1>Next: Phase 4</h1>

@@ -1,7 +1,8 @@
 """Tail check for the slot wait (plan 12 step 5, 5b's fairness check).
 
-16 threads reading one shared `FanoutCache(8)` at its default budget (8 connections, one per shard)
-for 60 s, `durable=False`, so a slot wait that starves past `--timeout` (default 1 s) raises
+16 threads reading one shared `FanoutCache(8)` at its default budget (8 connections, one per shard,
+when this was measured; it's two per shard since 2026-11-06, so pass `max_connections=8` to
+reproduce) for 60 s, `durable=False`, so a slot wait that starves past `--timeout` (default 1 s) raises
 `Timeout`. Each thread times every `get` and buckets it (power-of-two buckets split 8 ways, so a
 quantile is within 12.5%). The `get` time includes the slot wait, so its p99.9 bounds the slot
 wait's.

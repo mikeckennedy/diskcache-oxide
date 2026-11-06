@@ -836,7 +836,7 @@ fn shard_count(shards: Option<&Bound<'_, PyAny>>) -> PyResult<Option<u32>> {
 }
 
 /// Opens the root's manifest, then every shard under one deadline of the handle's `timeout`. With
-/// no `max_connections`, the total is one per shard, and never fewer than a plain cache's default.
+/// no `max_connections`, the total is two per shard, and never fewer than a plain cache's default.
 /// A failure comes with the shard count once the manifest has given it, for [`open_error`].
 fn open(
     root: &std::path::Path,

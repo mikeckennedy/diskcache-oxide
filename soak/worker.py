@@ -147,7 +147,7 @@ AUTO_FORK_EVERY = 7.0
 # budget, so its database fds stay within 2 x max_connections + 2 x shards (D-037). Paced, so it
 # shares the machine with the `run` workers.
 FANOUT_SHARDS = 8
-FANOUT_FD_BUDGET = 2 * 8 + 2 * FANOUT_SHARDS
+FANOUT_FD_BUDGET = 2 * (2 * FANOUT_SHARDS) + 2 * FANOUT_SHARDS
 FANOUT_SIZE_LIMIT = 2**34
 FANOUT_KEYS = 5_000
 FANOUT_OWNED = 200

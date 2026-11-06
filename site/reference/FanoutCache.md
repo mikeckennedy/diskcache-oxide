@@ -65,7 +65,7 @@ As for [Cache](Cache.md#diskcache_oxide.Cache).
 As for [Cache](Cache.md#diskcache_oxide.Cache).
 
 `max_connections: int | None = None`  
-The most SQLite connections this process opens for the whole cache, split across the shards (the first `max_connections % shards` get one more). At least [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards). The default is one per shard, and never fewer than 8 in all.
+The most SQLite connections this process opens for the whole cache, split across the shards (the first `max_connections % shards` get one more). At least [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards). The default is two per shard, and never fewer than 8 in all.
 
 `sqlite_cache_size: int | None = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache), per connection.

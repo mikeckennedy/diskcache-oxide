@@ -1501,9 +1501,9 @@ FANOUT_COUNTERS = (
     'fanout_fd_checks',
 )  # fmt: skip
 FANOUT_PROOF_COUNTERS = ('fanout_ops', 'fanout_merges', 'fanout_maint', 'fanout_forks')
-# Its database fds at 8 shards and the default connection budget: 2 x 8 + 2 x 8 (D-037). Matches
-# soak/worker.py, which judges it; here it's only shown.
-FANOUT_FD_BUDGET = 32
+# Its database fds at 8 shards and the default connection budget (two per shard): 2 x 16 + 2 x 8
+# (D-037). Matches soak/worker.py, which judges it; here it's only shown.
+FANOUT_FD_BUDGET = 48
 TIMELINE_FIELDS = [
     'time', 'elapsed_h', 'workers', 'ops_per_s', 'get_p50_us', 'get_p99_us', 'set_p50_us', 'set_p99_us',
     'rss_total_mib', 'fds_total', 'timeouts_total', 'problems', 'kills', 'forks_ok', 'forks_failed', 'maint_calls',

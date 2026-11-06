@@ -16,9 +16,10 @@ Usage (from the repo root):
 An arm is a number (that budget, the shipped policy), `adaptive`, `default` (no override: what a
 shipped build picks on the host), a name in ARMS, or `name:KEY=V+KEY=V` for any other mix (the keys
 without their DCO_SPIN_ prefix). Cases: shared `Cache` and `FanoutCache(8)` at 32 connections at each
-of --threads; `FanoutCache(8)` at its default budget at each of --fanout, with the number of slot
-waits it reached; and --phase A,B, which runs A threads and then scores B threads on the same handle
-in the same process (a load drop: the adaptive state left by A is what B starts from).
+of --threads; `FanoutCache(8)` at its default budget (one per shard when the sweep ran, two since
+2026-11-06) at each of --fanout, with the number of slot waits it reached; and --phase A,B, which
+runs A threads and then scores B threads on the same handle in the same process (a load drop: the
+adaptive state left by A is what B starts from).
 """
 
 from __future__ import annotations
