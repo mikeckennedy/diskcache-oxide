@@ -657,9 +657,9 @@ mod tests {
     /// the budget isn't 0.
     #[test]
     fn contended_increments_lose_nothing() {
-        spin_on();
         const THREADS: u64 = 8;
         const EACH: u64 = 20_000;
+        spin_on();
         for id in [ffi::SQLITE_MUTEX_FAST, ffi::SQLITE_MUTEX_RECURSIVE] {
             let p = Shared(alloc(id));
             let count = AtomicU64::new(0);

@@ -2205,12 +2205,16 @@ mod tests {
         let dir = tmp.path().join("cache");
         let first = Store::open(&options(&dir)).unwrap();
         put(&first, "k", b"v");
-        let first_id = first.file_id;
         drop(first);
         std::fs::remove_dir_all(&dir).unwrap();
         let second = Store::open(&options(&dir)).unwrap();
-        assert_ne!(second.file_id, first_id);
+        // No assertion on `file_id`: ext4 hands the freed inode straight to the new database file,
+        // so `(st_dev, st_ino)` can match (seen on talk-python-htz, 2026-11-06). That's safe, since
+        // a matching store is only reused for the same directory and reconnects by path (see the
+        // `pin` field). What matters is that the recreated directory is an empty, working cache.
         assert_eq!(count(&second), 0);
+        put(&second, "k2", b"v2");
+        assert_eq!(count(&second), 1);
     }
 
     #[test]
