@@ -1,0 +1,19 @@
+# ThreadSanitizer races scripts/sanitize.sh allows (plan 14, "Rules for reports"). A race is allowed
+# only if the top frames of its two accesses match a line here, both are inside SQLite, and no frame
+# of ours appears on either stack, so a race involving our code can never hide behind one of these.
+# Each line: <top frame of one access> <top frame of the other> <global or "shm">, then the evidence.
+#
+# Both were seen on HEAD (our mutexes, sqlite_mutex.rs) and on 721de5a (SQLite's own mutexes, before
+# plan 12 step 5a), in open::tests::racing_creators_all_succeed_with_one_schema under TSan on macOS
+# arm64, 40 runs each (2026-11-06). Neither depends on which mutexes SQLite uses.
+
+# The WAL index in -shm memory: a reader reads the header with no lock, twice, checks its checksum,
+# then takes a read lock and checks again (wal.c walTryBeginRead / walIndexReadHdr), while another
+# connection rebuilds it in walIndexRecover. TSan can't see the -shm file locks that order them across
+# processes. 721de5a: 12 pairs in 40 runs; HEAD: 15.
+walTryBeginRead walIndexRecover shm
+
+# os_unix.c unixOpen: every open compares the global randomnessPid with getpid() and, after a fork,
+# stores the new pid and reseeds SQLite's PRNG. Concurrent first opens store the same value.
+# 721de5a: 82 reports in 40 runs; HEAD: 86.
+unixOpen unixOpen randomnessPid

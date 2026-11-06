@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # The soak (soak/run.sh) on Linux: Ubuntu 26.04 LTS in Docker (OrbStack), in the background.
 #
-# Usage: scripts/linux-soak.sh [--cpus N] [--rebuild] [any soak/run.sh option, e.g. --hours 6 --rate 180000]
+# Usage: scripts/linux-soak.sh [--cpus N] [--memory SIZE] [--rebuild] [any soak/run.sh option, e.g. --hours 6]
 #
 #   --cpus N      CPUs for the container (default 14)
+#   --memory SIZE a hard memory cap for the container, e.g. 6g (default none), for a shared host
 #   --rebuild     rebuild the dco-linux-dev image even if it exists
 #
 # Results land on the host in soak-results/linux/<run>/ (soak-results/linux/latest/status.txt to
@@ -21,13 +22,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 IMAGE=dco-linux-dev
 NAME=dco-linux-soak
-CPUS=14 REBUILD=0
+CPUS=14 MEMORY='' REBUILD=0
 ARGS=()
 while (( $# )); do
     case "$1" in
         --cpus) CPUS="$2"; shift ;;
+        --memory) MEMORY="$2"; shift ;;
         --rebuild) REBUILD=1 ;;
-        -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
         *) ARGS+=("$1") ;;
     esac
     shift
@@ -66,7 +68,9 @@ export DCO_SOAK_CACHE_ROOT=/work/caches
 exec soak/run.sh --out /out "$@"
 '
 
-docker run -d --rm --init --name "$NAME" --cpus "$CPUS" --shm-size 1g --cap-add SYS_PTRACE -e TZ="${TZ_NAME:-UTC}" \
+MEM_ARGS=()
+[[ -n "$MEMORY" ]] && MEM_ARGS=(--memory "$MEMORY" --memory-swap "$MEMORY")
+docker run -d --rm --init --name "$NAME" --cpus "$CPUS" ${MEM_ARGS[@]+"${MEM_ARGS[@]}"} --shm-size 1g --cap-add SYS_PTRACE -e TZ="${TZ_NAME:-UTC}" \
     -v "$ROOT:/src:ro" \
     -v "$OUT:/out" \
     -v dco-cargo-registry:/opt/cargo/registry \

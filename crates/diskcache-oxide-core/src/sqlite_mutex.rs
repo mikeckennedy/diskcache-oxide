@@ -646,10 +646,18 @@ mod tests {
         free(p);
     }
 
+    /// The spin budget `install()` sets, for tests that run without it (under Miri, `install()` is
+    /// never reached, since SQLite is out of its reach). Natively it's already this on 3 or more CPUs.
+    fn spin_on() {
+        SPIN_BUDGET.store(SPIN_HINTS, Ordering::Relaxed);
+    }
+
     /// Every increment is a plain load and store, so a lost one means two threads were inside at
-    /// once. The spin path runs too, since the threads collide all the time.
+    /// once. The spin path runs too, since the threads collide all the time and `spin_on` makes sure
+    /// the budget isn't 0.
     #[test]
     fn contended_increments_lose_nothing() {
+        spin_on();
         const THREADS: u64 = 8;
         const EACH: u64 = 20_000;
         for id in [ffi::SQLITE_MUTEX_FAST, ffi::SQLITE_MUTEX_RECURSIVE] {

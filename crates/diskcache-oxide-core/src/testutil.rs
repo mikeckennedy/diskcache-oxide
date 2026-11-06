@@ -21,7 +21,8 @@ impl TempDir {
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
         // The pid and counter alone collide under `-Zmiri-many-seeds`, whose seeds run in parallel
         // with one pid and a counter each starting at 0, and one seed's cleanup would remove
-        // another's directory. A random part (drawn from each seed's RNG under Miri) keeps them apart.
+        // another's directory. A random part keeps them apart: `RandomState` draws host entropy
+        // (Miri runs these tests with isolation off), and natively the pid already separates processes.
         let salt = std::hash::BuildHasher::hash_one(&std::hash::RandomState::new(), n);
         let path = std::env::temp_dir().join(format!("dco-test-{name}-{}-{n}-{salt:016x}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);

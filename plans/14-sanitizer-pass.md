@@ -44,6 +44,25 @@ Miri: probe each core test module under `cargo +nightly miri test -p diskcache-o
 
 **Done when:** lane A runs from the script, the module list and why each excluded module is out are written here, and its result is recorded.
 
+**Lane A's coverage** (probed 2026-11-06 by running every core unit test alone under Miri; re-probe when a module gains tests):
+
+| Module | Under Miri | Why the rest are out |
+|---|---|---|
+| `gate`, `genlock`, `stack`, `poison`, `error`, `wal` | All (23, 18, 4, 6, 2, 9) | — |
+| `spill` | 5 of 6 | The 2^54-byte test: Miri can't model a failed allocation (resource exhaustion), which is the case it proves |
+| `sqlite_mutex` | 9 of 10 | One calls `sqlite3_config`, SQLite's C, which Miri can't execute. The integration tests (`tests/sqlite_mutex.rs`) are lane B's |
+| `fanout` | 11 of 16 | 5 need `fsync` on a real file, which Miri only supports on file-backed descriptors it doesn't provide here |
+| `store` (with `fork_timeout`, `shards`, `shard_identity`) | 5 of 97 | 81 open SQLite (`sqlite3_config` on first open), 11 need `fsync` |
+| `lockwait` | 2 of 3 | One opens SQLite |
+| `open` | 2 of 14 | 12 open SQLite |
+| `maintenance` | 1 of 16 | 15 open SQLite |
+| `pool` | 1 of 5 | 4 open SQLite |
+| `sqlite` | 1 of 3 | One opens SQLite; one calls `sqlite3_libversion` |
+| `rows`, `ops` | None of 5, 29 | Every test opens SQLite |
+| `sync`, `schema`, `model`, `testutil` | No tests | `model` holds the shuttle models (`scripts/model-check.sh`); `sync` is exercised through `gate` and `genlock` |
+
+So Miri sees 99 of 266 core unit tests; lanes B and C see all 266.
+
 ### Step 2a: lane B on macOS, the WAL A/B first, and the mutex tests TSan can see
 
 1. **The WAL A/B.** Run `racing_creators_all_succeed_with_one_schema` under TSan, many times, on `721de5a` (before step 5a, SQLite's own mutexes) and on HEAD. The `walIndexRecover`/`walTryBeginRead` report goes in `allowed-races.txt` only if it also appears on `721de5a`. If it appears only with our mutexes, it's a finding in `sqlite_mutex.rs`.

@@ -10,6 +10,7 @@
 #                 (bench/results/linux-amd64/ with --platform linux/amd64). Refused under emulation.
 #   --python      which Pythons to test (default 3.14,3.14t,3.15,3.15t)
 #   --cpus        CPUs for the container (default 8; benchmarks need at least 8)
+#   --memory      a hard memory cap for the container, e.g. 6g (default none), for a shared host
 #   --no-rust     skip fmt, clippy, cargo test and cargo deny
 #   --no-tests    skip the per-Python smoke test, ty and pytest (with --bench: bench only)
 #   --exec CMD    instead of the checks, run CMD in the repo copy once per Python, with $VENV
@@ -34,7 +35,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 IMAGE=dco-linux-dev
-SLOW=0 BENCH=0 RUST=1 TESTS=1 CPUS=8 ROUNDS=4 REBUILD=0 EXEC='' PLATFORM='' OUT=''
+SLOW=0 BENCH=0 RUST=1 TESTS=1 CPUS=8 MEMORY='' ROUNDS=4 REBUILD=0 EXEC='' PLATFORM='' OUT=''
 PYTHONS='3.14,3.14t,3.15,3.15t'
 while (( $# )); do
     case "$1" in
@@ -42,6 +43,7 @@ while (( $# )); do
         --bench) BENCH=1 ;;
         --python) PYTHONS="$2"; shift ;;
         --cpus) CPUS="$2"; shift ;;
+        --memory) MEMORY="$2"; shift ;;
         --rounds) ROUNDS="$2"; shift ;;
         --no-rust) RUST=0 ;;
         --no-tests) TESTS=0 ;;
@@ -49,7 +51,7 @@ while (( $# )); do
         --rebuild) REBUILD=1 ;;
         --platform) PLATFORM="$2"; shift ;;
         --out) OUT="$2"; shift ;;
-        -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
     shift
@@ -100,11 +102,13 @@ fi
 
 TTY_ARGS=()
 [[ -t 1 ]] && TTY_ARGS=(-t)
+MEM_ARGS=()
+[[ -n "$MEMORY" ]] && MEM_ARGS=(--memory "$MEMORY" --memory-swap "$MEMORY")
 EMU_ARGS=()
 (( EMULATED )) && EMU_ARGS=(-e DCO_EMULATED=1)
 
 exec docker run --rm --init ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} \
-    --name "$NAME" --cpus "$CPUS" --shm-size 1g \
+    --name "$NAME" --cpus "$CPUS" ${MEM_ARGS[@]+"${MEM_ARGS[@]}"} --shm-size 1g \
     -v "$ROOT:/src:ro" \
     -v "dco-cargo-registry$SUFFIX:/opt/cargo/registry" \
     -v "dco-cargo-git$SUFFIX:/opt/cargo/git" \
