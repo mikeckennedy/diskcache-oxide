@@ -1245,15 +1245,20 @@ fn held_by_this_thread_means_this_thread_on_this_store() {
     assert!(!one.held_by_this_thread(), "no transaction at all");
     let held = one.begin_hold(T).unwrap();
     assert!(one.held_by_this_thread());
+    // The fast path a `FanoutCache` tests first: never false while this thread holds one.
+    assert!(Store::any_held_in_process(), "the process-wide count missed this thread's transaction");
     assert!(!other.held_by_this_thread(), "a transaction on another store doesn't count");
     // Inside one of the transaction's own operations too, where its connection is lent out.
     one.read(T, |_| {
         assert!(one.held_by_this_thread(), "inside its own operation");
+        assert!(Store::any_held_in_process(), "inside its own operation");
         Ok(())
     })
     .unwrap();
     std::thread::scope(|s| {
         s.spawn(|| assert!(!one.held_by_this_thread(), "another thread's transaction doesn't count"));
+        // Process-wide: another thread sees the count too (it only says "check").
+        s.spawn(|| assert!(Store::any_held_in_process(), "the count is per thread"));
     });
     held.finish(true).unwrap();
     assert!(!one.held_by_this_thread(), "ended");

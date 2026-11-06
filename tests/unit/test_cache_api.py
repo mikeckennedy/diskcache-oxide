@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from diskcache_oxide import Cache, CacheLike, FanoutCache, NullCache, TransactionalCacheLike
+from diskcache_oxide import Cache, CacheLike, FanoutCache, NullCache, ShardedCacheLike, TransactionalCacheLike
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -451,7 +451,8 @@ def test_ty_types_each_kind_of_lookup(tmp_path: Path) -> None:
     result = _ty(
         tmp_path,
         'from typing import Literal\n'
-        'from diskcache_oxide import CacheLike, Caches, FanoutCache, NullCache, TransactionalCacheLike\n'
+        'from diskcache_oxide import CacheLike, Caches, FanoutCache, NullCache\n'
+        'from diskcache_oxide import ShardedCacheLike, TransactionalCacheLike\n'
         "caches = Caches[Literal['a', 'b']]('/tmp/y')\n"
         "caches.register('a')\n"
         "caches.register('b', shards=4)\n"
@@ -460,8 +461,47 @@ def test_ty_types_each_kind_of_lookup(tmp_path: Path) -> None:
         "    tx.set('k', 1)\n"
         "sharded: FanoutCache | NullCache = caches.fanout('b')\n"
         "as_like: CacheLike = caches.fanout('b')\n"
+        "as_sharded: ShardedCacheLike = caches.fanout('b')\n"
+        "with caches.fanout('b').transact(key='total') as stx:\n"
+        "    stx.incr('total')\n"
         "caches['c']\n",
     )
     assert result.returncode != 0
     # Only the misspelled name is an error; the rest of the probe type-checks.
     assert result.stdout.count('error[') == 1 and "'c'" in result.stdout, result.stdout
+
+
+def test_sharded_transact_has_the_protocols_parameters() -> None:
+    expected = params(ShardedCacheLike.transact)
+    assert expected == [('key', inspect.Parameter.KEYWORD_ONLY), ('retry', inspect.Parameter.KEYWORD_ONLY)]
+    assert params(FanoutCache.transact) == expected
+    assert inspect.signature(FanoutCache.transact).parameters['retry'].default is False
+    assert inspect.signature(FanoutCache.transact).parameters['key'].default is inspect.Parameter.empty
+
+
+def test_both_sharded_kinds_satisfy_the_sharded_protocol_at_runtime(tmp_path: Path) -> None:
+    with FanoutCache(tmp_path / 'f', shards=2, size_limit=4 * 2**20) as sharded:
+        assert isinstance(sharded, ShardedCacheLike)
+        assert isinstance(NullCache(invalidate=sharded), ShardedCacheLike)
+
+
+def test_ty_sees_both_sharded_kinds_and_refuses_a_positional_key(tmp_path: Path) -> None:
+    ok = _ty(
+        tmp_path,
+        'from diskcache_oxide import FanoutCache, NullCache, ShardedCacheLike\n'
+        "real: ShardedCacheLike = FanoutCache('/tmp/z')\n"
+        'null: ShardedCacheLike = NullCache()\n'
+        "with real.transact(key='k', retry=True) as tx:\n"
+        "    tx.set('k', 1)\n",
+    )
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    # On a NullCache a positional 'k' would bind to retry: the keyword-only key makes it a type error.
+    refused = _ty(
+        tmp_path,
+        'from diskcache_oxide import FanoutCache, NullCache, ShardedCacheLike\n'
+        'def f(c: ShardedCacheLike, d: FanoutCache | NullCache) -> None:\n'
+        "    c.transact('k')\n"
+        "    d.transact('k')\n",
+    )
+    assert refused.returncode != 0
+    assert refused.stdout.count('error[') >= 2, refused.stdout

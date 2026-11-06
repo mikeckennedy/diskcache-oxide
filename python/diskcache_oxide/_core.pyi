@@ -22,6 +22,7 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     '_sqlite_memory',
     '_gate_stats',
     '_sqlite_error',
+    '_held_stores',
     'FormatMismatchError',
     'LayoutMismatchError',
     'Cache',
@@ -71,6 +72,9 @@ def _encode(value: object, serializer: str = 'msgpack', pickle: bool = False) ->
 
 def _gate_stats() -> dict[str, Any]:
     """Test hook: the fork gate's state and counters (pending, holders, parked, fork_timeouts, deferred)."""
+
+def _held_stores() -> int:
+    """Test hook: how many stores in this process have a held transaction, on any thread."""
 
 def _sqlite_error(code: int) -> BaseException:
     """Test hook: the exception a SQLite result code becomes, as a store call would raise it."""
@@ -420,7 +424,7 @@ class Cache:
         and then by operation. Empty on a handle that isn't durable."""
     def _handle_count(self) -> int:
         """Test hook: how many open handles this cache's store counts, deferred releases included."""
-    def transact(self, retry: bool = False) -> Transaction:
+    def transact(self, retry: bool = False) -> Transaction[Cache]:
         """A write transaction, for `with cache.transact() as tx:`.
 
         `tx` is the cache itself. On the thread that entered the block, every call on this cache
@@ -571,6 +575,34 @@ class FanoutCache:
         """Always True for a real cache; False for a `NullCache`."""
     def shard_of(self, key: str) -> int:
         """The shard `key` lives in, from 0 to `shards - 1`: the same in every process and release."""
+    def transact(self, *, key: str, retry: bool = False) -> Transaction[FanoutCache]:
+        """A write transaction on the shard `key` lives in, for `with cache.transact(key='total') as tx:`.
+
+        It is `Cache.transact()` on that one shard: `tx` is this FanoutCache, calls on this thread
+        inside the block for keys on that shard run in the transaction (through any handle on the
+        root), it commits when the block exits and rolls back if the block raises, and a nested
+        `transact` for a key on the same shard joins it. Other threads' and processes' writes to that
+        shard wait for it; the other shards are not locked.
+
+        Inside the block, a call on this thread for a key on any other shard raises `ValueError`,
+        reads included, through any handle on the root, and so does a `transact` for a key on
+        another shard (its writes could not be in the transaction). Use `shard_of` to check that keys
+        share a shard. Calls over every shard (`len()`, `clear()` and the rest) are not refused; on
+        the transaction's shard they run inside it.
+
+        The check costs one atomic load while no transaction is open anywhere in the process; while
+        one is (any thread's, any cache's), keyed calls also look at each shard that holds one.
+
+        As on `Cache`, a transaction belongs to a thread, not an asyncio task, and under
+        `durable=True` a failure to begin, or inside the block, raises.
+
+        Args:
+            key: Keyword-only. Any key on the shard to hold; it needn't exist.
+            retry: As for `Cache.transact()`.
+
+        Raises:
+            TypeError: `key` isn't a `str`, or `retry` isn't a `bool`.
+        """
     @overload
     def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
         """As `Cache.get`, on the key's shard."""
@@ -721,16 +753,17 @@ class FanoutCache:
         """Close the cache, as `close()` does."""
 
 @final
-class Transaction:
-    """The context manager `Cache.transact()` returns. It's entered once and exited once.
+class Transaction[C]:
+    """The context manager `Cache.transact()` and `FanoutCache.transact(key=...)` return. It's entered
+    once and exited once.
 
     It may be exited on another thread: that thread commits or rolls back the owner's transaction
     within its `timeout`, and a commit that can't run in time raises `Timeout` and rolls back.
     """
 
-    def __enter__(self) -> Cache:
-        """Begin the transaction, or join the one this thread already holds on the directory, and
-        return the cache.
+    def __enter__(self) -> C:
+        """Begin the transaction, or join the one this thread already holds on the directory (for a
+        FanoutCache, the key's shard), and return the cache.
 
         Raises:
             Timeout: The write lock stayed taken, or a fork stayed pending, for longer than
@@ -739,6 +772,8 @@ class Transaction:
                 this one's write lock.
             RuntimeError: It was already entered, or is being entered on another thread, or this
                 process is a child forked inside a transaction on this directory.
+            ValueError: A FanoutCache's transaction, and this thread holds one on another of the
+                root's shards.
         """
     def __exit__(
         self,

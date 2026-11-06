@@ -2,6 +2,8 @@
 
 `TransactionalCacheLike` adds `transact()`. It's a separate protocol so a cache whose transactions
 need more than `retry` (a sharded cache's `transact(key=...)`) can still be a `CacheLike`.
+`ShardedCacheLike` is that sharded cache's: `CacheLike` plus `transact(*, key, retry=False)`, which
+`FanoutCache` and `NullCache` both satisfy.
 """
 
 from __future__ import annotations
@@ -134,6 +136,21 @@ class TransactionalCacheLike(CacheLike, Protocol):
 
     def transact(self, retry: bool = False) -> AbstractContextManager[Self]:
         """A context manager holding a write transaction for the block, yielding the cache."""
+
+
+@runtime_checkable
+class ShardedCacheLike(CacheLike, Protocol):
+    """A `CacheLike` with a sharded cache's `transact(*, key, retry=False)`, which `FanoutCache` and
+    `NullCache` both have.
+
+    On a `FanoutCache`, `with cache.transact(key='total') as tx:` runs the block's calls on this
+    thread for keys on `key`'s shard in one write transaction, and refuses keys on other shards
+    (`ValueError`); `tx` is the cache. On a `NullCache` it's a no-op that yields the `NullCache`.
+    `key` is keyword-only, so `transact('total')` is a type error rather than a `retry` of 'total'.
+    """
+
+    def transact(self, *, key: str, retry: bool = False) -> AbstractContextManager[Self]:
+        """A context manager holding a write transaction on `key`'s shard for the block, yielding the cache."""
 
 
 # The constructor arguments both classes accept (NullCache accepts and ignores them).

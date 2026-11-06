@@ -89,6 +89,25 @@ static DEFERRED_OWNERS: TakeAllStack<Arc<Store>> = TakeAllStack::new();
 /// [`DEFERRED_OWNERS`]: it's pushed with no gate level. Each entry keeps its store alive.
 static DEFERRED_ENDS: TakeAllStack<HeldTransaction> = TakeAllStack::new();
 
+/// How many stores have a held transaction (`pinned_active` set) in this process, on any thread.
+/// Zero proves no thread holds one anywhere, so [`Store::any_held_in_process`] lets a caller skip
+/// [`Store::held_by_this_thread`] with one relaxed load. Changed only with `pinned_active`, under
+/// the store's slot mutex, so it's exact; a thread's own changes are always visible to its own
+/// later loads, which is all a "held by this thread" question needs.
+///
+/// While any transaction is open anywhere in the process (one long `Cache.transact()` on any
+/// thread is enough), every caller takes the slow path: still cheap, since `held_by_this_thread`
+/// returns early on a store whose `pinned_active` is clear, but a gate entry and a slot-mutex lock
+/// per held store it's asked about.
+///
+/// Known limitation: in a child forked while transactions were open, the inherited count can stay
+/// above zero for good. `HeldTransaction::end`'s inherited branch leaves the slot `Lent` with
+/// `pinned_active` set by design, a parent thread's `Here` slot is never ended in the child, and
+/// `Store` has no `Drop` that would clear it. Such a child just takes the slow path: speed only,
+/// never correctness, since it can never read zero while it holds a transaction of its own. (A count
+/// scoped to the fork generation would fix it.)
+static HELD_STORES: AtomicUsize = AtomicUsize::new(0);
+
 /// Counts `HeldTransaction::abandon` calls, so a test can tell that path ran.
 #[cfg(test)]
 static ABANDONS: AtomicUsize = AtomicUsize::new(0);
@@ -343,7 +362,7 @@ impl Drop for Lend<'_, '_> {
         let mut slot = self.store.pinned.lock().unwrap_or_else(PoisonError::into_inner);
         match std::mem::replace(&mut *slot, PinnedSlot::Empty) {
             PinnedSlot::Lent { abandoned: Some(abandoned), .. } => {
-                self.store.pinned_active.store(false, Ordering::Release);
+                self.store.set_pinned_active(false);
                 drop(slot);
                 let (_, garbage) = close_pinned(self.store, self.gate, pinned, false, Duration::ZERO);
                 // In `HeldTransaction::end`'s order: the write lock, the D-020 hold, then the gate level.
@@ -1222,6 +1241,35 @@ impl Store {
         std::ptr::from_ref(self).addr()
     }
 
+    /// False only if no store in this process has a held transaction, on any thread: one relaxed
+    /// load, so a caller that must refuse calls made inside a transaction (a `FanoutCache` refusing
+    /// other shards' keys) costs nothing on the common path. True means "check": then ask
+    /// [`Store::held_by_this_thread`] of the stores that matter. Never false while the calling thread
+    /// holds one (its own `begin_hold` set the count, in program order).
+    #[inline]
+    #[must_use]
+    pub fn any_held_in_process() -> bool {
+        HELD_STORES.load(Ordering::Relaxed) != 0
+    }
+
+    /// The process-wide count of stores with a held transaction, for a test that it returns to zero.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn held_stores_in_process() -> usize {
+        HELD_STORES.load(Ordering::Relaxed)
+    }
+
+    /// Sets `pinned_active`, keeping [`HELD_STORES`] in step. Called with the slot mutex held.
+    fn set_pinned_active(&self, active: bool) {
+        if self.pinned_active.swap(active, Ordering::Release) != active {
+            if active {
+                HELD_STORES.fetch_add(1, Ordering::Relaxed);
+            } else {
+                HELD_STORES.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+    }
+
     /// Whether the calling thread holds a write transaction on this store that this process can use,
     /// inside one of its operations or between them. A transaction inherited across `fork()` doesn't
     /// count. For a failure's path, not a call's: it takes the slot's mutex.
@@ -1232,6 +1280,10 @@ impl Store {
             return false;
         }
         // Refused only to a thread with no level, which proves it holds nothing: see `on_pinned`.
+        // The one exception is a parked transaction's owner (its share given up) while a fork is
+        // pending: it reads false, so a `FanoutCache` doesn't refuse its other shards then. That
+        // transaction was already ended elsewhere and rolls back, and its owner's exit raises
+        // `TransactionAborted`.
         let Some(gate) = GATE.try_enter_shared() else { return false };
         let held = self.pinned.lock().unwrap_or_else(PoisonError::into_inner).held_by(std::thread::current().id());
         drop(gate);
@@ -1288,7 +1340,7 @@ impl Store {
                 files: RefCell::default(),
                 doomed: Cell::new(false),
             });
-            self.pinned_active.store(true, Ordering::Release);
+            self.set_pinned_active(true);
             drop(pinned);
             drop(gate);
         }
@@ -1569,7 +1621,7 @@ impl HeldTransaction {
                     gate::run_blocking(&|| std::thread::sleep(LENT_POLL.min(left)));
                 }
                 _ => {
-                    self.store.pinned_active.store(false, Ordering::Release);
+                    self.store.set_pinned_active(false);
                     let pinned = match std::mem::replace(&mut *slot, PinnedSlot::Empty) {
                         PinnedSlot::Here(p) => Some(p),
                         _ => None,

@@ -337,3 +337,94 @@ def test_a_durable_fanout_cache_answers_a_locked_shard_as_a_miss(
         assert cache.touch('k', 100) is False
     assert cache.get('k') == 'before'
     assert cache._durable_stats()['busy']
+
+
+# -- transact: the shard-scoped transaction (oxide, D-040) and stock's every-shard one share these ----------
+
+
+def _oxide_shard(key: str, shards: int) -> int:
+    """oxide's shard for `key` (D-033), so the keys a test uses inside one transaction share a shard
+    there. Stock's transaction covers every shard, so any keys would do for it."""
+    import xxhash
+
+    return (xxhash.xxh3_64_intdigest(b'\x01' + key.encode()) * shards) >> 64
+
+
+def _co_located(count: int, shards: int, shard: int = 0) -> list[str]:
+    found = [k for k in (f'tx-{i}' for i in range(10_000)) if _oxide_shard(k, shards) == shard]
+    return found[:count]
+
+
+def _from_another_thread(call: Callable[[], Any]) -> Any:
+    found: list[Any] = []
+    import threading
+
+    thread = threading.Thread(target=lambda: found.append(call()), daemon=True)
+    thread.start()
+    thread.join(JOIN_TIMEOUT)
+    assert found, 'the other thread never returned'
+    return found[0]
+
+
+def test_a_transaction_commits_on_exit(backend: Backend, make_fanout: Callable[..., Any], cache_dir: Path) -> None:
+    cache = make_fanout(cache_dir, shards=4)
+    a, b = _co_located(2, 4)
+    with backend.fanout_transact(cache, a):
+        cache.set(a, 1)
+        cache.incr(b)
+        assert cache.get(a) == 1, 'the block reads its own write'
+        assert _from_another_thread(lambda: cache.get(a)) is None, 'another thread saw an uncommitted write'
+    assert (cache.get(a), cache.get(b)) == (1, 1)
+    assert _from_another_thread(lambda: cache.get(b)) == 1
+
+
+def test_a_transaction_that_raises_rolls_back(
+    backend: Backend, make_fanout: Callable[..., Any], cache_dir: Path
+) -> None:
+    cache = make_fanout(cache_dir, shards=4)
+    a, b = _co_located(2, 4)
+    cache.set(b, 'before')
+    with pytest.raises(ValueError, match='boom'), backend.fanout_transact(cache, a):
+        cache.set(a, 1)
+        cache.delete(b)
+        raise ValueError('boom')
+    assert (cache.get(a), cache.get(b)) == (None, 'before')
+    assert cache.set(a, 2) is True, 'the write lock was not released'
+
+
+def test_a_nested_transaction_on_the_same_shard_joins_the_outer_one(
+    backend: Backend, make_fanout: Callable[..., Any], cache_dir: Path
+) -> None:
+    cache = make_fanout(cache_dir, shards=4)
+    a, b = _co_located(2, 4)
+    with backend.fanout_transact(cache, a):
+        cache.set(a, 1)
+        with backend.fanout_transact(cache, b):
+            cache.set(b, 2)
+        assert _from_another_thread(lambda: cache.get(b)) is None, 'the inner exit committed'
+    assert (cache.get(a), cache.get(b)) == (1, 2)
+
+
+@pytest.mark.diverges(
+    backend='diskcache',
+    ref='D-040',
+    reason="diskcache's FanoutCache.transact() locks every shard, so a write to another shard waits",
+    raises=AssertionError,
+)
+def test_a_write_to_another_shard_doesnt_wait_for_a_transaction(
+    backend: Backend, make_fanout: Callable[..., Any], cache_dir: Path
+) -> None:
+    cache = make_fanout(cache_dir, shards=4, timeout=0.2)
+    (a,) = _co_located(1, 4, shard=0)
+    (other,) = _co_located(1, 4, shard=1)
+    with backend.fanout_transact(cache, a):
+        cache.set(a, 1)
+
+        def write() -> object:
+            try:
+                return cache.set(other, 1)
+            except backend.timeout_error:
+                return 'Timeout'
+
+        answer = _from_another_thread(write)
+    assert answer is True, f'a write to another shard during the transaction answered {answer!r}'

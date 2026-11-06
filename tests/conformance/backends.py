@@ -127,6 +127,14 @@ class Backend:
         """
         raise NotImplementedError
 
+    def fanout_transact(self, cache: Any, key: str) -> AbstractContextManager[Any]:
+        """A FanoutCache transaction that covers `key`'s shard (stock: every shard, D-040).
+
+        Calls on the entering thread for keys on that shard join it; it commits on exit and rolls
+        back on an exception. The `as` target differs (stock yields None), so tests use the cache.
+        """
+        raise NotImplementedError
+
     def sqlite_info(self) -> dict[str, Any] | None:
         """Which SQLite the backend runs on, or None if it can't say.
 
@@ -204,6 +212,10 @@ class DiskcacheBackend(Backend):
 
     def hold_write_transaction(self, cache: Any) -> AbstractContextManager[Any]:
         return cache.transact()
+
+    def fanout_transact(self, cache: Any, key: str) -> AbstractContextManager[Any]:
+        # Stock's FanoutCache.transact() locks every shard in order and requires retry=True.
+        return cache.transact(retry=True)
 
     def sqlite_info(self) -> dict[str, Any] | None:
         # diskcache runs on the stdlib sqlite3 module, i.e. whatever SQLite this Python links.
@@ -287,6 +299,9 @@ class OxideBackend(Backend):
     def hold_write_transaction(self, cache: Any) -> AbstractContextManager[Any]:
         return cache.transact()
 
+    def fanout_transact(self, cache: Any, key: str) -> AbstractContextManager[Any]:
+        return cache.transact(key=key)
+
     def sqlite_info(self) -> dict[str, Any] | None:
         mod = self._module
         return {
@@ -320,6 +335,7 @@ KNOWN_COMMUNITY_DIFFERENCES: dict[str, str] = {
     'tests/conformance/test_fanout.py::test_a_write_to_a_locked_shard_raises_timeout[delete]': 'D-034',
     'tests/conformance/test_fanout.py::test_a_write_to_a_locked_shard_raises_timeout[pop]': 'D-034',
     'tests/conformance/test_fanout.py::test_a_write_to_a_locked_shard_raises_timeout[touch]': 'D-034',
+    'tests/conformance/test_fanout.py::test_a_write_to_another_shard_doesnt_wait_for_a_transaction': 'D-040',
 }
 
 

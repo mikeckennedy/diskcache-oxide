@@ -27,7 +27,7 @@ use pyo3::gc::PyVisit;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-use super::{DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, str_key, whole};
+use super::{DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, Transaction, str_key, whole};
 use crate::to_py_err;
 
 /// A disk cache split over several SQLite databases (shards), so reads and writes on different
@@ -176,17 +176,17 @@ impl FanoutCache {
         expire_time: bool,
     ) -> PyResult<Py<PyAny>> {
         let name = str_key(key)?;
-        self.config.get(py, self.route(name), name, default, expire_time)
+        self.config.get(py, self.routed(name)?, name, default, expire_time)
     }
 
     fn __getitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let name = str_key(key)?;
-        self.config.get_item(py, self.route(name), key, name)
+        self.config.get_item(py, self.routed(name)?, key, name)
     }
 
     fn __contains__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
         let name = str_key(key)?;
-        self.config.contains(py, self.route(name), name)
+        self.config.contains(py, self.routed(name)?, name)
     }
 
     #[pyo3(signature = (key, value, expire = None))]
@@ -198,7 +198,7 @@ impl FanoutCache {
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         let name = str_key(key)?;
-        self.config.set(py, self.route(name), name, value, expire)
+        self.config.set(py, self.routed(name)?, name, value, expire)
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -214,12 +214,12 @@ impl FanoutCache {
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         let name = str_key(key)?;
-        self.config.add(py, self.route(name), name, value, expire)
+        self.config.add(py, self.routed(name)?, name, value, expire)
     }
 
     fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
         let name = str_key(key)?;
-        self.config.delete(py, self.route(name), name)
+        self.config.delete(py, self.routed(name)?, name)
     }
 
     fn __delitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -229,25 +229,25 @@ impl FanoutCache {
     #[pyo3(signature = (key, default = None))]
     fn pop(&self, py: Python<'_>, key: &Bound<'_, PyAny>, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
         let name = str_key(key)?;
-        self.config.pop(py, self.route(name), name, default)
+        self.config.pop(py, self.routed(name)?, name, default)
     }
 
     #[pyo3(signature = (key, expire = None))]
     fn touch(&self, py: Python<'_>, key: &Bound<'_, PyAny>, expire: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
         let name = str_key(key)?;
-        self.config.touch(py, self.route(name), name, expire)
+        self.config.touch(py, self.routed(name)?, name, expire)
     }
 
     #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
     fn incr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
         let name = str_key(key)?;
-        self.config.add_number(py, self.route(name), key, name, delta, default, false)
+        self.config.add_number(py, self.routed(name)?, key, name, delta, default, false)
     }
 
     #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
     fn decr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
         let name = str_key(key)?;
-        self.config.add_number(py, self.route(name), key, name, delta, default, true)
+        self.config.add_number(py, self.routed(name)?, key, name, delta, default, true)
     }
 
     // -- over every shard, under one deadline ---------------------------------------------------
@@ -382,6 +382,21 @@ impl FanoutCache {
         let _ = (exc_type, exc, tb);
         self.close(py, true);
     }
+
+    // -- transactions -------------------------------------------------------------------------
+
+    /// A write transaction on the shard `key` lives in: `with cache.transact(key='total') as tx:`.
+    /// It is `Cache.transact()` on that shard's store (the same `Transaction`, reentrancy,
+    /// `TransactionBusy` and aborted exits), and `tx` is this `FanoutCache`. Inside the block, this
+    /// thread's calls on any other shard's key raise `ValueError`, reads included, through any
+    /// handle on the root, and so does a `transact` on another shard; `shard_of` says which keys
+    /// share one. `key` is keyword-only, so a switched-off cache's `NullCache.transact(key=...)`
+    /// takes the same spelling.
+    #[pyo3(signature = (*, key, retry = false))]
+    fn transact(slf: Py<Self>, key: &Bound<'_, PyAny>, retry: bool) -> PyResult<Transaction> {
+        let shard = slf.get().route(str_key(key)?).shard;
+        Ok(Transaction::on_shard(slf, shard, retry))
+    }
 }
 
 impl FanoutCache {
@@ -391,6 +406,47 @@ impl FanoutCache {
         // The shard count came from a validated manifest, so it fits a `u32`.
         let count = u32::try_from(self.shards.len()).unwrap_or(u32::MAX);
         &self.shards[fanout::shard_of_str(key, count)]
+    }
+
+    /// The handle of the shard `key` hashes to, for a routed call: refused with `ValueError` if this
+    /// thread holds a `transact(key=...)` on another of this root's shards (M3), through any handle.
+    /// With no transaction open anywhere in the process, that check is one relaxed load; while any
+    /// is open (a `Cache.transact()` on any thread counts), it asks each other shard, which stops at
+    /// once for a shard with none and costs a gate entry and a mutex lock for one that has one.
+    #[inline]
+    fn routed(&self, key: &str) -> PyResult<&StoreHandle> {
+        let handle = self.route(key);
+        if Store::any_held_in_process() {
+            self.refuse_other_shards(handle.shard)?;
+        }
+        Ok(handle)
+    }
+
+    /// `ValueError` if this thread holds a transaction on any of this root's shards but `shard`.
+    /// The stores are shared by every handle on the root, so another handle's transaction counts.
+    /// At most one shard can be held: a `transact` on a second one is refused here too.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn refuse_other_shards(&self, shard: usize) -> PyResult<()> {
+        let Some(held) = self.shards.iter().find(|h| h.shard != shard && h.store.held_by_this_thread()) else {
+            return Ok(());
+        };
+        Err(PyValueError::new_err(format!(
+            "this key is on shard {shard}, but this thread's transaction is on shard {held} of {count}: inside \
+             FanoutCache.transact(key=...), only keys on the transaction's shard can be used (see shard_of)",
+            held = held.shard,
+            count = self.shards.len(),
+        )))
+    }
+
+    /// Shard `shard`'s handle, for a `Transaction` on it.
+    pub(super) fn shard_handle(&self, shard: usize) -> &StoreHandle {
+        &self.shards[shard]
+    }
+
+    /// The handle's settings, for a `Transaction` on one of its shards.
+    pub(super) fn config(&self) -> &HandleConfig {
+        &self.config
     }
 
     /// `call` on every shard in order, all under one deadline of the handle's `timeout` (D-027's

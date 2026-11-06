@@ -227,6 +227,13 @@ fn _gate_stats(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     Ok(d)
 }
 
+/// Test hook: how many stores in this process have a held transaction (the count `FanoutCache`'s
+/// other-shard check reads first). Not part of the public API.
+#[pyfunction]
+fn _held_stores() -> usize {
+    store::Store::held_stores_in_process()
+}
+
 /// Set once the fork hooks are registered. The gate is process-wide, so its hooks must be too: a
 /// second module init (a re-import after `_core` is removed from `sys.modules`) must not register a
 /// second set, which would run every hook twice per fork. PyO3 refuses subinterpreters, so the one
@@ -325,6 +332,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_sqlite_memory, m)?)?;
     m.add_function(wrap_pyfunction!(_gate_stats, m)?)?;
     m.add_function(wrap_pyfunction!(_sqlite_error, m)?)?;
+    m.add_function(wrap_pyfunction!(_held_stores, m)?)?;
     m.add("FormatMismatchError", py.get_type::<FormatMismatchError>())?;
     m.add("LayoutMismatchError", layout_mismatch_type(py)?)?;
     m.add_class::<cache::Cache>()?;

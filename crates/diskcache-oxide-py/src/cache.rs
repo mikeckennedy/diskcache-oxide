@@ -1162,11 +1162,48 @@ impl TxState {
     }
 }
 
-/// The context manager returned by `Cache.transact()`.
+/// What a [`Transaction`] holds its store's transaction for: a `Cache`, or one shard of a
+/// `FanoutCache`. Either way it's one store, and `__enter__` hands back the cache object itself.
+enum TxCache {
+    Plain(Py<Cache>),
+    Shard(Py<FanoutCache>, usize),
+}
+
+impl TxCache {
+    fn handle(&self) -> &StoreHandle {
+        match self {
+            Self::Plain(cache) => &cache.get().handle,
+            Self::Shard(cache, shard) => cache.get().shard_handle(*shard),
+        }
+    }
+
+    fn config(&self) -> &HandleConfig {
+        match self {
+            Self::Plain(cache) => &cache.get().config,
+            Self::Shard(cache, _) => cache.get().config(),
+        }
+    }
+
+    fn object(&self, py: Python<'_>) -> Py<PyAny> {
+        match self {
+            Self::Plain(cache) => cache.clone_ref(py).into_any(),
+            Self::Shard(cache, _) => cache.clone_ref(py).into_any(),
+        }
+    }
+
+    fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        match self {
+            Self::Plain(cache) => visit.call(cache),
+            Self::Shard(cache, _) => visit.call(cache),
+        }
+    }
+}
+
+/// The context manager returned by `Cache.transact()` and `FanoutCache.transact(key=...)`.
 /// Single use: it's entered once and exited once. It may be exited on another thread (D-031).
 #[pyclass(frozen, module = "diskcache_oxide")]
 pub(crate) struct Transaction {
-    cache: Py<Cache>,
+    cache: TxCache,
     /// Retry a `BEGIN` that timed out, between attempts checking for signals.
     retry: bool,
     /// Taken attached, and never held across `begin_hold` or `finish`, which wait detached:
@@ -1178,6 +1215,15 @@ pub(crate) struct Transaction {
 
 impl Transaction {
     fn new(cache: Py<Cache>, retry: bool) -> Self {
+        Self::with(TxCache::Plain(cache), retry)
+    }
+
+    /// A transaction on one shard of a `FanoutCache`.
+    fn on_shard(cache: Py<FanoutCache>, shard: usize, retry: bool) -> Self {
+        Self::with(TxCache::Shard(cache, shard), retry)
+    }
+
+    fn with(cache: TxCache, retry: bool) -> Self {
         Self { cache, retry, state: Mutex::new(TxState::Ready), ended: Condvar::new() }
     }
 
@@ -1188,17 +1234,21 @@ impl Transaction {
     /// Begins the transaction, or joins the one this thread already holds on the store. Never
     /// through `attempt`, so a durable handle raises rather than swallowing a failed `BEGIN`.
     fn begin(&self, py: Python<'_>) -> PyResult<TxState> {
-        let cache = self.cache.get();
+        // A shard's transaction refuses to start while this thread holds another shard's (M3).
+        if let TxCache::Shard(cache, shard) = &self.cache
+            && Store::any_held_in_process()
+        {
+            cache.get().refuse_other_shards(*shard)?;
+        }
+        let (handle, timeout) = (self.cache.handle(), self.cache.config().timeout);
         // Per store, so a second handle on the directory passes through too. An inherited
         // transaction doesn't count: a child's `begin_hold` then refuses (D-020).
-        if cache.handle.store.held_by_this_thread() {
+        if handle.store.held_by_this_thread() {
             return Ok(TxState::PassThrough);
         }
         loop {
-            let began = cache
-                .handle
-                .ensure_open(cache.config.timeout)
-                .and_then(|timeout| crate::detach(py, || cache.handle.store.begin_hold(timeout)));
+            let began =
+                handle.ensure_open(timeout).and_then(|timeout| crate::detach(py, || handle.store.begin_hold(timeout)));
             match began {
                 Ok(held) => return Ok(TxState::Held(held)),
                 Err(Error::Timeout { .. }) if self.retry => py.check_signals()?,
@@ -1212,7 +1262,7 @@ impl Transaction {
     /// Waits, detached, up to the cache's `timeout` for another thread's end to finish, and returns
     /// whether it committed, or `None` if it's still running.
     fn wait_for_end(&self, py: Python<'_>) -> Option<bool> {
-        let timeout = self.cache.get().config.timeout;
+        let timeout = self.cache.config().timeout;
         crate::detach(py, || {
             let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             let (state, _) = self
@@ -1230,14 +1280,19 @@ impl Transaction {
 #[pymethods]
 impl Transaction {
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.cache)
+        self.cache.traverse(&visit)
     }
 
     fn __repr__(&self) -> String {
-        format!("<diskcache_oxide.Transaction {}>", self.lock_state().name())
+        match &self.cache {
+            TxCache::Plain(_) => format!("<diskcache_oxide.Transaction {}>", self.lock_state().name()),
+            TxCache::Shard(_, shard) => {
+                format!("<diskcache_oxide.Transaction {} on shard {shard}>", self.lock_state().name())
+            }
+        }
     }
 
-    fn __enter__(&self, py: Python<'_>) -> PyResult<Py<Cache>> {
+    fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         {
             let mut state = self.lock_state();
             match *state {
@@ -1254,7 +1309,7 @@ impl Transaction {
         match began {
             Ok(entered) => {
                 *state = entered;
-                Ok(self.cache.clone_ref(py))
+                Ok(self.cache.object(py))
             }
             Err(error) => {
                 *state = TxState::Ready;
