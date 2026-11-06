@@ -120,13 +120,34 @@ Reviewed by a second, independent architect: PASS with required changes, all app
 
 **Done when:** the app's suite passes (`ty`, ruff, pytest) against a locally built wheel, with tests that the bumps share one transaction, that a failure rolls all of them back and fails open, and that nothing in the block awaits.
 
-## Step 5: a read path without the pool mutex (after step 6, only if measured)
+## Step 5: lift the shared-handle read ceiling (rewritten 2026-11-05 from measurements)
 
-**Why:** on Linux, oxide's shared-handle reads reach about 1.5M/s against plain `sqlite3`'s 2.0M on one file. The pool mutex is 7% of the waits (plan 11, section 2). Sharding (step 6) divides that contention too, and production runs one single-threaded worker, so this is built only if a measurement after step 6 still justifies it.
+**Why:** plan 13's benchmark (13i) showed that FanoutCache doesn't lift the free-threaded read ceiling for threads sharing one handle, and a diagnosis then found what does it (`bench/results/read-ceiling-2026-11-05.md`, with the env-gated prototypes in `bench/results/read-ceiling-prototypes-2026-11-05.diff`; summary here). The ceiling is per store, not per handle: four handles on one directory perform like one shared handle, while four directories reach about 1.9M reads/s on the Mac and 3.4M in the Linux VM.
 
-**What, if built:** no true thread-locals: the fork hook and close-on-last-handle (D-018) can't reach another thread's thread-locals, thread-exit destructors would have to enter the gate, and one connection per thread breaks the D-023 memory bound. Instead, a store-owned array of `max_connections` slots, each with its own mutex on its own cache line. A thread tries its "home" slot first and falls back to the pool. Fork quiescence, `close_idle_all` (`pool.rs:9-15,132`), the rule that pool locks are only taken under the gate (`pool.rs:19-22`), generations and D-018 all keep working. The fast read path's `slots.try_acquire` plus `GATE.try_enter_shared` (`store.rs:707-710`) is the fork gate: don't change it without a shuttle model.
+- **Plain `Cache`:** SQLite's per-file shared-memory mutex (`unixShmNode.pShmMutex` in `unixShmLock`, `sqlite3.c:45938`). Every read takes it twice, and it's held across the `fcntl` lock syscall, so a waiter parks in the kernel. In a 5 s `sample`, 4,644 of 4,986 mutex-wait samples were there, and 336 in oxide's pool.
+- **`FanoutCache` at the default budget (one connection per shard):** a thread that collides on a shard fails `slots.try_acquire` and sleeps 50 µs (`genlock.rs:22` `POLL`, `Slots::acquire_until` at `genlock.rs:284`): 6,134 `nanosleep` samples.
+- **Ruled out:** the gate and slot atomics, PyO3 extraction, refcounts and `HandleConfig` state (each under 1% of self time).
 
-**Done when:** `scripts/model-check.sh` passes with the slot path modelled, the fork tests pass on all four interpreters, `bench/scaling/scale_probe.py` and `conn_sweep.py` in the Linux VM show the gain, and the plan records that a fresh soak is required.
+Prototypes, measured with 4 threads on one shared handle, 6-byte reads, 3.14t (k reads/s):
+
+| Case | Mac before | Mac after | Linux VM before | Linux VM after |
+|---|---|---|---|---|
+| `Cache`, SQLite mutex spin | 805-831 | 1,442 | 1,187 | 1,708 |
+| `Cache`, + slot spin | | | | 1,898 |
+| `Cache`, + pool spin | | 1,613 | | |
+| `FanoutCache(8)` default, mutex + slot spin | 768-781 | 1,192-1,204 | 1,084 | 1,518 |
+| `FanoutCache(8)` at 32 connections, mutex spin | 1,223 | 1,546 | 1,292 | 1,959 |
+
+Single-thread and separate-directory numbers don't change.
+
+**What:**
+
+- **5a, a spinning SQLite mutex:** the library supplies its own `sqlite3_mutex_methods` through `SQLITE_CONFIG_MUTEX`, pthread mutexes underneath (so fork behavior is unchanged: the gate quiesces before a fork, and the bundled SQLite is private to `_core.so`), spinning a bounded number of `try` attempts before blocking. Recursive and static mutexes are honored. It's installed once, before `sqlite3_initialize` and any connection. The prototype's install order (initialize, shutdown, GETMUTEX) is fragile and must not ship.
+- **5b, the slot wait:** replace the fixed 50 µs poll with a short spin and then a wait that's woken when a permit drops (or a spin-then-sleep that's measured equal), without holding a gate level (`reserve_slot` runs before `enter_until`, so the fork protocol is untouched).
+- **5c, the pool mutex:** second order (+12% on the Mac; Linux's std mutex already spins). Build only if a Linux measurement after 5a and 5b justifies it.
+- **FanoutCache's default connection budget** (Michael's decision M2: 8 in total, one per shard) costs shared-handle reads: 1.05M against plain `Cache`'s 1.46M on Linux before these fixes. Report the after-fix numbers to Michael so he can decide whether to keep it.
+
+**Done when:** the model check and `scripts/check.sh` pass; a test pins that the custom mutex methods are installed before any connection (and that `sqlite_compile_options` and threadsafety are unchanged); the 4-thread probe and `bench/fanout.py` show the gain on the Mac and in the Linux VM, with single-thread numbers unchanged; a CPU-oversubscribed run (more threads than cores) shows no regression from spinning. Spinning changes the locking that every read uses, so a fresh soak is required before production.
 
 ## Step 6: FanoutCache (roadmap Phase 6c)
 
@@ -170,3 +191,4 @@ Rerun Talk Python's benchmark (`APP/temp/cache_bench/`) at one and four threads,
 - 2026-11-05: step 3f done, so step 3 is complete. The user guide has a Transactions page (thread not task, the fork wait, lock order, TransactionBusy, TransactionAborted and the Ending wait, durable), with matching updates to switching-from-diskcache, divergences, concurrency-and-forks, null-cache and the roadmap; `soak/README.md` records that steps 1 and 3 need a fresh 24-hour soak before production. Site regenerated. `scripts/check.sh` passes on all four interpreters.
 - 2026-11-05: step 4 built on Talk Python's `diskcache-oxide-cache` branch against 0.1.0.dev2: every per-request rate-limit bump runs in one sync `rate_limit_records.count_request` holding the app's only `transact()`, called after the crawler-verification await and failing open around the whole block. The app's architect review passed it with nothing required. App `ty` 0, 9,086 tests pass. Uncommitted and unpushed on the branch, for Michael.
 - 2026-11-05: step 6 started: plan 13's sub-step 13a (the frozen shard hash and the manifest) done and reviewed; see plan 13.
+- 2026-11-05: step 5 rewritten from measurements. Plan 13's benchmark showed FanoutCache doesn't lift the shared-handle read ceiling; the diagnosis found SQLite's per-file shared-memory mutex (plain `Cache`) and a 50 µs slot poll (FanoutCache's default budget). Prototype spins gave +45% to +75% on four threads sharing one handle.

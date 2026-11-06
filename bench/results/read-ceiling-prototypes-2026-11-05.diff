@@ -1,0 +1,112 @@
+--- a/crates/diskcache-oxide-core/src/sqlite.rs
++++ b/crates/diskcache-oxide-core/src/sqlite.rs
+@@ -45,3 +45,72 @@
+         assert!(options.iter().any(|o| o.starts_with("THREADSAFE=")), "{options:?}");
+     }
+ }
++
++// ---- PROTOTYPE (scratch only): spin briefly before parking on any SQLite mutex. ----
++#[allow(unsafe_code, static_mut_refs, clippy::all)]
++mod spin {
++    use rusqlite::ffi;
++    use std::sync::Once;
++
++    static mut ORIG: ffi::sqlite3_mutex_methods = ffi::sqlite3_mutex_methods {
++        xMutexInit: None,
++        xMutexEnd: None,
++        xMutexAlloc: None,
++        xMutexFree: None,
++        xMutexEnter: None,
++        xMutexTry: None,
++        xMutexLeave: None,
++        xMutexHeld: None,
++        xMutexNotheld: None,
++    };
++
++    fn spins() -> u32 {
++        std::env::var("DCO_SPIN").ok().and_then(|v| v.parse().ok()).unwrap_or(200)
++    }
++    static mut SPINS: u32 = 200;
++
++    unsafe extern "C" fn enter(m: *mut ffi::sqlite3_mutex) {
++        unsafe {
++            let try_ = ORIG.xMutexTry.unwrap();
++            for _ in 0..SPINS {
++                if try_(m) == ffi::SQLITE_OK {
++                    return;
++                }
++                std::hint::spin_loop();
++            }
++            ORIG.xMutexEnter.unwrap()(m);
++        }
++    }
++
++    pub fn install() -> i32 {
++        static ONCE: Once = Once::new();
++        static mut RC: i32 = -1;
++        ONCE.call_once(|| unsafe {
++            SPINS = spins();
++            crate::pool::POOL_SPIN.store(std::env::var("DCO_POOL_SPIN").ok().and_then(|v| v.parse().ok()).unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
++            if SPINS == 0 {
++                RC = 0;
++                return;
++            }
++            if ffi::sqlite3_initialize() != ffi::SQLITE_OK { RC = -2; return; }
++            ffi::sqlite3_shutdown();
++            let rc = ffi::sqlite3_config(ffi::SQLITE_CONFIG_GETMUTEX, &raw mut ORIG);
++            if ORIG.xMutexTry.is_none() { RC = -3; return; }
++            if rc != ffi::SQLITE_OK {
++                RC = rc;
++                return;
++            }
++            let mut mine = ORIG;
++            mine.xMutexEnter = Some(enter);
++            static mut MINE: ffi::sqlite3_mutex_methods = ffi::sqlite3_mutex_methods {
++                xMutexInit: None, xMutexEnd: None, xMutexAlloc: None, xMutexFree: None,
++                xMutexEnter: None, xMutexTry: None, xMutexLeave: None, xMutexHeld: None, xMutexNotheld: None,
++            };
++            MINE = mine;
++            RC = ffi::sqlite3_config(ffi::SQLITE_CONFIG_MUTEX, &raw const MINE);
++            ffi::sqlite3_initialize();
++        });
++        unsafe { RC }
++    }
++}
++pub use spin::install as install_spin_mutex;
+--- a/crates/diskcache-oxide-core/src/genlock.rs
++++ b/crates/diskcache-oxide-core/src/genlock.rs
+@@ -282,6 +282,13 @@
+ 
+     /// Reserves a slot, waiting through the gate's blocker until `deadline`.
+     pub fn acquire_until(&self, cap: u64, deadline: Instant) -> Option<SlotPermit<'_>> {
++        let spin: u32 = std::env::var("DCO_SLOT_SPIN").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
++        for _ in 0..spin {
++            if let Some(permit) = self.try_acquire(cap) {
++                return Some(permit);
++            }
++            for _ in 0..16 { std::hint::spin_loop(); }
++        }
+         loop {
+             if let Some(permit) = self.try_acquire(cap) {
+                 return Some(permit);
+--- a/crates/diskcache-oxide-core/src/pool.rs
++++ b/crates/diskcache-oxide-core/src/pool.rs
+@@ -90,6 +90,10 @@
+ 
+ impl PoolShared {
+     fn lock(&self) -> MutexGuard<'_, PoolState> {
++        for _ in 0..POOL_SPIN.load(Ordering::Relaxed) {
++            if let Ok(g) = self.state.try_lock() { return g; }
++            std::hint::spin_loop();
++        }
+         // A panic while the lock was held leaves the Vec itself intact.
+         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+     }
+@@ -97,6 +101,7 @@
+ 
+ /// Every live pool, so the before-fork hook can quiesce them all. Locked under the gate, like the
+ /// pools themselves.
++pub static POOL_SPIN: AtomicUsize = AtomicUsize::new(0);
+ static REGISTRY: Mutex<Vec<Weak<PoolShared>>> = Mutex::new(Vec::new());
+ 
+ fn registry() -> MutexGuard<'static, Vec<Weak<PoolShared>>> {
