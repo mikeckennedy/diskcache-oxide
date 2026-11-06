@@ -1,0 +1,700 @@
+diff --git a/crates/diskcache-oxide-core/src/genlock.rs b/crates/diskcache-oxide-core/src/genlock.rs
+index da7e9e7..f4bb785 100644
+--- a/crates/diskcache-oxide-core/src/genlock.rs
++++ b/crates/diskcache-oxide-core/src/genlock.rs
+@@ -86,6 +86,19 @@ pub fn sweep_slot_wait() -> (u32, u32) {
+     (slot_spin(), slot_spinners())
+ }
+ 
++/// Slot waits that reached the detached wait, counted only in a sweep build, so the sweep can
++/// confirm a case really waits for slots (plan 12 step 5a-2).
++#[cfg(all(dco_spin_sweep, not(shuttle)))]
++static SWEEP_SLOT_WAITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++/// How many slot waits reached the detached wait so far. Only in a sweep build.
++#[cfg(all(dco_spin_sweep, not(shuttle)))]
++#[doc(hidden)]
++#[must_use]
++pub fn sweep_slot_waits() -> u64 {
++    SWEEP_SLOT_WAITS.load(Ordering::Relaxed)
++}
++
+ /// The slot-wait sweep's overrides, `DCO_SLOT_SPIN` and `DCO_SLOT_SPINNERS`, compiled in only under
+ /// `RUSTFLAGS="--cfg dco_spin_sweep"` (a benchmark build, as for [`crate::sqlite_mutex`]). A shipped
+ /// build has no environment knob.
+@@ -396,6 +409,8 @@ impl Slots {
+     /// Returns once fewer than `cap` slots look in use or `deadline` has passed. Takes nothing, so
+     /// another thread may win the slot it saw free; the caller retries.
+     fn wait_for_room(&self, cap: u64, deadline: Instant) {
++        #[cfg(all(dco_spin_sweep, not(shuttle)))]
++        SWEEP_SLOT_WAITS.fetch_add(1, Ordering::Relaxed);
+         let room = || self.in_use() < cap;
+         // Spin only while few other waiters in the process do: past that, the spinners take the
+         // CPUs the slot holders need (more busy threads than CPUs). No spin, no count.
+diff --git a/crates/diskcache-oxide-core/src/sqlite_mutex.rs b/crates/diskcache-oxide-core/src/sqlite_mutex.rs
+index d9d221b..5883be6 100644
+--- a/crates/diskcache-oxide-core/src/sqlite_mutex.rs
++++ b/crates/diskcache-oxide-core/src/sqlite_mutex.rs
+@@ -59,6 +59,104 @@ fn budget_for(cpus: Option<usize>) -> u32 {
+ /// The longest gap between two tries, in hints.
+ const MAX_GAP: u32 = 64;
+ 
++/// The adaptive spin (plan 12 step 5a-2): how a contended enter picks its budget. The fixed budget
++/// wins when the holder runs on another CPU and loses when there are more runnable threads than
++/// CPUs, since the holder is then often preempted mid-hold and every hint is quota a runnable
++/// thread needed. Neither mechanism touches the uncontended path.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++#[cfg_attr(not(any(test, dco_spin_sweep)), allow(dead_code, reason = "provisional until the 5a-2 sweep picks the arm"))]
++enum Adapt {
++    /// Always the whole budget.
++    Fixed,
++    /// Per mutex, an estimate of the hints a spin needs: a success moves it an eighth of the way
++    /// toward the hints used, a failure halves it, and the budget is twice the estimate.
++    Decay,
++    /// [`Adapt::Decay`], plus every [`PROBE_EVERY`]th contended enter spins the whole budget, so a
++    /// decayed mutex can find out that the load dropped.
++    Probe,
++}
++
++/// What a contended enter does: spin at most `budget` hints (0: block at once), with at most `cap`
++/// threads spinning on one mutex at a time ([`NO_CAP`]: no count kept), adapting as `adapt` says,
++/// never below `floor`.
++#[derive(Clone, Copy, Debug)]
++struct Policy {
++    budget: u32,
++    cap: u32,
++    adapt: Adapt,
++    floor: u32,
++}
++
++/// No spinner cap: the per-mutex count isn't kept.
++const NO_CAP: u32 = u32::MAX;
++
++/// The lowest an adaptive estimate decays to, in hints.
++const SPIN_FLOOR: u32 = 32;
++
++/// How often the probe arm spins the whole budget, in contended enters.
++const PROBE_EVERY: u32 = 64;
++
++/// The estimate's bits in `SpinMutex::estimate`; the probe arm keeps its count of contended enters
++/// in the rest. Budgets are held to it at install.
++const ESTIMATE_MASK: u32 = 0xFFFF;
++
++/// The policy a shipped build uses, and the sweep's default.
++const SHIPPED_ADAPT: Adapt = Adapt::Fixed;
++
++/// The spinner cap for a host with `cpus` CPUs.
++fn cap_for(_cpus: Option<usize>) -> u32 {
++    NO_CAP
++}
++
++/// Whether a contended enter that sees `current` spinners may become one more.
++fn may_spin(current: u32, cap: u32) -> bool {
++    current < cap
++}
++
++/// A contended enter's budget: twice the estimate, held to `floor..=max` (0 when `max` is).
++fn budget(estimate: u32, floor: u32, max: u32) -> u32 {
++    estimate.saturating_mul(2).max(floor).min(max)
++}
++
++/// What a spin came to: the lock, after this many hints, or the budget spent without it.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum Outcome {
++    Got(u32),
++    Failed,
++}
++
++/// The estimate after a spin. A success moves it an eighth of the way toward the hints it took
++/// (glibc's adaptive-mutex update), a failure halves it; the result is held to `floor..=max`.
++/// Computed in `i64`, so a spin that took fewer hints than the estimate can't wrap.
++fn next_estimate(estimate: u32, outcome: Outcome, floor: u32, max: u32) -> u32 {
++    let e = i64::from(estimate);
++    let next = match outcome {
++        Outcome::Got(spent) => e + (i64::from(spent) - e) / 8,
++        Outcome::Failed => e / 2,
++    };
++    let held = next.max(i64::from(floor.min(max))).min(i64::from(max));
++    u32::try_from(held).unwrap_or(max)
++}
++
++/// The probe arm's count of contended enters, kept above [`ESTIMATE_MASK`]; it wraps at 16 bits.
++fn probe_count(word: u32) -> u32 {
++    word >> 16
++}
++
++/// Whether the contended enter that finds `word` is a probe (every [`PROBE_EVERY`]th).
++fn is_probe(word: u32) -> bool {
++    (probe_count(word) + 1).is_multiple_of(PROBE_EVERY)
++}
++
++/// The state word to store after a spin that found `word`.
++fn next_word(word: u32, outcome: Outcome, policy: Policy) -> u32 {
++    let estimate = next_estimate(word & ESTIMATE_MASK, outcome, policy.floor, policy.budget);
++    match policy.adapt {
++        Adapt::Probe => (((probe_count(word) + 1) & 0xFFFF) << 16) | estimate,
++        Adapt::Fixed | Adapt::Decay => estimate,
++    }
++}
++
+ const FIRST_STATIC: c_int = ffi::SQLITE_MUTEX_STATIC_MAIN;
+ const LAST_STATIC: c_int = ffi::SQLITE_MUTEX_STATIC_VFS3;
+ /// SQLite's static mutexes, ids 2 to 13 in 3.54.
+@@ -134,6 +232,19 @@ static INSTALLED: AtomicBool = AtomicBool::new(false);
+ /// [`SPIN_HINTS`], or 0 at 2 or fewer CPUs ([`budget_for`]). Read once at install.
+ static SPIN_BUDGET: AtomicU32 = AtomicU32::new(0);
+ 
++/// The spinner cap in force ([`cap_for`]), or [`NO_CAP`]. Read once at install.
++static SPIN_CAP: AtomicU32 = AtomicU32::new(NO_CAP);
++
++/// The policy in force for a contended enter.
++fn policy() -> Policy {
++    let budget = SPIN_BUDGET.load(Ordering::Relaxed);
++    #[cfg(not(dco_spin_sweep))]
++    let (adapt, floor) = (SHIPPED_ADAPT, SPIN_FLOOR);
++    #[cfg(dco_spin_sweep)]
++    let (adapt, floor) = sweep::adapt_and_floor();
++    Policy { budget, cap: SPIN_CAP.load(Ordering::Relaxed), adapt, floor }
++}
++
+ /// The spin budget in force, for the sweep's harness to confirm its override took. Only in a sweep
+ /// build (`--cfg dco_spin_sweep`).
+ #[cfg(dco_spin_sweep)]
+@@ -143,16 +254,39 @@ pub fn sweep_spin_budget() -> u32 {
+     SPIN_BUDGET.load(Ordering::Relaxed)
+ }
+ 
+-/// The spin sweep's overrides (plan 12 step 5, build-order step 2), compiled in only under
++/// The whole policy in force, `(budget, cap, mode, floor)`, with the cap `u32::MAX` when there is
++/// none and the mode `"fixed"`, `"decay"` or `"decay+probe"`. Only in a sweep build.
++#[cfg(dco_spin_sweep)]
++#[doc(hidden)]
++#[must_use]
++pub fn sweep_spin_policy() -> (u32, u32, &'static str, u32) {
++    let p = policy();
++    let mode = match p.adapt {
++        Adapt::Fixed => "fixed",
++        Adapt::Decay => "decay",
++        Adapt::Probe => "decay+probe",
++    };
++    (p.budget, p.cap, mode, p.floor)
++}
++
++/// The spin sweep's overrides (plan 12 step 5, build-order steps 2 and 3a), compiled in only under
+ /// `RUSTFLAGS="--cfg dco_spin_sweep"`, a benchmark build. A shipped build has no environment knob:
+ /// there these return the built-in values.
+ mod sweep {
+     use std::ffi::c_int;
+ 
++    #[cfg(dco_spin_sweep)]
++    use super::{Adapt, NO_CAP};
++
++    #[cfg(dco_spin_sweep)]
++    fn var(name: &str) -> Option<String> {
++        std::env::var(name).ok()
++    }
++
+     /// The spin budget: `DCO_SPIN_HINTS` if set and a number, otherwise `default`.
+     #[cfg(dco_spin_sweep)]
+     pub(super) fn budget(default: u32) -> u32 {
+-        std::env::var("DCO_SPIN_HINTS").ok().and_then(|v| v.parse().ok()).unwrap_or(default)
++        var("DCO_SPIN_HINTS").and_then(|v| v.parse().ok()).unwrap_or(default)
+     }
+ 
+     #[cfg(not(dco_spin_sweep))]
+@@ -160,6 +294,62 @@ mod sweep {
+         default
+     }
+ 
++    /// The CPU count the 2-CPU rule sees: none (an unknown count keeps the spin) when
++    /// `DCO_SPIN_NO_CPU_RULE=1`.
++    #[cfg(dco_spin_sweep)]
++    pub(super) fn cpu_rule(cpus: Option<usize>) -> Option<usize> {
++        if var("DCO_SPIN_NO_CPU_RULE").is_some_and(|v| v == "1") { None } else { cpus }
++    }
++
++    #[cfg(not(dco_spin_sweep))]
++    pub(super) fn cpu_rule(cpus: Option<usize>) -> Option<usize> {
++        cpus
++    }
++
++    /// `DCO_SPIN_MODE`: `fixed`, `cap`, `decay`, `both` (cap and decay) or `decay+probe`; unset,
++    /// the shipped policy. Read once.
++    #[cfg(dco_spin_sweep)]
++    fn mode() -> Option<(bool, Adapt)> {
++        static MODE: std::sync::OnceLock<Option<(bool, Adapt)>> = std::sync::OnceLock::new();
++        *MODE.get_or_init(|| match var("DCO_SPIN_MODE")?.as_str() {
++            "fixed" => Some((false, Adapt::Fixed)),
++            "cap" => Some((true, Adapt::Fixed)),
++            "decay" => Some((false, Adapt::Decay)),
++            "both" => Some((true, Adapt::Decay)),
++            "decay+probe" => Some((false, Adapt::Probe)),
++            _ => None,
++        })
++    }
++
++    /// The spinner cap: under a mode, `DCO_SPIN_CAP` (a number, or `half` for half the CPUs, at
++    /// least 1; default 1) when the mode caps, else none; with no mode, `default`.
++    #[cfg(dco_spin_sweep)]
++    pub(super) fn cap(default: u32, cpus: Option<usize>) -> u32 {
++        let Some((capped, _)) = mode() else { return default };
++        if !capped {
++            return NO_CAP;
++        }
++        match var("DCO_SPIN_CAP").as_deref() {
++            Some("half") => cpus.map_or(2, |n| u32::try_from(n / 2).unwrap_or(NO_CAP - 1).max(1)),
++            Some(n) => n.parse().unwrap_or(1),
++            None => 1,
++        }
++    }
++
++    #[cfg(not(dco_spin_sweep))]
++    pub(super) fn cap(default: u32, _cpus: Option<usize>) -> u32 {
++        default
++    }
++
++    /// The adaptation and its floor (`DCO_SPIN_FLOOR`), read once.
++    #[cfg(dco_spin_sweep)]
++    pub(super) fn adapt_and_floor() -> (Adapt, u32) {
++        static FLOOR: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
++        let floor =
++            *FLOOR.get_or_init(|| var("DCO_SPIN_FLOOR").and_then(|v| v.parse().ok()).unwrap_or(super::SPIN_FLOOR));
++        (mode().map_or(super::SHIPPED_ADAPT, |(_, adapt)| adapt), floor)
++    }
++
+     /// The pthread type of a FAST mutex: the default, or glibc's adaptive (spinning) type when the
+     /// sweep sets `DCO_SPIN_ADAPTIVE=1`. Read once.
+     #[cfg(all(dco_spin_sweep, target_os = "linux", target_env = "gnu"))]
+@@ -177,8 +367,18 @@ mod sweep {
+ }
+ 
+ fn install() -> MutexStatus {
+-    let budget = budget_for(std::thread::available_parallelism().ok().map(std::num::NonZero::get));
+-    SPIN_BUDGET.store(sweep::budget(budget), Ordering::Relaxed);
++    let cpus = std::thread::available_parallelism().ok().map(std::num::NonZero::get);
++    // Held to the estimate's 16 bits, so the adaptive arms' packed word can't overflow.
++    let budget = sweep::budget(budget_for(sweep::cpu_rule(cpus))).min(ESTIMATE_MASK);
++    SPIN_BUDGET.store(budget, Ordering::Relaxed);
++    SPIN_CAP.store(sweep::cap(cap_for(cpus), cpus), Ordering::Relaxed);
++    // A fork landing mid-spin on a static mutex (only outside the gate: `compile_options`, and the
++    // MEM static that `_sqlite_memory` and every `sqlite3_malloc` take) would leave the child that
++    // mutex's spinner count raised with no thread to lower it. A failed registration (ENOMEM) only
++    // risks that: slower in the child, never wrong.
++    // SAFETY: registers a handler with no prepare or parent half; the child handler only does
++    // atomic stores to statics, which is async-signal-safe and so allowed in a forked child.
++    let _ = unsafe { libc::pthread_atfork(None, None, Some(reset_after_fork_in_child)) };
+     // SAFETY: SQLITE_CONFIG_MUTEX takes one `sqlite3_mutex_methods*`, which SQLite copies; METHODS
+     // is a 'static of exactly that type. Config only reads SQLite's global config before init, and
+     // it's called once, under the OnceLock, before any connection this crate opens.
+@@ -215,7 +415,13 @@ static METHODS: ffi::sqlite3_mutex_methods = ffi::sqlite3_mutex_methods {
+ /// One SQLite mutex. SQLite only ever sees a pointer to it, as `*mut sqlite3_mutex`.
+ #[repr(C)]
+ struct SpinMutex {
++    /// First, at offset 0 (SQLite never looks inside, but nothing moves it).
+     raw: UnsafeCell<libc::pthread_mutex_t>,
++    /// Threads spinning on it now, kept only under a spinner cap. Touched only by a contended enter.
++    spinners: AtomicU32,
++    /// The adaptive estimate, in hints, in the low 16 bits ([`ESTIMATE_MASK`]); the probe arm's
++    /// count of contended enters above it. Touched only by a contended enter.
++    estimate: AtomicU32,
+     /// The holding thread's token (0 when free) and its recursion depth. Atomics, because the
+     /// statics are shared between threads and a non-holder reads them in `held`.
+     #[cfg(debug_assertions)]
+@@ -234,6 +440,8 @@ impl SpinMutex {
+     const fn new_static() -> Self {
+         Self {
+             raw: UnsafeCell::new(libc::PTHREAD_MUTEX_INITIALIZER),
++            spinners: AtomicU32::new(0),
++            estimate: AtomicU32::new(INITIAL_ESTIMATE),
+             #[cfg(debug_assertions)]
+             owner: std::sync::atomic::AtomicUsize::new(0),
+             #[cfg(debug_assertions)]
+@@ -246,9 +454,26 @@ impl SpinMutex {
+     }
+ }
+ 
++/// Where a mutex's estimate starts: half the budget, so its first contended enter spins the whole
++/// [`SPIN_HINTS`]. A sweep budget below it is clamped there; one above it starts lower.
++const INITIAL_ESTIMATE: u32 = SPIN_HINTS / 2;
++
+ /// Never freed: `free` recognizes them by address and leaves them alone.
+ static STATICS: [SpinMutex; STATIC_COUNT] = [const { SpinMutex::new_static() }; STATIC_COUNT];
+ 
++/// The `pthread_atfork` child handler: no thread spins in a forked child, so every static's
++/// spinner count is 0 there. Dynamic mutexes can't be enumerated, but they belong to connections
++/// and are entered only inside the fork gate, which no fork overlaps.
++extern "C" fn reset_after_fork_in_child() {
++    reset_static_spinners();
++}
++
++fn reset_static_spinners() {
++    for m in &STATICS {
++        m.spinners.store(0, Ordering::Relaxed);
++    }
++}
++
+ /// Dynamic mutexes allocated so far (debug builds), for the install test.
+ #[cfg(debug_assertions)]
+ static DYNAMIC_ALLOCATIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+@@ -281,6 +506,8 @@ fn new_dynamic(kind: Option<c_int>) -> *mut ffi::sqlite3_mutex {
+     // The pthread mutex is initialized in place (POSIX doesn't allow initializing a copy), and the
+     // debug fields are written through raw pointers, so no reference to uninitialized memory exists.
+     let ok = unsafe {
++        (&raw mut (*p).spinners).write(AtomicU32::new(0));
++        (&raw mut (*p).estimate).write(AtomicU32::new(INITIAL_ESTIMATE));
+         #[cfg(debug_assertions)]
+         {
+             (&raw mut (*p).owner).write(std::sync::atomic::AtomicUsize::new(0));
+@@ -378,7 +605,12 @@ unsafe extern "C" fn mutex_free(p: *mut ffi::sqlite3_mutex) {
+ unsafe extern "C" fn mutex_enter(p: *mut ffi::sqlite3_mutex) {
+     // SAFETY: SQLite passes only mutexes it got from `mutex_alloc` and hasn't freed.
+     let m = unsafe { mutex(p) };
+-    if !try_lock(m) && !spin(m) {
++    enter_with(m, policy);
++}
++
++/// `xMutexEnter` under the policy `policy` returns (a parameter, so tests can force one).
++fn enter_with(m: &SpinMutex, policy: impl FnOnce() -> Policy) {
++    if !try_lock(m) && !spin(m, policy()) {
+         // SAFETY: an initialized pthread mutex. Like SQLite's own, the result isn't checked: the
+         // only failures are EINVAL (not a mutex) and EDEADLK (an error-checking type, never made).
+         unsafe { libc::pthread_mutex_lock(m.raw()) };
+@@ -387,23 +619,63 @@ unsafe extern "C" fn mutex_enter(p: *mut ffi::sqlite3_mutex) {
+     entered(m);
+ }
+ 
+-/// The spin between the first try and blocking: [`SPIN_BUDGET`] hints in all, in gaps of 1, 2, 4,
+-/// ... up to [`MAX_GAP`], with a try after each gap. No clock reads: one costs more than the spin.
+-fn spin(m: &SpinMutex) -> bool {
+-    let budget = SPIN_BUDGET.load(Ordering::Relaxed);
++/// The spin between the first try and blocking; true if it got the lock. At most the policy's
++/// budget of hints, in gaps of 1, 2, 4, ... up to [`MAX_GAP`], with a try after each gap. No clock
++/// reads: one costs more than the spin.
++///
++/// Under a cap, a spinner count is taken first, or it blocks at once with no change to the mutex's
++/// state. The loop has one exit, so the count is given back and the estimate updated before the
++/// caller blocks: a thread parked in the kernel never counts as a spinner.
++fn spin(m: &SpinMutex, policy: Policy) -> bool {
++    if policy.budget == 0 {
++        return false;
++    }
++    let capped = policy.cap != NO_CAP;
++    if capped {
++        // Test-and-test-and-set: when full, no RMW on the contended line.
++        if !may_spin(m.spinners.load(Ordering::Relaxed), policy.cap) {
++            return false;
++        }
++        if !may_spin(m.spinners.fetch_add(1, Ordering::Relaxed), policy.cap) {
++            m.spinners.fetch_sub(1, Ordering::Relaxed);
++            return false;
++        }
++    }
++    let word = match policy.adapt {
++        Adapt::Fixed => 0,
++        Adapt::Decay | Adapt::Probe => m.estimate.load(Ordering::Relaxed),
++    };
++    let limit = match policy.adapt {
++        Adapt::Fixed => policy.budget,
++        Adapt::Probe if is_probe(word) => policy.budget,
++        Adapt::Decay | Adapt::Probe => budget(word & ESTIMATE_MASK, policy.floor, policy.budget),
++    };
+     let (mut spent, mut gap) = (0, 1);
+-    while spent < budget {
+-        let hints = gap.min(budget - spent);
++    let outcome = loop {
++        if spent >= limit {
++            break Outcome::Failed;
++        }
++        let hints = gap.min(limit - spent);
+         for _ in 0..hints {
+             hint::spin_loop();
+         }
+         spent += hints;
+         if try_lock(m) {
+-            return true;
++            break Outcome::Got(spent);
+         }
+         gap = (gap * 2).min(MAX_GAP);
++    };
++    if capped {
++        m.spinners.fetch_sub(1, Ordering::Relaxed);
++    }
++    if policy.adapt != Adapt::Fixed {
++        // A Relaxed load and store, not an RMW: racing waiters can lose an update (a heuristic).
++        let next = next_word(word, outcome, policy);
++        if next != word {
++            m.estimate.store(next, Ordering::Relaxed);
++        }
+     }
+-    false
++    matches!(outcome, Outcome::Got(_))
+ }
+ 
+ unsafe extern "C" fn mutex_try(p: *mut ffi::sqlite3_mutex) -> c_int {
+@@ -674,4 +946,236 @@ mod tests {
+             free(p);
+         }
+     }
++
++    // The adaptive spin (5a-2).
++
++    fn policy_of(budget: u32, cap: u32, adapt: Adapt) -> Policy {
++        Policy { budget, cap, adapt, floor: SPIN_FLOOR }
++    }
++
++    /// The spinner count of the mutex behind `p`: the leak check.
++    fn spinners(p: Shared) -> u32 {
++        // SAFETY: `p` is live for the caller's test.
++        unsafe { mutex(p.0) }.spinners.load(Ordering::Relaxed)
++    }
++
++    fn estimate_word(p: Shared) -> u32 {
++        // SAFETY: as for `spinners`.
++        unsafe { mutex(p.0) }.estimate.load(Ordering::Relaxed)
++    }
++
++    fn enter_under(p: Shared, policy: Policy) {
++        // SAFETY: as for `enter`.
++        enter_with(unsafe { mutex(p.0) }, || policy);
++    }
++
++    #[test]
++    fn the_cap_admits_below_it_only() {
++        assert!(may_spin(0, 1));
++        assert!(!may_spin(1, 1));
++        assert!(may_spin(1, 2));
++        assert!(!may_spin(0, 0), "cap 0: nobody spins");
++        assert!(may_spin(u32::MAX - 1, NO_CAP));
++    }
++
++    #[test]
++    fn the_budget_is_twice_the_estimate_held_to_floor_and_max() {
++        assert_eq!(budget(0, 32, 1024), 32);
++        assert_eq!(budget(100, 32, 1024), 200);
++        assert_eq!(budget(600, 32, 1024), 1024, "never above the budget");
++        assert_eq!(budget(u32::MAX, 32, 1024), 1024, "saturates");
++        assert_eq!(budget(u32::MAX, 32, u32::MAX), u32::MAX);
++        assert_eq!(budget(500, 32, 0), 0, "0 when the budget is");
++        assert_eq!(budget(0, 64, 16), 16, "a floor above the budget gives the budget");
++        assert_eq!(
++            budget(INITIAL_ESTIMATE, SPIN_FLOOR, SPIN_HINTS),
++            SPIN_HINTS,
++            "a fresh mutex spins the whole budget"
++        );
++    }
++
++    #[test]
++    fn failures_halve_down_to_the_floor_and_never_below() {
++        let mut e = INITIAL_ESTIMATE;
++        let mut seen = vec![e];
++        for _ in 0..20 {
++            e = next_estimate(e, Outcome::Failed, 32, 1024);
++            seen.push(e);
++        }
++        assert_eq!(&seen[..6], &[512, 256, 128, 64, 32, 32]);
++        assert!(seen.iter().all(|&e| e >= 32));
++        assert_eq!(next_estimate(u32::MAX, Outcome::Failed, 32, 1024), 1024, "held to the budget");
++        assert_eq!(next_estimate(0, Outcome::Failed, 32, 0), 0);
++    }
++
++    #[test]
++    fn successes_converge_on_spent_without_wrapping() {
++        // Up toward a longer hold.
++        let mut e = 32;
++        for _ in 0..200 {
++            let next = next_estimate(e, Outcome::Got(300), 32, 1024);
++            assert!(next >= e && next <= 300);
++            e = next;
++        }
++        assert!((292..=300).contains(&e), "{e}");
++        // Down, the usual case once warm: `spent < estimate` must not wrap.
++        let mut e = 1000;
++        for _ in 0..200 {
++            let next = next_estimate(e, Outcome::Got(40), 0, 1024);
++            assert!(next <= e && next >= 40, "{e} -> {next}");
++            e = next;
++        }
++        assert!((40..=48).contains(&e), "{e}");
++        // `spent == 0`.
++        assert_eq!(next_estimate(512, Outcome::Got(0), 0, 1024), 448);
++        assert_eq!(next_estimate(512, Outcome::Got(0), 32, 1024), 448);
++        assert_eq!(next_estimate(7, Outcome::Got(0), 0, 1024), 7, "a step under an eighth rounds to none");
++        // Every pair in range stays in range, and moves the right way.
++        for e in [0, 1, 31, 32, 33, 100, 512, 1023, 1024, 40_000, u32::MAX] {
++            for spent in [0, 1, 32, 100, 512, 1024, 4096, u32::MAX] {
++                let next = next_estimate(e, Outcome::Got(spent), 32, 1024);
++                assert!((32..=1024).contains(&next), "{e} {spent} -> {next}");
++                let held = e.clamp(32, 1024);
++                if spent < e {
++                    assert!(next <= held, "{e} {spent} -> {next}");
++                } else {
++                    assert!(next >= held.min(spent.min(1024)), "{e} {spent} -> {next}");
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn a_mutex_decayed_to_the_floor_recovers_when_holds_fit_the_floor_budget() {
++        let mut e = INITIAL_ESTIMATE;
++        for _ in 0..20 {
++            e = next_estimate(e, Outcome::Failed, SPIN_FLOOR, SPIN_HINTS);
++        }
++        assert_eq!(e, SPIN_FLOOR);
++        let floor_budget = budget(e, SPIN_FLOOR, SPIN_HINTS);
++        // Spins that succeed near the floor budget raise the estimate, and with it the budget.
++        for _ in 0..100 {
++            let b = budget(e, SPIN_FLOOR, SPIN_HINTS);
++            e = next_estimate(e, Outcome::Got(b), SPIN_FLOOR, SPIN_HINTS);
++        }
++        assert!(budget(e, SPIN_FLOOR, SPIN_HINTS) > floor_budget, "{e}");
++    }
++
++    #[test]
++    fn the_probe_fires_every_64th_contended_enter_and_its_count_wraps() {
++        let policy = policy_of(SPIN_HINTS, NO_CAP, Adapt::Probe);
++        let mut word = 100;
++        let mut probes = vec![];
++        for i in 0..640 {
++            if is_probe(word) {
++                probes.push(i);
++            }
++            // A spin that took exactly the estimate leaves it where it is.
++            word = next_word(word, Outcome::Got(word & ESTIMATE_MASK), policy);
++            assert_eq!(word & ESTIMATE_MASK, 100);
++        }
++        assert_eq!(probes, (0..10).map(|k| 64 * k + 63).collect::<Vec<_>>());
++        // The count wraps at 16 bits without touching the estimate, and the period holds across it.
++        let top = (0xFFFF << 16) | 0x64;
++        assert!(is_probe(top), "65,536 is a multiple of 64");
++        assert_eq!(next_word(top, Outcome::Got(100), policy), 100);
++        // Plain decay keeps no count.
++        let decay = policy_of(SPIN_HINTS, NO_CAP, Adapt::Decay);
++        assert_eq!(next_word(top, Outcome::Got(100), decay), 100);
++    }
++
++    #[test]
++    fn no_budget_touches_nothing() {
++        let p = Shared(alloc(ffi::SQLITE_MUTEX_FAST));
++        // SAFETY: `p` is live until the `free` at the end.
++        let m = unsafe { mutex(p.0) };
++        enter(p);
++        for adapt in [Adapt::Fixed, Adapt::Decay, Adapt::Probe] {
++            assert!(!spin(m, policy_of(0, 1, adapt)));
++        }
++        assert_eq!((spinners(p), estimate_word(p)), (0, INITIAL_ESTIMATE));
++        leave(p);
++        free(p);
++    }
++
++    /// An enter the cap turns away blocks at once and changes neither the count nor the estimate.
++    #[test]
++    fn a_capped_enter_changes_nothing() {
++        let p = Shared(alloc(ffi::SQLITE_MUTEX_FAST));
++        // SAFETY: `p` is live until the `free` at the end.
++        let m = unsafe { mutex(p.0) };
++        enter(p);
++        m.spinners.store(2, Ordering::Relaxed);
++        for adapt in [Adapt::Fixed, Adapt::Decay, Adapt::Probe] {
++            assert!(!spin(m, policy_of(SPIN_HINTS, 2, adapt)));
++            assert_eq!((spinners(p), estimate_word(p)), (2, INITIAL_ESTIMATE), "{adapt:?}");
++        }
++        // Below the cap it spins (and fails: this thread holds it), gives its count back, and decays.
++        m.spinners.store(0, Ordering::Relaxed);
++        assert!(!spin(m, policy_of(SPIN_HINTS, 2, Adapt::Decay)));
++        assert_eq!((spinners(p), estimate_word(p)), (0, INITIAL_ESTIMATE / 2));
++        // A failed spin under the fixed policy leaves the estimate alone.
++        assert!(!spin(m, policy_of(SPIN_HINTS, 1, Adapt::Fixed)));
++        assert_eq!((spinners(p), estimate_word(p)), (0, INITIAL_ESTIMATE / 2));
++        leave(p);
++        free(p);
++    }
++
++    /// As `contended_increments_lose_nothing`, under each cap and adaptation, and the spinner count
++    /// comes back to 0. The recursive mutex is entered twice per increment, the second time while
++    /// held, so re-entry runs under contention too.
++    #[test]
++    fn adaptive_contended_increments_lose_nothing_and_leak_no_spinner() {
++        const THREADS: u64 = 8;
++        const EACH: u64 = 5_000;
++        for id in [ffi::SQLITE_MUTEX_FAST, ffi::SQLITE_MUTEX_RECURSIVE] {
++            for cap in [0, 1, 2, NO_CAP] {
++                for adapt in [Adapt::Fixed, Adapt::Decay, Adapt::Probe] {
++                    let policy = policy_of(SPIN_HINTS, cap, adapt);
++                    let p = Shared(alloc(id));
++                    let count = AtomicU64::new(0);
++                    let start = Barrier::new(usize::try_from(THREADS).unwrap());
++                    let (count_ref, start) = (&count, &start);
++                    thread::scope(|s| {
++                        for _ in 0..THREADS {
++                            s.spawn(move || {
++                                let count = count_ref;
++                                start.wait();
++                                for _ in 0..EACH {
++                                    enter_under(p, policy);
++                                    if id == ffi::SQLITE_MUTEX_RECURSIVE {
++                                        enter_under(p, policy);
++                                    }
++                                    count.store(count.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
++                                    if id == ffi::SQLITE_MUTEX_RECURSIVE {
++                                        leave(p);
++                                    }
++                                    leave(p);
++                                }
++                            });
++                        }
++                    });
++                    let what = format!("id {id}, cap {cap}, {adapt:?}");
++                    assert_eq!(count.into_inner(), THREADS * EACH, "{what}");
++                    assert_eq!(spinners(p), 0, "a leaked spinner count: {what}");
++                    let estimate = estimate_word(p) & ESTIMATE_MASK;
++                    assert!((SPIN_FLOOR..=SPIN_HINTS).contains(&estimate), "{what}: {estimate}");
++                    free(p);
++                }
++            }
++        }
++    }
++
++    /// The atfork child handler's body, called directly, zeroes a raised static count.
++    #[test]
++    fn the_fork_child_handler_zeroes_the_static_spinner_counts() {
++        let p = Shared(alloc(ffi::SQLITE_MUTEX_STATIC_APP2));
++        // SAFETY: a static, live for the process.
++        let m = unsafe { mutex(p.0) };
++        m.spinners.store(3, Ordering::Relaxed);
++        STATICS[STATIC_COUNT - 1].spinners.store(1, Ordering::Relaxed);
++        reset_after_fork_in_child();
++        assert_eq!(spinners(p), 0);
++        assert!(STATICS.iter().all(|m| m.spinners.load(Ordering::Relaxed) == 0));
++    }
+ }
+diff --git a/crates/diskcache-oxide-py/src/lib.rs b/crates/diskcache-oxide-py/src/lib.rs
+index b65e787..b137086 100644
+--- a/crates/diskcache-oxide-py/src/lib.rs
++++ b/crates/diskcache-oxide-py/src/lib.rs
+@@ -303,6 +303,13 @@ fn _sqlite_mutex_status() -> &'static str {
+     sqlite_mutex::status().map_or("not_attempted", MutexStatus::as_str)
+ }
+ 
++/// Sweep-build hook: how many slot waits reached the detached wait so far in this process.
++#[cfg(dco_spin_sweep)]
++#[pyfunction]
++fn _sweep_slot_waits() -> u64 {
++    diskcache_oxide_core::genlock::sweep_slot_waits()
++}
++
+ /// Installs SQLite's mutex methods before anything else in the module can reach SQLite (plan 12
+ /// step 5a): the module init is the earliest point, so no other thread can be opening a cache.
+ ///
+@@ -370,6 +377,11 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+     // And the slot wait's spin budget and spinner limit (5b).
+     #[cfg(dco_spin_sweep)]
+     m.add("_SWEEP_SLOT_WAIT", diskcache_oxide_core::genlock::sweep_slot_wait())?;
++    // And the adaptive spin's policy (5a-2), and a live count of slot waits.
++    #[cfg(dco_spin_sweep)]
++    m.add("_SWEEP_SPIN_POLICY", sqlite_mutex::sweep_spin_policy())?;
++    #[cfg(dco_spin_sweep)]
++    m.add_function(wrap_pyfunction!(_sweep_slot_waits, m)?)?;
+     m.add("__version__", pep440_version())?;
+     m.add("BUNDLED_SQLITE_VERSION", sqlite::compile_version())?;
+     // Lets benchmarks refuse to measure an unoptimized build.
