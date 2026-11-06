@@ -38,6 +38,9 @@ Plan documents: `plans/00-roadmap.md` (Phase 3), `plans/06` (the concurrency wor
 - **The wheels Talk Python installs are PGO builds** (2026-11-04), on Linux and macOS. This replaces plan 084 default 3 (plain wheels).
 - **A whole-codebase sanitizer pass comes before production** (2026-11-04): after the port is far enough along to move Talk Python over, and before the final 24-hour soak, so that soak covers any fixes (section 3, item 6).
 
+- **The 0.1.0 release (Michael, 2026-11-06):** PGO wheels for cp314, cp314t, cp315 and cp315t on macOS arm64, Linux x86_64 and Linux aarch64 (12 wheels), all `manylinux_2_34` on Linux (built on Ubuntu 26.04, as production and the tests are), plus an sdist. An annotated `v0.1.0` tag on the soaked commit, and a GitHub release with short notes and the wheels attached. Michael publishes to PyPI.
+- **The gating 24-hour soak runs on the mini at its full shape** (with `--fanout-threads 16`), on the final commit after the sanitizer pass and plan 13's changes. The htz run of 2026-11-06 (x86-64, 4 CPUs) is extra evidence, not the gate.
+
 ## 3. What to do next, in order
 
 1. **Michael's perf test** (section 5), against the wheels already in `dist/`. It needs a small spike on the branch, because the app can't use the library unmodified.
