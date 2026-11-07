@@ -70,7 +70,14 @@ MIRI_SKIP=(
     wal::tests::checks_are_rate_limited_by_time_or_commit_count
     wal::tests::a_successful_checkpoint_does_not_back_off
 )
-MIRI_FLAGS='-Zmiri-num-cpus=4'  # so genlock's and sqlite_mutex's spins (3+ CPUs) are what runs
+# -Zmiri-num-cpus=4: so genlock's and sqlite_mutex's spins (3+ CPUs) are what runs.
+# -Zmiri-address-reuse-rate=1.0: a freed address is always offered to the next same-thread allocation
+# of its size, so an ABA on addresses (plan 14, finding 1) surfaces at the first seed. The cross-thread
+# rate stays at Miri's default: raising it induces synchronization between the threads, which masks
+# data races and weak-memory bugs, the lane's other job; the stack gets its own pass below with both
+# rates up. Never add -Zmiri-strict-provenance: `stack` relies on exposed provenance by design.
+MIRI_FLAGS='-Zmiri-num-cpus=4 -Zmiri-address-reuse-rate=1.0'
+MIRI_REUSE_FLAGS='-Zmiri-address-reuse-rate=1.0 -Zmiri-address-reuse-cross-thread-rate=1.0'
 
 # Every test name the core lib has, from the Miri build itself. Printed one per line.
 miri_list() {
@@ -116,13 +123,24 @@ lane_A() {
         cargo "+$NIGHTLY" miri test -p diskcache-oxide-core --lib -- --exact "${iso[@]}" >"$log" 2>&1 || rc=1
     CARGO_TARGET_DIR="$PWD/target/san-A-$NIGHTLY" MIRIFLAGS="$MIRI_FLAGS -Zmiri-disable-isolation -Zmiri-many-seeds=0..$seeds" \
         cargo "+$NIGHTLY" miri test -p diskcache-oxide-core --lib -- --exact "${host[@]}" >>"$log" 2>&1 || rc=1
+    # The stack once more with cross-thread address reuse at 1.0 too (the finding's shape: a taker
+    # frees, a pusher allocates), on a few seeds, where masking races doesn't matter.
+    CARGO_TARGET_DIR="$PWD/target/san-A-$NIGHTLY" MIRIFLAGS="-Zmiri-num-cpus=4 $MIRI_REUSE_FLAGS -Zmiri-disable-isolation -Zmiri-many-seeds=0..4" \
+        cargo "+$NIGHTLY" miri test -p diskcache-oxide-core --lib -- stack:: >>"$log" 2>&1 || rc=1
     # -Zmiri-many-seeds exits non-zero if any seed fails, so the exit code is the verdict; the seeds'
     # interleaved output can split even a `test result` line, so it isn't counted.
     if (( rc == 0 )); then
-        note "A  PASS  ${#iso[@]} tests isolated and ${#host[@]} with the host, each clean on all $seeds seeds (of $(wc -l < "$all" | tr -d ' ') core tests)"
+        note "A  PASS  ${#iso[@]} tests isolated and ${#host[@]} with the host, each clean on all $seeds seeds, and the stack with cross-thread address reuse on 4 (of $(wc -l < "$all" | tr -d ' ') core tests)"
     else
-        # Report the failing seed and the first diagnostic, not a line that merely names `error::tests`.
-        note "A  FAIL  see $log: $(grep -m1 -E '^FAILING SEED' "$log") $(grep -m1 -E 'Undefined Behavior|memory leaked|data race|panicked at|^error: (unsupported|resource|Undefined)' "$log" | cut -c1-160)"
+        # Report every failing seed and every distinct diagnostic (the two modes run one after the
+        # other, and the first failure must not hide the second), not a line that merely names
+        # `error::tests`.
+        note "A  FAIL  see $log: $(grep -E '^FAILING SEED' "$log" | sort -u | tr '\n' ' ')"
+        # A panic's message is on the line after `panicked at`, hence -A1. `|| true`: this grep is
+        # a report, not the verdict, and a failure it can't name (a build error, an ICE) must not
+        # end the script here under `set -e`.
+        grep -E -A1 'Undefined Behavior|memory leaked|data race|panicked at|^error: (unsupported|resource|Undefined)' "$log" \
+            | sed -E 's/^.*(error: Undefined Behavior|thread )/\1/' | cut -c1-200 | sort -u | sed 's/^/         /' | tee -a "$SUMMARY" || true
         FAILED+=(A)
     fi
 }

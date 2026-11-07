@@ -3,8 +3,19 @@
 //! a thread a fork leaves behind never leaves the child anything held: the child can always push and
 //! take. A push the fork cut off loses only its own value, which then is never dropped in the child.
 //!
-//! There is no pop of a single node, so the ABA problem can't arise: a node is only freed by the
-//! thread that swapped the whole list out, after which nobody else can reach it.
+//! There is no pop of a single node, so no node is ever freed while another thread can still reach
+//! it through the list: a node is only freed by the thread that swapped the whole list out.
+//!
+//! ABA still happens at the address level, and the code is written for it. A pusher loads `head`
+//! (node n1), a taker swaps the list out and frees n1, another pusher's new node m is allocated at
+//! n1's address and published, and the first pusher's compare-and-swap succeeds, since the atomic
+//! compares addresses: its node's `next` is then the address of a live node, m, but a pointer to it
+//! would carry n1's provenance, a dead allocation, and reading through it would be undefined
+//! behavior (Miri found exactly that, plan 14, lane A, seed 31). So `next` is an address, every
+//! node's allocation is exposed when it is created, and the walk rebuilds each pointer with
+//! `with_exposed_provenance_mut`: a successful compare-and-swap on an address means a live, exposed
+//! node sits there, and that is the node the walk must visit. The list itself is right either way:
+//! the pusher linked under whatever the head was at the moment of the exchange.
 //!
 //! One of two modules in core that may use `unsafe`, with `sqlite_mutex` (see
 //! `tests::only_these_modules_allow_unsafe`).
@@ -28,7 +39,9 @@ pub(crate) struct TakeAllStack<T> {
 
 struct Node<T> {
     value: T,
-    next: *mut Node<T>,
+    /// The address of the node below, 0 at the bottom. An address and not a pointer: see the module
+    /// docs on ABA and provenance.
+    next: usize,
 }
 
 impl<T> TakeAllStack<T> {
@@ -37,13 +50,18 @@ impl<T> TakeAllStack<T> {
     }
 
     pub(crate) fn push(&self, value: T) {
-        let node = Box::into_raw(Box::new(Node { value, next: ptr::null_mut() }));
-        // Relaxed: the old head only goes into `next`, never read through here.
+        let node = Box::into_raw(Box::new(Node { value, next: 0 }));
+        // Exposes the node's allocation, so a walk that reaches this node by address can rebuild a
+        // pointer to it (module docs). The address itself isn't needed here.
+        let _ = node.expose_provenance();
+        // Relaxed: the old head only goes into `next` as an address, never read through here.
         let mut head = self.head.load(Ordering::Relaxed);
         loop {
+            #[cfg(all(test, not(shuttle)))]
+            hooks::between_load_and_exchange(head.addr());
             // SAFETY: `node` came from `Box::into_raw` above and is published only by the exchange
             // below succeeding, after which this loop ends, so until then this thread is its only user.
-            unsafe { (*node).next = head };
+            unsafe { (*node).next = head.addr() };
             // Release publishes the node. Each push is a read-modify-write, so it carries on the
             // release sequence of the pushes under it, and one acquiring swap sees them all.
             match self.head.compare_exchange_weak(head, node, Ordering::Release, Ordering::Relaxed) {
@@ -61,13 +79,54 @@ impl<T> TakeAllStack<T> {
             // SAFETY: every node in the list came from `Box::into_raw` in `push` and was published
             // with Release, which the Acquire swap above synchronizes with. The swap detached the
             // whole list, so nobody else can reach these nodes, and each is turned back into a `Box`
-            // once, here, as the walk moves past it.
+            // once, here, as the walk moves past it. The head pointer has its node's own provenance;
+            // each later one is rebuilt from an address below, which names a live node (only a walk
+            // frees list nodes, and this walk has owned the whole list since its swap) whose
+            // allocation `push` exposed (module docs).
             let node = unsafe { Box::from_raw(next) };
             let Node { value, next: below } = *node;
             taken.push(value);
-            next = below;
+            next = ptr::with_exposed_provenance_mut(below);
         }
         taken
+    }
+}
+
+/// Test hooks into `push`, for the ABA case the module docs describe. Nothing in production code
+/// calls them, and the hook is a no-op unless a test arms it on its own thread. Not under shuttle:
+/// the models don't use it, and its functions would be dead code there.
+#[cfg(all(test, not(shuttle)))]
+mod hooks {
+    use std::cell::Cell;
+
+    /// What a test wants done between a pusher's load of `head` and its exchange, given the address
+    /// that `head` names; returns whether it managed what it set out to do.
+    type Action = Box<dyn FnMut(usize) -> bool>;
+
+    thread_local! {
+        /// The action armed on this thread, taken out while it runs (it re-enters `push`).
+        static ARMED: Cell<Option<Action>> = const { Cell::new(None) };
+        /// Whether the last action that ran returned true.
+        static DONE: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Arms `action` to run once on this thread, at the next `push` whose loaded head isn't null.
+    pub(super) fn arm(action: Action) {
+        DONE.with(|d| d.set(false));
+        ARMED.with(|a| a.set(Some(action)));
+    }
+
+    /// Whether the last armed action reported success.
+    pub(super) fn done() -> bool {
+        DONE.with(Cell::get)
+    }
+
+    pub(super) fn between_load_and_exchange(stale: usize) {
+        if stale == 0 {
+            return;
+        }
+        let Some(mut action) = ARMED.with(Cell::take) else { return };
+        DONE.with(|d| d.set(action(stale)));
     }
 }
 
@@ -107,6 +166,48 @@ mod tests {
         assert_eq!(Arc::strong_count(&value), 4);
         drop(stack);
         assert_eq!(Arc::strong_count(&value), 1);
+    }
+
+    /// The ABA case from the module docs, made to happen: between a pusher's load of `head` (node
+    /// n1) and its exchange, the stack is emptied (freeing n1) and refilled until a new node lands
+    /// at n1's address, so the exchange succeeds against a node the pusher's pointer never knew.
+    /// The walk must then reach that node through the address, not through n1's dead provenance:
+    /// under Miri the old code reported a dangling box here (plan 14, lane A, seed 31). Many rounds,
+    /// because two things have to go the test's way in a round: the allocator must hand n1's
+    /// address out again (Miri pools a freed address with probability 0.5 by default; a native
+    /// allocator nearly always reuses it at once), and the weak exchange must not fail spuriously
+    /// (Miri makes it fail 80% of the time by default; a failure re-reads the head and takes the
+    /// safe path). Under Miri's defaults a round takes the stale path about one time in ten, so 64
+    /// rounds miss it about once in a thousand runs, and the lane runs 32 seeds.
+    #[test]
+    fn a_push_whose_head_was_freed_and_reused_links_to_the_live_node() {
+        static STACK: TakeAllStack<usize> = TakeAllStack::new();
+        let mut reused = 0;
+        for _ in 0..64 {
+            STACK.push(1); // n1, the head the racing push loads.
+            hooks::arm(Box::new(|stale| {
+                drop(STACK.take_all()); // Frees n1, the only node freed in this round, so its
+                // address is the one the allocator (or Miri's reuse pool) has to hand out again.
+                for _ in 0..1_000 {
+                    STACK.push(99); // m, hoping for n1's address; kept, never freed, if it isn't.
+                    if STACK.head.load(Ordering::Relaxed).addr() == stale {
+                        return true;
+                    }
+                }
+                false
+            }));
+            STACK.push(2);
+            let got = STACK.take_all();
+            assert_eq!(got.first(), Some(&2), "the racing push landed on top: {got:?}");
+            assert!(got[1..].iter().all(|v| *v == 99), "every replacement came back, once: {got:?}");
+            assert!(got.len() <= 1_001);
+            reused += usize::from(hooks::done());
+        }
+        // The assertions above hold either way; Miri's verdict on the old code was a dangling box in
+        // any round where the address came back. Natively that is nearly every round; under Miri's
+        // defaults about half. Zero would mean the test no longer exercises the case.
+        eprintln!("address reused in {reused} of 64 rounds");
+        assert!(reused > 0, "the allocator never handed the freed address out again, so nothing was tested");
     }
 
     /// Pushers racing takers on real threads: every value comes out exactly once.

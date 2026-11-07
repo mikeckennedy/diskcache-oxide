@@ -620,7 +620,12 @@ mod tests {
         });
         for (got, waited) in &waits {
             assert!(*got, "a waiter was starved until its deadline");
-            assert!(*waited < Duration::from_millis(200), "waited {waited:?}");
+            // A real-time bound, so native only: under Miri's instruction-counted clock one seed in
+            // 32 reported 222 ms (plan 14, lane A on the mini, 2026-11-07), with the lock won every
+            // round. The no-starvation check above is the property, and it holds under Miri too.
+            if !cfg!(miri) {
+                assert!(*waited < Duration::from_millis(200), "waited {waited:?}");
+            }
         }
         assert_eq!(state_now(lock.starving.load(Ordering::Acquire), current()), 0);
         assert_eq!(lock.waiters(), 0);
