@@ -1,0 +1,22 @@
+# LeakSanitizer suppressions for lane C (plan 14, "Rules for reports"). Each line names a test that
+# leaks on purpose and says why; the pattern is the test's function, which is on the allocation
+# stack of everything it leaks, so nothing outside that test is hidden. A leak anywhere else fails
+# the lane. Seen first in the Linux container on 2026-11-07 (0b20c96): every one is a SQLite
+# connection, or its statement cache, that a simulated fork made stale, and a stale connection is
+# forgotten, never closed, by design (D-017: closing a connection the parent still uses would drop
+# the parent's file locks; a forked child abandons what it inherited).
+
+# pool.rs: a pool whose generation moved (a fork) forgets its idle connections and its count.
+# Expected shape: one in-memory connection, 106 allocations, about 62 KB.
+leak:diskcache_oxide_core::pool::tests::a_stale_pool_forgets_its_idle_connections_and_count
+# pool.rs: a connection checked in after the generation moved is forgotten, not pooled or closed.
+# Expected shape: one in-memory connection, 106 allocations, about 62 KB.
+leak:diskcache_oxide_core::pool::tests::a_stale_connection_coming_back_is_forgotten_not_counted
+# fork_timeout.rs, row 16: a pin dropped behind a fork is forgotten (the test's name says so).
+# Expected shape: one file connection (its filename block too), 107 allocations, about 63 KB.
+leak:diskcache_oxide_core::store::fork_timeout::row_16_a_pin_dropped_behind_a_fork_leaks_its_fd_and_closes_nothing
+# fork_timeout.rs: a held transaction's end drained in the child forgets its connection.
+# Expected shape: one file connection with an open write transaction (dirty pages, cached
+# statements), about 270 allocations, about 184 KB. A jump in any count here is how a new leak
+# could hide behind its test's line: read the run's "Suppressions used" table against these.
+leak:diskcache_oxide_core::store::fork_timeout::a_parked_end_drained_in_a_child_forgets_the_connection_and_releases_the_rest

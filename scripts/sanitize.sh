@@ -8,7 +8,8 @@
 #               B  ThreadSanitizer on core: every core test, the bundled SQLite instrumented too, races
 #                  allowed only by signature (scripts/sanitize/allowed-races.txt), plus the canary and
 #                  the mutex tests in release (plan 14, step 2a; macOS and Linux)
-#               C  AddressSanitizer, LeakSanitizer and UBSan on core (step 3; not built yet)
+#               C  AddressSanitizer, LeakSanitizer and UBSan (trap mode) on core, SQLite's C instrumented too;
+#                  Linux only (LeakSanitizer's reference platform; plan 14, step 3)
 #               D  ThreadSanitizer through a TSan-built free-threaded CPython (step 4a; not built yet)
 #               E  AddressSanitizer through Python, runtime preloaded (step 4b; not built yet)
 #   --quick   fewer Miri seeds (4 rather than 32)
@@ -261,12 +262,113 @@ lane_B() {
     fi
 }
 
+# Lane C: AddressSanitizer with LeakSanitizer, and UBSan on SQLite's C. Core built with
+# `-Zsanitizer=address` on a `-Zbuild-std` std; the bundled SQLite with `-fsanitize=address,undefined
+# -fno-sanitize-recover=undefined` and frame pointers for the stacks. UBSan reports, not traps:
+# rustc's asan runtime carries UBSan's handlers (49 `__ubsan_handle_*` symbols in the Linux
+# librustc-nightly_rt.asan.a, checked 2026-11-07), so a hit prints `sqlite3.c:NNNN: runtime error:
+# ...` with a stack (UBSAN_OPTIONS=print_stacktrace=1) and then aborts the binary.
+# Linux only: it is LeakSanitizer's reference platform, and on macOS LSan runs only through ASan and
+# is flaky on arm64. No suppressions to start with (plan 14, "Rules for reports"): every report is a
+# finding until shown otherwise; a deliberate leak then gets a line in scripts/sanitize/lsan.supp
+# naming the test and the reason, and the lane passes `suppressions=` only if that file exists.
+# malloc_context_size: a leak's stack must reach the test that made it (the default 30 frames stop in
+# the store's write path), since the suppressions are by test.
+# halt_on_error=0 (the plan's rule: one report must not hide the rest) needs the code compiled
+# recoverable: -Zsanitizer-recover=address on the Rust side, -fsanitize-recover=address on the C.
+# strict_string_checks: the libc string interceptors check the whole string, terminator included.
+ASAN_OPTIONS_LANE='detect_leaks=1 halt_on_error=0 allocator_may_return_null=1 detect_stack_use_after_return=1 strict_string_checks=1 color=never malloc_context_size=60'
+LSAN_SUPP=scripts/sanitize/lsan.supp
+
+run_asan() {  # run_asan <target> <command...>: the command with lane C's build and run environment
+    local target="$1" rustflags="-Zsanitizer=address -Zsanitizer-recover=address" lsan_options=''
+    shift
+    # The same outline-atomics rule as lane B's: the sanitizer runtime must not land in instrumented
+    # compiler_builtins code before it is up.
+    if [[ "$target" == aarch64-unknown-linux-* ]]; then
+        rustflags+=" -Ctarget-feature=+lse,-outline-atomics"
+    fi
+    [[ -f "$LSAN_SUPP" ]] && lsan_options="suppressions=$PWD/$LSAN_SUPP print_suppressions=1"
+    # LeakSanitizer prints bare addresses unless it finds llvm-symbolizer; the image has the clang's.
+    local symbolizer
+    symbolizer=$(command -v "llvm-symbolizer-${CC:-clang-}" 2>/dev/null || command -v "llvm-symbolizer-${CC#clang-}" 2>/dev/null || command -v llvm-symbolizer || true)
+    (
+        export CARGO_TARGET_DIR="$PWD/target/san-C-$NIGHTLY" RUSTFLAGS="$rustflags" ASAN_OPTIONS="$ASAN_OPTIONS_LANE"
+        export LSAN_OPTIONS="$lsan_options"
+        [[ -n "$symbolizer" ]] && export ASAN_SYMBOLIZER_PATH="$symbolizer"
+        export "CFLAGS_${target//-/_}=-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g"
+        export UBSAN_OPTIONS='print_stacktrace=1 color=never'
+        "$@"
+    )
+}
+
+# Judges an ASan/LSan/UBSan log: every `ERROR: AddressSanitizer`/`LeakSanitizer` report and every
+# UBSan `runtime error:` fails, as does a test binary killed by a signal (a backstop), the SUMMARY
+# lines are kept for the record, LeakSanitizer's "Suppressions used" table goes in the summary (the
+# evidence that each suppressed test leaked what its line says), and a `leak:` line in lsan.supp
+# that matched nothing is stale (its test was deleted, or no longer forgets) and fails the lane.
+judge_asan() {  # judge_asan <log>: prints the verdict lines, returns 1 on any finding
+    local log="$1" errors ubsan signals stale=0
+    errors=$( (grep -cE '^==[0-9]+==ERROR: (AddressSanitizer|LeakSanitizer)' "$log" || true) | tail -1)
+    ubsan=$( (grep -cE 'runtime error: ' "$log" || true) | tail -1)
+    signals=$( (grep -cE '\(signal: [0-9]+, SIG(ILL|TRAP|SEGV|ABRT|BUS)' "$log" || true) | tail -1)
+    (grep -E '^SUMMARY: (AddressSanitizer|LeakSanitizer|UndefinedBehaviorSanitizer)' "$log" || true) | sort | uniq -c | sed 's/^/         /' | tee -a "$SUMMARY"
+    if grep -q '^Suppressions used:' "$log"; then
+        sed -n '/^Suppressions used:/,/^-----/p' "$log" | sed 's/^/         /' | tee -a "$SUMMARY"
+        if [[ -f "$LSAN_SUPP" ]]; then
+            local name
+            while read -r name; do
+                grep -qF "$name" <(sed -n '/^Suppressions used:/,/^-----/p' "$log") \
+                    || { note "  stale suppression (matched nothing): $name"; stale=$((stale + 1)); }
+            done < <(sed -n 's/^leak://p' "$LSAN_SUPP")
+        fi
+    elif [[ -f "$LSAN_SUPP" ]] && (( $(sed -n 's/^leak://p' "$LSAN_SUPP" | wc -l) > 0 )); then
+        note "  stale suppressions: $LSAN_SUPP has leak: lines and the run used none"
+        stale=1
+    fi
+    note "  $errors sanitizer report(s), $ubsan UBSan runtime error(s), $signals test binary(ies) killed by a signal, $stale stale suppression(s)"
+    [[ "$errors" == 0 && "$ubsan" == 0 && "$signals" == 0 && "$stale" == 0 ]]
+}
+
+lane_C() {
+    local target log="$OUT/C-asan.log" rc=0
+    if [[ "$(uname -s)" != Linux ]]; then
+        note "C  NOT RUN  Linux only (LeakSanitizer's reference platform); run it in the container (plan 14, step 3)"
+        FAILED+=(C)
+        return
+    fi
+    target=$(rustc "+$NIGHTLY" -vV | sed -n 's/^host: //p' || true)
+    [[ -n "$target" ]] || { note "C  FAIL  setup: no host triple from rustc +$NIGHTLY"; FAILED+=(C); return; }
+    pick_cc C || { FAILED+=(C); return; }
+    step "lane C: AddressSanitizer, LeakSanitizer and UBSan, $target, cc ${CC:-cc}"
+    # One test at a time, as in lane B, so a report is one test's. --tests: not the doctests (as in B).
+    # Skipped here: the stack's ABA test needs a freed address to come back, and ASan's quarantine
+    # holds freed memory back on purpose, so the test can't exercise its case (it reported 0 of 64
+    # rounds and failed its own vacuity check); it runs natively and under Miri (lane A), where it matters.
+    run_asan "$target" cargo "+$NIGHTLY" test -Zbuild-std --target "$target" -p diskcache-oxide-core --tests \
+        --no-fail-fast -- --test-threads=1 --skip stack::tests::a_push_whose_head_was_freed_and_reused_links_to_the_live_node \
+        >"$log" 2>&1 || rc=1
+    if ! grep -q '^test result:' "$log"; then
+        note "C  FAIL  setup: the AddressSanitizer build or run didn't get to the tests; see $log"; FAILED+=(C); return
+    fi
+    local failed_tests verdict=0
+    failed_tests=$( (grep -E '^test result: FAILED|^test .* FAILED$' "$log" || true) | head -5 | tr '\n' ' ')
+    judge_asan "$log" || verdict=1
+    if (( rc == 0 && verdict == 0 )); then
+        note "C  PASS  every core test but the stack's ABA test (ASan's quarantine) ran under AddressSanitizer (leaks checked) with UBSan on SQLite's C on $target, no report"
+    else
+        note "C  FAIL  tests rc=$rc ($failed_tests) reports=$([[ $verdict == 0 ]] && echo none || echo some); see $log"
+        FAILED+=(C)
+    fi
+}
+
 IFS=',' read -r -a WANT <<< "$LANES"
 for lane in "${WANT[@]}"; do
     case "$lane" in
         A) lane_A ;;
         B) lane_B ;;
-        C|D|E) note "$lane  NOT BUILT  (plan 14)"; FAILED+=("$lane") ;;
+        C) lane_C ;;
+        D|E) note "$lane  NOT BUILT  (plan 14)"; FAILED+=("$lane") ;;
         *) echo "unknown lane: $lane" >&2; exit 2 ;;
     esac
 done
