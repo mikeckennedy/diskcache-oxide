@@ -14,7 +14,7 @@ Cache.clear(
 ```
 
 
-Works in chunks and lets other writers in between them. Writes that land while it runs, including overwrites of existing keys, are kept.
+Works in chunks and lets other writers in between them. Writes that land while it runs, including overwrites of existing keys, are kept. Afterwards it removes every empty large-value folder (D-042), unless this thread is inside a transaction (any cache's).
 
 
 ## Parameters

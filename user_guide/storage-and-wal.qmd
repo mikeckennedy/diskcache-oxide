@@ -14,8 +14,7 @@ Open the directory and this is what you find:
 ├── diskcache-oxide.sqlite-wal    # SQLite's write-ahead log
 ├── diskcache-oxide.sqlite-shm    # SQLite's shared-memory index for the log
 └── 3f/
-    └── a2/
-        └── 3fa2…c91e.val         # one large value
+    └── 3fa2…c91e.val             # one large value
 ```
 
 The database file carries a format version. A future build that can't read it raises `FormatMismatchError` rather than guessing.
@@ -26,6 +25,8 @@ The database file carries a format version. A future build that can't read it ra
 - **64 KiB or more**, it's written to its own file, and the row points to it. This keeps the database small and its page cache hot, and large values stream straight from the file.
 
 Writing a large value never holds the database lock while the bytes go to disk: the value goes to a temporary file first, then inside a short transaction the file is renamed into place and the row updated. The old file is removed after the commit, and file names are never reused.
+
+Large values live one folder deep, in up to 256 folders named by the first two characters of the file's name (D-042). Deleting a value removes only its file. When the process closes its last handle on the cache, it removes the folders left empty, skipping any touched in the last 30 seconds so a busy folder isn't removed and re-created, and spending at most 100 ms on it; a close that runs out of time leaves the rest to a later one. `clear()` removes the folders it emptied at once. So a cache never has more than 256 value folders, and a closed one has none sitting empty for long. A `FanoutCache`'s shards don't sweep yet: each keeps at most 256.
 
 A reader racing an overwrite always gets a whole value, old or new. If a value's file really is gone (deleted by hand, or cut short by a crash, since value files aren't fsynced), `get` returns the default and the orphaned row is cleaned up, so `in` and `len` don't keep reporting an entry that can't be read.
 

@@ -365,8 +365,8 @@ impl Cache {
     // -- lifecycle ----------------------------------------------------------------------------
 
     /// Releases this handle. When the last handle on a directory closes, every connection closes
-    /// (D-018). Using the cache again afterwards reopens it, as diskcache does. Closing twice is
-    /// harmless.
+    /// (D-018), and the store sweeps its empty value directories (D-042, `Store::release_handle`).
+    /// Using the cache again afterwards reopens it, as diskcache does. Closing twice is harmless.
     ///
     /// With `checkpoint` (the default), the process's last handle first checkpoints a WAL left
     /// larger than its trim size (half of `wal_size_limit`), waiting at most 1 s (or `timeout`, if

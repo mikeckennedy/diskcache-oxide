@@ -71,9 +71,9 @@ class Cache:
   - All of these are created with `create_exception!(diskcache_oxide, ...)` so they pickle.
 - **`NullCache` and `CacheLike`:** as specified in the roadmap (instant expiry, `invalidate=`, the same constructor signature, `enabled` is False, falsy). A test asserts that `Cache`, `NullCache` and `CacheLike` have the same public signatures.
 
-## 3. On-disk format (format version 1)
+## 3. On-disk format (format version 2; version 1 kept value files two levels deep)
 
-File: `<directory>/diskcache-oxide.sqlite` (D-002), with `-wal` and `-shm` files alongside. Value files live under `<directory>/aa/bb/<32 hex>.val`.
+File: `<directory>/diskcache-oxide.sqlite` (D-002), with `-wal` and `-shm` files alongside. Value files live under `<directory>/aa/<32 hex>.val`, one level of at most 256 directories (format 2, plan 17, D-042); empty ones are swept when the process's last handle on the store is released and after `clear()`.
 
 ```sql
 CREATE TABLE cache (
@@ -82,7 +82,7 @@ CREATE TABLE cache (
     key TEXT NOT NULL,
     mode INTEGER NOT NULL,         -- see section 5
     value BLOB,                    -- inline value; NULL when spilled
-    filename TEXT,                 -- 'aa/bb/<32hex>.val' when spilled
+    filename TEXT,                 -- 'aa/<32hex>.val' when spilled
     size INTEGER NOT NULL,         -- bytes of value or file, for volume()
     store_time REAL NOT NULL,
     expire_time REAL,              -- NULL = never
@@ -125,7 +125,7 @@ CREATE TABLE totals (only INTEGER PRIMARY KEY CHECK (only = 1), count INTEGER NO
 
 - **Threshold: 64 KiB.** A `str`/`bytes` raw value, or an encoded value, of 64 KiB or more is stored in a file. The conformance adapter's `spill_threshold` becomes 65536 (spike 4a).
 - **Write:**
-  1. Write `aa/bb/<random 128-bit hex>.tmp` (`create_new`, no fsync) with no lock and no connection held, and with the interpreter released.
+  1. Write `aa/<random 128-bit hex>.tmp` (`create_new`, no fsync) with no lock and no connection held, and with the interpreter released. `aa` is made non-recursively and the create retried if a sweep removes it in between (plan 17).
   2. `BEGIN IMMEDIATE`; read the old filename for the key; rename `.tmp` → `.val` while holding the lock; upsert the row with a new `store_seq`; update the totals; `COMMIT`.
   3. Unlink the old file after the commit.
   4. On error before the commit, roll back and unlink both names. Names are never reused.

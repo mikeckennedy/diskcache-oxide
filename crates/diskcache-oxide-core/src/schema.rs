@@ -1,14 +1,18 @@
-//! The on-disk format, version 1 (04-design.md section 3).
+//! The on-disk format, version 2 (04-design.md section 3).
 //!
-//! A format change never migrates in place: it gets a new database filename, so old and new
-//! workers overlapping during a deploy each see only their own file. `user_version` stays as a
-//! safety check against a mislabeled file.
+//! A format change never migrates in place. Version 2 (plan 17: value files one level deep) keeps
+//! the database filename and raises `user_version`, so a version-1 cache is refused with
+//! `FormatMismatch` rather than opened beside its old value-file tree: the change is in the files
+//! around the database, which a new filename would have left behind (up to 65,792 directories), and
+//! caches are deleted when upgrading, with every worker stopped (Michael, 2026-11-06). A change
+//! confined to the database could still take a new filename instead, so old and new workers
+//! overlapping during a deploy each see only their own file.
 
-/// Database filename for format version 1 (D-002: never diskcache's `cache.db`).
+/// Database filename (D-002: never diskcache's `cache.db`).
 pub const DB_FILENAME: &str = "diskcache-oxide.sqlite";
 
-/// `PRAGMA user_version` of a format-1 database.
-pub const FORMAT_VERSION: i64 = 1;
+/// `PRAGMA user_version` of a current database. Version 1 kept value files two levels deep.
+pub const FORMAT_VERSION: i64 = 2;
 
 /// `size_limit` of a new cache, in bytes (diskcache's default).
 pub const DEFAULT_SIZE_LIMIT: i64 = 1 << 30;

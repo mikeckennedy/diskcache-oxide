@@ -197,7 +197,16 @@ impl Store {
         })
     }
 
+    /// After the last chunk, removes the empty value directories with no age limit (plan 17): this
+    /// call just emptied them. Not after an interrupted clear, and not inside a held transaction,
+    /// whose files go at its commit ([`Store::sweep_value_dirs`]).
     fn clear_from(&self, snapshot: i64, budget: Budget) -> Result<u64, Interrupted> {
+        let removed = self.clear_chunks(snapshot, budget)?;
+        self.sweep_value_dirs(Duration::ZERO);
+        Ok(removed)
+    }
+
+    fn clear_chunks(&self, snapshot: i64, budget: Budget) -> Result<u64, Interrupted> {
         self.chunked(budget, |conn, timeout| {
             conn.prepare_cached(
                 "DELETE FROM cache WHERE id IN (

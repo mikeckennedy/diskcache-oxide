@@ -19,6 +19,7 @@ Status checked on 2026-10-27, against open and closed issues and PRs in both rep
 | 9 | `close()` leaves other threads' connections open | `close_leaves_other_threads_connections_open.py` | reported: #295, #336 (fd exhaustion) | fixed (PR #13 closes exited threads' connections) | fixed: pooled connections, all closed by `close()` (D-017, D-018) |
 | 10 | Opening a cache with unchanged settings writes to the database | `open_writes_unchanged_settings.py` | not reported (related: #113, read-only caches) | fixed (PR #17) | fixed (D-019) |
 | 11 | `iterkeys()` takes quadratic time | `iterkeys_is_quadratic.py` | not reported (Talk Python measured 23 s at 400k keys) | not reported | fixed: keyset-paged range scan, 10 ms at 400k keys (Spike 4a) |
+| 12 | A large value set inside a `transact()` that rolls back leaves its file on disk | `rolled_back_transact_leaks_value_file.py` | not checked | not checked | not affected: a rolled-back transaction's files are removed (pinned in plan 17's tests) |
 
 ## 1. A top-level NaN reads back as None
 
@@ -63,6 +64,10 @@ Reopening an existing directory with the same settings and only reading still co
 ## 11. iterkeys() takes quadratic time
 
 Iterating keys over 20k entries takes 0.05 s; over 80k it takes 0.76 s, 16× the time for 4× the keys. At 400k keys a full `iterkeys()` takes about 26 s. Each page of keys is fetched with a query of the form `WHERE key = ? AND raw = ? OR key > ? ORDER BY key LIMIT 100`. With bound parameters, the `OR` keeps SQLite from using the key index, so every page scans the whole table (about 2M VM steps per page at 400k keys). Note that `EXPLAIN` on the same SQL with literal values reports an index search, which hides the problem. Rewriting the condition as a row-value comparison, `(key, raw) > (?, ?)`, lets SQLite use the index, and a keyset-paged range scan runs in 2.3 ms at 100k keys and 10.2 ms at 400k. **Impact:** any code that scans keys (prefix invalidation, admin pages) slows quadratically as the cache grows. Talk Python measured 1.3 s at 100k and 23 s at 400k keys.
+
+## 12. A rolled-back transaction leaks its large values' files
+
+Inside `with cache.transact():`, a `set` of a large value writes its file at once and remembers its name, but `_transact` removes the remembered files only when the transaction commits (core.py:732-747). If the block raises, the rows roll back and the files stay, with nothing pointing at them. Only `check(fix=True)` would remove them, and only if someone runs it. Found by the architect's review of plan 17 on 2026-11-06; upstream and community-fork status not checked yet. **Impact:** disk use grows with every rolled-back transaction that wrote a large value, invisibly to `volume()` and `size_limit`.
 
 ## Not bugs, but worth noting upstream
 

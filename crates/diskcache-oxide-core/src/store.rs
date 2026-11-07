@@ -46,7 +46,7 @@ use crate::poison::HoldGuard;
 use crate::pool::{Pool, PooledConn};
 use crate::rows::{Removed, RowWriter};
 use crate::stack::TakeAllStack;
-use crate::{Error, Result, lockwait, sqlite};
+use crate::{Error, Result, lockwait, spill, sqlite};
 
 /// Default `max_connections` (04-design.md section 2).
 pub const DEFAULT_MAX_CONNECTIONS: u64 = 8;
@@ -662,7 +662,10 @@ impl Store {
     /// now if the gate lets it in, else behind the pending fork.
     fn release_now_or_defer(self: &Arc<Self>) {
         match GATE.try_enter_shared() {
-            Some(gate) => self.release_under(&gate),
+            // No sweep: a failed open has used its budget.
+            Some(gate) => {
+                let _ = self.release_under(&gate);
+            }
             None => self.defer_release(),
         }
     }
@@ -700,13 +703,35 @@ impl Store {
 
     fn release_handle_within(self: &Arc<Self>, budget: Duration) {
         match GATE.enter_shared_until(lockwait::deadline_after(Instant::now(), budget)) {
-            Some(gate) => self.release_under(&gate),
+            Some(gate) => {
+                let retired = self.release_under(&gate);
+                drop(gate);
+                if retired {
+                    self.sweep_value_dirs(spill::SWEEP_MIN_AGE);
+                }
+            }
             None => self.defer_release(),
         }
     }
 
-    /// The release itself, on a level the caller holds.
-    fn release_under(&self, gate: &SharedGuard<'_>) {
+    /// Removes this store's empty value directories (plan 17), after the release that retired it or
+    /// after `clear()`: at most [`spill::SWEEP_BUDGET`], with the interpreter released. Skipped while
+    /// this thread holds a gate level, a held transaction's included: a walk then would keep a
+    /// pending fork waiting. Skipped for a `FanoutCache`'s shards until plan 17's part 2 sweeps them
+    /// together under one deadline. Never fails.
+    pub(crate) fn sweep_value_dirs(&self, min_age: Duration) {
+        if self.role != Role::Plain || GATE.own_depth() > 0 {
+            return;
+        }
+        let deadline = lockwait::deadline_after(Instant::now(), spill::SWEEP_BUDGET);
+        let start = spill::sweep_start();
+        gate::run_blocking(&|| spill::sweep(&self.directory, deadline, min_age, start));
+    }
+
+    /// The release itself, on a level the caller holds. Returns whether it retired the store (this
+    /// was the last handle): decided under the registry, so of two threads closing the last two
+    /// handles at once exactly one sees it.
+    fn release_under(&self, gate: &SharedGuard<'_>) -> bool {
         // Decided under the registry, like `claim`: an open that finds this store either registers
         // its handle first (and this isn't the last), or finds it retired.
         let stores = registry(gate);
@@ -717,6 +742,7 @@ impl Store {
         if retired {
             self.pool.clear(gate);
         }
+        retired
     }
 
     /// Leaves one handle's release for the drain at the end of the pending fork. Until then the
@@ -900,8 +926,10 @@ impl Store {
     /// few stay attached: each unlink takes microseconds, while on a GIL build getting the
     /// interpreter back can wait out the switch interval behind busy threads (a one-file `delete`
     /// measured 27 ms detached against 4 spinning threads).
+    /// A name that isn't one `spill` writes (a damaged row) unlinks nothing ([`spill::value_path`]).
     pub(crate) fn unlink(&self, files: impl IntoIterator<Item = String>) {
-        let paths: Vec<PathBuf> = files.into_iter().map(|relative| self.directory.join(relative)).collect();
+        let paths: Vec<PathBuf> =
+            files.into_iter().filter_map(|relative| spill::value_path(&self.directory, &relative)).collect();
         let work = || {
             for path in &paths {
                 let _ = std::fs::remove_file(path);
@@ -1875,8 +1903,9 @@ pub fn drain_deferred_releases() {
         let mut deferred: Vec<Arc<Store>> = registry(gate).iter().filter_map(Weak::upgrade).collect();
         deferred.retain(|store| store.deferred_releases.load(Ordering::SeqCst) > 0);
         for store in &deferred {
+            // No sweep here: the drain holds the gate. The next release that retires the store sweeps.
             for _ in 0..store.deferred_releases.swap(0, Ordering::SeqCst) {
-                store.release_under(gate);
+                let _ = store.release_under(gate);
             }
         }
     });
@@ -2011,6 +2040,131 @@ mod tests {
             }
         });
         assert!(peak.load(Ordering::Acquire) <= 2, "peak {} over the cap", peak.load(Ordering::Acquire));
+    }
+
+    /// An empty value directory last modified two minutes ago, past [`spill::SWEEP_MIN_AGE`].
+    fn old_empty_dir(dir: &Path, name: &str) {
+        let path = dir.join(name);
+        std::fs::create_dir(&path).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(120))
+            .unwrap();
+    }
+
+    #[test]
+    fn only_the_last_release_sweeps_and_it_leaves_young_directories() {
+        let tmp = TempDir::new("store-sweep-last");
+        let a = Store::open(&options(tmp.path())).unwrap();
+        let b = Store::open(&options(tmp.path())).unwrap();
+        old_empty_dir(tmp.path(), "aa");
+        std::fs::create_dir(tmp.path().join("bb")).unwrap();
+        a.release_handle();
+        assert!(tmp.path().join("aa").is_dir(), "not the last handle");
+        b.release_handle();
+        assert!(!tmp.path().join("aa").exists(), "the last release sweeps");
+        assert!(tmp.path().join("bb").is_dir(), "younger than SWEEP_MIN_AGE");
+    }
+
+    #[test]
+    fn two_threads_closing_the_last_two_handles_sweep() {
+        for round in 0..20 {
+            let tmp = TempDir::new("store-sweep-race");
+            let a = Store::open(&options(tmp.path())).unwrap();
+            let b = Store::open(&options(tmp.path())).unwrap();
+            old_empty_dir(tmp.path(), "aa");
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|s| {
+                for store in [&a, &b] {
+                    let barrier = &barrier;
+                    s.spawn(move || {
+                        barrier.wait();
+                        store.release_handle();
+                    });
+                }
+            });
+            assert!(!tmp.path().join("aa").exists(), "round {round}: one of the two releases retired the store");
+        }
+    }
+
+    #[test]
+    fn a_release_inside_a_held_transaction_doesnt_sweep() {
+        let tmp = TempDir::new("store-sweep-held");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let other = Store::open(&options(&tmp.path().join("other"))).unwrap();
+        old_empty_dir(tmp.path(), "aa");
+        let held = other.begin_hold(T).unwrap();
+        store.release_handle();
+        assert!(tmp.path().join("aa").is_dir(), "a gate level is held: no walk that would hold up a fork");
+        held.finish(true).unwrap();
+        add_handle(&store);
+        store.release_handle();
+        assert!(!tmp.path().join("aa").exists());
+        other.release_handle();
+    }
+
+    #[test]
+    fn clear_sweeps_with_no_age_limit_and_not_inside_a_held_transaction() {
+        let tmp = TempDir::new("store-sweep-clear");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        std::fs::create_dir(tmp.path().join("aa")).unwrap();
+        let held = store.begin_hold(T).unwrap();
+        store.clear(T).unwrap(); // Joins this thread's held transaction.
+        assert!(tmp.path().join("aa").is_dir(), "inside a held transaction: its files go at commit");
+        held.finish(true).unwrap();
+        store.clear(T).unwrap();
+        assert!(!tmp.path().join("aa").exists(), "a fresh directory goes too: clear just emptied it");
+        store.release_handle();
+    }
+
+    #[test]
+    fn an_interrupted_clear_doesnt_sweep() {
+        let tmp = TempDir::new("store-sweep-interrupted");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        put(&store, "k", b"v");
+        std::fs::create_dir(tmp.path().join("aa")).unwrap();
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        std::thread::scope(|s| {
+            let store = &store;
+            s.spawn(move || {
+                let held = store.begin_hold(T).unwrap();
+                held_tx.send(()).unwrap();
+                done_rx.recv().unwrap();
+                held.finish(false).unwrap();
+            });
+            held_rx.recv().unwrap();
+            let error = store.clear(Duration::from_millis(5)).unwrap_err();
+            assert!(matches!(error, Error::Timeout { .. }), "{error:?}");
+            assert!(tmp.path().join("aa").is_dir(), "a clear that stopped early doesn't sweep");
+            done_tx.send(()).unwrap();
+        });
+        store.release_handle();
+    }
+
+    #[test]
+    fn unlink_refuses_names_spill_never_writes() {
+        let tmp = TempDir::new("store-unlink-names");
+        let cache = tmp.path().join("cache");
+        let store = Store::open(&options(&cache)).unwrap();
+        let outside = tmp.path().join("outside.val");
+        std::fs::write(&outside, b"keep me").unwrap();
+        store.unlink([outside.to_str().unwrap().to_string(), "../outside.val".to_string()]);
+        assert!(outside.exists(), "a damaged row's name must never reach outside the cache");
+        store.release_handle();
+    }
+
+    #[test]
+    fn a_shard_doesnt_sweep_yet() {
+        let tmp = TempDir::new("store-sweep-shard");
+        let shard = tmp.path().join("000");
+        std::fs::create_dir(&shard).unwrap();
+        let store =
+            Store::open(&OpenOptions { role: crate::open::Role::Shard { index: 0, count: 1 }, ..options(&shard) })
+                .unwrap();
+        old_empty_dir(&shard, "aa");
+        store.release_handle();
+        assert!(shard.join("aa").is_dir(), "plan 17 part 2 sweeps shards together");
     }
 
     #[test]

@@ -371,13 +371,13 @@ mod tests {
     fn file_rows_store_null_value_and_report_their_file_on_removal() {
         let tmp = TempDir::new("rows-file");
         let mut conn = new_db(&tmp);
-        let file_row = NewRow { value: Stored::File("aa/bb/x.val"), size: 100_000, ..row("big", b"") };
+        let file_row = NewRow { value: Stored::File("aa/x.val"), size: 100_000, ..row("big", b"") };
         write(&mut conn, |w| w.upsert(&file_row).unwrap());
         let is_null: bool =
             conn.query_row("SELECT value IS NULL FROM cache WHERE key = 'big'", [], |r| r.get(0)).unwrap();
         assert!(is_null);
         let (_, replaced) = write(&mut conn, |w| w.upsert(&row("big", b"small now")).unwrap());
-        assert_eq!(replaced, Some(Removed { filename: Some("aa/bb/x.val".into()) }));
+        assert_eq!(replaced, Some(Removed { filename: Some("aa/x.val".into()) }));
         assert_eq!(totals(&conn), (1, 9));
     }
 
@@ -401,7 +401,7 @@ mod tests {
             match next(10) {
                 0..=5 => write(&mut conn, |w| w.upsert(&row(key, &payload[..len])).map(|_| ()).unwrap()),
                 6 => {
-                    let file_row = NewRow { value: Stored::File("aa/bb/f.val"), size: 70_000, ..row(key, b"") };
+                    let file_row = NewRow { value: Stored::File("aa/f.val"), size: 70_000, ..row(key, b"") };
                     write(&mut conn, |w| w.upsert(&file_row).map(|_| ()).unwrap());
                 }
                 7 | 8 => write(&mut conn, |w| w.delete_key(key).map(|_| ()).unwrap()),

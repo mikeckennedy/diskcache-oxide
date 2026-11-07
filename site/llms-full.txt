@@ -333,7 +333,8 @@ clear(self, *, timeout: 'float | None' = None) -> 'int'
 Remove every entry that existed when the call started.
 
 Works in chunks and lets other writers in between them. Writes that land while it runs,
-including overwrites of existing keys, are kept.
+including overwrites of existing keys, are kept. Afterwards it removes every empty
+large-value folder (D-042), unless this thread is inside a transaction (any cache's).
 
 Args:
     timeout: Seconds each chunk may wait for the write lock (another thread's or another
@@ -390,7 +391,10 @@ close(self, *, checkpoint: 'bool' = True) -> 'None'
 Close this handle and return its connections.
 
 When the last handle on a directory in the process closes, every connection to it closes,
-whichever threads used them. Using the cache again afterwards reopens it.
+whichever threads used them, and the empty folders that large values left behind are
+removed (those not touched in the last 30 seconds, for at most 100 ms; D-042), unless this
+thread is inside a transaction. A handle dropped without `close()` does the same. Using the
+cache again afterwards reopens it.
 
 It never raises. Behind a fork that stays stuck it returns after about 2 seconds at most,
 whatever `timeout` is, and those connections close when the fork ends.
@@ -2787,8 +2791,7 @@ Open the directory and this is what you find:
 ├── diskcache-oxide.sqlite-wal    # SQLite's write-ahead log
 ├── diskcache-oxide.sqlite-shm    # SQLite's shared-memory index for the log
 └── 3f/
-    └── a2/
-        └── 3fa2…c91e.val         # one large value
+    └── 3fa2…c91e.val             # one large value
 ```
 
 The database file carries a format version. A future build that can't read it raises `FormatMismatchError` rather than guessing.
@@ -2799,6 +2802,8 @@ The database file carries a format version. A future build that can't read it ra
 - **64 KiB or more**, it's written to its own file, and the row points to it. This keeps the database small and its page cache hot, and large values stream straight from the file.
 
 Writing a large value never holds the database lock while the bytes go to disk: the value goes to a temporary file first, then inside a short transaction the file is renamed into place and the row updated. The old file is removed after the commit, and file names are never reused.
+
+Large values live one folder deep, in up to 256 folders named by the first two characters of the file's name (D-042). Deleting a value removes only its file. When the process closes its last handle on the cache, it removes the folders left empty, skipping any touched in the last 30 seconds so a busy folder isn't removed and re-created, and spending at most 100 ms on it; a close that runs out of time leaves the rest to a later one. `clear()` removes the folders it emptied at once. So a cache never has more than 256 value folders, and a closed one has none sitting empty for long. A `FanoutCache`'s shards don't sweep yet: each keeps at most 256.
 
 A reader racing an overwrite always gets a whole value, old or new. If a value's file really is gone (deleted by hand, or cut short by a crash, since value files aren't fsynced), `get` returns the default and the orphaned row is cleaned up, so `in` and `len` don't keep reporting an entry that can't be read.
 
@@ -2998,6 +3003,8 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-039 | `FanoutCache` constructor and features | `FanoutCache(path, 4)`; sub-collections, tags, `stats()`, `check()` and more | `shards` is keyword-only; those features aren't there yet |
 | D-040 | `FanoutCache.transact()` | Locks every shard; `tx` is `None` | `transact(*, key)` locks one shard and refuses other shards' keys |
 | D-041 | Your own types | A `Disk` subclass, or pickle | `register_type()` per type; stored tagged, read by an allowlist; never pickled |
+| D-042 | Large values' folders | Two levels (65,536 folders); a folder goes with its last file | One level (at most 256); empty ones go at the last close and in `clear()` |
+| D-043 | A large write after the cache's folder was deleted | Re-creates the folders and succeeds | `OSError`; nothing is re-created |
 
 ## Safety
 
@@ -3091,6 +3098,8 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
 - **D-041:** a type the codec doesn't know is registered per type with `register_type(cls, name=..., encode=..., decode=...)` (a dataclass needs only a name), process-wide or per cache with `types=`. It's stored as a tagged value and read back only where the name is registered, so nothing is imported by name; a registered type is never pickled; a `decode` error about the row is a `CorruptValueError` with yours as `__cause__`. See [Your own types](serialization.qmd#your-own-types).
 - **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.qmd#a-cache-that-cant-take-a-request-down).
+- **D-042:** a large value's file sits one folder deep, in at most 256 folders. A delete removes only the file; the last close in a process removes folders left empty and untouched for 30 seconds, and `clear()` removes the ones it emptied. A `FanoutCache`'s shards don't sweep yet. Before this, empty folders were never removed and a long-lived cache could hold 65,536 of them, about 257 MiB on ext4. See [Storage and WAL](storage-and-wal.qmd).
+- **D-043:** if a cache's folder is deleted while a process has it open, that process's next large write raises `OSError` instead of re-creating the folder. Delete a cache's folder only with every process stopped.
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)

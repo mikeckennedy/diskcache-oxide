@@ -218,7 +218,7 @@ pub fn connect(directory: &Path, timeout: Duration) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Brings the database to format version 1 with the requested settings, writing only what differs,
+/// Brings the database to the current format version ([`FORMAT_VERSION`]) with the requested settings, writing only what differs,
 /// after checking that its stamp matches `role` (see [`Role`]). A new database gets `role`'s stamp;
 /// a refused open writes nothing. Returns the limits in effect.
 pub fn prepare(conn: &mut Connection, requested: Requested, role: Role, timeout: Duration) -> Result<Limits> {
@@ -429,14 +429,25 @@ mod tests {
     fn a_newer_format_is_refused_without_writing() {
         let tmp = TempDir::new("open-newer");
         drop(open(tmp.path(), Requested::default()));
-        connect(tmp.path(), T).unwrap().execute_batch("PRAGMA user_version = 2").unwrap();
+        connect(tmp.path(), T).unwrap().execute_batch("PRAGMA user_version = 3").unwrap();
         let peer = connect(tmp.path(), T).unwrap();
         let before = data_version(&peer);
         let mut conn = connect(tmp.path(), T).unwrap();
         let err =
             prepare(&mut conn, Requested { size_limit: Some(9 << 20), cull_limit: None }, Role::Plain, T).unwrap_err();
-        assert!(matches!(err, Error::FormatMismatch { found: 2, expected: 1, .. }), "{err:?}");
+        assert!(matches!(err, Error::FormatMismatch { found: 3, expected: 2, .. }), "{err:?}");
         assert_eq!(data_version(&peer), before);
+    }
+
+    #[test]
+    fn a_format_1_cache_is_refused() {
+        // Format 1 kept value files two levels deep (plan 17); such a cache is deleted on upgrade.
+        let tmp = TempDir::new("open-format-1");
+        drop(open(tmp.path(), Requested::default()));
+        connect(tmp.path(), T).unwrap().execute_batch("PRAGMA user_version = 1").unwrap();
+        let mut conn = connect(tmp.path(), T).unwrap();
+        let err = prepare(&mut conn, Requested::default(), Role::Plain, T).unwrap_err();
+        assert!(matches!(err, Error::FormatMismatch { found: 1, expected: 2, .. }), "{err:?}");
     }
 
     #[test]

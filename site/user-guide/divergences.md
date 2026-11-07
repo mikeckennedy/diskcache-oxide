@@ -50,6 +50,8 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-039 | [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) constructor and features | `FanoutCache(path, 4)`; sub-collections, tags, [stats()](../reference/Caches.stats.md#diskcache_oxide.Caches.stats), `check()` and more | [shards](../reference/FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) is keyword-only; those features aren't there yet |
 | D-040 | [FanoutCache.transact()](../reference/FanoutCache.transact.md#diskcache_oxide.FanoutCache.transact) | Locks every shard; `tx` is `None` | `transact(*, key)` locks one shard and refuses other shards' keys |
 | D-041 | Your own types | A `Disk` subclass, or pickle | `register_type()` per type; stored tagged, read by an allowlist; never pickled |
+| D-042 | Large values' folders | Two levels (65,536 folders); a folder goes with its last file | One level (at most 256); empty ones go at the last close and in [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) |
+| D-043 | A large write after the cache's folder was deleted | Re-creates the folders and succeeds | `OSError`; nothing is re-created |
 
 
 # Safety
@@ -166,6 +168,8 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
 - **D-041:** a type the codec doesn't know is registered per type with `register_type(cls, name=..., encode=..., decode=...)` (a dataclass needs only a name), process-wide or per cache with `types=`. It's stored as a tagged value and read back only where the name is registered, so nothing is imported by name; a registered type is never pickled; a `decode` error about the row is a [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) with yours as `__cause__`. See [Your own types](serialization.md#your-own-types).
 - **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.md#a-cache-that-cant-take-a-request-down).
+- **D-042:** a large value's file sits one folder deep, in at most 256 folders. A delete removes only the file; the last close in a process removes folders left empty and untouched for 30 seconds, and [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) removes the ones it emptied. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)'s shards don't sweep yet. Before this, empty folders were never removed and a long-lived cache could hold 65,536 of them, about 257 MiB on ext4. See [Storage and WAL](storage-and-wal.md).
+- **D-043:** if a cache's folder is deleted while a process has it open, that process's next large write raises `OSError` instead of re-creating the folder. Delete a cache's folder only with every process stopped.
 - **D-025:** `iter(cache)` and [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 

@@ -55,6 +55,17 @@ QUIET_AFTER = 1800.0
 QUIET_GAPS = 20
 # Files younger than this are skipped by the orphan scan (writes in flight).
 ORPHAN_MIN_AGE = 120.0
+
+
+def _is_empty_dir(path: Path) -> bool:
+    """Whether `path` is an empty directory. One a worker's sweep removed mid-scan counts as gone, not empty."""
+    try:
+        with os.scandir(path) as entries:
+            return next(entries, None) is None
+    except OSError:
+        return False
+
+
 # More unexpected worker deaths than this within CRASH_WINDOW seconds stops the run: the build or
 # environment is broken, and respawning would only bury the first error.
 CRASH_LIMIT = 5
@@ -758,7 +769,22 @@ class Soak:
         root = self.dir / name
         now = time.time()
         on_disk: set[str] = set()
-        for path in root.glob('??/??/*'):
+        # Value files live one level deep, `aa/<hex>.val` (plan 17, D-042). Anything two levels deep
+        # is the old layout, which nothing should write any more.
+        value_dirs = [p for p in root.glob('??') if p.is_dir()]
+        empty_dirs = sum(1 for p in value_dirs if _is_empty_dir(p))
+        two_level = [p.relative_to(root).as_posix() for p in root.glob('??/??') if p.is_dir()]
+        if len(value_dirs) > 256 or two_level:
+            self.event(
+                'value-dirs-out-of-shape',
+                problem=True,
+                db=name,
+                value_dirs=len(value_dirs),
+                two_level=two_level[:20],
+            )
+        for path in root.glob('??/*'):
+            if not path.is_file():
+                continue
             rel = path.relative_to(root).as_posix()
             try:
                 if now - path.stat().st_mtime >= ORPHAN_MIN_AGE:
@@ -788,6 +814,8 @@ class Soak:
             orphans=len(orphans),
             orphan_tmp=sum(f.endswith('.tmp') for f in orphans),
             missing=len(still),
+            value_dirs=len(value_dirs),
+            empty_value_dirs=empty_dirs,
         )
 
     def check_ledger(self, conn: sqlite3.Connection) -> None:

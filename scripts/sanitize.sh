@@ -59,9 +59,13 @@ MIRI_HOST_MODULES=(stack:: spill::)
 # Not run under Miri: the 2^54-byte allocation it can't model (resource exhaustion), and three tests
 # of real-time behavior (a 10 ms deadline; a check every 250 ms or 64 commits), which Miri's clock
 # can't honor, since it follows instructions when isolated and runs about 1000x slow on the host's.
-# All four run natively and under ThreadSanitizer (lane B).
+# All four run natively and under ThreadSanitizer (lane B). Plan 17 adds two (probed 2026-11-06):
+# setting a directory's mtime needs `fsetattrlist`/`futimens`, which Miri doesn't support, and the
+# 8-writer sweep race takes 82 s a seed under Miri (45 minutes at 32 seeds) for what TSan checks.
 MIRI_SKIP=(
     spill::tests::a_size_too_big_to_allocate_is_out_of_memory
+    spill::tests::a_sweep_with_a_min_age_skips_young_directories
+    spill::tests::writers_racing_a_sweeper_in_one_directory_never_fail
     genlock::tests::a_waiter_with_a_short_deadline_still_starves_in_time
     wal::tests::checks_are_rate_limited_by_time_or_commit_count
     wal::tests::a_successful_checkpoint_does_not_back_off

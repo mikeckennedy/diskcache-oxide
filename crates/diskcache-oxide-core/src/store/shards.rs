@@ -101,7 +101,10 @@ pub(super) fn close_all_within(stores: &[&Arc<Store>], checkpoint_budget: Option
 /// each release to the drain at the end of that fork.
 fn release_all<S: Borrow<Arc<Store>>>(stores: &[S], gate: Option<SharedGuard<'_>>) {
     match gate {
-        Some(gate) => stores.iter().for_each(|store| store.borrow().release_under(&gate)),
+        // Shards don't sweep yet (plan 17, part 2).
+        Some(gate) => stores.iter().for_each(|store| {
+            let _ = store.borrow().release_under(&gate);
+        }),
         None => stores.iter().for_each(|store| store.borrow().defer_release()),
     }
 }
