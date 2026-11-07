@@ -326,6 +326,77 @@ def test_many_threads_stay_within_the_fd_budget_and_close_leaves_none(
     assert after == 0, f'{after} fds still open inside the root after close()'
 
 
+def test_a_closed_handle_used_again_beside_a_live_one_adds_no_fd_on_any_shard(tmp_path: Path) -> None:
+    """The plain-Cache case of tests/conformance/test_threads.py, once per shard: a closed FanoutCache
+    used again rejoins each shard's store, and beside a live handle that must open nothing. Before the
+    fix, each rejoin left one bare fd on the shard's database file (SQLite defers the close of a
+    descriptor while another connection in the process holds a lock on the file), so a FanoutCache
+    reopened while another thread iterated it went one over D-037's budget until the next fork."""
+    root = tmp_path / 'root'
+    live = FanoutCache(root, shards=8)
+    keys = [f'k{i}' for i in range(64)]
+    for key in keys:
+        live.set(key, 1)
+    other = FanoutCache(root, shards=8)
+    for key in keys:
+        assert other.get(key) == 1
+    other.close()
+    before = fds_inside(root)
+    for key in keys:
+        assert other.get(key) == 1  # Rejoins every shard.
+    assert fds_inside(root) == before, 'a rejoin left an fd open on a shard database'
+    other.close()
+    live.close()
+    assert fds_inside(root) == 0
+
+
+def test_reopening_under_a_running_iteration_stays_within_the_fd_budget(tmp_path: Path) -> None:
+    """The soak's shape (soak/worker.py, `reopen_fan` beside `walk`): one thread iterates the keys
+    while another opens a new handle on the root and closes the old one, over and over. The
+    iteration's later pages find their shards' handles closed and rejoin, which must leave the fds
+    inside the root within `2 × max_connections + 2 × shards` (D-037) at every sample. One connection
+    per shard, so the iteration alone fills the budget and one descriptor left behind shows."""
+    root = tmp_path / 'root'
+    shards = 8
+    budget = 2 * shards + 2 * shards
+    holder = [FanoutCache(root, shards=shards, max_connections=shards)]
+    for i in range(200):
+        holder[0].set(f'k{i}', i)
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def iterate() -> None:
+        try:
+            while not stop.is_set():
+                assert len(list(holder[0].iterkeys())) == 200
+        except BaseException as ex:
+            errors.append(ex)
+
+    worst = 0
+    opened = [holder[0]]
+    thread = threading.Thread(target=iterate)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            old = holder[0]
+            holder[0] = FanoutCache(root, shards=shards, max_connections=shards)
+            opened.append(holder[0])
+            old.close()
+            worst = max(worst, fds_inside(root))
+    finally:
+        stop.set()
+        thread.join(30)
+    if errors:
+        raise errors[0]
+    assert worst <= budget, f'{worst} fds inside the root at a sample, budget {budget}'
+    # An iteration that outlived its handle's close() rejoined it, so that handle is open again
+    # until it is closed or collected: close every handle this test opened, then nothing is left.
+    for cache in opened:
+        cache.close()
+    assert fds_inside(root) == 0
+
+
 # -- maintenance over every shard -------------------------------------------------------------------
 
 DB = 'diskcache-oxide.sqlite'

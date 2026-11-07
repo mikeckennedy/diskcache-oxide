@@ -321,6 +321,31 @@ def test_close_releases_every_fd(make_cache: Callable[..., Any], cache_dir: Path
     assert remaining == 0, f'{remaining} fds still open inside the cache directory after close()'
 
 
+@pytest.mark.backend_only('oxide')
+@pytest.mark.covers('D-017')
+def test_a_closed_handle_used_again_beside_a_live_one_adds_no_fd(
+    make_cache: Callable[..., Any], cache_dir: Path
+) -> None:
+    """A closed handle used again rejoins its store. While another handle keeps the store live, that
+    must open nothing: SQLite's unix VFS defers closing a descriptor on the database while any
+    connection in the process holds a lock on it (every pooled connection does, in WAL mode), so a pin
+    opened and closed for the rejoin stayed open as a bare fd on the database file, one over the
+    budget, until the pool emptied (the soak's fd check, 2026-11-07)."""
+    live = make_cache(cache_dir)
+    live.set('k', 'v')
+    assert live.get('k') == 'v'
+    other = make_cache(cache_dir)
+    assert other.get('k') == 'v'
+    other.close()
+    before = _stable_fds_inside(cache_dir)
+    for _ in range(3):
+        assert other.get('k') == 'v'  # Rejoins the live store.
+        other.close()
+    assert _stable_fds_inside(cache_dir) == before, 'a rejoin left an fd open on the database file'
+    live.close()
+    assert _stable_fds_inside(cache_dir) == 0
+
+
 @pytest.mark.diverges(
     backend='diskcache',
     ref='D-018',

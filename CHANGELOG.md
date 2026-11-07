@@ -29,6 +29,8 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ### Fixed
 
+- A closed handle used again (it rejoins its store, as diskcache reopens lazily) no longer leaves one extra file descriptor open on the database while another handle keeps the store live. It used to open a pin on the database file and close it again, and SQLite's unix VFS defers that close while any connection in the process holds a lock on the file, which every pooled connection does in WAL mode, so the descriptor stayed until the pool emptied (the next fork, or the last close). The soak found it on a `FanoutCache` when a `set` in flight on one thread met a `close()` on another (a new handle had just been opened on the same root): one shard went to 49 file descriptors against D-037's budget of 48 (D-017).
+
 - A `FanoutCache` root deleted while its shards were opening is no longer re-created by a shard open, without a manifest and with shards of the old count, which left the cache unopenable until the folder was deleted again. The open now fails with `OSError` (a reported `NullCache` in a registry), and the next open creates the root properly.
 - `ruff format --check .`, which `scripts/check.sh` runs, failed on the generated Markdown companions under `site/`, whose code blocks ruff 0.17 reformats. The built site is now excluded in `ruff.toml`, as its comment already intended.
 

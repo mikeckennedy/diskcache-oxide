@@ -319,7 +319,12 @@ mod tests {
         let err = Store::open_shards(&base(root), manifest, lockwait::deadline_after(Instant::now(), T)).unwrap_err();
         assert!(matches!(err, Error::RoleMismatch { .. }), "{err:?}");
         for store in &held {
-            assert_eq!(store.handles(), 1, "the failed open released the handle it took on {:?}", store.directory());
+            assert_eq!(
+                store.settled_handles(),
+                1,
+                "the failed open released the handle it took on {:?}",
+                store.directory()
+            );
         }
         assert!(!root.join("003").exists(), "nothing past the failure was opened");
         close(&held);
@@ -331,7 +336,7 @@ mod tests {
         let stores = open(&base(tmp.path()), Some(4)).unwrap();
         Store::close_all(&stores.iter().collect::<Vec<_>>(), Some(Duration::from_millis(100)));
         for store in &stores {
-            assert_eq!(store.handles(), 0);
+            assert_eq!(store.settled_handles(), 0);
             assert!(store.is_retired());
         }
     }

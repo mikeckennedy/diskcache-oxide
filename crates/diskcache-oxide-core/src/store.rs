@@ -570,7 +570,8 @@ impl Store {
     /// handles live, a release that lands first can retire the store for a moment (pin released,
     /// pool cleared) until the matching add revives it. Returns whether it was revived, and a pin for
     /// the caller to close once the registry is released (it's never closed under the registry, which
-    /// never waits on I/O): the store's own if it retired, or `pin` if it wasn't needed.
+    /// never waits on I/O): the store's own if it retired, or `pin` if it wasn't needed, which
+    /// includes an add that lands at or below zero behind a release that outran it.
     #[must_use = "the pin it returns must be closed after the registry is released"]
     fn count_handle(
         &self,
@@ -582,7 +583,9 @@ impl Store {
         let mut slot = self.pin.lock().unwrap_or_else(PoisonError::into_inner);
         if after <= 0 {
             self.retired.store(true, Ordering::Release);
-            return (false, slot.take());
+            // `pin` goes back too, never dropped here: a close under the registry is the I/O it
+            // must never do (`slot` is empty whenever a caller brings a pin, so at most one is Some).
+            return (false, slot.take().or(pin));
         }
         if !self.is_retired() {
             return (false, pin);
@@ -680,7 +683,25 @@ impl Store {
         if !claim() {
             return Ok(());
         }
-        // Opened before taking the registry, which never waits on I/O.
+        // The usual case: the store is live (another handle kept it so), and needs no pin. Decided
+        // under the registry, where retirement can't change (`count_handle`). No speculative pin
+        // here: SQLite's unix VFS defers closing a descriptor on the database while any connection
+        // in the process holds a lock on it, which every pooled connection does in WAL mode, so a
+        // pin opened and closed beside a live pool would stay open as a bare fd on the database
+        // until the pool emptied (the next fork, or the last close): one over D-017's budget, as the
+        // soak's fd check found when a `set` in flight on one thread met a `close()` on another.
+        {
+            let stores = registry(&gate);
+            if !self.is_retired() {
+                let (_, unused) = self.claim(&stores, None);
+                drop(stores);
+                debug_assert!(unused.is_none(), "a live store handed back a pin it was never given");
+                return Ok(());
+            }
+        }
+        // Retired: opened before taking the registry again, which never waits on I/O. Another thread
+        // may revive the store meanwhile; then this pin is unused and its close may be deferred as
+        // above, once, which is the price of never doing I/O under the registry.
         let db_path = open::db_path(&self.directory);
         let pin = open_pin(&gate, &db_path).ok().filter(|(_, id)| *id == self.file_id).map(|(pin, _)| pin);
         let stores = registry(&gate);
@@ -772,6 +793,19 @@ impl Store {
     #[must_use]
     pub fn handles(&self) -> isize {
         self.handles.load(Ordering::Acquire)
+    }
+
+    /// Open handles net of the releases deferred behind a pending fork: what the count will be once
+    /// the fork's drain runs. A test that asserts the count right after a release can run while
+    /// another test in the same process holds a simulated fork, which defers that release, so it
+    /// asserts this and not [`Store::handles`] unless the deferral is what it tests. During a drain
+    /// it reads one high for the instant between the deferred count's reset and each release.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn settled_handles(&self) -> isize {
+        self.handles
+            .load(Ordering::Acquire)
+            .saturating_sub(isize::try_from(self.deferred_releases.load(Ordering::SeqCst)).unwrap_or(isize::MAX))
     }
 
     /// Returns a leased connection: to the pool, or closed if the store is retired (a lease or a
