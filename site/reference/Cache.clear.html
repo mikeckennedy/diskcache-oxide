@@ -1305,7 +1305,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L480-L499" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L480-L501" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Cache</span><span class="op">.</span><span class="sig-name">clear</span>(
@@ -1314,7 +1314,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 )</span></code></pre></div>
 </div>
 <div class="doc-text">
-<p>Works in chunks and lets other writers in between them. Writes that land while it runs, including overwrites of existing keys, are kept. Afterwards it removes every empty large-value folder (D-042), unless this thread is inside a transaction (any cache’s).</p>
+<p>Works in chunks and lets other writers in between them. Writes that land while it runs, including overwrites of existing keys, are kept. Afterwards it sweeps the large-value folders (D-042): a temp file no writer has touched for an hour (left by a process killed mid-write) is removed, and every empty folder goes, for at most 100 ms in all, unless this thread is inside a transaction (any cache’s).</p>
 </div>
 <section id="parameters" class="level2 doc-parameters">
 <h2 class="doc-parameters">Parameters</h2>

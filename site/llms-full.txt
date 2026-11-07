@@ -333,8 +333,10 @@ clear(self, *, timeout: 'float | None' = None) -> 'int'
 Remove every entry that existed when the call started.
 
 Works in chunks and lets other writers in between them. Writes that land while it runs,
-including overwrites of existing keys, are kept. Afterwards it removes every empty
-large-value folder (D-042), unless this thread is inside a transaction (any cache's).
+including overwrites of existing keys, are kept. Afterwards it sweeps the large-value
+folders (D-042): a temp file no writer has touched for an hour (left by a process killed
+mid-write) is removed, and every empty folder goes, for at most 100 ms in all, unless this
+thread is inside a transaction (any cache's).
 
 Args:
     timeout: Seconds each chunk may wait for the write lock (another thread's or another
@@ -391,10 +393,11 @@ close(self, *, checkpoint: 'bool' = True) -> 'None'
 Close this handle and return its connections.
 
 When the last handle on a directory in the process closes, every connection to it closes,
-whichever threads used them, and the empty folders that large values left behind are
-removed (those not touched in the last 30 seconds, for at most 100 ms; D-042), unless this
-thread is inside a transaction. A handle dropped without `close()` does the same. Using the
-cache again afterwards reopens it.
+whichever threads used them, and the folders that large values use are swept (D-042): a
+temp file no writer has touched for an hour, left by a process killed mid-write, is removed,
+and a folder left empty goes (those not touched in the last 30 seconds), for at most 100 ms
+in all, unless this thread is inside a transaction. A handle dropped without `close()` does
+the same. Using the cache again afterwards reopens it.
 
 It never raises. Behind a fork that stays stuck it returns after about 2 seconds at most,
 whatever `timeout` is, and those connections close when the fork ends.
@@ -2803,7 +2806,7 @@ The database file carries a format version. A future build that can't read it ra
 
 Writing a large value never holds the database lock while the bytes go to disk: the value goes to a temporary file first, then inside a short transaction the file is renamed into place and the row updated. The old file is removed after the commit, and file names are never reused.
 
-Large values live one folder deep, in up to 256 folders named by the first two characters of the file's name (D-042). Deleting a value removes only its file. When the process closes its last handle on the cache, it removes the folders left empty, skipping any touched in the last 30 seconds so a busy folder isn't removed and re-created, and spending at most 100 ms on it; a close that runs out of time leaves the rest to a later one. `clear()` removes the folders it emptied at once. So a cache never has more than 256 value folders, and a closed one has none sitting empty for long. A `FanoutCache`'s shards don't sweep yet: each keeps at most 256.
+Large values live one folder deep, in up to 256 folders named by the first two characters of the file's name (D-042). Deleting a value removes only its file. When the process closes its last handle on the cache, it sweeps those folders: a temp file that no writer has touched for an hour, left by a process killed mid-write, is removed, and a folder left empty goes too, skipping any touched in the last 30 seconds so a busy folder isn't removed and re-created, all within 100 ms; a close that runs out of time leaves the rest to a later one. `clear()` runs the same sweep and removes the folders it emptied at once. So a cache never has more than 256 value folders, and a closed one has none sitting empty for long. A `FanoutCache`'s shards don't sweep yet: each keeps at most 256.
 
 A reader racing an overwrite always gets a whole value, old or new. If a value's file really is gone (deleted by hand, or cut short by a crash, since value files aren't fsynced), `get` returns the default and the orphaned row is cleaned up, so `in` and `len` don't keep reporting an entry that can't be read.
 

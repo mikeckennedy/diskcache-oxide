@@ -206,6 +206,36 @@ def test_close_leaves_recently_touched_directories(
 
 
 @pytest.mark.backend_only('oxide')
+@pytest.mark.covers('D-042')
+@pytest.mark.parametrize('how', ['close', 'clear'])
+def test_a_dead_writers_temp_file_goes_with_the_sweep(
+    make_cache: Callable[..., Any], cache_dir: Path, backend: Backend, how: str
+) -> None:
+    """A `.tmp` nobody has written to for an hour is a killed writer's leftover (plan 19): the sweep
+    removes it, once its folder has been quiet for 30 seconds on a close (at once on `clear()`). A
+    young `.tmp` may be another process's write in flight, and a `.val` with no row may be a held
+    transaction's file, so both stay."""
+    cache = make_cache(cache_dir)
+    cache.set('k', big(backend, 0))
+    directory = next(p.parent for p in backend.spill_files(cache_dir))
+    hex_name = directory.name + '0' * 30
+    old_tmp = directory / f'{hex_name[:-1]}1.tmp'
+    young_tmp = directory / f'{hex_name[:-1]}2.tmp'
+    orphan_val = directory / f'{hex_name[:-1]}3.val'
+    for path in (old_tmp, young_tmp, orphan_val):
+        path.write_bytes(b'x')
+    two_hours_ago = time.time() - 7_200
+    for path in (old_tmp, orphan_val, directory):
+        os.utime(path, (two_hours_ago, two_hours_ago))
+    if how == 'close':
+        cache.close()
+    else:
+        cache.clear()
+    assert not old_tmp.exists(), 'the hour-old .tmp was swept'
+    assert young_tmp.exists() and orphan_val.exists(), 'a young .tmp and any .val stay'
+
+
+@pytest.mark.backend_only('oxide')
 @pytest.mark.covers('D-043')
 def test_a_large_write_into_a_deleted_cache_directory_fails_and_recreates_nothing(
     make_cache: Callable[..., Any], cache_dir: Path, backend: Backend

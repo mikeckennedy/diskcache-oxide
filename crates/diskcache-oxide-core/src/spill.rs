@@ -51,6 +51,13 @@ pub const SWEEP_MIN_AGE: Duration = Duration::from_secs(30);
 /// How long a sweep may run. A placeholder until plan 17's step 4 measures how long one really
 /// takes; a sweep cut short leaves the rest for the next.
 pub const SWEEP_BUDGET: Duration = Duration::from_millis(100);
+/// How long a `.tmp` must have gone unwritten before a sweep removes it as a dead writer's leftover
+/// (plan 19). A live `.tmp` lasts one operation: the write of the data, then at most one wait for the
+/// write lock, bounded by the handle's `timeout`, before `commit_name` renames it. An hour is far past
+/// any sensible timeout. The trade: a live writer that goes an hour without touching its file (paused,
+/// or waiting past an hour on the lock) loses it, its `commit_name` fails, and its write raises an
+/// I/O error with nothing stored.
+pub const TMP_MIN_AGE: Duration = Duration::from_secs(3_600);
 
 /// A value file created for a write, not yet committed.
 #[derive(Debug)]
@@ -192,10 +199,12 @@ fn is_hex(s: &str, len: usize) -> bool {
 /// entries named exactly two lowercase hex characters, starting at the `start`-th (modulo their
 /// count, in name order) and wrapping, so a sweep cut short leaves the rest for a later one with no
 /// state kept. With a `min_age`, skips a directory modified less than that long ago (a future
-/// mtime, or one it can't read, counts as young). It only ever calls `rmdir`, which removes nothing
-/// but an empty directory: never a file (a `.tmp` may be another process's write in flight), and
-/// never recursively (an old two-level `aa/bb` keeps `aa` non-empty). Never fails; an
-/// already-passed `deadline` removes nothing.
+/// mtime, or one it can't read, counts as young). In each directory old enough it first removes the
+/// temp files a dead writer left (`<32 hex>.tmp` under its own directory's prefix, a regular file,
+/// unwritten for [`TMP_MIN_AGE`]; never a `.val`, and never a young `.tmp`, which may be another
+/// process's write in flight), then calls `rmdir`, which removes nothing but an empty directory,
+/// never recursively (an old two-level `aa/bb` keeps `aa` non-empty). Never fails; an already-passed
+/// `deadline` removes nothing.
 ///
 /// Run by a store's last release and after `clear()`, with no gate level held and the interpreter
 /// released (plan 17, 4.2). Not for a `FanoutCache` root: each shard is its own store.
@@ -223,7 +232,36 @@ pub fn sweep(directory: &Path, deadline: Instant, min_age: Duration, start: usiz
         if !min_age.is_zero() && !old_enough(&path, now, min_age) {
             continue;
         }
+        // After the age check, so a young directory costs one `lstat`, and a quiet one holding only
+        // a dead temp file goes in this pass (the unlink refreshes its mtime, but the decision is made).
+        remove_dead_temp_files(&path, now);
         let _ = std::fs::remove_dir(&path);
+    }
+}
+
+/// Removes the `<32 hex>.tmp` regular files in `dir` that no writer has touched for [`TMP_MIN_AGE`]
+/// (plan 19). Nothing else: not a `.val`, not a young `.tmp`, not a link or a directory of that
+/// name, and a directory it can't read is left alone.
+fn remove_dead_temp_files(dir: &Path, now: SystemTime) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Some(prefix) = dir.file_name().and_then(|name| name.to_str()) else { return };
+    for entry in entries.filter_map(std::result::Result::ok) {
+        let name = entry.file_name();
+        let Some(stem) = name.to_str().and_then(|name| name.strip_suffix(".tmp")) else { continue };
+        // The same rule as `value_path`: oxide only ever writes a file under its own prefix.
+        if !is_hex(stem, 32) || !stem.starts_with(prefix) {
+            continue;
+        }
+        let path = dir.join(&name);
+        let dead = std::fs::symlink_metadata(&path)
+            .ok()
+            .filter(std::fs::Metadata::is_file)
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= TMP_MIN_AGE);
+        if dead {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 }
 
@@ -658,13 +696,14 @@ mod tests {
     }
 
     #[test]
-    fn writers_racing_a_sweeper_in_one_directory_never_fail() {
+    fn writers_racing_a_sweeper_in_one_directory_never_fail_except_the_macos_rmdir_race() {
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        type Failure = (String, Error);
         let tmp = TempDir::new("spill-sweep-race");
         let root = tmp.path();
         let stop = AtomicBool::new(false);
         let next = AtomicUsize::new(0);
-        let failures: Vec<String> = std::thread::scope(|s| {
+        let failures: Vec<Failure> = std::thread::scope(|s| {
             s.spawn(|| {
                 while !stop.load(Ordering::Relaxed) {
                     sweep(root, far(), Duration::ZERO, 0);
@@ -672,12 +711,12 @@ mod tests {
             });
             let writers: Vec<_> = (0..8)
                 .map(|_| {
-                    s.spawn(|| -> std::result::Result<(), String> {
+                    s.spawn(|| -> std::result::Result<(), Failure> {
                         for _ in 0..300 {
                             let n = next.fetch_add(1, Ordering::Relaxed);
                             let pending = PendingFile::write_named(root, &hex_with_prefix("ee", n), b"x")
-                                .map_err(|e| format!("write {n}: {e:?}"))?;
-                            pending.commit_name().map_err(|e| format!("commit {n}: {e:?}"))?;
+                                .map_err(|e| (format!("write {n}"), e))?;
+                            pending.commit_name().map_err(|e| (format!("commit {n}"), e))?;
                             pending.discard();
                         }
                         Ok(())
@@ -688,8 +727,78 @@ mod tests {
             stop.store(true, Ordering::Relaxed);
             failures
         });
-        assert_eq!(failures, Vec::<String>::new());
+        // On macOS, APFS lets `rmdir` succeed on a directory while a create inside it succeeds too
+        // (plan 19's probe: 2 orphaned files in 54,353 creates racing a tight rmdir loop, with no
+        // oxide code involved), so a write there can lose its file after the create: the data
+        // write or the rename then fails with ENOENT or EINVAL. No retry in user space can prevent
+        // that, so this test tolerates exactly that shape on macOS, a few times in 2,400 writes
+        // (about 2% of runs see one). Linux serializes the two, and stays strict.
+        let kernel_race = |(_, error): &Failure| {
+            cfg!(target_os = "macos") && matches!(error, Error::Io { source, .. } if directory_vanished(source))
+        };
+        let (tolerated, real): (Vec<Failure>, Vec<Failure>) = failures.into_iter().partition(kernel_race);
+        assert!(real.is_empty(), "{real:?}");
+        assert!(tolerated.len() <= 3, "more than a few files lost to the macOS rmdir race: {tolerated:?}");
         sweep(root, far(), Duration::ZERO, 0);
         assert_eq!(value_dirs(root), Vec::<String>::new());
+    }
+
+    fn backdate(path: &Path, by: Duration) {
+        File::open(path).unwrap().set_modified(SystemTime::now() - by).unwrap();
+    }
+
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_sweep_removes_only_the_temp_files_a_dead_writer_left() {
+        let tmp = TempDir::new("spill-sweep-tmp");
+        let root = tmp.path();
+        let dir = root.join("ee");
+        std::fs::create_dir(&dir).unwrap();
+        let two_hours = Duration::from_secs(7_200);
+        let old_tmp = dir.join(format!("{}.tmp", hex_with_prefix("ee", 1)));
+        let young_tmp = dir.join(format!("{}.tmp", hex_with_prefix("ee", 2)));
+        let old_val = dir.join(format!("{}.val", hex_with_prefix("ee", 3)));
+        let misnamed = dir.join("not-a-value-name.tmp");
+        let tmp_dir = dir.join(format!("{}.tmp", hex_with_prefix("ee", 4)));
+        for path in [&old_tmp, &young_tmp, &old_val, &misnamed] {
+            std::fs::write(path, b"x").unwrap();
+        }
+        std::fs::create_dir(&tmp_dir).unwrap();
+        for path in [&old_tmp, &old_val, &misnamed, &tmp_dir] {
+            backdate(path, two_hours);
+        }
+        backdate(&dir, two_hours);
+        sweep(root, far(), SWEEP_MIN_AGE, 0);
+        let mut expected: Vec<String> = [&young_tmp, &old_val, &misnamed, &tmp_dir]
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_owned())
+            .into();
+        expected.sort();
+        assert_eq!(names_in(&dir), expected, "only the old, well-named, regular .tmp went");
+        // A dead .tmp under another directory's prefix isn't oxide's: left alone.
+        let foreign = dir.join(format!("{}.tmp", hex_with_prefix("ef", 9)));
+        std::fs::write(&foreign, b"x").unwrap();
+        backdate(&foreign, two_hours);
+        backdate(&dir, two_hours);
+        sweep(root, far(), SWEEP_MIN_AGE, 0);
+        assert!(foreign.exists());
+        // Two hours old and alone in a quiet directory: file and directory go in one pass, since the
+        // age is decided before the unlink refreshes the directory's mtime. A young directory isn't
+        // read at all, so its dead .tmp waits for it to go quiet.
+        let lonely = root.join("f0");
+        std::fs::create_dir(&lonely).unwrap();
+        let leftover = lonely.join(format!("{}.tmp", hex_with_prefix("f0", 1)));
+        std::fs::write(&leftover, b"x").unwrap();
+        backdate(&leftover, two_hours);
+        sweep(root, far(), SWEEP_MIN_AGE, 0);
+        assert!(leftover.exists(), "a young directory isn't read");
+        backdate(&lonely, two_hours);
+        sweep(root, far(), SWEEP_MIN_AGE, 0);
+        assert!(!lonely.exists(), "a quiet directory loses its dead .tmp and goes, in one pass");
     }
 }

@@ -11,6 +11,7 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 ### Changed
 
 - Large values' files now live one folder deep (`aa/<name>.val`, at most 256 folders per cache) instead of two (65,536), and empty folders are removed: by the process's last close of a cache (those untouched for 30 seconds, for at most 100 ms) and by `clear()`. Before, no folder was ever removed, so a long-lived cache filled all 65,536 with empty folders, about 257 MiB on ext4 and 2 GiB for a default `FanoutCache` (D-042, plan 17; a `FanoutCache`'s shards don't sweep yet, so each keeps at most 256). This is a new on-disk format, version 2: **delete existing caches when upgrading**, with every worker stopped. Opening a version-1 cache raises `FormatMismatchError`, which a `Caches` registry reports as a `NullCache`.
+- The sweep that runs at a cache's last close and after `clear()` also removes a value folder's temp files that no writer has touched for an hour: the file a process killed mid-write leaves behind, which nothing removed before (plan 19). A young temp file and any `.val` are left alone.
 - A large write after a cache's folder was deleted under a running process now raises `OSError` instead of re-creating the folder tree (D-043).
 - A stored file name that isn't one oxide writes is no longer turned into a path: the value reads as a miss and its row is removed (D-013), so a damaged row can't make a read or delete reach outside the cache folder.
 

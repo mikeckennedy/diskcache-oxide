@@ -481,8 +481,10 @@ class Cache:
         """Remove every entry that existed when the call started.
 
         Works in chunks and lets other writers in between them. Writes that land while it runs,
-        including overwrites of existing keys, are kept. Afterwards it removes every empty
-        large-value folder (D-042), unless this thread is inside a transaction (any cache's).
+        including overwrites of existing keys, are kept. Afterwards it sweeps the large-value
+        folders (D-042): a temp file no writer has touched for an hour (left by a process killed
+        mid-write) is removed, and every empty folder goes, for at most 100 ms in all, unless this
+        thread is inside a transaction (any cache's).
 
         Args:
             timeout: Seconds each chunk may wait for the write lock (another thread's or another
@@ -534,10 +536,11 @@ class Cache:
         """Close this handle and return its connections.
 
         When the last handle on a directory in the process closes, every connection to it closes,
-        whichever threads used them, and the empty folders that large values left behind are
-        removed (those not touched in the last 30 seconds, for at most 100 ms; D-042), unless this
-        thread is inside a transaction. A handle dropped without `close()` does the same. Using the
-        cache again afterwards reopens it.
+        whichever threads used them, and the folders that large values use are swept (D-042): a
+        temp file no writer has touched for an hour, left by a process killed mid-write, is removed,
+        and a folder left empty goes (those not touched in the last 30 seconds), for at most 100 ms
+        in all, unless this thread is inside a transaction. A handle dropped without `close()` does
+        the same. Using the cache again afterwards reopens it.
 
         It never raises. Behind a fork that stays stuck it returns after about 2 seconds at most,
         whatever `timeout` is, and those connections close when the fork ends.

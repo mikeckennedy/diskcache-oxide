@@ -62,10 +62,12 @@ MIRI_HOST_MODULES=(stack:: spill::)
 # All four run natively and under ThreadSanitizer (lane B). Plan 17 adds two (probed 2026-11-06):
 # setting a directory's mtime needs `fsetattrlist`/`futimens`, which Miri doesn't support, and the
 # 8-writer sweep race takes 82 s a seed under Miri (45 minutes at 32 seeds) for what TSan checks.
+# Plan 19 adds a third, the dead temp file test, for the same mtime reason.
 MIRI_SKIP=(
     spill::tests::a_size_too_big_to_allocate_is_out_of_memory
     spill::tests::a_sweep_with_a_min_age_skips_young_directories
-    spill::tests::writers_racing_a_sweeper_in_one_directory_never_fail
+    spill::tests::a_sweep_removes_only_the_temp_files_a_dead_writer_left
+    spill::tests::writers_racing_a_sweeper_in_one_directory_never_fail_except_the_macos_rmdir_race
     genlock::tests::a_waiter_with_a_short_deadline_still_starves_in_time
     wal::tests::checks_are_rate_limited_by_time_or_commit_count
     wal::tests::a_successful_checkpoint_does_not_back_off
