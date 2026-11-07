@@ -27,6 +27,17 @@ impl Store {
         DEFAULT_MAX_CONNECTIONS.max(2 * u64::from(shards))
     }
 
+    /// Whether `base`'s `max_connections` and `size_limit` totals split over `shards` shards, as
+    /// [`Store::open_shards`] splits them: `InvalidSetting` naming the one that doesn't. Touches no
+    /// disk, so an open can check its settings against a count before it creates anything.
+    pub fn check_shard_settings(base: &OpenOptions, shards: u32) -> Result<()> {
+        split_connections(base.max_connections, shards)?;
+        if let Some(total) = base.requested.size_limit {
+            split_size_limit("size_limit", total, shards)?;
+        }
+        split_size_limit("the default size_limit", base.default_size_limit, shards).map(|_| ())
+    }
+
     /// Opens every shard of the `FanoutCache` whose root manifest is `manifest`, under `deadline`.
     ///
     /// `base` is the root's settings: `directory` is the root, and `max_connections`,
@@ -152,7 +163,11 @@ mod tests {
     }
 
     fn open(options: &OpenOptions, shards: Option<u32>) -> Result<Vec<Arc<Store>>> {
-        let manifest = fanout::open_manifest(&options.directory, shards)?;
+        let request = match shards {
+            None => fanout::ShardRequest::Stored,
+            Some(n) => fanout::ShardRequest::Exactly(fanout::Manifest::new(n)?),
+        };
+        let manifest = fanout::open_manifest(&options.directory, request)?;
         Store::open_shards(options, manifest, lockwait::deadline_after(Instant::now(), T))
     }
 
@@ -235,10 +250,60 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_check_matches_what_opening_refuses() {
+        let tmp = TempDir::new("shards-check");
+        let too_few = OpenOptions { max_connections: 7, ..base(tmp.path()) };
+        assert!(
+            matches!(Store::check_shard_settings(&too_few, 8), Err(Error::InvalidSetting(m)) if m.contains("max_connections"))
+        );
+        assert!(Store::check_shard_settings(&too_few, 7).is_ok());
+        let small =
+            OpenOptions { requested: Requested { size_limit: Some(4 << 20), cull_limit: None }, ..base(tmp.path()) };
+        assert!(Store::check_shard_settings(&small, 4).is_ok());
+        assert!(
+            matches!(Store::check_shard_settings(&small, 8), Err(Error::InvalidSetting(m)) if m.contains("size_limit"))
+        );
+        // A FanoutCache's defaults (two connections a shard, the default size_limit) fit every count.
+        let defaults =
+            OpenOptions { max_connections: Store::default_total_connections(fanout::MAX_SHARDS), ..base(tmp.path()) };
+        assert!(Store::check_shard_settings(&defaults, fanout::MAX_SHARDS).is_ok(), "the defaults always fit");
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0, "the check touched the disk");
+    }
+
+    #[test]
+    fn shard_directories_are_private_and_a_file_in_their_place_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new("shards-mode");
+        let stores = open(&base(tmp.path()), Some(2)).unwrap();
+        for name in ["000", "001"] {
+            let mode = std::fs::metadata(tmp.path().join(name)).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "shard {name} isn't owner-only (D-015)");
+        }
+        close(&stores);
+        let other = TempDir::new("shards-file");
+        fanout::open_manifest(other.path(), fanout::ShardRequest::Exactly(Manifest::new(2).unwrap())).unwrap();
+        std::fs::write(other.path().join("000"), b"not a directory").unwrap();
+        let err = open(&base(other.path()), None).unwrap_err();
+        assert!(matches!(&err, Error::Io { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn a_root_deleted_before_its_shards_open_is_not_re_created() {
+        let tmp = TempDir::new("shards-deleted");
+        let root = tmp.path().join("root");
+        let manifest = fanout::open_manifest(&root, fanout::ShardRequest::Exactly(Manifest::new(4).unwrap())).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        let err = Store::open_shards(&base(&root), manifest, lockwait::deadline_after(Instant::now(), T)).unwrap_err();
+        assert!(matches!(&err, Error::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound), "{err:?}");
+        assert!(!root.exists(), "a shard open re-created the deleted root");
+    }
+
+    #[test]
     fn a_shard_that_fails_to_open_releases_the_shards_before_it() {
         let tmp = TempDir::new("shards-fail");
         let root = tmp.path();
-        let manifest = fanout::open_manifest(root, Some(4)).unwrap();
+        let manifest =
+            fanout::open_manifest(root, fanout::ShardRequest::Exactly(fanout::Manifest::new(4).unwrap())).unwrap();
         // Shards 0 and 1 are already open elsewhere in this process, so the failed open joins them.
         let held: Vec<Arc<Store>> = (0..2)
             .map(|index| {

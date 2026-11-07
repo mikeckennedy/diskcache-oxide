@@ -1305,7 +1305,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/caches.py#L179-L235" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/caches.py#L204-L262" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Caches</span><span class="op">.</span><span class="sig-name">register</span>(
@@ -1329,7 +1329,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </dd>
 <dt><code><span class="doc-parameter-name">**settings</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Any</span></code></dt>
 <dd>
-<a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> settings for this cache, over the registry’s defaults. A callable <code>on_decode_error</code> is called as <code>(name, key, exc)</code>, as at the registry level. Adding <code>shards=</code> registers a <a href="FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> instead, which takes the same settings; read it with <code>fanout(name)</code>. Passing the key at all is what picks the kind, so <code>shards=None</code> is NOT “not sharded”: it is a <a href="FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> with the stored shard count, or 8 for a new root. Leave <a href="FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> out for a plain cache (a config file that writes <code>shards: null</code> for “none” would register a FanoutCache).
+<a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> settings for this cache, over the registry’s defaults. A callable <code>on_decode_error</code> is called as <code>(name, key, exc)</code>, as at the registry level. Adding <code>shards=</code> registers a <a href="FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> instead, which takes the same settings; read it with <code>fanout(name)</code>. <code>shards=n</code> is the count for a new folder: an existing one keeps the count it was created with, and the registry warns when that isn’t <code>n</code>. Passing the key at all is what picks the kind, so <code>shards=None</code> is NOT “not sharded”: it is a <a href="FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> with the stored shard count, or 8 for a new root. Leave <a href="FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> out for a plain cache (a config file that writes <code>shards: null</code> for “none” would register a FanoutCache).
 </dd>
 </dl>
 </div>

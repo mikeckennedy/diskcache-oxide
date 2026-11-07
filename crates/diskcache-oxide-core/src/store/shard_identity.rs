@@ -32,7 +32,7 @@ fn shard(index: u32, count: u32) -> Role {
 
 /// Opens shards `0..count` under `root` the way a `FanoutCache` will: the manifest first.
 fn open_root(root: &Path, count: u32) -> Vec<Arc<Store>> {
-    fanout::open_manifest(root, Some(count)).unwrap();
+    fanout::open_manifest(root, fanout::ShardRequest::Exactly(fanout::Manifest::new(count).unwrap())).unwrap();
     (0..count)
         .map(|i| {
             let dir = root.join(fanout::shard_dirname(i as usize));
@@ -124,7 +124,12 @@ fn a_lost_manifest_recreated_with_another_count_is_refused_by_the_shard_stamps()
         store.release_handle();
     }
     std::fs::remove_file(tmp.path().join(MANIFEST_FILENAME)).unwrap();
-    assert_eq!(fanout::open_manifest(tmp.path(), Some(2)).unwrap().shards(), 2);
+    assert_eq!(
+        fanout::open_manifest(tmp.path(), fanout::ShardRequest::Exactly(fanout::Manifest::new(2).unwrap()))
+            .unwrap()
+            .shards(),
+        2
+    );
     refused(Store::open(&options(&tmp.path().join("000"), shard(0, 2))), "this database is shard 0 of 4");
     refused(Store::open(&options(&tmp.path().join("001"), shard(1, 2))), "this database is shard 1 of 4");
 }
@@ -144,19 +149,25 @@ fn a_shard_directory_a_plain_cache_created_is_never_adopted() {
 #[test]
 fn a_plain_cache_on_a_fanout_root_is_refused_and_leaves_no_database() {
     let tmp = TempDir::new("shard-plain-root");
-    fanout::open_manifest(tmp.path(), None).unwrap();
+    fanout::open_manifest(tmp.path(), fanout::ShardRequest::Stored).unwrap();
     refused(Store::open(&options(tmp.path(), Role::Plain)), "is a FanoutCache root");
     assert!(!tmp.path().join(DB_FILENAME).exists(), "the refused Cache must not create its database");
     // The root still opens as a FanoutCache afterwards.
-    assert_eq!(fanout::open_manifest(tmp.path(), None).unwrap().shards(), fanout::DEFAULT_SHARDS);
+    assert_eq!(
+        fanout::open_manifest(tmp.path(), fanout::ShardRequest::Stored).unwrap().shards(),
+        fanout::DEFAULT_SHARDS
+    );
 }
 
 #[test]
 fn a_fanout_cache_on_a_plain_cache_directory_is_refused_and_writes_no_manifest() {
     let tmp = TempDir::new("shard-fanout-plain");
     let plain = Store::open(&options(tmp.path(), Role::Plain)).unwrap();
-    for shards in [None, Some(4)] {
-        let err = fanout::open_manifest(tmp.path(), shards).unwrap_err();
+    let four = fanout::Manifest::new(4).unwrap();
+    for request in
+        [fanout::ShardRequest::Stored, fanout::ShardRequest::Exactly(four), fanout::ShardRequest::ForNewRoot(four)]
+    {
+        let err = fanout::open_manifest(tmp.path(), request).unwrap_err();
         assert!(matches!(err, Error::RoleMismatch { .. }), "{err:?}");
         assert!(err.to_string().contains("holds a plain Cache"), "{err}");
     }
@@ -173,7 +184,7 @@ fn a_directory_left_with_both_markers_is_refused_by_both_and_nothing_is_deleted(
     Store::open(&options(tmp.path(), Role::Plain)).unwrap().release_handle();
     std::fs::write(tmp.path().join(MANIFEST_FILENAME), fanout::Manifest::new(8).unwrap().render()).unwrap();
     refused(Store::open(&options(tmp.path(), Role::Plain)), "is a FanoutCache root");
-    assert!(matches!(fanout::open_manifest(tmp.path(), None), Err(Error::RoleMismatch { .. })));
+    assert!(matches!(fanout::open_manifest(tmp.path(), fanout::ShardRequest::Stored), Err(Error::RoleMismatch { .. })));
     assert!(tmp.path().join(MANIFEST_FILENAME).exists());
     assert!(tmp.path().join(DB_FILENAME).exists());
 }
@@ -191,7 +202,7 @@ fn a_plain_cache_racing_a_fanout_cache_for_one_root_never_both_succeed() {
             });
             let fanout = s.spawn(|| {
                 barrier.wait();
-                fanout::open_manifest(&root, None)
+                fanout::open_manifest(&root, fanout::ShardRequest::Stored)
             });
             (plain.join().unwrap(), fanout.join().unwrap())
         });

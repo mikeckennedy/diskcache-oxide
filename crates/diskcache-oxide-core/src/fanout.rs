@@ -187,29 +187,51 @@ pub fn read_manifest(root: &Path) -> Result<Option<Manifest>> {
     Manifest::parse(&bytes, &path).map(Some)
 }
 
+/// The shard count a `FanoutCache` open asks for. Every variant agrees on a new root's count with
+/// any concurrent creator: the first `link` wins, whatever each asked for (plan 15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShardRequest {
+    /// The stored count, or [`DEFAULT_SHARDS`] for a new root (`shards=None`).
+    Stored,
+    /// Exactly this count: a new root gets it, and an existing root with another count is
+    /// [`Error::ShardCountMismatch`] (`shards=n`).
+    Exactly(Manifest),
+    /// This count for a new root, the stored count for an existing one, so never a count mismatch.
+    /// The `Caches` registry's open: a root created one way runs that way until it's deleted.
+    ForNewRoot(Manifest),
+}
+
+impl ShardRequest {
+    /// The manifest a new root is created with.
+    fn for_a_new_root(self) -> Result<Manifest> {
+        match self {
+            Self::Stored => Manifest::new(DEFAULT_SHARDS),
+            Self::Exactly(manifest) | Self::ForNewRoot(manifest) => Ok(manifest),
+        }
+    }
+}
+
 /// Opens the root `root` for a `FanoutCache`: creates the directory and the manifest if there is
-/// none, otherwise reads and validates it. Returns the manifest in force.
-///
-/// `shards: None` takes the stored count, or [`DEFAULT_SHARDS`] for a new root. An explicit count
-/// that differs from the stored one is [`Error::ShardCountMismatch`] naming both. When this returns, the
-/// manifest is durable (the root directory is `fsync`ed), so the caller may create shards.
-/// Concurrent creators (threads or processes) agree on one manifest: the first `link` wins.
-pub fn open_manifest(root: &Path, shards: Option<u32>) -> Result<Manifest> {
-    let requested = shards.map(Manifest::new).transpose()?;
+/// none, otherwise reads and validates it. Returns the manifest in force, as `request` decides
+/// (see [`ShardRequest`]); only [`ShardRequest::Exactly`] can give [`Error::ShardCountMismatch`].
+/// When this returns, the manifest is durable (the root directory is `fsync`ed), so the caller may
+/// create shards. Concurrent creators (threads or processes) agree on one manifest: the first
+/// `link` wins, and the comparison runs only after it, so a lost race is decided by the winner's.
+pub fn open_manifest(root: &Path, request: ShardRequest) -> Result<Manifest> {
     ensure_directory(root)?;
     // Before the manifest can be written, and again once it is there: of a plain `Cache` and a
     // `FanoutCache` creating one root at once, at least one is refused, and nothing is deleted.
     refuse_plain_cache(root)?;
-    let stored = open_or_create(root, requested)?;
+    let stored = open_or_create(root, request)?;
     refuse_plain_cache(root)?;
     Ok(stored)
 }
 
 /// [`open_manifest`] after its first check for a plain cache.
-fn open_or_create(root: &Path, requested: Option<Manifest>) -> Result<Manifest> {
+fn open_or_create(root: &Path, request: ShardRequest) -> Result<Manifest> {
     let stored = match read_manifest(root)? {
         Some(manifest) => manifest,
-        None => match create_manifest(root, requested.unwrap_or(Manifest::new(DEFAULT_SHARDS)?))? {
+        None => match create_manifest(root, request.for_a_new_root()?)? {
             Created::Won(manifest) => return Ok(manifest),
             Created::Lost => read_manifest(root)?.ok_or_else(|| Error::ManifestInvalid {
                 path: manifest_path(root),
@@ -217,7 +239,7 @@ fn open_or_create(root: &Path, requested: Option<Manifest>) -> Result<Manifest> 
             })?,
         },
     };
-    if let Some(requested) = requested
+    if let ShardRequest::Exactly(requested) = request
         && requested != stored
     {
         return Err(Error::ShardCountMismatch { stored: stored.shards, requested: requested.shards });
@@ -501,7 +523,7 @@ mod tests {
         let tmp = TempDir::new("fanout-new");
         let root = tmp.path().join("root");
         assert!(read_manifest(&root).unwrap().is_none());
-        let manifest = open_manifest(&root, None).unwrap();
+        let manifest = open_manifest(&root, ShardRequest::Stored).unwrap();
         assert_eq!(manifest.shards(), DEFAULT_SHARDS);
         assert_eq!(std::fs::read_to_string(manifest_path(&root)).unwrap(), CANONICAL_8);
         let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
@@ -521,28 +543,52 @@ mod tests {
     fn reopening_reads_the_stored_count() {
         let tmp = TempDir::new("fanout-reopen");
         let root = tmp.path().join("root");
-        assert_eq!(open_manifest(&root, Some(64)).unwrap().shards(), 64);
-        assert_eq!(open_manifest(&root, None).unwrap().shards(), 64);
-        assert_eq!(open_manifest(&root, Some(64)).unwrap().shards(), 64);
-        let err = open_manifest(&root, Some(8)).unwrap_err();
+        assert_eq!(open_manifest(&root, exactly(64)).unwrap().shards(), 64);
+        assert_eq!(open_manifest(&root, ShardRequest::Stored).unwrap().shards(), 64);
+        assert_eq!(open_manifest(&root, exactly(64)).unwrap().shards(), 64);
+        let err = open_manifest(&root, exactly(8)).unwrap_err();
         assert!(matches!(err, Error::ShardCountMismatch { stored: 64, requested: 8 }), "{err:?}");
         let message = err.to_string();
         assert!(message.contains("64") && message.contains('8'), "{message}");
-        assert!(matches!(open_manifest(&root, Some(0)), Err(Error::InvalidSetting(_))));
-        assert!(matches!(open_manifest(&root, Some(300)), Err(Error::InvalidSetting(_))));
+    }
+
+    #[test]
+    fn for_a_new_root_creates_its_count_and_otherwise_keeps_the_stored_one_untouched() {
+        let tmp = TempDir::new("fanout-for-new");
+        let root = tmp.path().join("root");
+        assert_eq!(open_manifest(&root, for_new(4)).unwrap().shards(), 4, "a new root gets the requested count");
+        let path = manifest_path(&root);
+        let (bytes, mtime) = (std::fs::read(&path).unwrap(), std::fs::metadata(&path).unwrap().modified().unwrap());
+        for other in [8, 4, 1] {
+            assert_eq!(open_manifest(&root, for_new(other)).unwrap().shards(), 4, "the stored count wins");
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "the manifest was rewritten (D-019)");
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), mtime);
+        let names: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, [MANIFEST_FILENAME]);
+    }
+
+    #[test]
+    fn for_a_new_root_still_refuses_a_plain_caches_directory() {
+        let tmp = TempDir::new("fanout-for-new-plain");
+        let root = tmp.path().join("root");
+        ensure_directory(&root).unwrap();
+        std::fs::write(crate::open::db_path(&root), b"").unwrap();
+        assert!(matches!(open_manifest(&root, for_new(4)), Err(Error::RoleMismatch { .. })));
+        assert!(read_manifest(&root).unwrap().is_none(), "nothing was created");
     }
 
     #[test]
     fn an_oversized_or_altered_manifest_is_refused_on_open() {
         let tmp = TempDir::new("fanout-bad");
         let root = tmp.path().join("root");
-        open_manifest(&root, None).unwrap();
+        open_manifest(&root, ShardRequest::Stored).unwrap();
         let path = manifest_path(&root);
         std::fs::write(&path, vec![b'x'; 1 << 20]).unwrap();
-        let err = open_manifest(&root, None).unwrap_err();
+        let err = open_manifest(&root, ShardRequest::Stored).unwrap_err();
         assert!(matches!(&err, Error::ManifestInvalid { reason, .. } if reason.contains("larger")), "{err:?}");
         std::fs::write(&path, CANONICAL_8.replace("shards = 8", "shards = 9 ")).unwrap();
-        assert!(matches!(open_manifest(&root, None), Err(Error::ManifestInvalid { .. })));
+        assert!(matches!(open_manifest(&root, ShardRequest::Stored), Err(Error::ManifestInvalid { .. })));
         // Nothing was replaced by the failed opens.
         assert_eq!(std::fs::read_to_string(&path).unwrap(), CANONICAL_8.replace("shards = 8", "shards = 9 "));
     }
@@ -554,7 +600,7 @@ mod tests {
         ensure_directory(&root).unwrap();
         std::fs::write(root.join(format!("{MANIFEST_FILENAME}.tmp-1-0")), "junk").unwrap();
         assert!(read_manifest(&root).unwrap().is_none());
-        assert_eq!(open_manifest(&root, Some(4)).unwrap().shards(), 4);
+        assert_eq!(open_manifest(&root, exactly(4)).unwrap().shards(), 4);
     }
 
     #[test]
@@ -588,7 +634,7 @@ mod tests {
                         scope.spawn(move || {
                             let shards = if same_count { 16 } else { u32::try_from(i + 1).unwrap() };
                             barrier.wait();
-                            open_manifest(root, Some(shards))
+                            open_manifest(root, exactly(shards))
                         })
                     })
                     .collect();
@@ -609,5 +655,59 @@ mod tests {
             assert_eq!(names, [MANIFEST_FILENAME], "one manifest, no temporary files");
             assert_eq!(std::fs::read_to_string(manifest_path(&root)).unwrap(), winner.render());
         }
+    }
+
+    #[test]
+    fn mixed_requests_racing_on_a_new_root_all_agree_on_the_winner() {
+        const THREADS: usize = 18;
+        for round in 0..8 {
+            let tmp = TempDir::new("fanout-mixed-race");
+            let root = tmp.path().join("root");
+            let barrier = Barrier::new(THREADS);
+            // Thread i asks one of three ways, each with a count of its own.
+            let request = |i: usize| {
+                let shards = u32::try_from(i % 6 + 1).unwrap();
+                match i % 3 {
+                    0 => ShardRequest::Stored,
+                    1 => exactly(shards),
+                    _ => for_new(shards),
+                }
+            };
+            let results: Vec<(ShardRequest, Result<Manifest>)> = std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..THREADS)
+                    .map(|i| {
+                        let (root, barrier) = (&root, &barrier);
+                        scope.spawn(move || {
+                            barrier.wait();
+                            (request(i), open_manifest(root, request(i)))
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            let winner = read_manifest(&root).unwrap().unwrap();
+            for (request, result) in &results {
+                match (request, result) {
+                    (ShardRequest::Exactly(asked), Ok(got)) => assert!(asked == got && *got == winner, "round {round}"),
+                    (ShardRequest::Exactly(asked), Err(Error::ShardCountMismatch { stored, requested })) => {
+                        assert!(*stored == winner.shards() && *requested == asked.shards(), "round {round}");
+                    }
+                    (ShardRequest::Stored | ShardRequest::ForNewRoot(_), Ok(got)) => {
+                        assert_eq!(*got, winner, "round {round}: a lenient request didn't get the winner");
+                    }
+                    other => panic!("round {round}: {other:?}"),
+                }
+            }
+            let names: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name()).collect();
+            assert_eq!(names, [MANIFEST_FILENAME], "round {round}: one manifest, no temporary files");
+        }
+    }
+
+    fn exactly(shards: u32) -> ShardRequest {
+        ShardRequest::Exactly(Manifest::new(shards).unwrap())
+    }
+
+    fn for_new(shards: u32) -> ShardRequest {
+        ShardRequest::ForNewRoot(Manifest::new(shards).unwrap())
     }
 }

@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
-use diskcache_oxide_core::fanout::{self, Manifest};
+use diskcache_oxide_core::fanout::{self, Manifest, ShardRequest};
 use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, PAGE, Snapshot};
 use diskcache_oxide_core::open::Role;
 use diskcache_oxide_core::ops::Number;
@@ -78,26 +78,24 @@ impl FanoutCache {
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
     ) -> PyResult<Self> {
-        let settings = Settings::parse(
+        Self::construct(
             py,
+            directory,
             timeout,
+            shards,
+            false,
             size_limit,
             cull_limit,
             serializer,
+            pickle,
+            clock,
             max_connections,
             sqlite_cache_size,
             wal_size_limit,
             wal_checkpoint,
-        )?;
-        let shards = shard_count(shards)?;
-        let stores = crate::detach(py, || open(&directory, &settings, shards))
-            .map_err(|(e, shards)| open_error(py, e, shards))?;
-        let shards = stores
-            .into_iter()
-            .enumerate()
-            .map(|(shard, store)| StoreHandle { store, shard, closed: AtomicBool::new(false) })
-            .collect();
-        Ok(Self { shards, config: HandleConfig::new(&directory, &settings, pickle, clock, on_decode_error, durable) })
+            on_decode_error,
+            durable,
+        )
     }
 
     // -- attributes ---------------------------------------------------------------------------
@@ -410,6 +408,54 @@ impl FanoutCache {
 }
 
 impl FanoutCache {
+    /// `FanoutCache(...)` and `_open_fanout_keeping_stored(...)`: validates the settings (in
+    /// `Cache`'s order, then `shards`) and opens the root. With `keep_stored`, `shards=n` is a count
+    /// for a new root only, and an existing root keeps its own (`ShardRequest::ForNewRoot`).
+    #[allow(clippy::too_many_arguments)]
+    fn construct(
+        py: Python<'_>,
+        directory: PathBuf,
+        timeout: Option<&Bound<'_, PyAny>>,
+        shards: Option<&Bound<'_, PyAny>>,
+        keep_stored: bool,
+        size_limit: Option<&Bound<'_, PyAny>>,
+        cull_limit: Option<&Bound<'_, PyAny>>,
+        serializer: &str,
+        pickle: bool,
+        clock: Option<Py<PyAny>>,
+        max_connections: Option<&Bound<'_, PyAny>>,
+        sqlite_cache_size: Option<&Bound<'_, PyAny>>,
+        wal_size_limit: Option<&Bound<'_, PyAny>>,
+        wal_checkpoint: &str,
+        on_decode_error: Option<DecodePolicy>,
+        durable: bool,
+    ) -> PyResult<Self> {
+        let settings = Settings::parse(
+            py,
+            timeout,
+            size_limit,
+            cull_limit,
+            serializer,
+            max_connections,
+            sqlite_cache_size,
+            wal_size_limit,
+            wal_checkpoint,
+        )?;
+        let request = match (shard_count(shards)?, keep_stored) {
+            (None, _) => ShardRequest::Stored,
+            (Some(manifest), false) => ShardRequest::Exactly(manifest),
+            (Some(manifest), true) => ShardRequest::ForNewRoot(manifest),
+        };
+        let stores = crate::detach(py, || open(&directory, &settings, request))
+            .map_err(|(e, shards)| open_error(py, e, shards))?;
+        let shards = stores
+            .into_iter()
+            .enumerate()
+            .map(|(shard, store)| StoreHandle { store, shard, closed: AtomicBool::new(false) })
+            .collect();
+        Ok(Self { shards, config: HandleConfig::new(&directory, &settings, pickle, clock, on_decode_error, durable) })
+    }
+
     /// The handle of the shard `key` hashes to.
     #[inline]
     fn route(&self, key: &str) -> &StoreHandle {
@@ -788,6 +834,66 @@ impl FanoutKeyIterator {
     }
 }
 
+/// The `Caches` registry's open (plan 15): `FanoutCache(...)`, except that `shards=n` is the count
+/// for a new root only, and an existing root keeps its stored count instead of raising
+/// `LayoutMismatchError`. The registry compares `.shards` with `n` and warns. `shards` is required:
+/// `None` is `FanoutCache`'s own lenient form, so the registry never passes it here.
+#[pyfunction]
+#[pyo3(signature = (
+    directory,
+    timeout = None,
+    *,
+    shards,
+    size_limit = None,
+    cull_limit = None,
+    serializer = "msgpack",
+    pickle = false,
+    clock = None,
+    max_connections = None,
+    sqlite_cache_size = None,
+    wal_size_limit = None,
+    wal_checkpoint = "manual",
+    on_decode_error = None,
+    durable = false,
+))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn _open_fanout_keeping_stored(
+    py: Python<'_>,
+    directory: PathBuf,
+    timeout: Option<&Bound<'_, PyAny>>,
+    shards: &Bound<'_, PyAny>,
+    size_limit: Option<&Bound<'_, PyAny>>,
+    cull_limit: Option<&Bound<'_, PyAny>>,
+    serializer: &str,
+    pickle: bool,
+    clock: Option<Py<PyAny>>,
+    max_connections: Option<&Bound<'_, PyAny>>,
+    sqlite_cache_size: Option<&Bound<'_, PyAny>>,
+    wal_size_limit: Option<&Bound<'_, PyAny>>,
+    wal_checkpoint: &str,
+    on_decode_error: Option<DecodePolicy>,
+    durable: bool,
+) -> PyResult<FanoutCache> {
+    FanoutCache::construct(
+        py,
+        directory,
+        timeout,
+        Some(shards),
+        true,
+        size_limit,
+        cull_limit,
+        serializer,
+        pickle,
+        clock,
+        max_connections,
+        sqlite_cache_size,
+        wal_size_limit,
+        wal_checkpoint,
+        on_decode_error,
+        durable,
+    )
+}
+
 impl Drop for FanoutCache {
     /// A cache dropped without `close()`: releases every shard still open, as `close()` does but
     /// with no checkpoint, detached on a large WAL as `Cache`'s drop is.
@@ -861,10 +967,10 @@ fn open_fds() -> Option<u64> {
 }
 
 /// The `shards=` argument: `None` (the stored count, or 8 for a new root) or an int from 1 to 256.
-fn shard_count(shards: Option<&Bound<'_, PyAny>>) -> PyResult<Option<u32>> {
+fn shard_count(shards: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Manifest>> {
     let Some(n) = whole("shards", shards)? else { return Ok(None) };
-    match u32::try_from(n) {
-        Ok(n) if (fanout::MIN_SHARDS..=fanout::MAX_SHARDS).contains(&n) => Ok(Some(n)),
+    match u32::try_from(n).ok().and_then(|n| Manifest::new(n).ok()) {
+        Some(manifest) => Ok(Some(manifest)),
         _ => Err(PyValueError::new_err(format!(
             "shards must be between {} and {}, got {n}",
             fanout::MIN_SHARDS,
@@ -876,16 +982,35 @@ fn shard_count(shards: Option<&Bound<'_, PyAny>>) -> PyResult<Option<u32>> {
 /// Opens the root's manifest, then every shard under one deadline of the handle's `timeout`. With
 /// no `max_connections`, the total is two per shard, and never fewer than a plain cache's default.
 /// A failure comes with the shard count once the manifest has given it, for [`open_error`].
+///
+/// Under `ForNewRoot(n)` (the registry's open, plan 15), the settings are checked against `n`
+/// before anything touches disk, so a setting that's wrong for the registration raises as a bad
+/// setting always has, whatever is on disk. If the root keeps another count and the settings fit
+/// `n` but not it, the open is `StoredShardsRefuseSettings`, a layout error the registry reports.
 fn open(
     root: &std::path::Path,
     settings: &Settings,
-    shards: Option<u32>,
+    request: ShardRequest,
 ) -> Result<Vec<std::sync::Arc<Store>>, (Error, Option<u32>)> {
     let deadline = lockwait::deadline_after(Instant::now(), settings.timeout);
-    let manifest: Manifest = fanout::open_manifest(root, shards).map_err(|e| (e, None))?;
-    let total = settings.max_connections.unwrap_or_else(|| Store::default_total_connections(manifest.shards()));
-    // The role is set per shard by `open_shards`.
-    let base = settings.options(root.to_path_buf(), total, Role::Plain);
+    let base_for = |shards: u32| {
+        let total = settings.max_connections.unwrap_or_else(|| Store::default_total_connections(shards));
+        // The role is set per shard by `open_shards`.
+        settings.options(root.to_path_buf(), total, Role::Plain)
+    };
+    if let ShardRequest::ForNewRoot(wanted) = request {
+        Store::check_shard_settings(&base_for(wanted.shards()), wanted.shards()).map_err(|e| (e, None))?;
+    }
+    let manifest: Manifest = fanout::open_manifest(root, request).map_err(|e| (e, None))?;
+    let base = base_for(manifest.shards());
+    if let ShardRequest::ForNewRoot(wanted) = request
+        && wanted != manifest
+        && let Err(Error::InvalidSetting(reason)) = Store::check_shard_settings(&base, manifest.shards())
+    {
+        let refused =
+            Error::StoredShardsRefuseSettings { stored: manifest.shards(), requested: wanted.shards(), reason };
+        return Err((refused, None));
+    }
     Store::open_shards(&base, manifest, deadline).map_err(|error| match error {
         Error::Timeout { .. } => (Error::Timeout { seconds: settings.timeout.as_secs_f64() }, None),
         other => (other, Some(manifest.shards())),

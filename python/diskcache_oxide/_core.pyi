@@ -21,6 +21,7 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     '_decode',
     '_sqlite_memory',
     '_gate_stats',
+    '_open_fanout_keeping_stored',
     '_sqlite_error',
     '_held_stores',
     '_sqlite_mutex_status',
@@ -80,6 +81,30 @@ def _encode(value: object, serializer: str = 'msgpack', pickle: bool = False) ->
 
 def _gate_stats() -> dict[str, Any]:
     """Test hook: the fork gate's state and counters (pending, holders, parked, fork_timeouts, deferred)."""
+
+def _open_fanout_keeping_stored(
+    directory: str | os.PathLike[str],
+    timeout: float | None = None,
+    *,
+    shards: int,
+    size_limit: int | None = None,
+    cull_limit: int | None = None,
+    serializer: str = 'msgpack',
+    pickle: bool = False,
+    clock: Callable[[], float] | None = None,
+    max_connections: int | None = None,
+    sqlite_cache_size: int | None = None,
+    wal_size_limit: int | None = None,
+    wal_checkpoint: Literal['manual', 'auto'] = 'manual',
+    on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
+    durable: bool = False,
+) -> FanoutCache:
+    """For the `Caches` registry: `FanoutCache(...)`, but `shards` is the count for a new root only.
+
+    An existing root keeps its stored count instead of raising `LayoutMismatchError`; compare the
+    result's `shards` with the one passed. A setting that fits `shards` but not the stored count
+    raises `LayoutMismatchError` (plan 15).
+    """
 
 def _held_stores() -> int:
     """Test hook: how many stores in this process have a held transaction, on any thread."""

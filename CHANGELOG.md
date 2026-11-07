@@ -6,6 +6,8 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ### Changed
 
+- A `Caches` registry no longer turns a sharded cache whose folder has another shard count than `register(..., shards=n)` into a `NullCache`. It opens the folder with the count on disk, logs a `WARNING` saying how to apply `n` (delete the folder with every worker stopped), and logs one `ERROR` per process with a constant message so an error tracker groups the reports. `n` applies only to a new folder. A `size_limit` or `max_connections` that fits `n` but is too small for the folder's count is still a reported `NullCache`. A direct `FanoutCache(path, shards=n)` still raises `LayoutMismatchError` (plan 15).
+
 - Inside `FanoutCache.transact(key=...)`, calls over every shard now raise `ValueError` on the thread that holds the transaction, as calls for other shards' keys already did: `len()`, `volume()`, `iter()`, `iterkeys()` (and `next()` on an iterator made before the block), `clear()`, `expire()`, `cull()` and `checkpoint()`. They used to run inside the transaction on its shard and outside it on the others. Other threads and a plain `Cache`'s transaction are unaffected (D-040).
 
 ### Documentation
@@ -19,6 +21,7 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ### Fixed
 
+- A `FanoutCache` root deleted while its shards were opening is no longer re-created by a shard open, without a manifest and with shards of the old count, which left the cache unopenable until the folder was deleted again. The open now fails with `OSError` (a reported `NullCache` in a registry), and the next open creates the root properly.
 - `ruff format --check .`, which `scripts/check.sh` runs, failed on the generated Markdown companions under `site/`, whose code blocks ruff 0.17 reformats. The built site is now excluded in `ruff.toml`, as its comment already intended.
 
 [Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/commits/main

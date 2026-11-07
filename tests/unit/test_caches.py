@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import subprocess
 import sys
 import threading
 import time
+import traceback
 import warnings
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +25,12 @@ from diskcache_oxide import (
     LayoutMismatchError,
     NullCache,
 )
+from diskcache_oxide import caches as caches_module
+from diskcache_oxide._core import _open_fanout_keeping_stored
+
+from tests.unit.spawn_race import race
+
+MiB = 1 << 20
 
 
 class Clock:
@@ -560,12 +569,6 @@ def _fanout_root(directory: Path) -> None:
     FanoutCache(directory, shards=8).close()
 
 
-def _wrong_shard_count(base: Path, caches: Caches) -> tuple[str, bool]:
-    _fanout_root(base / 'rl')
-    caches.register('rl', shards=16)
-    return 'rl', True
-
-
 def _plain_on_a_root(base: Path, caches: Caches) -> tuple[str, bool]:
     _fanout_root(base / 'rl')
     caches.register('rl')
@@ -578,7 +581,7 @@ def _plain_on_a_shard(base: Path, caches: Caches) -> tuple[str, bool]:
     return 'shard', False
 
 
-@pytest.mark.parametrize('arrange', [_wrong_shard_count, _plain_on_a_root, _plain_on_a_shard])
+@pytest.mark.parametrize('arrange', [_plain_on_a_root, _plain_on_a_shard])
 def test_a_layout_mismatch_is_a_null_cache_reported_remembered_and_retried(base: Path, arrange: Any) -> None:
     clock = Clock()
     errors: list[tuple[str, Exception]] = []
@@ -624,6 +627,275 @@ def test_a_layout_mismatch_raised_directly_is_still_a_value_error(base: Path) ->
         'RuntimeError',
         'ValueError',
     ]
+
+
+# -- a registered shard count that differs from the folder's (plan 15) ---------------------------------
+
+MISMATCH_ERROR = 'a FanoutCache is registered with a shard count its folder does not have'
+
+
+@pytest.fixture(autouse=True)
+def _fresh_mismatch_reports() -> Iterator[None]:
+    caches_module._forget_reported_shard_mismatches()
+    yield
+    caches_module._forget_reported_shard_mismatches()
+
+
+def _mismatch_records(caplog: pytest.LogCaptureFixture) -> tuple[list[logging.LogRecord], list[logging.LogRecord]]:
+    """The registry's WARNINGs about a shard-count mismatch, and its ERRORs."""
+    records = [r for r in caplog.records if r.name == 'diskcache_oxide']
+    warned = [r for r in records if r.levelno == logging.WARNING and 'is registered with shards=' in r.getMessage()]
+    errored = [r for r in records if r.levelno == logging.ERROR and r.getMessage() == MISMATCH_ERROR]
+    return warned, errored
+
+
+def test_a_folder_with_another_shard_count_opens_with_its_own_and_warns(
+    base: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with FanoutCache(base / 'rl', shards=8) as old:
+        old.set('kept', 1)
+    errors: list[tuple[str, Exception]] = []
+    caches = Caches(base, on_open_error=lambda name, exc: errors.append((name, exc)))
+    caches.register('rl', shards=4)
+    with caplog.at_level(logging.WARNING, logger='diskcache_oxide'):
+        rl = caches.fanout('rl')
+    assert isinstance(rl, FanoutCache) and rl.shards == 8, 'the count on disk wins'
+    assert rl.get('kept') == 1, 'the entries are still there'
+    assert errors == [], 'not an open failure'
+    [warning], [error] = _mismatch_records(caplog)
+    path = str(base / 'rl')
+    assert warning.getMessage() == (
+        f"cache 'rl' at {path} has 8 shards but is registered with shards=4; using the 8 on disk. "
+        f'To apply shards=4, delete {path} while no process has it open'
+    )
+    assert error.msg == MISMATCH_ERROR and error.args == (), 'a constant template, for one error-tracker issue'
+    extra = tuple(getattr(error, k) for k in ('cache', 'directory', 'stored_shards', 'registered_shards'))
+    assert extra == ('rl', path, 8, 4)
+    assert sorted(p.name for p in (base / 'rl').iterdir() if p.is_dir()) == [f'{i:03d}' for i in range(8)]
+    caches.close_all()
+
+
+def test_the_error_is_once_per_process_and_mismatch_but_the_warning_is_every_open(
+    base: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _fanout_root(base / 'rl')
+    with caplog.at_level(logging.WARNING, logger='diskcache_oxide'):
+        caches = Caches(base)
+        caches.register('rl', shards=4)
+        caches.fanout('rl')
+        caches.close_all()
+        caches.fanout('rl')  # A reopen.
+        caches.close_all()
+        rebuilt = Caches(base)  # A second registry in the same process.
+        rebuilt.register('rl', shards=4)
+        rebuilt.fanout('rl')
+        rebuilt.close_all()
+        assert [len(r) for r in _mismatch_records(caplog)] == [3, 1]
+        another = Caches(base)  # A later registration with yet another count is a new mismatch.
+        another.register('rl', shards=16)
+        reopened = another.fanout('rl')
+        assert isinstance(reopened, FanoutCache) and reopened.shards == 8
+        another.close_all()
+    assert [len(r) for r in _mismatch_records(caplog)] == [4, 2]
+
+
+def test_racing_lookups_log_once_and_share_one_handle(
+    base: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fanout_root(base / 'rl')
+    caches = Caches(base)
+    caches.register('rl', shards=4)
+    built = threading.Barrier(8)
+    handles: list[FanoutCache] = []
+    real = caches_module._open_fanout_keeping_stored
+
+    def every_thread_builds_a_handle(*args: Any, **kwargs: Any) -> FanoutCache:
+        cache = real(*args, **kwargs)
+        handles.append(cache)
+        built.wait(10)  # All 8 have built one before any reaches `setdefault`.
+        return cache
+
+    monkeypatch.setattr(caches_module, '_open_fanout_keeping_stored', every_thread_builds_a_handle)
+    start = threading.Barrier(8)
+    found: list[object] = []
+
+    def lookup() -> None:
+        start.wait(10)
+        found.append(caches.fanout('rl'))
+
+    with caplog.at_level(logging.WARNING, logger='diskcache_oxide'):
+        threads = [threading.Thread(target=lookup) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(20)
+    assert len(found) == 8 and len({id(c) for c in found}) == 1, 'every lookup got the one kept handle'
+    assert len(handles) == 8, 'the race was not forced'
+    assert [len(r) for r in _mismatch_records(caplog)] == [1, 1], 'a losing handle logged'
+    caches.close_all()
+
+
+def test_a_larger_folder_opens_with_the_default_connections_for_its_own_count(
+    base: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Registered 2, stored 16: the default total for 2 shards (8) can't split over 16, so the open
+    # must use the folder's count for the default, not the registration's.
+    FanoutCache(base / 'rl', shards=16).close()
+    errors: list[tuple[str, Exception]] = []
+    caches = Caches(base, on_open_error=lambda name, exc: errors.append((name, exc)))
+    caches.register('rl', shards=2)
+    with caplog.at_level(logging.WARNING, logger='diskcache_oxide'):
+        rl = caches.fanout('rl')
+    assert isinstance(rl, FanoutCache) and rl.shards == 16
+    assert errors == []
+    assert [len(r) for r in _mismatch_records(caplog)] == [1, 1]
+    caches.close_all()
+
+
+def test_the_error_is_once_per_folder_even_through_a_symlinked_base(
+    tmp_path: Path, base: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _fanout_root(base / 'rl')
+    link = tmp_path / 'link'
+    link.symlink_to(base)
+    with caplog.at_level(logging.WARNING, logger='diskcache_oxide'):
+        for where in (base, link):
+            caches = Caches(where)
+            caches.register('rl', shards=4)
+            caches.fanout('rl')
+            caches.close_all()
+    assert [len(r) for r in _mismatch_records(caplog)] == [2, 1], 'one folder, one ERROR'
+
+
+def test_a_new_folder_gets_the_registered_count_and_shards_none_never_warns(
+    base: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caches = Caches(base)
+    caches.register('new', shards=4)
+    caches.register('rl', shards=None)
+    _fanout_root(base / 'rl')
+    with caplog.at_level(logging.WARNING, logger='diskcache_oxide'):
+        new, rl = caches.fanout('new'), caches.fanout('rl')
+        assert isinstance(new, FanoutCache) and new.shards == 4
+        assert isinstance(rl, FanoutCache) and rl.shards == 8
+    assert _mismatch_records(caplog) == ([], [])
+    caches.close_all()
+
+
+@pytest.mark.parametrize(
+    'settings', [{'size_limit': 4 * MiB}, {'max_connections': 4}], ids=['size_limit', 'max_connections']
+)
+def test_settings_that_fit_the_registered_count_but_not_the_folders_are_a_reported_null_cache(
+    base: Path, settings: dict[str, Any]
+) -> None:
+    _fanout_root(base / 'rl')
+    errors: list[tuple[str, Exception]] = []
+    caches = Caches(base, on_open_error=lambda name, exc: errors.append((name, exc)))
+    caches.register('rl', shards=4, **settings)
+    assert isinstance(caches.fanout('rl'), NullCache)
+    [(name, exc)] = errors
+    assert name == 'rl' and isinstance(exc, LayoutMismatchError)
+    message = str(exc)
+    assert 'has 8 shards but is registered with shards=4' in message, message
+    assert next(iter(settings)) in message and 'delete the directory' in message, message
+    caches.close_all()
+
+
+@pytest.mark.parametrize(
+    'settings', [{'size_limit': 3 * MiB}, {'max_connections': 3}], ids=['size_limit', 'max_connections']
+)
+def test_settings_wrong_for_the_registered_count_still_raise_whatever_is_on_disk(
+    base: Path, settings: dict[str, Any]
+) -> None:
+    _fanout_root(base / 'rl')
+    caches = Caches(base)
+    caches.register('rl', shards=4, **settings)
+    caches.register('new', shards=4, **settings)
+    for name in ('rl', 'new'):
+        with pytest.raises(ValueError, match=next(iter(settings))) as caught:
+            caches.fanout(name)
+        assert not isinstance(caught.value, LayoutMismatchError), 'a bad setting, not an outage'
+    assert not (base / 'new').exists(), 'the check ran before anything was created'
+    caches.close_all()
+
+
+def test_admin_calls_on_a_mismatched_registration_use_the_folders_count(
+    base: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with FanoutCache(base / 'rl', shards=8) as old:
+        for n in range(5):
+            old.set(f'k{n}', n)
+    caches = Caches(base)
+    caches.register('rl', shards=4)
+    with caplog.at_level(logging.WARNING, logger='diskcache_oxide'):
+        assert caches.stats()['rl'].count == 5
+        assert caches.expire_all() == {'rl': 0}
+        assert caches.clear('rl') == 5
+    assert [len(r) for r in _mismatch_records(caplog)] == [1, 1], 'one real open, so one report'
+    caches.close_all()
+
+
+def test_a_private_parameter_is_never_a_registry_setting(base: Path) -> None:
+    caches = Caches(base)
+    with pytest.raises(TypeError, match='unknown Cache setting'):
+        caches.register('rl', shards=4, _anything=True)
+    with pytest.raises(TypeError, match='unknown Cache setting'):
+        Caches(base, _anything=True)
+
+
+def test_the_keeping_open_takes_every_fanout_setting() -> None:
+    ours = inspect.signature(_open_fanout_keeping_stored).parameters
+    theirs = inspect.signature(FanoutCache).parameters
+    assert list(ours) == list(theirs), 'a FanoutCache setting is missing from _open_fanout_keeping_stored'
+    for name, param in theirs.items():
+        if name == 'shards':
+            assert ours[name].default is inspect.Parameter.empty and ours[name].kind == param.kind
+        else:
+            assert (ours[name].kind, ours[name].default) == (param.kind, param.default), name
+
+
+def _registry_racer(base: str, shards: int, barrier: Any, results: Any) -> None:
+    try:
+        seen: list[logging.LogRecord] = []
+
+        class Keep(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                seen.append(record)
+
+        logger = logging.getLogger('diskcache_oxide')
+        logger.addHandler(Keep())
+        logger.setLevel(logging.WARNING)
+        caches = Caches(base)
+        caches.register('rl', shards=shards)
+        barrier.wait(30)
+        cache = caches.fanout('rl')
+        if not isinstance(cache, FanoutCache):
+            results.put(('null', shards))
+            return
+        cache.incr('k')
+        warned = sum(r.levelno == logging.WARNING and 'is registered with shards=' in r.getMessage() for r in seen)
+        errored = sum(r.levelno == logging.ERROR and r.getMessage() == MISMATCH_ERROR for r in seen)
+        caches.close_all()
+        results.put(('ok', (shards, cache.shards, warned, errored)))
+    except BaseException:
+        results.put(('crash', traceback.format_exc()))
+
+
+@pytest.mark.timeout(120)
+def test_processes_registering_different_counts_on_a_new_folder_all_use_the_winners(base: Path) -> None:
+    root = base / 'rl'
+    outcomes = race([(_registry_racer, (str(base), 8 if i % 2 else 16)) for i in range(8)])
+    assert all(kind == 'ok' for kind, _ in outcomes), outcomes
+    reports = [detail for _, detail in outcomes]
+    with FanoutCache(root) as cache:
+        winner = cache.shards
+        assert cache.get('k') == 8, 'every incr landed on one shard: one total'
+    for registered, opened, warned, errored in reports:
+        assert opened == winner, reports
+        expected = 0 if registered == winner else 1
+        assert (warned, errored) == (expected, expected), reports
+    names = sorted(p.name for p in root.iterdir())
+    assert names == sorted([*(f'{i:03d}' for i in range(winner)), 'diskcache-oxide-fanout']), names
 
 
 def test_stats_clear_expire_and_close_cover_sharded_caches(base: Path) -> None:

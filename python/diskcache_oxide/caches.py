@@ -18,9 +18,14 @@ settings. Plain caches are read with `caches[name]` (typed `TransactionalCacheLi
 that. A lookup is one dict read, with no lock, so it's cheap enough to do on every request.
 
 **When a cache can't open** (a permissions problem, a database in a format this version can't read,
-a directory that holds the other kind of cache or another shard count (`LayoutMismatchError`),
-another process holding the lock past `timeout`), the lookup returns a `NullCache` instead of
-raising, reports the error through `on_open_error`, and tries again after `retry_open_after` seconds.
+a directory that holds the other kind of cache (`LayoutMismatchError`), another process holding the
+lock past `timeout`), the lookup returns a `NullCache` instead of raising, reports the error through
+`on_open_error`, and tries again after `retry_open_after` seconds.
+
+**A sharded cache keeps the shard count it was created with.** If its folder already has another
+count than `register(..., shards=n)` says, the registry opens it with the count on disk, logs a
+WARNING saying so (and one ERROR per process, for an error tracker), and carries on. `n` applies only
+to a new folder: to change the count, delete the folder while no process has it open.
 A bad setting (`size_limit=True`) is a bug, not an outage, so that still raises. With `durable=True`
 among the settings, the handle a lookup returns doesn't raise for an outage either, so the two together
 keep a cache failure out of a request: the registry covers opening, and `durable` everything after.
@@ -47,7 +52,7 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Self, cast
 
-from diskcache_oxide._core import Cache, FanoutCache, Timeout
+from diskcache_oxide._core import Cache, FanoutCache, Timeout, _open_fanout_keeping_stored
 from diskcache_oxide.null import NullCache
 from diskcache_oxide.protocol import CacheLike, TransactionalCacheLike
 
@@ -56,17 +61,37 @@ __all__ = ['CacheStats', 'Caches']
 
 log = logging.getLogger('diskcache_oxide')
 
+
 # The keywords `Cache` and `FanoutCache` accept, so a misspelled setting fails at registration, not on
 # first use. `shards` is the one a FanoutCache adds; it picks the kind, so it's per-cache, never a default.
-_CACHE_SETTINGS = frozenset(inspect.signature(Cache).parameters) - {'directory'}
-_FANOUT_SETTINGS = frozenset(inspect.signature(FanoutCache).parameters) - {'directory'}
+# Private (`_`) parameters are never settings.
+def _public_settings(kind: type) -> frozenset[str]:
+    return frozenset(p for p in inspect.signature(kind).parameters if p != 'directory' and not p.startswith('_'))
+
+
+_CACHE_SETTINGS = _public_settings(Cache)
+_FANOUT_SETTINGS = _public_settings(FanoutCache)
 
 # Errors that mean "this cache can't open right now", as opposed to a bug in its settings.
 # `Timeout` is an `OSError`. `RuntimeError` covers `FormatMismatchError` and its subclass
-# `LayoutMismatchError` (a directory that holds another kind of cache, or another shard count), the
-# not-WAL error, and a child forked mid-transaction that can't write the file (D-020): a NullCache
-# is right for all.
+# `LayoutMismatchError` (a directory that holds another kind of cache, a moved shard directory, or
+# settings that fit the registered shard count but not the stored one), the not-WAL error, and a
+# child forked mid-transaction that can't write the file (D-020): a NullCache is right for all. A
+# different shard count alone is not an error here: the stored count is used (plan 15).
 _OPEN_ERRORS = (OSError, RuntimeError)
+
+# The shard-count mismatches this process has reported at ERROR, keyed by (real path, stored count,
+# registered count): once per process, not per registry, so a rebuilt `Caches` doesn't report again,
+# while a later registration with yet another count does. A forked child inherits it and stays quiet.
+# No lock: `dict.setdefault` is atomic with or without the GIL, and a lock held by another thread
+# at `fork()` would hang the child's first report, inside a cache lookup.
+_REPORTED_SHARD_MISMATCHES: dict[tuple[str, int, int], object] = {}
+
+
+def _forget_reported_shard_mismatches() -> None:
+    """Test hook: forget which shard-count mismatches this process has reported."""
+    _REPORTED_SHARD_MISMATCHES.clear()
+
 
 # The longest a `Timeout` at open is remembered: it means busy (a fork, a peer holding the lock), not
 # broken. Still remembered, or each lookup would spend the whole `timeout` behind a stuck fork.
@@ -191,11 +216,13 @@ class Caches[N: str = str]:
             directory: Put this cache somewhere else.
             **settings: `Cache` settings for this cache, over the registry's defaults. A callable
                 `on_decode_error` is called as `(name, key, exc)`, as at the registry level. Adding
-                `shards=` registers a `FanoutCache` instead, which takes the same settings; read it
-                with `fanout(name)`. Passing the key at all is what picks the kind, so `shards=None`
-                is NOT "not sharded": it is a `FanoutCache` with the stored shard count, or 8 for a
-                new root. Leave `shards` out for a plain cache (a config file that writes
-                `shards: null` for "none" would register a FanoutCache).
+                `shards=` registers a `FanoutCache` instead, which takes the same settings; read it with
+                `fanout(name)`. `shards=n` is the count for a new folder: an existing one keeps the
+                count it was created with, and the registry warns when that isn't `n`. Passing the key
+                at all is what picks the kind, so `shards=None` is NOT "not sharded": it is a
+                `FanoutCache` with the stored shard count, or 8 for a new root. Leave `shards` out for a
+                plain cache (a config file that writes `shards: null` for "none" would register a
+                FanoutCache).
 
         Raises:
             ValueError: The name is taken or isn't a plain directory name, or another registered
@@ -275,8 +302,10 @@ class Caches[N: str = str]:
 
         A `NullCache` while it can't be opened or is disabled, exactly as for a plain cache. That
         includes a directory whose layout doesn't match the registration (`LayoutMismatchError`: a
-        different shard count, or a plain cache's directory): reported through `on_open_error`,
-        remembered, and retried after `retry_open_after`. Its `transact(retry=False, *, key=None)`
+        plain cache's directory, or settings too small for the folder's shard count): reported
+        through `on_open_error`, remembered, and retried after `retry_open_after`. A folder with
+        another shard count than the registered one is not an error: it opens with its own count,
+        and the registry logs a WARNING (see the class docs). Its `transact(retry=False, *, key=None)`
         accepts the `key=` a `FanoutCache` needs, so `caches.fanout(name).transact(key=k)` runs
         whether the cache is on or off. Both kinds satisfy `ShardedCacheLike`, so code (or a test
         fake) can be typed against that; the return stays the union so `shard_of` and `shards`
@@ -326,12 +355,46 @@ class Caches[N: str = str]:
         if opened is not None:
             return opened
         path, settings = self._spec(name)
-        kind = FanoutCache if name in self._fanout else Cache
-        cache = kind(path, **self._bind_reporter(name, settings))
+        settings = self._bind_reporter(name, settings)
+        registered = settings.get('shards')
+        cache: Cache | FanoutCache
+        if name not in self._fanout:
+            cache = Cache(path, **settings)
+        elif registered is None:
+            cache = FanoutCache(path, **settings)
+        else:
+            # A count for a new folder only: an existing one keeps its own (plan 15).
+            cache = _open_fanout_keeping_stored(path, **settings)
         winner = self._opened.setdefault(name, cache)
         if winner is not cache:
             cache.close(checkpoint=False)
+        elif isinstance(cache, FanoutCache) and registered is not None and cache.shards != registered:
+            # Only the handle that won logs, so racing lookups report once.
+            self._report_shard_mismatch(name, path, cache.shards, registered)
         return winner
+
+    @staticmethod
+    def _report_shard_mismatch(name: str, path: str, stored: int, registered: int) -> None:
+        log.warning(
+            'cache %r at %s has %d shards but is registered with shards=%d; using the %d on disk. '
+            'To apply shards=%d, delete %s while no process has it open',
+            name,
+            path,
+            stored,
+            registered,
+            stored,
+            registered,
+            path,
+        )
+        key = (os.path.realpath(path), stored, registered)
+        mine = object()
+        if _REPORTED_SHARD_MISMATCHES.setdefault(key, mine) is not mine:
+            return
+        # A constant message, so an error tracker groups every process's report into one issue.
+        log.error(
+            'a FanoutCache is registered with a shard count its folder does not have',
+            extra={'cache': name, 'directory': path, 'stored_shards': stored, 'registered_shards': registered},
+        )
 
     @staticmethod
     def _bind_reporter(name: str, settings: dict[str, Any]) -> dict[str, Any]:

@@ -69,6 +69,15 @@ pub enum Error {
     )]
     ShardCountMismatch { stored: u32, requested: u32 },
 
+    /// The `Caches` registry's open (`ShardRequest::ForNewRoot`) kept a root's stored count, but a
+    /// setting that fits the registered count doesn't fit the stored one (a `size_limit` or
+    /// `max_connections` too small to split over `stored` shards). Python `LayoutMismatchError`, so
+    /// the registry serves its reported `NullCache` (plan 15, R1).
+    #[error(
+        "this FanoutCache has {stored} shards but is registered with shards={requested}, and its settings don't fit {stored} shards: {reason}; delete the directory to apply shards={requested}, or raise the setting"
+    )]
+    StoredShardsRefuseSettings { stored: u32, requested: u32, reason: String },
+
     /// SQLite refused WAL mode, e.g. on a network filesystem.
     #[error("the cache requires WAL journal mode, but SQLite is using {mode:?}")]
     NotWal { mode: String },
@@ -178,6 +187,7 @@ impl Error {
             | Self::ManifestInvalid { .. }
             | Self::RoleMismatch { .. }
             | Self::ShardCountMismatch { .. }
+            | Self::StoredShardsRefuseSettings { .. }
             | Self::NotWal { .. }
             | Self::InvalidSetting(_)
             | Self::Closed
@@ -259,6 +269,7 @@ mod tests {
             Error::ManifestInvalid { path: PathBuf::from("x"), reason: "y".into() },
             Error::RoleMismatch { path: PathBuf::from("x"), reason: "y".into() },
             Error::ShardCountMismatch { stored: 8, requested: 16 },
+            Error::StoredShardsRefuseSettings { stored: 8, requested: 4, reason: "x".into() },
             Error::NotWal { mode: "delete".into() },
             Error::Closed,
             Error::KeyMissing,

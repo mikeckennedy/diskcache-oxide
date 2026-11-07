@@ -56,7 +56,7 @@ FanoutCache('/var/cache/my-app-rate-limits', shards=16)
 
 ### Plain `Cache` and `FanoutCache` directories don't mix
 
-A `Cache` opened on a `FanoutCache`'s directory, or on one of its shard directories, raises `LayoutMismatchError`, and so does a `FanoutCache` opened on a plain `Cache`'s directory. The refused open creates nothing, so a typo doesn't leave a directory that neither kind can open. `LayoutMismatchError` is both a `ValueError` and a `FormatMismatchError`. If a registry hits it, the lookup returns a [`NullCache`](null-cache.qmd) and reports it like any failed open.
+A `Cache` opened on a `FanoutCache`'s directory, or on one of its shard directories, raises `LayoutMismatchError`, and so does a `FanoutCache` opened on a plain `Cache`'s directory. The refused open creates nothing, so a typo doesn't leave a directory that neither kind can open. `LayoutMismatchError` is both a `ValueError` and a `FormatMismatchError`. If a registry hits it, the lookup returns a [`NullCache`](null-cache.qmd) and reports it like any failed open. A registry that meets another shard count than its registration's opens the folder with the count on disk and warns instead ([Caches](caches.qmd)).
 
 ## Choosing `shards` and `max_connections`
 

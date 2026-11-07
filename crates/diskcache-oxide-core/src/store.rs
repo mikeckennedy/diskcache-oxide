@@ -398,10 +398,12 @@ impl Store {
     /// least one is refused (plan 13, section 1).
     pub fn open_until(options: &OpenOptions, deadline: Instant) -> Result<Arc<Self>> {
         Self::validate(options)?;
-        open::ensure_directory(&options.directory)?;
         if options.role != Role::Plain {
+            // A shard never creates its root: a root deleted mid-open must stay deleted (plan 15, R3).
+            open::ensure_shard_directory(&options.directory)?;
             return Self::open_store(options, deadline);
         }
+        open::ensure_directory(&options.directory)?;
         crate::fanout::refuse_manifest(&options.directory)?;
         let store = Self::open_store(options, deadline)?;
         #[cfg(test)]

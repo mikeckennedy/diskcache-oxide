@@ -8,7 +8,6 @@ vector is a format break, never a test update.
 from __future__ import annotations
 
 import gc
-import multiprocessing
 import random
 import resource
 import subprocess
@@ -27,6 +26,7 @@ from diskcache_oxide import Cache, FanoutCache, Timeout
 
 from tests.conformance.proc_workers import SqlitePeer
 from tests.unit.fork_timeout_scenarios import fds_inside
+from tests.unit.spawn_race import race
 
 MiB = 1 << 20
 GiB = 1 << 30
@@ -765,7 +765,6 @@ def test_a_bad_value_on_each_shard_is_reported_once_per_shard(tmp_path: Path) ->
 
 # -- racing creators -------------------------------------------------------------------------------
 
-SPAWN = multiprocessing.get_context('spawn')
 RACERS = 16
 
 
@@ -793,26 +792,12 @@ def _open_plain(root: str, barrier: Any, results: Any) -> None:
         results.put(('crash', traceback.format_exc()))
 
 
-def _race(targets: list[tuple[Any, tuple[Any, ...]]]) -> list[tuple[str, Any]]:
-    barrier = SPAWN.Barrier(len(targets))
-    results = SPAWN.Queue()
-    procs = [SPAWN.Process(target=t, args=(*args, barrier, results)) for t, args in targets]
-    for p in procs:
-        p.start()
-    outcomes = [results.get(timeout=60) for _ in procs]
-    for p in procs:
-        p.join(30)
-    assert [p.exitcode for p in procs] == [0] * len(procs)
-    assert not [o for o in outcomes if o[0] == 'crash'], outcomes
-    return outcomes
-
-
 @pytest.mark.timeout(120)
 @pytest.mark.parametrize('same_count', [True, False])
 def test_processes_racing_to_create_one_root_agree_on_one_manifest(tmp_path: Path, same_count: bool) -> None:
     root = tmp_path / 'root'
     counts = [4 if same_count else 1 + i % 8 for i in range(RACERS)]
-    outcomes = _race([(_open_root, (str(root), n)) for n in counts])
+    outcomes = race([(_open_root, (str(root), n)) for n in counts])
     winner = int((root / MANIFEST).read_text().split('shards = ')[1].split('\n')[0])
     assert {n for kind, n in outcomes if kind == 'ok'} == {winner}, outcomes
     for kind, detail in outcomes:
@@ -826,7 +811,7 @@ def test_processes_racing_to_create_one_root_agree_on_one_manifest(tmp_path: Pat
 def test_a_plain_cache_racing_fanout_caches_for_one_root_never_both_open(tmp_path: Path) -> None:
     for round_ in range(3):
         root = tmp_path / f'root-{round_}'
-        outcomes = _race([(_open_plain, (str(root),)), *[(_open_root, (str(root), None))] * 3])
+        outcomes = race([(_open_plain, (str(root),)), *[(_open_root, (str(root), None))] * 3])
         # Results arrive in completion order: a plain Cache reports 0 shards, a FanoutCache 8.
         opened = {detail for kind, detail in outcomes if kind == 'ok'}
         assert opened in ({0}, {8}, set()), f'round {round_}: both kinds opened one root: {outcomes}'

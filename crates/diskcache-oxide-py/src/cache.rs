@@ -36,7 +36,7 @@ use crate::durable::{Failures, Op};
 use crate::to_py_err;
 
 mod fanout;
-pub(crate) use fanout::FanoutCache;
+pub(crate) use fanout::{_open_fanout_keeping_stored, FanoutCache};
 
 /// A disk cache backed by SQLite, shared safely across threads and processes.
 #[pyclass(frozen, module = "diskcache_oxide")]

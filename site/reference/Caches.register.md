@@ -26,7 +26,7 @@ The cache's name. Without [directory](Cache.directory.md#diskcache_oxide.Cache.d
 Put this cache somewhere else.
 
 `**settings: Any`  
-[Cache](Cache.md#diskcache_oxide.Cache) settings for this cache, over the registry's defaults. A callable `on_decode_error` is called as `(name, key, exc)`, as at the registry level. Adding `shards=` registers a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache) instead, which takes the same settings; read it with `fanout(name)`. Passing the key at all is what picks the kind, so `shards=None` is NOT "not sharded": it is a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache) with the stored shard count, or 8 for a new root. Leave [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) out for a plain cache (a config file that writes `shards: null` for "none" would register a FanoutCache).
+[Cache](Cache.md#diskcache_oxide.Cache) settings for this cache, over the registry's defaults. A callable `on_decode_error` is called as `(name, key, exc)`, as at the registry level. Adding `shards=` registers a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache) instead, which takes the same settings; read it with `fanout(name)`. `shards=n` is the count for a new folder: an existing one keeps the count it was created with, and the registry warns when that isn't `n`. Passing the key at all is what picks the kind, so `shards=None` is NOT "not sharded": it is a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache) with the stored shard count, or 8 for a new root. Leave [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) out for a plain cache (a config file that writes `shards: null` for "none" would register a FanoutCache).
 
 
 ## Raises

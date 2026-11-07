@@ -168,8 +168,20 @@ pub fn db_path(directory: &Path) -> PathBuf {
     directory.join(DB_FILENAME)
 }
 
+/// Creates a shard directory as owner-only (0700) if it doesn't exist, but never its parent: a
+/// root deleted while its shards were opening gives `NotFound` instead of being re-created without
+/// a manifest, with the old count's shards in it (plan 15, R3).
+pub fn ensure_shard_directory(directory: &Path) -> Result<()> {
+    match std::fs::DirBuilder::new().mode(0o700).create(directory) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::AlreadyExists && directory.is_dir() => Ok(()),
+        Err(source) => Err(Error::Io { path: directory.to_path_buf(), source }),
+    }
+}
+
 /// Creates `directory` as owner-only (0700) if it doesn't exist (D-015). Missing parents are
-/// created with the process umask, like `os.makedirs`; an existing directory is left alone.
+/// created with the process umask, like `os.makedirs`; an existing directory is left alone. For a
+/// plain cache's directory or a `FanoutCache` root; a shard uses [`ensure_shard_directory`].
 pub fn ensure_directory(directory: &Path) -> Result<()> {
     let io = |source| Error::Io { path: directory.to_path_buf(), source };
     if let Some(parent) = directory.parent()
