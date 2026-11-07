@@ -682,4 +682,92 @@ mod tests {
             free(p);
         }
     }
+
+    /// A counter `ThreadSanitizer` can see a race on. The test above counts through an atomic, which
+    /// `TSan` treats as synchronized whatever the mutex does, so it can never show a mutex that fails
+    /// to exclude; this one guards a plain cell with it (plan 14, step 2a).
+    struct PlainCell(UnsafeCell<u64>);
+    // SAFETY: every access in the tests below is made under a mutex the test holds (or, in the
+    // canary, deliberately isn't, which is the point of that test and the race TSan must report).
+    unsafe impl Sync for PlainCell {}
+
+    /// Every increment is a plain read-modify-write of a plain cell, in through `enter`, or through
+    /// `try` and then `enter` when busy (which spins first, since `spin_on` makes the budget
+    /// non-zero), on FAST and RECURSIVE. Natively a lost increment means two threads were inside at
+    /// once; under `ThreadSanitizer` (lane B) so does a data race report on the cell.
+    #[test]
+    fn contended_increments_through_a_plain_cell_lose_nothing() {
+        const THREADS: u64 = 8;
+        const EACH: u64 = 20_000;
+        spin_on();
+        assert!(SPIN_BUDGET.load(Ordering::Relaxed) > 0, "the spin path must be what runs");
+        for id in [ffi::SQLITE_MUTEX_FAST, ffi::SQLITE_MUTEX_RECURSIVE] {
+            let p = Shared(alloc(id));
+            let count = PlainCell(UnsafeCell::new(0));
+            let start = Barrier::new(usize::try_from(THREADS).unwrap());
+            let (count_ref, start) = (&count, &start);
+            thread::scope(|s| {
+                for _ in 0..THREADS {
+                    s.spawn(move || {
+                        let count = count_ref;
+                        start.wait();
+                        for i in 0..EACH {
+                            if i % 3 == 0 || try_enter(p) != ffi::SQLITE_OK {
+                                enter(p);
+                            }
+                            // On RECURSIVE, every fifth increment is made at depth 2, so the nested
+                            // leave (2 -> 1, the mutex still held) guards a cell TSan can see.
+                            let nested = id == ffi::SQLITE_MUTEX_RECURSIVE && i % 5 == 0;
+                            if nested {
+                                enter(p);
+                            }
+                            // SAFETY: this thread holds `p`, which every other access to the cell is
+                            // made under too.
+                            unsafe { *count.0.get() += 1 };
+                            if nested {
+                                leave(p);
+                            }
+                            leave(p);
+                        }
+                    });
+                }
+            });
+            assert_eq!(count.0.into_inner(), THREADS * EACH, "mutex id {id}");
+            free(p);
+        }
+    }
+
+    /// Lane B's canary: a real data race, so a `ThreadSanitizer` run that doesn't report it can't see
+    /// races in this module at all. Two threads increment a plain cell, each under its own mutex,
+    /// so nothing excludes them. Ignored, so it never runs with the suite; `scripts/sanitize.sh`
+    /// runs it alone and requires the report. It asserts nothing about the count: `TSan`'s report is
+    /// the verdict, and natively the count is simply whatever the race left.
+    #[test]
+    #[ignore = "lane B's canary: a deliberate data race for ThreadSanitizer to report"]
+    fn canary_two_mutexes_exclude_nothing() {
+        const EACH: u64 = 20_000;
+        let (a, b) = (Shared(alloc(ffi::SQLITE_MUTEX_FAST)), Shared(alloc(ffi::SQLITE_MUTEX_FAST)));
+        let count = PlainCell(UnsafeCell::new(0));
+        let start = Barrier::new(2);
+        let (count_ref, start) = (&count, &start);
+        thread::scope(|s| {
+            for p in [a, b] {
+                s.spawn(move || {
+                    let count = count_ref;
+                    start.wait();
+                    for _ in 0..EACH {
+                        enter(p);
+                        // SAFETY: not sound, on purpose: the other thread holds a different mutex.
+                        // The cell is a plain integer, so the race corrupts nothing but the count,
+                        // which the test doesn't read back as an invariant.
+                        unsafe { *count.0.get() += 1 };
+                        leave(p);
+                    }
+                });
+            }
+        });
+        let _ = count.0.into_inner();
+        free(a);
+        free(b);
+    }
 }

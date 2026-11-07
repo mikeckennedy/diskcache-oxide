@@ -774,7 +774,11 @@ mod tests {
             if let Some(s) = Spinner::admit() {
                 break s;
             }
-            assert!(start.elapsed() < Duration::from_secs(5), "spinner counts leaked");
+            // A wall-clock bound, so native only (Miri's clock, plan 14): under Miri the loop
+            // still has to end, which the spinner count does by itself.
+            if !cfg!(miri) {
+                assert!(start.elapsed() < Duration::from_secs(5), "spinner counts leaked");
+            }
             std::thread::yield_now();
         };
         drop(spinner);
@@ -802,8 +806,11 @@ mod tests {
             let released = Instant::now();
             drop(held);
             let (got, permit) = waiter.join().unwrap().expect("the waiter timed out");
-            // One POLL plus scheduling; generous for a loaded machine.
-            assert!(got.duration_since(released) < Duration::from_millis(100));
+            // One POLL plus scheduling; generous for a loaded machine. Native only: under Miri's
+            // clock a seed in 32 overran it (plan 14, lane A, 2026-11-07), with the waiter in.
+            if !cfg!(miri) {
+                assert!(got.duration_since(released) < Duration::from_millis(100));
+            }
             drop(permit);
         });
         assert_eq!(slots.in_use(), 0);

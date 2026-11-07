@@ -5,7 +5,9 @@
 #
 #   --lanes   which lanes to run (default all five; a lane not built yet fails the run):
 #               A  Miri on the core tests that never reach SQLite or fsync
-#               B  ThreadSanitizer on core (plan 14, step 2; not built yet)
+#               B  ThreadSanitizer on core: every core test, the bundled SQLite instrumented too, races
+#                  allowed only by signature (scripts/sanitize/allowed-races.txt), plus the canary and
+#                  the mutex tests in release (plan 14, step 2a; macOS and Linux)
 #               C  AddressSanitizer, LeakSanitizer and UBSan on core (step 3; not built yet)
 #               D  ThreadSanitizer through a TSan-built free-threaded CPython (step 4a; not built yet)
 #               E  AddressSanitizer through Python, runtime preloaded (step 4b; not built yet)
@@ -147,11 +149,82 @@ lane_A() {
     fi
 }
 
+# Lane B: ThreadSanitizer. Core built with `-Zsanitizer=thread` on a `-Zbuild-std` std, the bundled
+# SQLite with `-fsanitize=thread -g` (the cc crate reads `CFLAGS_<target>`), so TSan attributes frames
+# inside SQLite and in ours alike. Every core test runs (the lib's and tests/sqlite_mutex.rs), with
+# `halt_on_error=0` so one report doesn't hide the rest and `exitcode=0` so the test binary's status
+# is the tests' alone: the reports are judged afterwards by scripts/sanitize/tsan_races.py against
+# allowed-races.txt (a data race whose two #0 frames form a listed pair, neither of them ours; our
+# frames below, as SQLite's callers, are on every stack). Then the canary, a deliberate race in
+# sqlite_mutex's tests that TSan must report, or the lane can't see our races at all. Then the
+# sqlite_mutex tests again in release, where the debug owner tracking is gone. Core tests don't fork
+# (fork_timeout runs a subprocess), so no fork rule here. `color=never`: TSan's report printer
+# otherwise calls isatty(2) on every report, which with stderr in a log sets errno to ENOTTY on the
+# reporting thread, between a syscall's failure and std's read of errno; the first run's one test
+# failure (ENOTTY for EEXIST from a mkdir) was that.
+TSAN_OPTIONS_LANE='halt_on_error=0 exitcode=0 color=never allocator_may_return_null=1 second_deadlock_stack=1'
+TSAN_RACES=scripts/sanitize/tsan_races.py
+TSAN_ALLOWED=scripts/sanitize/allowed-races.txt
+
+run_tsan() {  # run_tsan <target> <command...>: the command with lane B's build and run environment
+    local target="$1"
+    shift
+    (
+        export CARGO_TARGET_DIR="$PWD/target/san-B-$NIGHTLY" RUSTFLAGS="-Zsanitizer=thread" TSAN_OPTIONS="$TSAN_OPTIONS_LANE"
+        export "CFLAGS_${target//-/_}=-fsanitize=thread -g"
+        "$@"
+    )
+}
+
+lane_B() {
+    local target log="$OUT/B-tsan.log" canary="$OUT/B-canary.log" release="$OUT/B-release.log" rc=0
+    target=$(rustc "+$NIGHTLY" -vV | sed -n 's/^host: //p' || true)
+    [[ -n "$target" ]] || { note "B  FAIL  setup: no host triple from rustc +$NIGHTLY"; FAILED+=(B); return; }
+    step "lane B: ThreadSanitizer, $target"
+    # One build, all of core's tests. `--target` is required with -Zbuild-std; it also keeps build
+    # scripts and proc macros uninstrumented. One test at a time: each test's own threads are what
+    # TSan should race, and a report is then attributable to one test. With tests in parallel, a new
+    # thread can take an exited test thread's stack, whose TSD block holds errno on macOS, and TSan
+    # reports std's errno accesses as a race between the two tests (allowed-races.txt). `--no-fail-fast`:
+    # a failure in the lib binary must not stop tests/sqlite_mutex.rs from running.
+    # `--tests`: the lib's unit tests and tests/sqlite_mutex.rs, not the doctests, which rustdoc
+    # builds without the sanitizer and then refuses to link against the instrumented crate.
+    run_tsan "$target" cargo "+$NIGHTLY" test -Zbuild-std --target "$target" -p diskcache-oxide-core --tests \
+        --no-fail-fast -- --test-threads=1 >"$log" 2>&1 || rc=1
+    if (( rc )) && ! grep -q '^test result:' "$log"; then
+        note "B  FAIL  setup: the ThreadSanitizer build or run didn't get to the tests; see $log"; FAILED+=(B); return
+    fi
+    local failed_tests
+    failed_tests=$( (grep -E '^test result: FAILED|^test .* FAILED$' "$log" || true) | head -5 | tr '\n' ' ')
+    local verdict=0
+    python3 "$TSAN_RACES" "$log" "$TSAN_ALLOWED" | tee -a "$SUMMARY" || verdict=1
+    # The canary: run alone, must be reported.
+    run_tsan "$target" cargo "+$NIGHTLY" test -Zbuild-std --target "$target" -p diskcache-oxide-core --lib \
+        -- --ignored --exact sqlite_mutex::tests::canary_two_mutexes_exclude_nothing >"$canary" 2>&1 || true
+    local canary_ok=0
+    python3 "$TSAN_RACES" "$canary" "$TSAN_ALLOWED" --expect-ours | tee -a "$SUMMARY" || canary_ok=1
+    # The mutex tests in release.
+    local rel_rc=0
+    run_tsan "$target" cargo "+$NIGHTLY" test -Zbuild-std --target "$target" --release -p diskcache-oxide-core \
+        --lib -- --test-threads=1 sqlite_mutex:: >"$release" 2>&1 || rel_rc=1
+    run_tsan "$target" cargo "+$NIGHTLY" test -Zbuild-std --target "$target" --release -p diskcache-oxide-core \
+        --test sqlite_mutex -- --test-threads=1 >>"$release" 2>&1 || rel_rc=1
+    local rel_verdict=0
+    python3 "$TSAN_RACES" "$release" "$TSAN_ALLOWED" | tee -a "$SUMMARY" || rel_verdict=1
+    if (( rc == 0 && verdict == 0 && canary_ok == 0 && rel_rc == 0 && rel_verdict == 0 )); then
+        note "B  PASS  every core test ran under ThreadSanitizer on $target, races only as allowed, the canary reported, the mutex tests clean in release too"
+    else
+        note "B  FAIL  tests rc=$rc ($failed_tests) races=$([[ $verdict == 0 ]] && echo ok || echo bad) canary=$([[ $canary_ok == 0 ]] && echo seen || echo missed) release rc=$rel_rc races=$([[ $rel_verdict == 0 ]] && echo ok || echo bad); see $log, $canary, $release"
+        FAILED+=(B)
+    fi
+}
+
 IFS=',' read -r -a WANT <<< "$LANES"
 for lane in "${WANT[@]}"; do
     case "$lane" in
         A) lane_A ;;
-        B|C|D|E) note "$lane  NOT BUILT  (plan 14)"; FAILED+=("$lane") ;;
+        B) lane_B ;;
+        C|D|E) note "$lane  NOT BUILT  (plan 14)"; FAILED+=("$lane") ;;
         *) echo "unknown lane: $lane" >&2; exit 2 ;;
     esac
 done

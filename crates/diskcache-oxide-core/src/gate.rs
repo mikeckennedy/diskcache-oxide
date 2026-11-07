@@ -957,7 +957,9 @@ mod tests {
         let held = gate.try_enter_shared().unwrap().into_held();
         let start = Instant::now();
         let fork = gate.begin_fork();
-        assert!(start.elapsed() < Duration::from_secs(1));
+        if !cfg!(miri) {
+            assert!(start.elapsed() < Duration::from_secs(1)); // Wall clock: native only (plan 14).
+        }
         // The forking thread may still use the gate between the hooks.
         assert!(gate.try_enter_shared().is_some());
         fork.end_child();
@@ -1265,7 +1267,9 @@ mod tests {
         });
         let (entered, took) = rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(!entered);
-        assert!(took < Duration::from_millis(500), "a passed deadline waited {took:?}");
+        if !cfg!(miri) {
+            assert!(took < Duration::from_millis(500), "a passed deadline waited {took:?}"); // Native only.
+        }
         assert_eq!(gate.stats().fork_timeouts, 1);
         fork.end_parent();
     }
@@ -1357,7 +1361,9 @@ mod tests {
         .unwrap();
         let (entered, took) = rx.recv().unwrap();
         assert!(!entered);
-        assert!(took < Duration::from_millis(100), "a passed deadline waited {took:?}");
+        if !cfg!(miri) {
+            assert!(took < Duration::from_millis(100), "a passed deadline waited {took:?}"); // Native only.
+        }
         let (tx, rx) = mpsc::channel();
         let ender = thread::spawn(move || {
             let entered = share.enter_until(Instant::now() + Duration::from_secs(5)).is_some();

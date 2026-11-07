@@ -1,7 +1,9 @@
-# ThreadSanitizer races scripts/sanitize.sh allows (plan 14, "Rules for reports"). A race is allowed
-# only if the top frames of its two accesses match a line here, both are inside SQLite, and no frame
-# of ours appears on either stack, so a race involving our code can never hide behind one of these.
-# Each line: <top frame of one access> <top frame of the other> <global or "shm">, then the evidence.
+# ThreadSanitizer races scripts/sanitize.sh allows (plan 14, "Rules for reports"). A report is allowed
+# only if it is a data race whose two accesses' top (#0) frames form a line here, in either order, and
+# neither top frame is ours (scripts/sanitize/tsan_races.py). Our frames further down a stack are
+# SQLite's or std's callers and appear on every report; a race whose access is in our code can never
+# hide behind one of these. Each line: <top frame of one access> <top frame of the other> <label>,
+# then the evidence. The label (a global's name, "shm", "errno") is for the reader; the judge ignores it.
 #
 # Both were seen on HEAD (our mutexes, sqlite_mutex.rs) and on 721de5a (SQLite's own mutexes, before
 # plan 12 step 5a), in open::tests::racing_creators_all_succeed_with_one_schema under TSan on macOS
@@ -17,3 +19,13 @@ walTryBeginRead walIndexRecover shm
 # stores the new pid and reseeds SQLite's PRNG. Concurrent first opens store the same value.
 # 721de5a: 82 reports in 40 runs; HEAD: 86.
 unixOpen unixOpen randomnessPid
+
+# Not SQLite's: Rust std's errno. `std::sys::io::error::unix::errno` (a read after a failed syscall,
+# `mkdir` in open::ensure_directory) against `set_errno` (std's `ReadDir::next` zeroes errno before
+# `readdir`) on another thread, at one address: on macOS a thread's errno lives in its TSD block at
+# the top of its stack, and a new thread took an exited test thread's stack, with no happens-before
+# TSan could see between the two tests. errno is per thread, so the accesses never meet in the
+# program; TSan sees the reused address. Seen once in lane B's first run on macOS arm64 (2026-11-07,
+# a83edd7). Mangled fragments without the crate hash, which changes with every std build: an entry
+# starting with a digit matches a frame whose name contains it.
+3std3sys2io5error4unix5errno 3std3sys2io5error4unix9set_errno errno
