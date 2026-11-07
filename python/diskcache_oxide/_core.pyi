@@ -709,11 +709,14 @@ class FanoutCache:
         Inside the block, a call on this thread for a key on any other shard raises `ValueError`,
         reads included, through any handle on the root, and so does a `transact` for a key on
         another shard (its writes could not be in the transaction). Use `shard_of` to check that keys
-        share a shard. Calls over every shard (`len()`, `clear()` and the rest) are not refused; on
-        the transaction's shard they run inside it.
+        share a shard. Calls over every shard raise `ValueError` on this thread inside the block
+        too: `len()`, `volume()`, `iter()`, `iterkeys()` (and `next()` on an iterator made before
+        the block), `clear()`, `expire()`, `cull()` and `checkpoint()`. They would run inside the
+        transaction on its shard and outside it on the others.
 
         The check costs one atomic load while no transaction is open anywhere in the process; while
-        one is (any thread's, any cache's), keyed calls also look at each shard that holds one.
+        one is (any thread's, any cache's), keyed calls, calls over every shard and iterator `next()`s also
+        look at each shard that holds one.
 
         As on `Cache`, a transaction belongs to a thread, not an asyncio task, and under
         `durable=True` a failure to begin, or inside the block, raises.

@@ -6,7 +6,8 @@
 //! `expire`, `cull`, `checkpoint`, `close`) share one deadline, not one each. A maintenance call
 //! carries on past a shard that fails and then raises the first failure, saying how far it got
 //! (`partial_failure`). `__iter__` walks the shards one after another; `iterkeys` merges the
-//! shards' sorted pages (`FanoutKeyIterator`).
+//! shards' sorted pages (`FanoutKeyIterator`). Inside a `transact(key=...)` on this thread, every
+//! call over every shard is refused (`refuse_fan_out`), as other shards' keys are.
 
 use std::cmp::Ordering as KeyOrdering;
 use std::collections::{BinaryHeap, VecDeque};
@@ -253,6 +254,7 @@ impl FanoutCache {
     // -- over every shard, under one deadline ---------------------------------------------------
 
     fn __len__(&self, py: Python<'_>) -> PyResult<usize> {
+        self.refuse_fan_out("len()")?;
         let counts = self.every_shard(py, Store::len)?;
         Ok(counts.into_iter().map(|n| usize::try_from(n).unwrap_or(0)).sum())
     }
@@ -265,6 +267,7 @@ impl FanoutCache {
 
     /// The sum of every shard's volume.
     fn volume(&self, py: Python<'_>) -> PyResult<i64> {
+        self.refuse_fan_out("volume()")?;
         Ok(self.every_shard(py, Store::volume)?.into_iter().sum())
     }
 
@@ -273,6 +276,7 @@ impl FanoutCache {
     #[pyo3(signature = (*, timeout = None))]
     fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
+        self.refuse_fan_out("expire()")?;
         let now = self.config.now(py)?;
         self.remove_everywhere(py, "expire", timeout, |store, snapshot, deadline| {
             store.expire_until(snapshot, now, deadline)
@@ -284,6 +288,7 @@ impl FanoutCache {
     #[pyo3(signature = (*, timeout = None))]
     fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
+        self.refuse_fan_out("clear()")?;
         self.remove_everywhere(py, "clear", timeout, Store::clear_until)
     }
 
@@ -292,6 +297,7 @@ impl FanoutCache {
     #[pyo3(signature = (*, timeout = None))]
     fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
+        self.refuse_fan_out("cull()")?;
         let now = self.config.now(py)?;
         self.remove_everywhere(py, "cull", timeout, |store, snapshot, deadline| {
             store.cull_until(snapshot, now, deadline)
@@ -304,6 +310,7 @@ impl FanoutCache {
     #[pyo3(signature = (*, timeout = None))]
     fn checkpoint(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
         let timeout = self.config.call_timeout(timeout)?;
+        self.refuse_fan_out("checkpoint()")?;
         let deadline = lockwait::deadline_after(Instant::now(), timeout);
         let mut reset = true;
         let mut failures = Vec::new();
@@ -336,15 +343,17 @@ impl FanoutCache {
     /// shard keeps a small page buffered (see `merge_page`), so the first `next()` reads every shard
     /// once; no connection is held between `next()` calls.
     #[pyo3(signature = (*, prefix = None, reverse = false))]
-    fn iterkeys(slf: Py<Self>, prefix: Option<String>, reverse: bool) -> FanoutKeyIterator {
+    fn iterkeys(slf: Py<Self>, prefix: Option<String>, reverse: bool) -> PyResult<FanoutKeyIterator> {
+        slf.get().refuse_fan_out("iterkeys()")?;
         let shards = slf.get().shards.len();
-        FanoutKeyIterator::new(slf, Walk::merge(shards, reverse), prefix)
+        Ok(FanoutKeyIterator::new(slf, Walk::merge(shards, reverse), prefix))
     }
 
     /// Every key once: shard 0's in insertion order, then shard 1's, and so on. That is not the
     /// order the keys were stored in across the whole cache.
-    fn __iter__(slf: Py<Self>) -> FanoutKeyIterator {
-        FanoutKeyIterator::new(slf, Walk::Shards { shard: 0, cursor: Cursor::Start, buffer: VecDeque::new() }, None)
+    fn __iter__(slf: Py<Self>) -> PyResult<FanoutKeyIterator> {
+        slf.get().refuse_fan_out("iteration")?;
+        Ok(FanoutKeyIterator::new(slf, Walk::Shards { shard: 0, cursor: Cursor::Start, buffer: VecDeque::new() }, None))
     }
 
     // -- lifecycle ----------------------------------------------------------------------------
@@ -390,7 +399,8 @@ impl FanoutCache {
     /// `TransactionBusy` and aborted exits), and `tx` is this `FanoutCache`. Inside the block, this
     /// thread's calls on any other shard's key raise `ValueError`, reads included, through any
     /// handle on the root, and so does a `transact` on another shard; `shard_of` says which keys
-    /// share one. `key` is keyword-only, so a switched-off cache's `NullCache.transact(key=...)`
+    /// share one. Calls over every shard (`len`, `volume`, iteration and the maintenance calls) raise
+    /// `ValueError` there too. `key` is keyword-only, so a switched-off cache's `NullCache.transact(key=...)`
     /// takes the same spelling.
     #[pyo3(signature = (*, key, retry = false))]
     fn transact(slf: Py<Self>, key: &Bound<'_, PyAny>, retry: bool) -> PyResult<Transaction> {
@@ -434,6 +444,32 @@ impl FanoutCache {
         Err(PyValueError::new_err(format!(
             "this key is on shard {shard}, but this thread's transaction is on shard {held} of {count}: inside \
              FanoutCache.transact(key=...), only keys on the transaction's shard can be used (see shard_of)",
+            held = held.shard,
+            count = self.shards.len(),
+        )))
+    }
+
+    /// For a call over every shard (`call` names it in the message): refused with `ValueError` if
+    /// this thread holds a `transact(key=...)` on any of this root's shards, through any handle
+    /// (plan 13, decision 2). It would run inside the transaction on one shard and outside it on the
+    /// rest, so like a keyed call on another shard it's a mistake either way. The same cost as
+    /// `routed`'s check: one relaxed load while no transaction is open anywhere in the process.
+    /// Callers check their arguments first and read the clock after, so a bad argument is still a
+    /// `TypeError` and a refused call never calls a user's clock.
+    #[inline]
+    fn refuse_fan_out(&self, call: &str) -> PyResult<()> {
+        if Store::any_held_in_process() { self.refuse_fan_out_slow(call) } else { Ok(()) }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn refuse_fan_out_slow(&self, call: &str) -> PyResult<()> {
+        let Some(held) = self.shards.iter().find(|h| h.store.held_by_this_thread()) else {
+            return Ok(());
+        };
+        Err(PyValueError::new_err(format!(
+            "{call} on a FanoutCache covers every shard, but this thread's transaction is on shard {held} of \
+             {count}: inside FanoutCache.transact(key=...), only keys on the transaction's shard can be used",
             held = held.shard,
             count = self.shards.len(),
         )))
@@ -692,8 +728,10 @@ impl FanoutKeyIterator {
     }
 
     /// The next key. The reads one `next()` makes (every shard's first page, on the first call of a
-    /// merge) share one deadline of the cache's `timeout`.
+    /// merge) share one deadline of the cache's `timeout`. Refused inside a `transact(key=...)` on
+    /// this thread, as creating the iterator is, so one made before the block can't walk inside it.
     fn __next__(&self) -> PyResult<Option<String>> {
+        self.cache.get().refuse_fan_out("iteration")?;
         // As `Cache`'s iterator: never wait for the state while attached (the gate's rules), and
         // another thread inside `next()` is an error, as for a generator.
         let mut walk = match self.walk.try_lock() {

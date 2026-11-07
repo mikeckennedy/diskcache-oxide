@@ -4,6 +4,10 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+### Changed
+
+- Inside `FanoutCache.transact(key=...)`, calls over every shard now raise `ValueError` on the thread that holds the transaction, as calls for other shards' keys already did: `len()`, `volume()`, `iter()`, `iterkeys()` (and `next()` on an iterator made before the block), `clear()`, `expire()`, `cull()` and `checkpoint()`. They used to run inside the transaction on its shard and outside it on the others. Other threads and a plain `Cache`'s transaction are unaffected (D-040).
+
 ### Documentation
 
 - A hand-written agent skill (`skills/diskcache-oxide/SKILL.md`) replaces the generated one, which only listed API names. It carries the rules an agent needs: `str` keys and exact built-in values, what `NullCache.add()` and `durable=True` do to a job claim, when a `FanoutCache` helps and when it doesn't, what `transact()` joins and refuses, and a decision table for the modes and the exceptions. It is published at `skill.md` and under `.well-known/`.

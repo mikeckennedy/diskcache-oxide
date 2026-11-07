@@ -9,6 +9,7 @@ diskcache shares are in tests/conformance/test_fanout.py.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import threading
@@ -200,15 +201,108 @@ def test_a_plain_caches_transaction_doesnt_refuse_any_shard(tmp_path: Path, cach
             assert cache.get(k) == shard
 
 
-def test_calls_over_every_shard_are_not_refused(cache: FanoutCache, keys: tuple[str, str, str]) -> None:
+# Every call over every shard, with the name its refusal gives (plan 13, decision 2).
+FAN_OUT: dict[str, tuple[str, Callable[[FanoutCache], Any]]] = {
+    'len': ('len()', len),
+    'volume': ('volume()', lambda c: c.volume()),
+    'iter': ('iteration', iter),
+    'iterkeys': ('iterkeys()', lambda c: c.iterkeys()),
+    'clear': ('clear()', lambda c: c.clear()),
+    'expire': ('expire()', lambda c: c.expire()),
+    'cull': ('cull()', lambda c: c.cull()),
+    'checkpoint': ('checkpoint()', lambda c: c.checkpoint()),
+}
+
+
+@pytest.mark.parametrize('held', [0, 3])
+@pytest.mark.parametrize('op', sorted(FAN_OUT))
+def test_every_call_over_every_shard_raises_inside_the_block(cache: FanoutCache, op: str, held: int) -> None:
+    # Held on shard 0 and on the last shard, so a check that only looks at one shard can't pass.
+    (a,) = _on_shard(cache, held)
+    (other,) = _on_shard(cache, 1)
+    name, call = FAN_OUT[op]
+    cache.set(other, 5, expire=0.01)  # Expired by the time the block runs, so expire() or cull() would remove it.
+    time.sleep(0.05)
+    with cache.transact(key=a):
+        cache.set(a, 1)
+        refused = (
+            rf'^{re.escape(name)} on a FanoutCache covers every shard, '
+            rf'but this thread.s transaction is on shard {held} of 4'
+        )
+        with pytest.raises(ValueError, match=refused):
+            call(cache)
+        cache.set(a, 2)
+    assert cache.get(a) == 2, 'the refusal broke the transaction'
+    assert len(cache) == 2, 'the refused call removed something'
+    assert cache.get(other) is None  # Expired, but still stored: the count above includes it.
+    call(cache)  # The refusal ends with the block.
+
+
+@pytest.mark.parametrize('op', sorted(FAN_OUT))
+def test_calls_over_every_shard_are_refused_through_another_handle(
+    tmp_path: Path, cache: FanoutCache, keys: tuple[str, str, str], op: str
+) -> None:
+    a, _, _ = keys
+    name, call = FAN_OUT[op]
+    with FanoutCache(tmp_path / 'f', timeout=10) as second, cache.transact(key=a):
+        with pytest.raises(ValueError, match=re.escape(name)):
+            call(second)
+
+
+def test_an_iterator_made_before_the_block_cant_walk_inside_it(cache: FanoutCache, keys: tuple[str, str, str]) -> None:
+    a, _, _ = keys
+    for k in keys:
+        cache.set(k, 1)
+    walk, merge = iter(cache), cache.iterkeys()
+    assert next(merge) == min(keys)
+    with cache.transact(key=a):
+        for it in (walk, merge):
+            with pytest.raises(ValueError, match='^iteration on a FanoutCache covers every shard'):
+                next(it)
+    assert sorted([*walk]) == sorted(keys), 'the refused next() lost the walk'
+    assert [min(keys), *merge] == sorted(keys), 'the refused next() lost the merge'
+
+
+def test_other_threads_calls_over_every_shard_are_not_refused(cache: FanoutCache, keys: tuple[str, str, str]) -> None:
     a, _, other = keys
     cache.set(other, 1)
     with cache.transact(key=a):
         cache.set(a, 1)
-        assert len(cache) == 2
-        assert sorted(cache) == sorted([a, other])
-        assert list(cache.iterkeys()) == sorted([a, other])
-        assert cache.volume() > 0
+        assert _on_thread(lambda: len(cache)) == 1, "another thread saw the block's uncommitted write"
+        assert _on_thread(lambda: sorted(cache)) == [other]
+        assert _on_thread(lambda: cache.volume()) > 0
+    assert len(cache) == 2
+
+
+@pytest.mark.parametrize('op', ['clear', 'expire', 'cull', 'checkpoint'])
+def test_a_bad_timeout_is_a_type_error_before_the_refusal(
+    cache: FanoutCache, keys: tuple[str, str, str], op: str
+) -> None:
+    a, _, _ = keys
+    with cache.transact(key=a), pytest.raises(TypeError):
+        getattr(cache, op)(timeout='soon')
+
+
+@pytest.mark.parametrize('op', sorted(FAN_OUT))
+def test_another_roots_transaction_doesnt_refuse_calls_over_every_shard(
+    tmp_path: Path, cache: FanoutCache, op: str
+) -> None:
+    _, call = FAN_OUT[op]
+    with FanoutCache(tmp_path / 'g', shards=SHARDS, timeout=10) as elsewhere:
+        (k,) = _on_shard(elsewhere, 0)
+        with elsewhere.transact(key=k):
+            call(cache)
+
+
+def test_a_plain_caches_transaction_doesnt_refuse_calls_over_every_shard(
+    tmp_path: Path, cache: FanoutCache, keys: tuple[str, str, str]
+) -> None:
+    a, _, _ = keys
+    cache.set(a, 1)
+    with Cache(tmp_path / 'c', timeout=10) as plain, plain.transact():
+        assert len(cache) == 1
+        assert list(cache.iterkeys()) == [a]
+        assert cache.expire() == 0
 
 
 # -- nesting -------------------------------------------------------------------------------------------------
