@@ -27,6 +27,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential curl git ca-certificates procps tzdata gdb \
+        libsqlite3-dev zlib1g-dev libffi-dev \
+    # (those three: the sanitizer lanes' from-source CPython needs them for sqlite3, zlib and ctypes)
     && rm -rf /var/lib/apt/lists/*
 
 # rustup, pinned to the repo's toolchain so rust-toolchain.toml never triggers a download at run time.
@@ -66,7 +68,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 # Run as the image's unprivileged `ubuntu` user (uid 1000): as root, the permission tests would pass
 # for the wrong reason. The cache dirs exist here so the named volumes mounted over them inherit
 # this ownership when Docker first creates them.
-RUN mkdir -p /cache/target /cache/uv /opt/cargo/registry /opt/cargo/git /work \
+RUN mkdir -p /cache/target /cache/uv /cache/cpython-san /opt/cargo/registry /opt/cargo/git /work \
     && chown -R ubuntu:ubuntu /cache /work /opt/cargo /opt/rustup /opt/uv-python
 USER ubuntu
 WORKDIR /work

@@ -28,7 +28,8 @@
 #
 # The repo is mounted read-only; the container copies it and builds the copy, so it never touches
 # the host's venvs or target dirs. Cargo's registry, target dirs and uv's cache persist in the named
-# volumes dco-cargo-registry, dco-cargo-git, dco-target and dco-uv-cache (`docker volume rm` them to
+# volumes dco-cargo-registry, dco-cargo-git, dco-target, dco-uv-cache and dco-cpython-san, the last
+# holding the sanitizer lanes' CPython builds (plan 14, step 4a) (`docker volume rm` them to
 # start cold). The container is named dco-linux-check (dco-linux-bench with --bench, dco-linux-exec
 # with --exec). With --platform, the image, volumes and container all take the suffix, e.g. -amd64.
 set -euo pipefail
@@ -114,6 +115,7 @@ exec docker run --rm --init ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} ${TTY_ARGS
     -v "dco-cargo-git$SUFFIX:/opt/cargo/git" \
     -v "dco-target$SUFFIX:/cache/target" \
     -v "dco-uv-cache$SUFFIX:/cache/uv" \
+    -v "dco-cpython-san$SUFFIX:/cache/cpython-san" \
     ${OUT_ARGS[@]+"${OUT_ARGS[@]}"} \
     -e DCO_PYTHONS="$PYTHONS" -e DCO_SLOW="$SLOW" -e DCO_BENCH="$BENCH" -e DCO_RUST="$RUST" \
     -e DCO_TESTS="$TESTS" -e DCO_ROUNDS="$ROUNDS" -e DCO_EXEC="$EXEC" \
