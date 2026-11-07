@@ -47,6 +47,7 @@ note "diskcache-oxide sanitize  $(date '+%Y-%m-%d %H:%M:%S')  commit $(git rev-p
 if ! rustup toolchain list | grep -q "^$NIGHTLY"; then
     rustup toolchain install "$NIGHTLY" --profile minimal -c miri,rust-src >/dev/null 2>&1 \
         || { note "setup FAIL: couldn't install $NIGHTLY"; exit 1; }
+    note "setup: installed $NIGHTLY for this run (the toolchain wasn't there; in the Linux container that means docker/linux-dev.Dockerfile's NIGHTLY is behind)"
 fi
 note "host $(uname -sm), $NIGHTLY ($(rustc +"$NIGHTLY" --version | cut -d' ' -f2-)), LLVM $(rustc +"$NIGHTLY" -vV | sed -n 's/^LLVM version: //p'), cc $(cc --version | head -1)"
 note "lanes requested $LANES$( (( QUICK )) && echo ', quick')"
@@ -167,20 +168,61 @@ TSAN_RACES=scripts/sanitize/tsan_races.py
 TSAN_ALLOWED=scripts/sanitize/allowed-races.txt
 
 run_tsan() {  # run_tsan <target> <command...>: the command with lane B's build and run environment
-    local target="$1"
+    local target="$1" rustflags="-Zsanitizer=thread"
     shift
+    # On Linux aarch64, an atomic compiles by default to a call into an outline-atomics helper
+    # (__aarch64_swp1_acq and friends), which -Zbuild-std takes from Rust's compiler_builtins and
+    # instruments like everything else. TSan's own prebuilt runtime performs an atomic in its
+    # Initialize (MemoryMappingLayout), so the helper's instrumented entry runs before TSan has a
+    # thread state and the binary segfaults at startup (gdb: TraceSwitchPart <- __aarch64_swp1_acq
+    # <- MemoryMappingLayout <- Initialize). compiler_builtins compiles those helpers only when the
+    # target feature `outline-atomics` is on, so turning it off leaves them out of the build; the
+    # runtime's references then resolve to libgcc's plain ones. `-outline-atomics` is the operative
+    # half: under TSan every atomic in instrumented code is a `__tsan_atomic*` call, so instruction
+    # selection never enters what TSan sees, and `+lse` only decides what any atomic that escaped
+    # instrumentation compiles to. Every machine the lane runs on has LSE (Apple Silicon under
+    # OrbStack); macOS never needs this, since Apple targets have no outline atomics. A candidate
+    # rust-lang/rust report (to file when Michael asks): -Zsanitizer with -Zbuild-std instruments
+    # compiler_builtins' outline-atomics helpers, which the sanitizer runtime calls before it is up.
+    if [[ "$target" == aarch64-unknown-linux-* ]]; then
+        rustflags+=" -Ctarget-feature=+lse,-outline-atomics"
+    fi
     (
-        export CARGO_TARGET_DIR="$PWD/target/san-B-$NIGHTLY" RUSTFLAGS="-Zsanitizer=thread" TSAN_OPTIONS="$TSAN_OPTIONS_LANE"
+        export CARGO_TARGET_DIR="$PWD/target/san-B-$NIGHTLY" RUSTFLAGS="$rustflags" TSAN_OPTIONS="$TSAN_OPTIONS_LANE"
         export "CFLAGS_${target//-/_}=-fsanitize=thread -g"
+        # The release profile strips symbols; a report there must still have names to judge.
+        export CARGO_PROFILE_RELEASE_STRIP=none CARGO_PROFILE_RELEASE_DEBUG=line-tables-only
         "$@"
     )
+}
+
+# The C compiler for an instrumented lane. On Linux it must be the clang whose LLVM major matches the
+# nightly's (the image installs clang-<major>; the sanitizer runtime comes from rustc's LLVM, and a C
+# object from another major can fail to link or report wrongly), so the lane refuses a mismatch.
+# Apple clang numbers its releases on its own scale (21.0.0 beside LLVM 23 worked in plan 14's probe),
+# so macOS records the versions and goes on.
+pick_cc() {  # pick_cc <lane>: exports CC, or fails the lane and returns 1
+    local lane="$1" llvm_major clang
+    llvm_major=$(rustc "+$NIGHTLY" -vV | sed -n 's/^LLVM version: \([0-9]*\).*/\1/p' || true)
+    if [[ "$(uname -s)" == Linux ]]; then
+        clang="clang-$llvm_major"
+        if ! command -v "$clang" >/dev/null; then
+            note "$lane  FAIL  setup: $clang (rustc +$NIGHTLY is LLVM $llvm_major) isn't installed; docker/linux-dev.Dockerfile puts it in the image"
+            return 1
+        fi
+        export CC="$clang" CXX="${clang/clang/clang++}"
+        note "$lane  cc $("$clang" --version | head -1) (rustc +$NIGHTLY is LLVM $llvm_major)"
+    fi
+    return 0
 }
 
 lane_B() {
     local target log="$OUT/B-tsan.log" canary="$OUT/B-canary.log" release="$OUT/B-release.log" rc=0
     target=$(rustc "+$NIGHTLY" -vV | sed -n 's/^host: //p' || true)
     [[ -n "$target" ]] || { note "B  FAIL  setup: no host triple from rustc +$NIGHTLY"; FAILED+=(B); return; }
-    step "lane B: ThreadSanitizer, $target"
+    pick_cc B || { FAILED+=(B); return; }
+    python3 "$TSAN_RACES" --self-test | tee -a "$SUMMARY" || { note "B  FAIL  setup: the race judge's self-test failed"; FAILED+=(B); return; }
+    step "lane B: ThreadSanitizer, $target, cc ${CC:-$(cc --version | head -1)}"
     # One build, all of core's tests. `--target` is required with -Zbuild-std; it also keeps build
     # scripts and proc macros uninstrumented. One test at a time: each test's own threads are what
     # TSan should race, and a report is then attributable to one test. With tests in parallel, a new

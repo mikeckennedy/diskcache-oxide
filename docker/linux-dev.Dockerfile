@@ -8,6 +8,11 @@ FROM ubuntu:26.04
 ARG RUST_TOOLCHAIN=1.99.1
 ARG CARGO_DENY_VERSION=0.20.2
 ARG PYTHONS="3.14 3.14t 3.15 3.15t"
+# The sanitizer lanes (plan 14): the pinned nightly with rust-src for -Zbuild-std, and the clang whose
+# LLVM major matches that nightly's (`rustc +nightly -vV`), so the instrumented C of the bundled SQLite
+# links against the Rust sanitizer runtime. Keep NIGHTLY in step with scripts/sanitize.sh.
+ARG NIGHTLY=nightly-2026-11-04
+ARG CLANG_MAJOR=23
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -28,7 +33,17 @@ RUN apt-get update \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --no-modify-path --profile minimal --default-toolchain "$RUST_TOOLCHAIN" \
             --component rustfmt --component clippy \
-    && rustc --version && cargo fmt --version && cargo clippy --version
+    && rustc --version && cargo fmt --version && cargo clippy --version \
+    && rustup toolchain install "$NIGHTLY" --profile minimal --component rust-src --component miri \
+    && rustc "+$NIGHTLY" -vV | grep "^LLVM version: $CLANG_MAJOR\."
+
+# clang for the sanitizer lanes, from apt.llvm.org (Ubuntu's own clang lags the nightly's LLVM).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget gnupg lsb-release software-properties-common \
+    && wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh && chmod +x /tmp/llvm.sh \
+    && /tmp/llvm.sh "$CLANG_MAJOR" \
+    && rm -rf /tmp/llvm.sh /var/lib/apt/lists/* \
+    && "clang-$CLANG_MAJOR" --version
 
 # cargo-deny: the prebuilt musl binary (a source build costs minutes). Stripping the archive's top
 # directory keeps tar from creating one: under OrbStack's Rosetta (--platform linux/amd64 on an

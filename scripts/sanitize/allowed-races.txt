@@ -9,10 +9,11 @@
 # plan 12 step 5a), in open::tests::racing_creators_all_succeed_with_one_schema under TSan on macOS
 # arm64, 40 runs each (2026-11-06). Neither depends on which mutexes SQLite uses.
 
-# The WAL index in -shm memory: a reader reads the header with no lock, twice, checks its checksum,
-# then takes a read lock and checks again (wal.c walTryBeginRead / walIndexReadHdr), while another
-# connection rebuilds it in walIndexRecover. TSan can't see the -shm file locks that order them across
-# processes. 721de5a: 12 pairs in 40 runs; HEAD: 15.
+# The WAL index in -shm memory, the checkpoint field: walIndexRecover, rebuilding the index, stores
+# WalCkptInfo.nBackfill (sqlite3.c, `pInfo->nBackfill = 0`, a 4-byte write at shm offset 0x60) while
+# walTryBeginRead reads nBackfill and aReadMark[] with no lock, by design (wal.c, the comment above
+# walTryBeginRead: those fields are read unlocked and the read is retried). TSan can't see the -shm
+# file locks that order a recovery against other processes. 721de5a: 12 pairs in 40 runs; HEAD: 15.
 walTryBeginRead walIndexRecover shm
 
 # os_unix.c unixOpen: every open compares the global randomnessPid with getpid() and, after a fork,
@@ -29,3 +30,20 @@ unixOpen unixOpen randomnessPid
 # a83edd7). Mangled fragments without the crate hash, which changes with every std build: an entry
 # starting with a digit matches a frame whose name contains it.
 3std3sys2io5error4unix5errno 3std3sys2io5error4unix9set_errno errno
+
+# The WAL-index header itself (WalIndexHdr, two copies at shm offsets 0 and 0x30): walIndexWriteHdr
+# copies it into the -shm mapping at commit, holding the WAL write lock, while walIndexTryHdr copies
+# it out and walTryBeginRead compares it, with no lock, by design: SQLite marks both functions
+# SQLITE_NO_TSAN (no_sanitize_thread) and these very memcpy lines "Possible TSAN false-positive. See
+# tag-20200519-1" (sqlite3.c 67855, 67857, 69569): the two copies are read [0] then [1] and written in
+# reverse order with barriers, a double read TSan can't account for, and a mutex is impossible since
+# the memory is shared across processes. The function's own loads and stores are exempt; the memcpy
+# and memcmp calls still reach TSan's interceptor, which is why #0 is memcpy on Linux and the judge
+# reads the frame below. Not seen on macOS so far (why Apple's build doesn't reach the interceptor
+# there isn't known). Seen in lane B's Linux runs (Ubuntu 26.04 aarch64, clang-23, 2026-11-07,
+# b2c8579), in open::tests::racing_creators_all_succeed_with_one_schema and
+# racing_shard_creators_agree_on_one_stamp: in the retained run (sanitize-results/linux,
+# 20261107-203716) 5 walIndexTryHdr reports and 1 walTryBeginRead (the memcmp at sqlite3.c:70099);
+# an earlier run had 6 and 0, and the first 4 and 2.
+walIndexWriteHdr walIndexTryHdr shm
+walIndexWriteHdr walTryBeginRead shm
