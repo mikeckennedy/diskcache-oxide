@@ -6,7 +6,7 @@
 
 **A shared, durable cache for Python apps, rebuilt in Rust for many cores, many processes and free-threaded Python.**
 
-Every Python web app arrives at the same afternoon. A query that was fine at launch is now the slowest thing on the page, so you cache its result in a dict. Then gunicorn starts four workers and there are four dicts, each warming up alone and forgetting everything on restart. So you reach for Redis, and now there's a server to deploy, secure and monitor, to remember the answer to one query. [python-diskcache](https://github.com/grantjenks/python-diskcache) showed the third way: a cache that is just a directory, shared by every thread and process on the machine, still there after a restart. diskcache-oxide keeps diskcache's API and rebuilds everything underneath it: a Rust engine, SQLite storage, and the thinnest possible Python layer.
+Every Python web app arrives at the same situation. A query that was fine at launch is now the slowest thing on the page, so you cache its result in a dict. Then gunicorn starts four workers and there are four dicts, each warming up alone and forgetting everything on restart. So you reach for Redis, and now there's a server to deploy, secure and monitor, to remember the answer to one query. [python-diskcache](https://github.com/grantjenks/python-diskcache) showed the third way: a cache that is just a directory, shared by every thread and process on the machine, still there after a restart. diskcache-oxide keeps diskcache's API and rebuilds everything underneath it: a Rust engine, SQLite storage, and the thinnest possible Python layer.
 
 **Docs: <https://mkennedy.codes/docs/diskcache-oxide/>**
 

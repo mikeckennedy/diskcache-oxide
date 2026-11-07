@@ -5,7 +5,7 @@ pagetitle: "diskcache-oxide"
 
 **Python cache. Rust engine. SQLite storage.**
 
-Every Python web app arrives at the same afternoon. A query that was fine at launch is now the slowest thing on the page, so you cache its result in a dict. That works until the app runs under gunicorn with four workers, and now there are four dicts, each warming up on its own and each forgetting everything when its worker is recycled. So you reach for Redis, and you've added a server to deploy, secure, monitor and pay for, to remember the answer to one query.
+Every Python web app arrives at the same situation. A query that was fine at launch is now the slowest thing on the page, so you cache its result in a dict. That works until the app runs under gunicorn with four workers, and now there are four dicts, each warming up on its own and each forgetting everything when its worker is recycled. So you reach for Redis, and you've added a server to deploy, secure, monitor and pay for, to remember the answer to one query.
 
 [python-diskcache](https://github.com/grantjenks/python-diskcache) showed there was a third way: a cache that is just a directory on disk. Every thread and every process on the machine opens the same path and sees the same entries, and they're still there after a restart, because a directory doesn't restart. No daemon, no network hop, no second system to keep alive.
 
