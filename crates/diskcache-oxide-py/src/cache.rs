@@ -31,7 +31,7 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyString, PyTuple};
 
-use crate::codec::{self, Payload, Serializer};
+use crate::codec::{self, Codec, Payload, Serializer, TypeRegistry};
 use crate::durable::{Failures, Op};
 use crate::to_py_err;
 
@@ -60,8 +60,7 @@ struct HandleConfig {
     /// The directory the handle was opened on: shown in `repr` and named in failure reports.
     directory: String,
     timeout: Duration,
-    serializer: Serializer,
-    pickle: bool,
+    codec: Codec,
     clock: Option<Py<PyAny>>,
     on_decode_error: DecodePolicy,
     /// `durable=True`: what this handle has swallowed. `None` means failures raise.
@@ -86,6 +85,7 @@ impl Cache {
         cull_limit = None,
         serializer = "msgpack",
         pickle = false,
+        types = None,
         clock = None,
         max_connections = None,
         sqlite_cache_size = None,
@@ -103,6 +103,7 @@ impl Cache {
         cull_limit: Option<&Bound<'_, PyAny>>,
         serializer: &str,
         pickle: bool,
+        types: Option<Py<TypeRegistry>>,
         clock: Option<Py<PyAny>>,
         max_connections: Option<&Bound<'_, PyAny>>,
         sqlite_cache_size: Option<&Bound<'_, PyAny>>,
@@ -127,7 +128,7 @@ impl Cache {
         let store = crate::detach(py, || Store::open(&options)).map_err(to_py_err)?;
         Ok(Self {
             handle: StoreHandle { store, shard: 0, closed: AtomicBool::new(false) },
-            config: HandleConfig::new(&directory, &settings, pickle, clock, on_decode_error, durable),
+            config: HandleConfig::new(&directory, &settings, pickle, types, clock, on_decode_error, durable),
         })
     }
 
@@ -530,10 +531,12 @@ impl StoreHandle {
 }
 
 impl HandleConfig {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         directory: &std::path::Path,
         settings: &Settings,
         pickle: bool,
+        types: Option<Py<TypeRegistry>>,
         clock: Option<Py<PyAny>>,
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
@@ -542,8 +545,7 @@ impl HandleConfig {
         Self {
             directory: directory.to_string_lossy().into_owned(),
             timeout,
-            serializer: settings.serializer,
-            pickle,
+            codec: Codec { serializer: settings.serializer, pickle, types },
             clock,
             on_decode_error: on_decode_error.unwrap_or(if durable { DecodePolicy::Miss } else { DecodePolicy::Raise }),
             failures: durable.then(|| Box::new(Failures::new(timeout.as_secs_f64()))),
@@ -553,6 +555,7 @@ impl HandleConfig {
 
     /// Visits the Python objects the handle holds, for `__traverse__`.
     fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        self.codec.traverse(visit)?;
         if let Some(clock) = &self.clock {
             visit.call(clock)?;
         }
@@ -665,7 +668,7 @@ impl HandleConfig {
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         let expire = optional_seconds("expire", expire)?;
-        let encoded = codec::encode(py, value, self.serializer, self.pickle)?;
+        let encoded = self.codec.encode(py, value)?;
         let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
         let now = self.now(py)?;
         let stored =
@@ -682,7 +685,7 @@ impl HandleConfig {
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         let expire = optional_seconds("expire", expire)?;
-        let encoded = codec::encode(py, value, self.serializer, self.pickle)?;
+        let encoded = self.codec.encode(py, value)?;
         let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
         let now = self.now(py)?;
         let added =
@@ -751,13 +754,13 @@ impl HandleConfig {
         key: &str,
         now: f64,
     ) -> Result<Option<Decoded>, Error> {
-        let allow_pickle = self.pickle;
+        let codec = &self.codec;
         store.get_with(
             timeout,
             key,
             now,
-            |mode| codec::refuses(mode, allow_pickle),
-            |mode, value| Ok(decode_value(py, mode, value, allow_pickle).map_err(|e| (mode, e))),
+            |mode| codec.refuses(mode),
+            |mode, value| Ok(decode_value(py, codec, mode, value).map_err(|e| (mode, e))),
         )
     }
 
@@ -807,12 +810,12 @@ impl HandleConfig {
                 return Ok(None);
             }
         }
-        let allow_pickle = self.pickle;
-        let refuse = |mode| codec::refuses(mode, allow_pickle);
+        let codec = &self.codec;
+        let refuse = |mode| codec.refuses(mode);
         let removed = store.pop(left(), key, now, refuse);
         match self.pop_attempt(py, store, now, removed)? {
             None | Some(Pop::Missing) => Ok(None),
-            Some(Pop::Removed(popped)) => match decode_value(py, popped.mode, popped.value_ref(), allow_pickle) {
+            Some(Pop::Removed(popped)) => match decode_value(py, codec, popped.mode, popped.value_ref()) {
                 Ok(value) => Ok(Some(value)),
                 Err(e) => {
                     self.decode_failed(py, store, shard, key, Op::Pop, popped.mode, e, Row::Removed).map(|()| None)
@@ -1374,16 +1377,16 @@ impl Transaction {
 
 /// Converts a row's value column for the codec and decodes it. Returns the decode result rather
 /// than failing the store call, so a Python error (e.g. `UnsafeValueError`) passes through intact.
-fn decode_value(py: Python<'_>, mode: i64, value: ValueRef<'_>, allow_pickle: bool) -> PyResult<Py<PyAny>> {
+fn decode_value(py: Python<'_>, codec: &Codec, mode: i64, value: ValueRef<'_>) -> PyResult<Py<PyAny>> {
     let stored = match value {
         ValueRef::Blob(bytes) | ValueRef::Text(bytes) => codec::Stored::Blob(bytes),
         ValueRef::Integer(n) => codec::Stored::Int(n),
         ValueRef::Real(x) => codec::Stored::Float(x),
         // A value file the store didn't read because this handle refuses its mode.
-        ValueRef::Null if codec::refuses(mode, allow_pickle) => return Err(codec::refusal(mode)),
+        ValueRef::Null if codec.refuses(mode) => return Err(codec::refusal(mode)),
         ValueRef::Null => return Err(crate::CorruptValueError::new_err(format!("mode {mode} row has no value"))),
     };
-    codec::decode(py, mode, stored, allow_pickle)
+    codec.decode(py, mode, stored)
 }
 
 /// What a read does with a value it can't decode: the `on_decode_error=` argument.

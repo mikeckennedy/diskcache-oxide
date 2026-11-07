@@ -13,7 +13,15 @@ use pyo3::types::{
 use rmp::encode as w;
 
 use super::common::{self, Tag, Types};
+use super::registry::{self, Entry, Kind, Snapshot};
 use crate::{CorruptValueError, ForeignValueError};
+
+/// What the encoder needs besides the value: the cached Python types and the registry snapshot.
+#[derive(Debug)]
+pub struct EncodeCtx<'a> {
+    pub t: &'a Types,
+    pub reg: &'a Snapshot,
+}
 
 fn io(e: impl std::fmt::Display) -> PyErr {
     PyValueError::new_err(e.to_string())
@@ -30,8 +38,9 @@ fn tag_head<W: Write>(out: &mut W, name: &str) -> PyResult<()> {
 
 /// Encodes `o` as tagged msgpack into `out`. Errors keep the original Python exception (a
 /// `TypeError` for anything that can't be represented).
-pub fn encode<W: Write>(o: &Bound<'_, PyAny>, t: &Types, depth: u32, out: &mut W) -> PyResult<()> {
+pub fn encode<W: Write>(o: &Bound<'_, PyAny>, cx: &EncodeCtx<'_>, depth: u32, out: &mut W) -> PyResult<()> {
     let py = o.py();
+    let t = cx.t;
     if depth > common::MAX_DEPTH {
         return Err(common::too_deep());
     }
@@ -59,8 +68,9 @@ pub fn encode<W: Write>(o: &Bound<'_, PyAny>, t: &Types, depth: u32, out: &mut W
     }
     common::check_stack(py)?;
     if let Ok(d) = o.cast_exact::<PyDict>() {
-        // A snapshot on the free-threaded build, so the length written first matches the entries.
-        let d = common::DictEntries::of(d);
+        // A snapshot on the free-threaded build, or whenever user code could run, so the length
+        // written first matches the entries.
+        let d = common::DictEntries::of(d, !cx.reg.is_empty());
         let first_dollar = d.iter().next().is_some_and(|(k, _)| {
             k.cast_exact::<PyString>().is_ok_and(|s| s.to_str().is_ok_and(|s| s.starts_with('$')))
         });
@@ -71,8 +81,8 @@ pub fn encode<W: Write>(o: &Bound<'_, PyAny>, t: &Types, depth: u32, out: &mut W
         }
         w::write_map_len(out, len32(d.len())?).map_err(io)?;
         for (k, v) in d.iter() {
-            encode(&k, t, depth, out)?;
-            encode(&v, t, depth, out)?;
+            encode(&k, cx, depth, out)?;
+            encode(&v, cx, depth, out)?;
         }
         return Ok(());
     }
@@ -83,7 +93,7 @@ pub fn encode<W: Write>(o: &Bound<'_, PyAny>, t: &Types, depth: u32, out: &mut W
         w::write_array_len(out, len32(n)?).map_err(io)?;
         for i in 0..n {
             let item = l.get_item(i).map_err(|_| common::changed_during_encode("list"))?;
-            encode(&item, t, depth + 1, out)?;
+            encode(&item, cx, depth + 1, out)?;
         }
         return Ok(());
     }
@@ -91,7 +101,7 @@ pub fn encode<W: Write>(o: &Bound<'_, PyAny>, t: &Types, depth: u32, out: &mut W
         tag_head(out, common::TAG_TUPLE)?;
         w::write_array_len(out, len32(tp.len())?).map_err(io)?;
         for item in tp.iter() {
-            encode(&item, t, depth + 2, out)?;
+            encode(&item, cx, depth + 2, out)?;
         }
         return Ok(());
     }
@@ -121,16 +131,49 @@ pub fn encode<W: Write>(o: &Bound<'_, PyAny>, t: &Types, depth: u32, out: &mut W
     } else if o.is_exact_instance_of::<PyFrozenSet>() {
         common::TAG_FROZENSET
     } else {
-        return Err(common::unsupported(o));
+        // After every exact check, before pickle: a registered type (by exact type, no MRO walk).
+        return match cx.reg.by_type(&ty) {
+            Some(entry) => encode_registered(o, entry, cx, depth, out),
+            None => Err(common::unsupported(o)),
+        };
     };
     // Collected first because the length goes before the items.
     let items = common::set_items(o)?;
     tag_head(out, name)?;
     w::write_array_len(out, len32(items.len())?).map_err(io)?;
     for item in &items {
-        encode(item, t, depth + 2, out)?;
+        encode(item, cx, depth + 2, out)?;
     }
     Ok(())
+}
+
+/// `{"$t:<name>": body}`: the registered `encode` function's result, or a map of a dataclass's
+/// fields, encoded by the normal path (so it may hold other registered types, nested).
+fn encode_registered<W: Write>(
+    o: &Bound<'_, PyAny>,
+    entry: &Entry,
+    cx: &EncodeCtx<'_>,
+    depth: u32,
+    out: &mut W,
+) -> PyResult<()> {
+    let py = o.py();
+    cx.reg.note_hit();
+    tag_head(out, &entry.tag)?;
+    match &entry.kind {
+        Kind::Explicit { encode: f, .. } => {
+            let body = f.bind(py).call1((o,))?;
+            encode(&body, cx, depth + 1, out)
+        }
+        Kind::Dataclass { fields } => {
+            w::write_map_len(out, len32(fields.len())?).map_err(io)?;
+            for field in fields {
+                let field = field.bind(py);
+                w::write_str(out, field.to_str()?).map_err(io)?;
+                encode(&o.getattr(field)?, cx, depth + 2, out)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 // Howard Hinnant's days_from_civil / civil_from_days.
@@ -184,8 +227,8 @@ fn write_timestamp<W: Write>(out: &mut W, dt: &Bound<'_, PyDateTime>) -> PyResul
 
 /// Decodes one msgpack value that must fill `data` exactly. Malformed input raises
 /// `CorruptValueError`; a Python error raised while building a value is returned as itself.
-pub fn decode<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyAny>> {
-    let mut r = Reader { data, pos: 0, depth: 0 };
+pub fn decode<'py>(py: Python<'py>, data: &[u8], reg: &Snapshot) -> PyResult<Bound<'py, PyAny>> {
+    let mut r = Reader { data, pos: 0, depth: 0, reg };
     let v = r.value(py)?;
     if r.pos != r.data.len() {
         return Err(CorruptValueError::new_err("trailing bytes after the msgpack value"));
@@ -197,6 +240,7 @@ struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
     depth: u32,
+    reg: &'a Snapshot,
 }
 
 fn bad() -> PyErr {
@@ -285,6 +329,15 @@ impl<'a> Reader<'a> {
         }
         let first = match self.peek_str()? {
             Some(s) if s.starts_with('$') => {
+                if let Some(name) = s.strip_prefix(registry::TAG_PREFIX) {
+                    // Resolved here, where the name is in hand, so nothing is allocated for it.
+                    let entry = self.reg.by_name(name).ok_or_else(|| foreign(format!("unknown tag {s:?}")))?;
+                    if n != 1 {
+                        return Err(corrupt("a tag map must have exactly one entry"));
+                    }
+                    let body = self.value(py)?;
+                    return registry::decode_body(py, entry, body);
+                }
                 let tag = Tag::parse(s).ok_or_else(|| foreign(format!("unknown tag {s:?}")))?;
                 if n != 1 {
                     return Err(corrupt("a tag map must have exactly one entry"));

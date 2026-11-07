@@ -497,7 +497,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td>raises, row kept</td>
 </tr>
 <tr class="odd">
-<td>An unreadable value (malformed bytes, a failing unpickle)</td>
+<td>An unreadable value (malformed bytes, a failing unpickle, a registered type’s <code>decode</code> raising about the row)</td>
 <td>deletes that version, then raises</td>
 <td>deletes that version, returns the default and reports</td>
 <td>the same as <code>'miss'</code></td>
@@ -509,7 +509,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td>returns the default and reports both, row kept</td>
 </tr>
 <tr class="odd">
-<td><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, an I/O error or <code>RecursionError</code> from a pickle hook</td>
+<td><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, an I/O error or <code>RecursionError</code> from a pickle hook or a registered type’s <code>decode</code></td>
 <td>raises, row kept</td>
 <td>raises, row kept</td>
 <td>returns the default, row kept, reported once per stored version</td>
@@ -521,7 +521,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td>returns the default, row kept, reported once per stored version</td>
 </tr>
 <tr class="odd">
-<td><code>MemoryError</code> or a <code>BaseException</code> from a pickle hook</td>
+<td><code>MemoryError</code> or a <code>BaseException</code> from a pickle hook or a <code>decode</code></td>
 <td>raises, row kept</td>
 <td>raises, row kept</td>
 <td>raises, row kept</td>

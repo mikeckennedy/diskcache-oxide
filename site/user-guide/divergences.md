@@ -49,6 +49,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-038 | [Cache](../reference/Cache.md#diskcache_oxide.Cache) and [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) on each other's directory | Quietly creates or reuses a database | [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError), creating nothing |
 | D-039 | [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) constructor and features | `FanoutCache(path, 4)`; sub-collections, tags, [stats()](../reference/Caches.stats.md#diskcache_oxide.Caches.stats), `check()` and more | [shards](../reference/FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) is keyword-only; those features aren't there yet |
 | D-040 | [FanoutCache.transact()](../reference/FanoutCache.transact.md#diskcache_oxide.FanoutCache.transact) | Locks every shard; `tx` is `None` | `transact(*, key)` locks one shard and refuses other shards' keys |
+| D-041 | Your own types | A `Disk` subclass, or pickle | `register_type()` per type; stored tagged, read by an allowlist; never pickled |
 
 
 # Safety
@@ -163,6 +164,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-007:** [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) subclasses `TimeoutError`, so `except TimeoutError` catches it too.
 - **D-009:** `bool(Cache)` is always True and `bool(NullCache)` is False, so `if cache:` means "caching is on".
 - **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
+- **D-041:** a type the codec doesn't know is registered per type with `register_type(cls, name=..., encode=..., decode=...)` (a dataclass needs only a name), process-wide or per cache with `types=`. It's stored as a tagged value and read back only where the name is registered, so nothing is imported by name; a registered type is never pickled; a `decode` error about the row is a [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) with yours as `__cause__`. See [Your own types](serialization.md#your-own-types).
 - **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.md#a-cache-that-cant-take-a-request-down).
 - **D-025:** `iter(cache)` and [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 

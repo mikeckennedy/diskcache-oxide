@@ -397,6 +397,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<cache::Cache>()?;
     m.add_class::<cache::FanoutCache>()?;
     m.add_class::<cache::Transaction>()?;
+    m.add_class::<codec::TypeRegistry>()?;
+    m.add("registry", codec::registry::global(py)?)?;
     install_fork_barrier(m)?;
     Ok(())
 }

@@ -4,6 +4,10 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+### Added
+
+- A type registry (D-041, plan 16): `register_type(cls, name=..., encode=..., decode=...)` tells the codec how to store a type it doesn't know, without pickle. A dataclass needs only a name: its fields are stored and it is rebuilt with `cls(**fields)`, so defaults and `__post_init__` run. Registrations are process-wide (`diskcache_oxide.registry`, a `TypeRegistry`), or per cache with `Cache(types=TypeRegistry())`, consulted first. A registered value is stored as a tagged map in both serializers; a reader without the registration gets `ForeignValueError` and the row stays, so nothing is ever imported by name. Once the encoder has used a registration for any part of a value, that value is never pickled. `unregister_type()` and `registered_types()` complete the surface; `NullCache` and `Caches.register` accept `types=`.
+
 ### Changed
 
 - A `Caches` registry no longer turns a sharded cache whose folder has another shard count than `register(..., shards=n)` into a `NullCache`. It opens the folder with the count on disk, logs a `WARNING` saying how to apply `n` (delete the folder with every worker stopped), and logs one `ERROR` per process with a constant message so an error tracker groups the reports. `n` applies only to a new folder. A `size_limit` or `max_connections` that fits `n` but is too small for the folder's count is still a reported `NullCache`. A direct `FanoutCache(path, shards=n)` still raises `LayoutMismatchError` (plan 15).

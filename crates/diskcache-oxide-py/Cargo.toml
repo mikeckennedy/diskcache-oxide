@@ -13,6 +13,7 @@ name = "_core"
 crate-type = ["cdylib"]
 
 [dependencies]
+arc-swap.workspace = true
 base64.workspace = true
 diskcache-oxide-core.workspace = true
 libc.workspace = true

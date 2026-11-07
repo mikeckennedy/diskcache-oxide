@@ -315,6 +315,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#two-formats" id="toc-two-formats" class="nav-link active" data-scroll-target="#two-formats">Two formats</a></li>
   <li><a href="#exact-types" id="toc-exact-types" class="nav-link" data-scroll-target="#exact-types">Exact types</a></li>
   <li><a href="#what-isnt-stored" id="toc-what-isnt-stored" class="nav-link" data-scroll-target="#what-isnt-stored">What isn’t stored</a></li>
+  <li><a href="#your-own-types" id="toc-your-own-types" class="nav-link" data-scroll-target="#your-own-types">Your own types</a></li>
   <li><a href="#why-pickle-is-off-by-default" id="toc-why-pickle-is-off-by-default" class="nav-link" data-scroll-target="#why-pickle-is-off-by-default">Why pickle is off by default</a></li>
   <li><a href="#opting-in-to-pickle" id="toc-opting-in-to-pickle" class="nav-link" data-scroll-target="#opting-in-to-pickle">Opting in to pickle</a></li>
   <li><a href="#reading-safely-unsafevalueerror" id="toc-reading-safely-unsafevalueerror" class="nav-link" data-scroll-target="#reading-safely-unsafevalueerror">Reading safely: <code>UnsafeValueError</code></a></li>
@@ -417,7 +418,43 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>A value that neither format can represent exactly, such as an instance of your own class, raises <code>TypeError</code> at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'service'</span>, MyService())</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="co"># TypeError: values of type MyService can't be stored without pickle (only exact built-in types round-trip)</span></span></code></pre></div>
-<p>Only exact built-in types count. A subclass of <code>dict</code> or <code>str</code> isn’t stored as its base type, because it wouldn’t come back as the class you stored. Failing at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> time means you find out where the value was created, not three requests later when something reads it.</p>
+<p>Only exact built-in types count. A subclass of <code>dict</code> or <code>str</code> isn’t stored as its base type, because it wouldn’t come back as the class you stored. Failing at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> time means you find out where the value was created, not three requests later when something reads it. For a type of your own, or one from a library, <a href="#your-own-types">register it</a>.</p>
+</section>
+<section id="your-own-types" class="level1">
+<h1>Your own types</h1>
+<p>Most of what an app stores that isn’t a built-in is a type it doesn’t own: a bson <code>ObjectId</code> inside a session dict, a namedtuple a library hands back, the <code>str</code> subclass a Markdown renderer returns. Converting those by hand at every call site works, but it’s the kind of code that drifts. Instead, tell the codec once how to store the type:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> bson <span class="im">import</span> ObjectId</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> diskcache_oxide</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(ObjectId, name<span class="op">=</span><span class="st">'bson.ObjectId'</span>, encode<span class="op">=</span><span class="bu">str</span>, decode<span class="op">=</span>ObjectId)</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'session'</span>, {<span class="st">'id'</span>: ObjectId(), <span class="st">'user'</span>: ObjectId()})</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>cache.get(<span class="st">'session'</span>)[<span class="st">'id'</span>]   <span class="co"># an ObjectId again</span></span></code></pre></div>
+<p><code>encode</code> turns an instance into a value the codec can already store, built-ins or other registered types, nested as deep as you like. <code>decode</code> turns that value back into an instance. The registration is process-wide, so make it at import time, in every process that opens the directory.</p>
+<p>A dataclass needs only a name. Its <code>init=True</code> fields are read straight off the instance, with no intermediate dict, and on the way out it’s rebuilt with <code>cls(**fields)</code>, so defaults and <code>__post_init__</code> still run:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclasses.dataclass</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Episode:</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">id</span>: <span class="bu">int</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    title: <span class="bu">str</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    published: datetime.datetime <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(Episode, name<span class="op">=</span><span class="st">'tp.Episode'</span>)</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'episode:491'</span>, Episode(<span class="dv">491</span>, <span class="st">'Rust and Python'</span>))</span></code></pre></div>
+<p>The write path skips <code>dataclasses.asdict()</code>, which deep-copies: on a 20-field dataclass a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> goes from about 23 µs to 18. A read still builds one keyword dict and calls the constructor, so it saves almost nothing (4.0 µs against 3.8), and that’s fine: a cache is mostly reads, and what you gain is the call sites.</p>
+<p>What the registry guarantees:</p>
+<ul>
+<li><strong>Nothing is imported by name.</strong> A registered value is stored as <code>{"$t:bson.ObjectId": "..."}</code>, and a reader looks that name up in its own registry. A process that hasn’t registered it gets <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>, and the row stays for one that has. That is the whole difference from pickle.</li>
+<li><strong>The name is yours.</strong> Rename or move the class and the stored rows still read, because the tag is the name you chose, not the class’s path.</li>
+<li><strong>Lookup is by exact type.</strong> A subclass of a registered class is its own registration. The codec’s own types (<code>str</code>, <code>dict</code>, <code>datetime</code> and the rest) can’t be registered, since their wire form is a contract across versions; their subclasses can, which is how a namedtuple or a <code>str</code> subclass gets in.</li>
+<li><strong>A registered type is never pickled</strong>, even on a cache with <code>pickle=True</code>. Once the encoder has used a registration for any part of a value, that value is stored through it or <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> raises: if its <code>encode</code> raises, or returns something the codec can’t store. You registered it to stay off pickle, and a silent fallback would hide the bug.</li>
+<li><strong>Last registration wins</strong>, by class and by name, so a module that a dev server reloads can register its new class object again.</li>
+<li><strong>A decode function’s errors are classified as a pickle hook’s would be.</strong> A <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> or <code>OSError</code> raises with the row kept (a miss under <code>durable=True</code>). An error about the row, such as a <code>TypeError</code> from a dataclass row written before a field was removed, becomes <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> with yours as <code>__cause__</code>, and <code>on_decode_error='miss'</code> deletes that row so the writer replaces it. Decode runs while the cache holds a connection, as unpickling does, so a slow <code>decode</code> delays forks and checkpoints for as long as it runs; one that re-enters the cache is fine.</li>
+</ul>
+<p>A cache that needs a different encoding of a type than the rest of the process gets its own registry, consulted before the global one:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>reg <span class="op">=</span> diskcache_oxide.TypeRegistry()</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>reg.register(ObjectId, name<span class="op">=</span><span class="st">'bson.ObjectId'</span>, encode<span class="op">=</span><span class="kw">lambda</span> o: o.binary, decode<span class="op">=</span>ObjectId)</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-binary-ids'</span>, types<span class="op">=</span>reg)</span></code></pre></div>
+<p>Two processes with different registrations on one directory write rows the other can’t read, the same way two processes with different <code>serializer=</code> settings would. Register at import time, the same way everywhere.</p>
 </section>
 <section id="why-pickle-is-off-by-default" class="level1">
 <h1>Why pickle is off by default</h1>
@@ -429,8 +466,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="opting-in-to-pickle" class="level1">
 <h1>Opting in to pickle</h1>
 <p>When you really do need to cache arbitrary objects, turn pickle on for that cache. It’s used only for values the structured format can’t represent; everything else is still stored as msgpack or JSON.</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>objects <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-objects'</span>, pickle<span class="op">=</span><span class="va">True</span>)</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>objects.<span class="bu">set</span>(<span class="st">'service'</span>, MyService())</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>objects <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-objects'</span>, pickle<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>objects.<span class="bu">set</span>(<span class="st">'service'</span>, MyService())</span></code></pre></div>
 <p>A good habit is to give pickled values their own cache directory, and keep everything else in a cache without pickle.</p>
 </section>
 <section id="reading-safely-unsafevalueerror" class="level1">

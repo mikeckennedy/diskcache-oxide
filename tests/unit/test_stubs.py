@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -68,11 +69,17 @@ def _signature(node: Function) -> list[tuple[str, inspect._ParameterKind, ast.ex
         (arg.arg, inspect.Parameter.KEYWORD_ONLY, default)
         for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True)
     )
-    return [p for p in params if p[0] not in ('self', 'cls')]
+    return _without_receiver(params, lambda p: p[0])
+
+
+def _without_receiver[T](params: list[T], name: Callable[[T], str]) -> list[T]:
+    """Drops a leading `self` or `cls` (the receiver), and only that one: `TypeRegistry.register(cls, ...)`
+    takes a class as its first real parameter."""
+    return params[1:] if params and name(params[0]) in ('self', 'cls') else params
 
 
 def _check_defaults(where: str, stub: Function, runtime: inspect.Signature) -> None:
-    actual = [p for p in runtime.parameters.values() if p.name not in ('self', 'cls')]
+    actual = _without_receiver(list(runtime.parameters.values()), lambda p: p.name)
     expected = _signature(stub)
     assert [(n, k.name) for n, k, _ in expected] == [(p.name, p.kind.name) for p in actual], where
     for (name, _, default), param in zip(expected, actual, strict=True):
@@ -102,11 +109,11 @@ def test_function_signatures_match(name: str) -> None:
     _check_defaults(name, FUNCTIONS[name], inspect.signature(getattr(_core, name)))
 
 
-CACHE_CLASSES = ('Cache', 'FanoutCache')
+CACHE_CLASSES = ('Cache', 'FanoutCache', 'TypeRegistry')
 
 
 @pytest.mark.parametrize(
-    'name', sorted(n for n, c in CLASSES.items() if n not in ('Cache', 'FanoutCache', 'Transaction'))
+    'name', sorted(n for n, c in CLASSES.items() if n not in ('Cache', 'FanoutCache', 'Transaction', 'TypeRegistry'))
 )
 def test_exception_bases_match(name: str) -> None:
     node = CLASSES[name]
@@ -162,6 +169,7 @@ def test_method_signatures_match(cls: str, name: str) -> None:
     runtime = inspect.signature(getattr(getattr(_core, cls), name))
     for definition in MEMBERS[cls][name]:
         expected = [(n, k) for n, k, _ in _signature(definition)]
-        assert expected == [(p.name, p.kind) for p in runtime.parameters.values() if p.name != 'self'], f'{cls}.{name}'
+        actual = _without_receiver(list(runtime.parameters.values()), lambda p: p.name)
+        assert expected == [(p.name, p.kind) for p in actual], f'{cls}.{name}'
     if len(MEMBERS[cls][name]) == 1:
         _check_defaults(f'{cls}.{name}', MEMBERS[cls][name][0], runtime)

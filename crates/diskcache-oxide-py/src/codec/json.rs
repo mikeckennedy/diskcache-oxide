@@ -14,19 +14,20 @@ use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor
 use serde::ser::{self, Serialize, SerializeMap, SerializeSeq, Serializer};
 
 use super::common::{self, Tag, Types};
+use super::registry::{self, Entry, Kind, Snapshot};
 
 /// Encodes `obj` as tagged JSON into `out`. Errors keep the original Python exception (a
 /// `TypeError` for anything that can't be represented).
-pub fn encode<W: Write>(py: Python<'_>, obj: &Bound<'_, PyAny>, out: W) -> PyResult<()> {
-    let ctx = Ctx { py, t: common::types(py)?, err: RefCell::new(None) };
+pub fn encode<W: Write>(py: Python<'_>, obj: &Bound<'_, PyAny>, reg: &Snapshot, out: W) -> PyResult<()> {
+    let ctx = Ctx { py, t: common::types(py)?, reg, err: RefCell::new(None) };
     let enc = Enc { obj, ctx: &ctx, depth: 0 };
     enc.serialize(&mut serde_json::Serializer::new(out)).map_err(|e| ctx.take_err(&e))
 }
 
 /// Decodes one tagged JSON value. A Python error raised while building the value is returned as
 /// itself; anything `serde_json` rejects comes back as its message (the caller makes both corrupt).
-pub fn decode<'py>(py: Python<'py>, data: &[u8]) -> Result<Bound<'py, PyAny>, DecodeError> {
-    let dctx = DeCtx { py, err: RefCell::new(None) };
+pub fn decode<'py>(py: Python<'py>, data: &[u8], reg: &Snapshot) -> Result<Bound<'py, PyAny>, DecodeError> {
+    let dctx = DeCtx { py, reg, err: RefCell::new(None) };
     let mut de = serde_json::Deserializer::from_slice(data);
     let result = Any { cx: &dctx }.deserialize(&mut de).and_then(|v| de.end().map(|()| v));
     result.map_err(|e| match dctx.err.take() {
@@ -44,13 +45,14 @@ pub enum DecodeError {
     Invalid(String),
 }
 
-struct Ctx<'py> {
+struct Ctx<'r, 'py> {
     py: Python<'py>,
     t: &'static Types,
+    reg: &'r Snapshot,
     err: RefCell<Option<PyErr>>,
 }
 
-impl Ctx<'_> {
+impl Ctx<'_, '_> {
     fn fail<E: ser::Error>(&self, e: PyErr) -> E {
         self.err.replace(Some(e));
         E::custom("python error")
@@ -63,7 +65,7 @@ impl Ctx<'_> {
 
 struct Enc<'a, 'py> {
     obj: &'a Bound<'py, PyAny>,
-    ctx: &'a Ctx<'py>,
+    ctx: &'a Ctx<'a, 'py>,
     depth: u32,
 }
 
@@ -161,7 +163,7 @@ impl Serialize for Pairs<'_, '_> {
 impl<'py> Enc<'_, 'py> {
     fn serialize_dict<S: Serializer>(&self, s: S, d: &Bound<'py, PyDict>) -> Result<S::Ok, S::Error> {
         let ctx = self.ctx;
-        let d = common::DictEntries::of(d);
+        let d = common::DictEntries::of(d, !ctx.reg.is_empty());
         let mut all_str = true;
         let mut first_dollar = false;
         for (i, (k, _)) in d.iter().enumerate() {
@@ -252,7 +254,11 @@ impl Serialize for Enc<'_, '_> {
         } else if o.is_exact_instance_of::<PyFrozenSet>() {
             common::TAG_FROZENSET
         } else {
-            return Err(ctx.fail(common::unsupported(o)));
+            // After every exact check, before pickle: a registered type (by exact type, no MRO walk).
+            return match ctx.reg.by_type(&ty) {
+                Some(entry) => self.serialize_registered(s, entry),
+                None => Err(ctx.fail(common::unsupported(o))),
+            };
         };
         let items = common::set_items(o).map_err(|e| ctx.fail(e))?;
         let inner = self.child(o, 1);
@@ -260,15 +266,55 @@ impl Serialize for Enc<'_, '_> {
     }
 }
 
+impl Enc<'_, '_> {
+    /// `{"$t:<name>": body}`: the registered `encode` function's result, or an object of a
+    /// dataclass's fields, encoded by the normal path (so it may hold other registered types).
+    fn serialize_registered<S: Serializer>(&self, s: S, entry: &Entry) -> Result<S::Ok, S::Error> {
+        let ctx = self.ctx;
+        ctx.reg.note_hit();
+        match &entry.kind {
+            Kind::Explicit { encode, .. } => {
+                let body = encode.bind(ctx.py).call1((self.obj,)).map_err(|e| ctx.fail(e))?;
+                tag(s, &entry.tag, &self.child(&body, 1))
+            }
+            Kind::Dataclass { fields } => {
+                let inner = self.child(self.obj, 1);
+                tag(s, &entry.tag, &Fields { parent: &inner, fields })
+            }
+        }
+    }
+}
+
+/// A dataclass's `init=True` fields as a JSON object, read with `getattr`.
+struct Fields<'a, 'py> {
+    parent: &'a Enc<'a, 'py>,
+    fields: &'a [Py<PyString>],
+}
+
+impl Serialize for Fields<'_, '_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let ctx = self.parent.ctx;
+        let mut m = s.serialize_map(Some(self.fields.len()))?;
+        for field in self.fields {
+            let field = field.bind(ctx.py);
+            m.serialize_key(field.to_str().map_err(|e| ctx.fail(e))?)?;
+            let value = self.parent.obj.getattr(field).map_err(|e| ctx.fail(e))?;
+            m.serialize_value(&self.parent.child(&value, 1))?;
+        }
+        m.end()
+    }
+}
+
 // ---------------- decoder ----------------
 
 /// Decoder state shared by every seed: the interpreter token and the first Python error raised.
-struct DeCtx<'py> {
+struct DeCtx<'r, 'py> {
     py: Python<'py>,
+    reg: &'r Snapshot,
     err: RefCell<Option<PyErr>>,
 }
 
-impl DeCtx<'_> {
+impl DeCtx<'_, '_> {
     fn fail<E: de::Error>(&self, e: PyErr) -> E {
         let msg = e.to_string();
         // Keeps the first: it's the one that says why decoding stopped.
@@ -279,7 +325,7 @@ impl DeCtx<'_> {
 
 #[derive(Clone, Copy)]
 struct Any<'a, 'py> {
-    cx: &'a DeCtx<'py>,
+    cx: &'a DeCtx<'a, 'py>,
 }
 
 impl<'de, 'py> DeserializeSeed<'de> for Any<'_, 'py> {
@@ -335,6 +381,13 @@ impl<'de, 'py> Visitor<'de> for Any<'_, 'py> {
                 }
                 Ok(v)
             }
+            Some(Key::Registered(entry)) => {
+                let body = map.next_value_seed(self)?;
+                if map.next_key::<IgnoredAny>()?.is_some() {
+                    return Err(de::Error::custom("a tag map must have exactly one entry"));
+                }
+                registry::decode_body(cx.py, entry, body).map_err(|e| cx.fail(e))
+            }
             Some(Key::Str(k)) => {
                 let d = PyDict::new(cx.py);
                 let v = map.next_value_seed(self)?;
@@ -346,7 +399,7 @@ impl<'de, 'py> Visitor<'de> for Any<'_, 'py> {
     }
 }
 
-fn collect<'de, 'py, A: SeqAccess<'de>>(cx: &DeCtx<'py>, mut seq: A) -> Result<Vec<Bound<'py, PyAny>>, A::Error> {
+fn collect<'de, 'py, A: SeqAccess<'de>>(cx: &DeCtx<'_, 'py>, mut seq: A) -> Result<Vec<Bound<'py, PyAny>>, A::Error> {
     let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(4).min(4096));
     while let Some(v) = seq.next_element_seed(Any { cx })? {
         items.push(v);
@@ -354,7 +407,11 @@ fn collect<'de, 'py, A: SeqAccess<'de>>(cx: &DeCtx<'py>, mut seq: A) -> Result<V
     Ok(items)
 }
 
-fn fill_map<'de, 'py, A: MapAccess<'de>>(cx: &DeCtx<'py>, d: &Bound<'py, PyDict>, mut map: A) -> Result<(), A::Error> {
+fn fill_map<'de, 'py, A: MapAccess<'de>>(
+    cx: &DeCtx<'_, 'py>,
+    d: &Bound<'py, PyDict>,
+    mut map: A,
+) -> Result<(), A::Error> {
     while let Some(k) = map.next_key_seed(KeySeed { cx, first: false })? {
         // KeySeed reads tags only for the first key, so this is always a plain key.
         let Key::Str(k) = k else { return Err(de::Error::custom("a tag key after the first entry")) };
@@ -364,42 +421,46 @@ fn fill_map<'de, 'py, A: MapAccess<'de>>(cx: &DeCtx<'py>, d: &Bound<'py, PyDict>
     Ok(())
 }
 
-enum Key<'py> {
+enum Key<'a, 'py> {
     Tag(Tag),
+    /// A `$t:` tag, resolved where the name is in hand (unknown names are foreign).
+    Registered(&'a Entry),
     Str(Bound<'py, PyString>),
 }
 
 #[derive(Clone, Copy)]
 struct KeySeed<'a, 'py> {
-    cx: &'a DeCtx<'py>,
+    cx: &'a DeCtx<'a, 'py>,
     first: bool,
 }
 
-impl<'de, 'py> DeserializeSeed<'de> for KeySeed<'_, 'py> {
-    type Value = Key<'py>;
+impl<'de, 'a, 'py> DeserializeSeed<'de> for KeySeed<'a, 'py> {
+    type Value = Key<'a, 'py>;
     fn deserialize<D: de::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
         d.deserialize_str(self)
     }
 }
 
-impl<'py> Visitor<'_> for KeySeed<'_, 'py> {
-    type Value = Key<'py>;
+impl<'a, 'py> Visitor<'_> for KeySeed<'a, 'py> {
+    type Value = Key<'a, 'py>;
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("a string key")
     }
     fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
         if self.first && v.starts_with('$') {
             // A newer version may have written it: kept as `ForeignValueError` (see `DeCtx::fail`).
-            return Tag::parse(v)
-                .map(Key::Tag)
-                .ok_or_else(|| self.cx.fail(crate::ForeignValueError::new_err(format!("unknown tag {v:?}"))));
+            let unknown = || self.cx.fail(crate::ForeignValueError::new_err(format!("unknown tag {v:?}")));
+            if let Some(name) = v.strip_prefix(registry::TAG_PREFIX) {
+                return self.cx.reg.by_name(name).map(|e| Key::Registered(e)).ok_or_else(unknown);
+            }
+            return Tag::parse(v).map(Key::Tag).ok_or_else(unknown);
         }
         Ok(Key::Str(common::key_str(self.cx.py, v)))
     }
 }
 
 struct TagSeed<'a, 'py> {
-    cx: &'a DeCtx<'py>,
+    cx: &'a DeCtx<'a, 'py>,
     tag: Tag,
 }
 
@@ -465,7 +526,7 @@ impl<'de, 'py> Visitor<'de> for TagSeed<'_, 'py> {
 }
 
 struct PairSeed<'a, 'py> {
-    cx: &'a DeCtx<'py>,
+    cx: &'a DeCtx<'a, 'py>,
 }
 
 impl<'de, 'py> DeserializeSeed<'de> for PairSeed<'_, 'py> {

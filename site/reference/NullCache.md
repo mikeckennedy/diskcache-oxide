@@ -15,6 +15,7 @@ NullCache(
     cull_limit=None,
     serializer="msgpack",
     pickle=False,
+    types=None,
     clock=None,
     max_connections=8,
     sqlite_cache_size=None,

@@ -6,22 +6,30 @@
 //! specified in plans/spike-3-codecs.md. Pickle is used only when the handle allows it *and* the
 //! serializer can't represent the value.
 //!
-//! The encoder runs no user Python code: it dispatches on exact types, rejects subclasses and
-//! foreign tzinfo classes before calling anything on them, and calls only C-implemented methods.
-//! The pickle fallback is the exception, and only runs when the caller opted in.
+//! The encoder runs no user Python code of its own: it dispatches on exact types, rejects subclasses
+//! and foreign tzinfo classes before calling anything on them, and calls only C-implemented
+//! methods. Two things the caller opts into are the exceptions: the pickle fallback, and a
+//! registered type (plan 16, [`registry`]), whose `encode` function or dataclass fields run inside
+//! the encoder. `common::DictEntries` copies a dict's entries whenever anything is registered, so
+//! that code can't change a dict under the encoder.
 
 mod common;
 mod json;
 mod msgpack;
+pub mod registry;
 
 use std::cell::RefCell;
 use std::fmt;
 use std::io::Write;
 
-use pyo3::exceptions::{PyException, PyMemoryError, PyRecursionError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyException, PyMemoryError, PyOSError, PyRecursionError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::critical_section::with_critical_section;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
+use pyo3::{PyTraverseError, PyVisit};
+
+use registry::Snapshot;
+pub use registry::TypeRegistry;
 
 use crate::{CorruptValueError, ForeignValueError, UnsafeValueError};
 
@@ -139,41 +147,110 @@ impl fmt::Display for Stored<'_> {
 /// `ForeignValueError` (a newer peer's data), not a corrupt row that `on_decode_error` deletes.
 const PICKLE_PROTOCOL: u8 = 5;
 
-/// Encodes `value` for storage. Raises `TypeError` for a value the serializer can't represent,
-/// unless `pickle` is true, in which case that value is pickled instead.
-pub fn encode<'py>(
-    py: Python<'py>,
-    value: &Bound<'py, PyAny>,
-    serializer: Serializer,
-    pickle: bool,
-) -> PyResult<Encoded<'py>> {
-    if let Ok(s) = value.cast_exact::<PyString>() {
-        s.to_str()?; // Lone surrogates can't be stored as UTF-8: raise now, not at bind time.
-        return Ok(Encoded { mode: Mode::RawStr, payload: Payload::Str(s.clone()) });
+/// A handle's serialization settings: the structured serializer, whether pickle may be used, and
+/// the registry consulted before the global one (`types=`). Built once per handle; every encode and
+/// decode goes through it.
+#[derive(Debug)]
+pub struct Codec {
+    pub serializer: Serializer,
+    pub pickle: bool,
+    pub types: Option<Py<TypeRegistry>>,
+}
+
+impl Codec {
+    /// Whether a row of `mode` must be refused without reading its value (see [`refuses`]).
+    #[must_use]
+    pub fn refuses(&self, mode: i64) -> bool {
+        refuses(mode, self.pickle)
     }
-    if let Ok(b) = value.cast_exact::<PyBytes>() {
-        return Ok(Encoded { mode: Mode::RawBytes, payload: Payload::Bytes(b.clone()) });
-    }
-    // Exact int only, so bool (an int subclass) and IntEnum never come back as plain ints.
-    if value.is_exact_instance_of::<PyInt>()
-        && let Ok(i) = value.extract::<i64>()
-    {
-        return Ok(Encoded { mode: Mode::Int, payload: Payload::Int(i) });
-    }
-    // NaN and the infinities stay in the serializer: SQLite binds NaN as NULL (D-008). -0.0 is
-    // native: it round-trips through a BLOB-affinity column (tests::negative_zero_survives_real).
-    if let Ok(f) = value.cast_exact::<PyFloat>()
-        && f.value().is_finite()
-    {
-        return Ok(Encoded { mode: Mode::Float, payload: Payload::Float(f.value()) });
-    }
-    match serialize(py, value, serializer) {
-        Ok(bytes) => Ok(Encoded { mode: serializer.mode(), payload: Payload::Bytes(bytes) }),
-        Err(e) if pickle && e.is_instance_of::<PyTypeError>(py) => {
-            let dumped = common::types(py)?.pickle_dumps.bind(py).call1((value, PICKLE_PROTOCOL))?;
-            Ok(Encoded { mode: Mode::Pickle, payload: Payload::Bytes(dumped.cast_into::<PyBytes>()?) })
+
+    /// Visits the registry this handle holds, for `__traverse__`.
+    pub fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if let Some(types) = &self.types {
+            visit.call(types)?;
         }
-        Err(e) => Err(e),
+        Ok(())
+    }
+
+    fn snapshot(&self, py: Python<'_>) -> PyResult<Snapshot> {
+        Snapshot::take(py, self.types.as_ref())
+    }
+
+    /// Encodes `value` for storage. Raises `TypeError` for a value the serializer can't represent,
+    /// unless `pickle` is true, in which case that value is pickled instead. A value that reached a
+    /// registered type is never pickled: whatever it raises, raises.
+    pub fn encode<'py>(&self, py: Python<'py>, value: &Bound<'py, PyAny>) -> PyResult<Encoded<'py>> {
+        if let Ok(s) = value.cast_exact::<PyString>() {
+            s.to_str()?; // Lone surrogates can't be stored as UTF-8: raise now, not at bind time.
+            return Ok(Encoded { mode: Mode::RawStr, payload: Payload::Str(s.clone()) });
+        }
+        if let Ok(b) = value.cast_exact::<PyBytes>() {
+            return Ok(Encoded { mode: Mode::RawBytes, payload: Payload::Bytes(b.clone()) });
+        }
+        // Exact int only, so bool (an int subclass) and IntEnum never come back as plain ints.
+        if value.is_exact_instance_of::<PyInt>()
+            && let Ok(i) = value.extract::<i64>()
+        {
+            return Ok(Encoded { mode: Mode::Int, payload: Payload::Int(i) });
+        }
+        // NaN and the infinities stay in the serializer: SQLite binds NaN as NULL (D-008). -0.0 is
+        // native: it round-trips through a BLOB-affinity column (tests::negative_zero_survives_real).
+        if let Ok(f) = value.cast_exact::<PyFloat>()
+            && f.value().is_finite()
+        {
+            return Ok(Encoded { mode: Mode::Float, payload: Payload::Float(f.value()) });
+        }
+        let reg = self.snapshot(py)?;
+        match serialize(py, value, self.serializer, &reg) {
+            Ok(bytes) => Ok(Encoded { mode: self.serializer.mode(), payload: Payload::Bytes(bytes) }),
+            Err(e) if self.pickle && !reg.had_hit() && e.is_instance_of::<PyTypeError>(py) => {
+                let dumped = common::types(py)?.pickle_dumps.bind(py).call1((value, PICKLE_PROTOCOL))?;
+                Ok(Encoded { mode: Mode::Pickle, payload: Payload::Bytes(dumped.cast_into::<PyBytes>()?) })
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Decodes a row's value. A mode-5 row raises `UnsafeValueError` unless `pickle`; a row that
+    /// can't be decoded (unknown mode, wrong storage class, malformed bytes) raises `CorruptValueError`.
+    pub fn decode(&self, py: Python<'_>, mode: i64, stored: Stored<'_>) -> PyResult<Py<PyAny>> {
+        let Some(mode) = Mode::from_column(mode) else {
+            return Err(ForeignValueError::new_err(format!("unknown value mode {mode}")));
+        };
+        if mode == Mode::Pickle && !self.pickle {
+            return Err(pickle_refused());
+        }
+        let value = match (mode, stored) {
+            (Mode::RawStr, Stored::Blob(b)) => match std::str::from_utf8(b) {
+                Ok(s) => PyString::new(py, s).into_any(),
+                Err(e) => return Err(CorruptValueError::new_err(format!("a str row holds invalid UTF-8: {e}"))),
+            },
+            (Mode::RawBytes, Stored::Blob(b)) => PyBytes::new(py, b).into_any(),
+            (Mode::Msgpack, Stored::Blob(b)) => {
+                let reg = self.snapshot(py)?;
+                msgpack::decode(py, b, &reg).map_err(|e| as_corrupt(py, e, "msgpack"))?
+            }
+            (Mode::Json, Stored::Blob(b)) => {
+                let reg = self.snapshot(py)?;
+                json::decode(py, b, &reg).map_err(|e| match e {
+                    json::DecodeError::Python(e) => as_corrupt(py, e, "JSON"),
+                    json::DecodeError::Invalid(msg) => {
+                        CorruptValueError::new_err(format!("undecodable JSON value: {msg}"))
+                    }
+                })?
+            }
+            (Mode::Pickle, Stored::Blob(b)) => {
+                // Errors from unpickling (a missing class, a failing __setstate__) are the user's
+                // own and pass through unchanged, as they do with diskcache.
+                common::types(py)?.pickle_loads.bind(py).call1((PyBytes::new(py, b),))?
+            }
+            (Mode::Int, Stored::Int(i)) => i.into_pyobject(py)?.into_any(),
+            (Mode::Float, Stored::Float(f)) => PyFloat::new(py, f).into_any(),
+            (mode, stored) => {
+                return Err(CorruptValueError::new_err(format!("a mode-{} row holds a {stored} value", mode.as_u8())));
+            }
+        };
+        Ok(value.unbind())
     }
 }
 
@@ -208,40 +285,6 @@ pub fn pickle_refused() -> PyErr {
     UnsafeValueError::new_err("this value was stored with pickle; open the cache with pickle=True to read it")
 }
 
-/// Decodes a row's value. A mode-5 row raises `UnsafeValueError` unless `allow_pickle`; a row that
-/// can't be decoded (unknown mode, wrong storage class, malformed bytes) raises `CorruptValueError`.
-pub fn decode(py: Python<'_>, mode: i64, stored: Stored<'_>, allow_pickle: bool) -> PyResult<Py<PyAny>> {
-    let Some(mode) = Mode::from_column(mode) else {
-        return Err(ForeignValueError::new_err(format!("unknown value mode {mode}")));
-    };
-    if mode == Mode::Pickle && !allow_pickle {
-        return Err(pickle_refused());
-    }
-    let value = match (mode, stored) {
-        (Mode::RawStr, Stored::Blob(b)) => match std::str::from_utf8(b) {
-            Ok(s) => PyString::new(py, s).into_any(),
-            Err(e) => return Err(CorruptValueError::new_err(format!("a str row holds invalid UTF-8: {e}"))),
-        },
-        (Mode::RawBytes, Stored::Blob(b)) => PyBytes::new(py, b).into_any(),
-        (Mode::Msgpack, Stored::Blob(b)) => msgpack::decode(py, b).map_err(|e| as_corrupt(py, e, "msgpack"))?,
-        (Mode::Json, Stored::Blob(b)) => json::decode(py, b).map_err(|e| match e {
-            json::DecodeError::Python(e) => as_corrupt(py, e, "JSON"),
-            json::DecodeError::Invalid(msg) => CorruptValueError::new_err(format!("undecodable JSON value: {msg}")),
-        })?,
-        (Mode::Pickle, Stored::Blob(b)) => {
-            // Errors from unpickling (a missing class, a failing __setstate__) are the user's
-            // own and pass through unchanged, as they do with diskcache.
-            common::types(py)?.pickle_loads.bind(py).call1((PyBytes::new(py, b),))?
-        }
-        (Mode::Int, Stored::Int(i)) => i.into_pyobject(py)?.into_any(),
-        (Mode::Float, Stored::Float(f)) => PyFloat::new(py, f).into_any(),
-        (mode, stored) => {
-            return Err(CorruptValueError::new_err(format!("a mode-{} row holds a {stored} value", mode.as_u8())));
-        }
-    };
-    Ok(value.unbind())
-}
-
 /// Imports what the codecs use, on the caller's stack. Otherwise it happens on whichever thread first
 /// encodes a container, and an import can need more stack than a small worker thread has.
 pub fn load_types(py: Python<'_>) -> PyResult<()> {
@@ -249,19 +292,31 @@ pub fn load_types(py: Python<'_>) -> PyResult<()> {
 }
 
 /// Wraps a Python error raised while decoding as `CorruptValueError`, keeping it as `__cause__`.
-/// `MemoryError`, `RecursionError` (this thread's stack, not the row: another thread can read it) and
-/// non-`Exception` errors (`KeyboardInterrupt`) pass through unchanged.
+/// `MemoryError`, `RecursionError` (this thread's stack, not the row: another thread can read it),
+/// `OSError` (`Timeout` included) and `UnsafeValueError` from a registered type's decode function,
+/// and non-`Exception` errors (`KeyboardInterrupt`) pass through unchanged.
 fn as_corrupt(py: Python<'_>, e: PyErr, what: &str) -> PyErr {
-    if e.is_instance_of::<CorruptValueError>(py)
-        || e.is_instance_of::<PyMemoryError>(py)
-        || e.is_instance_of::<PyRecursionError>(py)
-        || !e.is_instance_of::<PyException>(py)
-    {
+    if passes_through(py, &e) {
         return e;
     }
     let corrupt = CorruptValueError::new_err(format!("undecodable {what} value: {e}"));
     corrupt.set_cause(py, Some(e));
     corrupt
+}
+
+/// Whether an error raised while decoding is about something other than the stored bytes, so it is
+/// returned as itself rather than wrapped as `CorruptValueError`: `CorruptValueError` already (a
+/// nested read's, or `ForeignValueError`), `MemoryError`, `RecursionError` (this thread's stack),
+/// `OSError` (`Timeout` included) and `UnsafeValueError` from a pickle hook or a registered type's
+/// decode function, and anything that isn't an `Exception` (`KeyboardInterrupt`). One list, used by
+/// every decoder, so an exemption can't be added to one and not another.
+pub(super) fn passes_through(py: Python<'_>, e: &PyErr) -> bool {
+    e.is_instance_of::<CorruptValueError>(py)
+        || e.is_instance_of::<PyMemoryError>(py)
+        || e.is_instance_of::<PyRecursionError>(py)
+        || e.is_instance_of::<PyOSError>(py)
+        || e.is_instance_of::<UnsafeValueError>(py)
+        || !e.is_instance_of::<PyException>(py)
 }
 
 // ---- output buffers ----
@@ -279,7 +334,12 @@ thread_local! {
     static SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
-fn serialize<'py>(py: Python<'py>, value: &Bound<'py, PyAny>, serializer: Serializer) -> PyResult<Bound<'py, PyBytes>> {
+fn serialize<'py>(
+    py: Python<'py>,
+    value: &Bound<'py, PyAny>,
+    serializer: Serializer,
+    reg: &Snapshot,
+) -> PyResult<Bound<'py, PyBytes>> {
     let estimate = large_size_estimate(value);
     if estimate > DIRECT_WRITE_THRESHOLD {
         // JSON writes bytes as base64, a third bigger.
@@ -287,16 +347,16 @@ fn serialize<'py>(py: Python<'py>, value: &Bound<'py, PyAny>, serializer: Serial
             Serializer::Msgpack => estimate,
             Serializer::Json => estimate / 3 * 4,
         } + 1024;
-        return PyBytes::new_with_writer(py, reserve, |w| write_value(py, value, serializer, w));
+        return PyBytes::new_with_writer(py, reserve, |w| write_value(py, value, serializer, reg, w));
     }
     SCRATCH.with(|cell| {
         let Ok(mut buf) = cell.try_borrow_mut() else {
             // Already in use further up this thread's stack: use a fresh buffer.
             let mut buf = Vec::new();
-            return write_value(py, value, serializer, &mut buf).map(|()| PyBytes::new(py, &buf));
+            return write_value(py, value, serializer, reg, &mut buf).map(|()| PyBytes::new(py, &buf));
         };
         buf.clear();
-        let r = write_value(py, value, serializer, &mut *buf).map(|()| PyBytes::new(py, &buf));
+        let r = write_value(py, value, serializer, reg, &mut *buf).map(|()| PyBytes::new(py, &buf));
         if buf.capacity() > SCRATCH_KEEP {
             *buf = Vec::new();
         }
@@ -308,11 +368,13 @@ fn write_value<W: Write>(
     py: Python<'_>,
     value: &Bound<'_, PyAny>,
     serializer: Serializer,
+    reg: &Snapshot,
     out: &mut W,
 ) -> PyResult<()> {
+    let t = common::types(py)?;
     match serializer {
-        Serializer::Msgpack => msgpack::encode(value, common::types(py)?, 0, out),
-        Serializer::Json => json::encode(py, value, out),
+        Serializer::Msgpack => msgpack::encode(value, &msgpack::EncodeCtx { t, reg }, 0, out),
+        Serializer::Json => json::encode(py, value, reg, out),
     }
 }
 
@@ -345,16 +407,18 @@ fn large_size_estimate(value: &Bound<'_, PyAny>) -> usize {
 
 // ---- test hooks (private module functions) ----
 
-/// Test hook: `_core._encode(value, serializer='msgpack', pickle=False) -> (mode, payload)`.
+/// Test hook: `_core._encode(value, serializer='msgpack', pickle=False, types=None) -> (mode, payload)`.
 #[pyfunction]
-#[pyo3(signature = (value, serializer = "msgpack", pickle = false))]
+#[pyo3(signature = (value, serializer = "msgpack", pickle = false, types = None))]
 pub fn _encode<'py>(
     py: Python<'py>,
     value: &Bound<'py, PyAny>,
     serializer: &str,
     pickle: bool,
+    types: Option<Py<TypeRegistry>>,
 ) -> PyResult<(u8, Bound<'py, PyAny>)> {
-    let encoded = encode(py, value, Serializer::from_name(serializer)?, pickle)?;
+    let codec = Codec { serializer: Serializer::from_name(serializer)?, pickle, types };
+    let encoded = codec.encode(py, value)?;
     let payload = match &encoded.payload {
         Payload::Str(_) => PyBytes::new(py, encoded.payload.as_blob()?.unwrap_or_default()).into_any(),
         Payload::Bytes(b) => b.clone().into_any(),
@@ -364,17 +428,24 @@ pub fn _encode<'py>(
     Ok((encoded.mode.as_u8(), payload))
 }
 
-/// Test hook: `_core._decode(mode, payload, allow_pickle=False)`, with the payload a `bytes`,
-/// `int` or `float` standing for a BLOB, INTEGER or REAL column.
+/// Test hook: `_core._decode(mode, payload, allow_pickle=False, types=None)`, with the payload a
+/// `bytes`, `int` or `float` standing for a BLOB, INTEGER or REAL column.
 #[pyfunction]
-#[pyo3(signature = (mode, payload, allow_pickle = false))]
-pub fn _decode(py: Python<'_>, mode: i64, payload: &Bound<'_, PyAny>, allow_pickle: bool) -> PyResult<Py<PyAny>> {
+#[pyo3(signature = (mode, payload, allow_pickle = false, types = None))]
+pub fn _decode(
+    py: Python<'_>,
+    mode: i64,
+    payload: &Bound<'_, PyAny>,
+    allow_pickle: bool,
+    types: Option<Py<TypeRegistry>>,
+) -> PyResult<Py<PyAny>> {
+    let codec = Codec { serializer: Serializer::Msgpack, pickle: allow_pickle, types };
     if let Ok(b) = payload.cast_exact::<PyBytes>() {
-        decode(py, mode, Stored::Blob(b.as_bytes()), allow_pickle)
+        codec.decode(py, mode, Stored::Blob(b.as_bytes()))
     } else if payload.is_exact_instance_of::<PyInt>() {
-        decode(py, mode, Stored::Int(payload.extract()?), allow_pickle)
+        codec.decode(py, mode, Stored::Int(payload.extract()?))
     } else if let Ok(f) = payload.cast_exact::<PyFloat>() {
-        decode(py, mode, Stored::Float(f.value()), allow_pickle)
+        codec.decode(py, mode, Stored::Float(f.value()))
     } else {
         Err(PyTypeError::new_err("payload must be bytes, int or float"))
     }

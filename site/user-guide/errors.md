@@ -24,8 +24,11 @@ The value isn't one the msgpack or JSON format can represent exactly, so it's re
 
 Fix it in this order:
 
-1.  Store a plain structure instead: a dict from `dataclasses.asdict()` or a model's `model_dump()`, and rebuild the object on the way out. This is the right answer for almost every cache entry, and it keeps pickle out of the directory.
-2.  If you really need arbitrary objects, open a separate cache for them with `Cache('/var/cache/my-app-objects', pickle=True)`. Don't turn `pickle=True` on for a cache that other code shares just to make the error go away: every reader of that directory then runs `pickle.loads` on whatever is written there. See [Serialization](serialization.md).
+1.  Register the type: `diskcache_oxide.register_type(Episode, name='tp.Episode')` for a dataclass, or with `encode=` and `decode=` functions for anything else (an `ObjectId`, a namedtuple, a `str` subclass). The value is stored without pickle and comes back as the type you stored. See [Your own types](serialization.md#your-own-types).
+2.  Or store a plain structure instead: a dict from a model's `model_dump()`, and rebuild the object on the way out.
+3.  If you really need arbitrary objects, open a separate cache for them with `Cache('/var/cache/my-app-objects', pickle=True)`. Don't turn `pickle=True` on for a cache that other code shares just to make the error go away: every reader of that directory then runs `pickle.loads` on whatever is written there. See [Serialization](serialization.md).
+
+A registered type that still raises here is one whose `encode` function raised, or returned something the codec can't store, or a dataclass with a field it can't store. That raises even on a cache with `pickle=True`: a registered type is never pickled.
 
 
 # `TypeError` for keys and booleans
@@ -100,7 +103,7 @@ ForeignValueError: ...
 CorruptValueError: ...
 ```
 
-[CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) means no build of diskcache-oxide could read the stored bytes: they're malformed, or a pickled class has been removed since it was stored. [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError), its subclass, means this build can't read them but another might: a newer version wrote a mode or tag this one doesn't know, or the value needs a time zone this host doesn't have.
+[CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) means no build of diskcache-oxide could read the stored bytes: they're malformed, a pickled class has been removed since it was stored, or a [registered type's](serialization.md#your-own-types) `decode` function raised about the row (a dataclass row written before a field was removed, say), in which case your exception is its `__cause__`. [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError), its subclass, means this build can't read them but another might: a newer version wrote a mode or tag this one doesn't know, the value needs a time zone this host doesn't have, or it holds a registered type this process hasn't registered (the message names the tag: register it, at import time).
 
 By default a read raises these, as diskcache does. A cache holds copies, so most apps would rather treat them as a miss:
 

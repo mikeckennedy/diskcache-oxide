@@ -32,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
         'fanout-fork-mid-merge',
         'fanout-close-after-fork',
         'fanout-fork-mid-clear',
+        'registry-after-fork',
     ],
 )
 def test_fork_scenario(scenario: str, tmp_path: Path) -> None:

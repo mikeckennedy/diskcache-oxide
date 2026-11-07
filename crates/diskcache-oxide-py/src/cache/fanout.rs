@@ -29,6 +29,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
 use super::{DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, Transaction, str_key, whole};
+use crate::codec::TypeRegistry;
 use crate::to_py_err;
 
 /// A disk cache split over several SQLite databases (shards), so reads and writes on different
@@ -52,6 +53,7 @@ impl FanoutCache {
         cull_limit = None,
         serializer = "msgpack",
         pickle = false,
+        types = None,
         clock = None,
         max_connections = None,
         sqlite_cache_size = None,
@@ -70,6 +72,7 @@ impl FanoutCache {
         cull_limit: Option<&Bound<'_, PyAny>>,
         serializer: &str,
         pickle: bool,
+        types: Option<Py<TypeRegistry>>,
         clock: Option<Py<PyAny>>,
         max_connections: Option<&Bound<'_, PyAny>>,
         sqlite_cache_size: Option<&Bound<'_, PyAny>>,
@@ -88,6 +91,7 @@ impl FanoutCache {
             cull_limit,
             serializer,
             pickle,
+            types,
             clock,
             max_connections,
             sqlite_cache_size,
@@ -422,6 +426,7 @@ impl FanoutCache {
         cull_limit: Option<&Bound<'_, PyAny>>,
         serializer: &str,
         pickle: bool,
+        types: Option<Py<TypeRegistry>>,
         clock: Option<Py<PyAny>>,
         max_connections: Option<&Bound<'_, PyAny>>,
         sqlite_cache_size: Option<&Bound<'_, PyAny>>,
@@ -453,7 +458,10 @@ impl FanoutCache {
             .enumerate()
             .map(|(shard, store)| StoreHandle { store, shard, closed: AtomicBool::new(false) })
             .collect();
-        Ok(Self { shards, config: HandleConfig::new(&directory, &settings, pickle, clock, on_decode_error, durable) })
+        Ok(Self {
+            shards,
+            config: HandleConfig::new(&directory, &settings, pickle, types, clock, on_decode_error, durable),
+        })
     }
 
     /// The handle of the shard `key` hashes to.
@@ -848,6 +856,7 @@ impl FanoutKeyIterator {
     cull_limit = None,
     serializer = "msgpack",
     pickle = false,
+    types = None,
     clock = None,
     max_connections = None,
     sqlite_cache_size = None,
@@ -866,6 +875,7 @@ pub(crate) fn _open_fanout_keeping_stored(
     cull_limit: Option<&Bound<'_, PyAny>>,
     serializer: &str,
     pickle: bool,
+    types: Option<Py<TypeRegistry>>,
     clock: Option<Py<PyAny>>,
     max_connections: Option<&Bound<'_, PyAny>>,
     sqlite_cache_size: Option<&Bound<'_, PyAny>>,
@@ -884,6 +894,7 @@ pub(crate) fn _open_fanout_keeping_stored(
         cull_limit,
         serializer,
         pickle,
+        types,
         clock,
         max_connections,
         sqlite_cache_size,

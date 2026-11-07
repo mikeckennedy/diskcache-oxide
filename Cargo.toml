@@ -14,6 +14,8 @@ publish = false
 # One version per dependency, declared once. Crates opt in with `foo.workspace = true`.
 [workspace.dependencies]
 diskcache-oxide-core = { path = "crates/diskcache-oxide-core" }
+# The type registry's lock-free snapshot (plan 16): readers never take a lock, so a forked child can't inherit one held.
+arc-swap = "1.9.3"
 base64 = "0.22.1"
 libc = "0.2.191"
 pyo3 = "0.30.1"

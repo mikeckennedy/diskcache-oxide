@@ -593,6 +593,12 @@ ul.task-list li input[type="checkbox"] {
 <td>Locks every shard; <code>tx</code> is <code>None</code></td>
 <td><code>transact(*, key)</code> locks one shard and refuses other shards’ keys</td>
 </tr>
+<tr class="odd">
+<td>D-041</td>
+<td>Your own types</td>
+<td>A <code>Disk</code> subclass, or pickle</td>
+<td><code>register_type()</code> per type; stored tagged, read by an allowlist; never pickled</td>
+</tr>
 </tbody>
 </table>
 </section>
@@ -691,6 +697,7 @@ ul.task-list li input[type="checkbox"] {
 <li><strong>D-007:</strong> <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> subclasses <code>TimeoutError</code>, so <code>except TimeoutError</code> catches it too.</li>
 <li><strong>D-009:</strong> <code>bool(Cache)</code> is always True and <code>bool(NullCache)</code> is False, so <code>if cache:</code> means “caching is on”.</li>
 <li><strong>D-022:</strong> there’s no <code>disk=</code> (a Python <code>Disk</code> class would put Python code on every read and write) and no <code>eviction_policy=</code> until Phase 6a adds the other policies.</li>
+<li><strong>D-041:</strong> a type the codec doesn’t know is registered per type with <code>register_type(cls, name=..., encode=..., decode=...)</code> (a dataclass needs only a name), process-wide or per cache with <code>types=</code>. It’s stored as a tagged value and read back only where the name is registered, so nothing is imported by name; a registered type is never pickled; a <code>decode</code> error about the row is a <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> with yours as <code>__cause__</code>. See <a href="../user-guide/serialization.html#your-own-types">Your own types</a>.</li>
 <li><strong>D-028:</strong> <code>Cache(..., durable=True)</code> has no counterpart in diskcache. It answers an outage on a single-key call as a miss or <code>False</code>, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See <a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">A cache that can’t take a request down</a>.</li>
 <li><strong>D-025:</strong> <code>iter(cache)</code> and <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> return a native iterator, not a generator. Two threads calling <code>next()</code> on the same one at once get <code>ValueError</code> at once, as with a shared generator.</li>
 </ul>

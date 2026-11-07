@@ -62,7 +62,58 @@ cache.set('service', MyService())
 # TypeError: values of type MyService can't be stored without pickle (only exact built-in types round-trip)
 ```
 
-Only exact built-in types count. A subclass of `dict` or `str` isn't stored as its base type, because it wouldn't come back as the class you stored. Failing at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) time means you find out where the value was created, not three requests later when something reads it.
+Only exact built-in types count. A subclass of `dict` or `str` isn't stored as its base type, because it wouldn't come back as the class you stored. Failing at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) time means you find out where the value was created, not three requests later when something reads it. For a type of your own, or one from a library, [register it](#your-own-types).
+
+
+# Your own types
+
+Most of what an app stores that isn't a built-in is a type it doesn't own: a bson `ObjectId` inside a session dict, a namedtuple a library hands back, the `str` subclass a Markdown renderer returns. Converting those by hand at every call site works, but it's the kind of code that drifts. Instead, tell the codec once how to store the type:
+
+``` python
+from bson import ObjectId
+import diskcache_oxide
+
+diskcache_oxide.register_type(ObjectId, name='bson.ObjectId', encode=str, decode=ObjectId)
+
+cache.set('session', {'id': ObjectId(), 'user': ObjectId()})
+cache.get('session')['id']   # an ObjectId again
+```
+
+`encode` turns an instance into a value the codec can already store, built-ins or other registered types, nested as deep as you like. `decode` turns that value back into an instance. The registration is process-wide, so make it at import time, in every process that opens the directory.
+
+A dataclass needs only a name. Its `init=True` fields are read straight off the instance, with no intermediate dict, and on the way out it's rebuilt with `cls(**fields)`, so defaults and `__post_init__` still run:
+
+``` python
+@dataclasses.dataclass
+class Episode:
+    id: int
+    title: str
+    published: datetime.datetime | None = None
+
+diskcache_oxide.register_type(Episode, name='tp.Episode')
+cache.set('episode:491', Episode(491, 'Rust and Python'))
+```
+
+The write path skips `dataclasses.asdict()`, which deep-copies: on a 20-field dataclass a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) goes from about 23 µs to 18. A read still builds one keyword dict and calls the constructor, so it saves almost nothing (4.0 µs against 3.8), and that's fine: a cache is mostly reads, and what you gain is the call sites.
+
+What the registry guarantees:
+
+- **Nothing is imported by name.** A registered value is stored as `{"$t:bson.ObjectId": "..."}`, and a reader looks that name up in its own registry. A process that hasn't registered it gets [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError), and the row stays for one that has. That is the whole difference from pickle.
+- **The name is yours.** Rename or move the class and the stored rows still read, because the tag is the name you chose, not the class's path.
+- **Lookup is by exact type.** A subclass of a registered class is its own registration. The codec's own types (`str`, `dict`, `datetime` and the rest) can't be registered, since their wire form is a contract across versions; their subclasses can, which is how a namedtuple or a `str` subclass gets in.
+- **A registered type is never pickled**, even on a cache with `pickle=True`. Once the encoder has used a registration for any part of a value, that value is stored through it or [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) raises: if its `encode` raises, or returns something the codec can't store. You registered it to stay off pickle, and a silent fallback would hide the bug.
+- **Last registration wins**, by class and by name, so a module that a dev server reloads can register its new class object again.
+- **A decode function's errors are classified as a pickle hook's would be.** A [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) or `OSError` raises with the row kept (a miss under `durable=True`). An error about the row, such as a `TypeError` from a dataclass row written before a field was removed, becomes [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) with yours as `__cause__`, and `on_decode_error='miss'` deletes that row so the writer replaces it. Decode runs while the cache holds a connection, as unpickling does, so a slow `decode` delays forks and checkpoints for as long as it runs; one that re-enters the cache is fine.
+
+A cache that needs a different encoding of a type than the rest of the process gets its own registry, consulted before the global one:
+
+``` python
+reg = diskcache_oxide.TypeRegistry()
+reg.register(ObjectId, name='bson.ObjectId', encode=lambda o: o.binary, decode=ObjectId)
+cache = Cache('/var/cache/my-app-binary-ids', types=reg)
+```
+
+Two processes with different registrations on one directory write rows the other can't read, the same way two processes with different `serializer=` settings would. Register at import time, the same way everywhere.
 
 
 # Why pickle is off by default

@@ -30,6 +30,8 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     'Cache',
     'FanoutCache',
     'Transaction',
+    'TypeRegistry',
+    'registry',
 ]
 
 __version__: str
@@ -76,8 +78,10 @@ def sqlite_version() -> str:
 def sqlite_compile_options() -> list[str]:
     """The compile-time options of the linked SQLite (`PRAGMA compile_options`)."""
 
-def _encode(value: object, serializer: str = 'msgpack', pickle: bool = False) -> tuple[int, bytes | int | float]:
-    """Test hook: `_core._encode(value, serializer='msgpack', pickle=False) -> (mode, payload)`."""
+def _encode(
+    value: object, serializer: str = 'msgpack', pickle: bool = False, types: TypeRegistry | None = None
+) -> tuple[int, bytes | int | float]:
+    """Test hook: `_core._encode(value, serializer='msgpack', pickle=False, types=None) -> (mode, payload)`."""
 
 def _gate_stats() -> dict[str, Any]:
     """Test hook: the fork gate's state and counters (pending, holders, parked, fork_timeouts, deferred)."""
@@ -91,6 +95,7 @@ def _open_fanout_keeping_stored(
     cull_limit: int | None = None,
     serializer: str = 'msgpack',
     pickle: bool = False,
+    types: TypeRegistry | None = None,
     clock: Callable[[], float] | None = None,
     max_connections: int | None = None,
     sqlite_cache_size: int | None = None,
@@ -118,9 +123,9 @@ def _sqlite_error(code: int) -> BaseException:
 def _sqlite_memory(reset: bool = False) -> tuple[int, int]:
     """Test hook: the bundled SQLite's (bytes in use, high-water mark), optionally resetting the mark."""
 
-def _decode(mode: int, payload: bytes | float, allow_pickle: bool = False) -> object:
-    """Test hook: `_core._decode(mode, payload, allow_pickle=False)`, with the payload a `bytes`,
-    `int` or `float` standing for a BLOB, INTEGER or REAL column."""
+def _decode(mode: int, payload: bytes | float, allow_pickle: bool = False, types: TypeRegistry | None = None) -> object:
+    """Test hook: `_core._decode(mode, payload, allow_pickle=False, types=None)`, with the payload a
+    `bytes`, `int` or `float` standing for a BLOB, INTEGER or REAL column."""
 
 @final
 class Cache:
@@ -141,7 +146,13 @@ class Cache:
         serializer: `'msgpack'` (the default) or `'json'`, for values that aren't plain `str` or
             `bytes`.
         pickle: Allow pickle for values the serializer can't represent exactly. Without it, such
-            values raise `TypeError` and pickled values are never read.
+            values raise `TypeError` and pickled values are never read. Once the encoder has used a
+            registration (`types`, or the global `registry`) for any part of a value, that value is
+            never pickled: it is stored through the registration, or raises.
+        types: A `TypeRegistry` consulted before the process-wide `diskcache_oxide.registry`, for a
+            cache that needs its own encoding of a type. Register types at import time, in every
+            process that opens the directory, since a row written through a registration can only
+            be read where it is registered.
         clock: A function returning the current time in seconds, used instead of the native clock.
             Tests pass `clock=lambda: time.time()` to follow a patched `time.time`.
         max_connections: The most SQLite connections this process opens for the directory, shared
@@ -212,6 +223,7 @@ class Cache:
         cull_limit: int | None = None,
         serializer: str = 'msgpack',
         pickle: bool = False,
+        types: TypeRegistry | None = None,
         clock: Callable[[], float] | None = None,
         max_connections: int | None = None,
         sqlite_cache_size: int | None = None,
@@ -685,6 +697,7 @@ class FanoutCache:
         cull_limit: int | None = None,
         serializer: str = 'msgpack',
         pickle: bool = False,
+        types: TypeRegistry | None = None,
         clock: Callable[[], float] | None = None,
         max_connections: int | None = None,
         sqlite_cache_size: int | None = None,
@@ -967,3 +980,71 @@ class Transaction[C]:
             Timeout: The commit couldn't run within `timeout`; it rolled back. Or another thread's
                 end was still running after `timeout`, and whether it committed is unknown.
         """
+
+@final
+class TypeRegistry:
+    """Types the codecs can store without pickle: per-type `encode` and `decode` functions, or a dataclass's
+    fields.
+
+    A registered value is stored as a tagged map, `{"$t:<name>": body}`, in both serializers. Reads look the
+    name up in the registry of the reading process: an unregistered name is a `ForeignValueError`, and the row
+    is left in place. Nothing is ever imported by name, which is what keeps this safe where pickle isn't.
+
+    `diskcache_oxide.registry` is the process-wide instance, used by every cache; `register_type()` and its
+    siblings act on it. A `Cache(types=TypeRegistry())` consults its own registry first, then the global one.
+
+    Examples:
+        ```python
+        from bson import ObjectId
+        import diskcache_oxide
+
+        diskcache_oxide.register_type(ObjectId, name='bson.ObjectId', encode=str, decode=ObjectId)
+        diskcache_oxide.register_type(Episode, name='tp.Episode')   # a dataclass: no functions needed
+
+        cache.set('session', {'id': ObjectId(), 'episode': Episode(491, 'Rust and Python')})
+        cache.get('session')['id']   # an ObjectId again
+        ```
+    """
+
+    def __new__(cls) -> TypeRegistry: ...
+    def register[T](
+        self,
+        cls: type[T],
+        *,
+        name: str,
+        encode: Callable[[T], object] | None = None,
+        decode: Callable[[Any], T] | None = None,
+    ) -> None:
+        """Register `cls` under `name`.
+
+        With `encode` and `decode`, `encode(instance)` must return a value the codec can already store
+        (registered types included, nested) and `decode(value)` must give the instance back. With neither,
+        `cls` must be a dataclass: its `init=True` fields are stored and read back with `getattr`, and it is
+        rebuilt with `cls(**fields)`, so defaults and `__post_init__` run. A field removed or made required
+        between the write and the read makes that row a `CorruptValueError`.
+
+        Lookup is by exact type: a subclass of a registered class is not registered. Last registration wins,
+        by class and by name, so a reloaded module can register its new class object again.
+
+        Args:
+            cls: The class. Not one of the codec's own exact types (`str`, `int`, `dict`, `datetime`, ...),
+                whose wire form is fixed; their subclasses are fine.
+            name: The tag written into every row. Yours, so a class rename never orphans stored rows.
+            encode: Instance to a storable value.
+            decode: That value back to an instance.
+
+        Raises:
+            ValueError: An empty name, or one of the codec's own types.
+            TypeError: `cls` isn't a class; only one of `encode`/`decode` was given; neither was given and
+                `cls` isn't a dataclass, or is one with an `InitVar` field (the constructor needs it but no
+                instance holds it: pass explicit functions).
+        """
+    def unregister(self, cls: type) -> bool:
+        """Remove `cls`'s registration. Returns whether there was one. Rows already written with it become
+        `ForeignValueError` on read until it is registered again."""
+    def registered(self) -> dict[str, type]:
+        """The registrations, as `{name: cls}`."""
+    def __len__(self) -> int: ...
+
+registry: TypeRegistry
+"""The process-wide `TypeRegistry`, consulted by every cache after the one passed as `types=`."""

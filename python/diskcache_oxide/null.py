@@ -37,6 +37,7 @@ from contextlib import AbstractContextManager, nullcontext
 from types import TracebackType
 from typing import Any, Literal, Self, overload
 
+from diskcache_oxide._core import TypeRegistry
 from diskcache_oxide.protocol import CacheLike
 
 DEFAULT_SIZE_LIMIT = 2**30
@@ -121,6 +122,7 @@ class NullCache:
         cull_limit: int | None = None,
         serializer: Literal['msgpack', 'json'] = 'msgpack',
         pickle: bool = False,
+        types: TypeRegistry | None = None,
         clock: Callable[[], float] | None = None,
         max_connections: int = 8,
         sqlite_cache_size: int | None = None,

@@ -727,8 +727,71 @@ def fanout_fork_mid_clear(directory: Path) -> list[str]:
     return failures
 
 
+def registry_after_fork(directory: Path) -> list[str]:
+    """Fork while 16 threads encode registered values (plan 16): the child reads a registered value
+    through the inherited snapshot and registers a new type under a deadline. The registry's reads
+    are lock-free and its writes retry a compare-and-swap, so neither can inherit a lock a dead
+    thread held; this is the proof, since the plan takes arc-swap's fork behavior on trust."""
+    import dataclasses
+
+    import diskcache_oxide
+
+    @dataclasses.dataclass
+    class Point:
+        x: int
+        y: int = 0
+
+    class Later:
+        def __init__(self, v: int) -> None:
+            self.v = v
+
+    diskcache_oxide.register_type(Point, name='fork.Point')
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('p', Point(1, 2))
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def encoder(i: int) -> None:
+        n = 0
+        try:
+            while not stop.is_set():
+                cache.set(f'k{i}', {'p': Point(n, i), 'list': [Point(n)] * 3})
+                n += 1
+        except BaseException as ex:
+            errors.append(ex)
+
+    def child() -> None:
+        assert cache.get('p') == Point(1, 2)
+        start = time.monotonic()
+        diskcache_oxide.register_type(Later, name='fork.Later', encode=lambda o: o.v, decode=Later)
+        assert time.monotonic() - start < 2.0, 'registering in the child stalled'
+        cache.set('later', Later(7))
+        assert cache.get('later').v == 7
+        assert cache.set('q', Point(3)) is True
+        assert cache.get('q') == Point(3)
+
+    threads = [threading.Thread(target=encoder, args=(i,)) for i in range(16)]
+    for t in threads:
+        t.start()
+    time.sleep(0.2)
+    codes = [wait(fork(child)) for _ in range(3)]
+    stop.set()
+    for t in threads:
+        t.join(TIMEOUT)
+    failures = [f'encoder failed: {ex!r}' for ex in errors]
+    if codes != [0, 0, 0]:
+        failures.append(f'child exit codes {codes}')
+    if cache.get('q') != Point(3):
+        failures.append('the parent cannot read what the child wrote')
+    if 'fork.Later' in diskcache_oxide.registered_types():
+        failures.append("the child's registration leaked into the parent")
+    cache.close()
+    return failures
+
+
 SCENARIOS = {
     'd020': d020,
+    'registry-after-fork': registry_after_fork,
     'transact-fork-from-the-owner': transact_fork_from_the_owner,
     'transact-fork-from-another-thread': transact_fork_from_another_thread,
     'fork-while-a-write-waits': fork_while_a_write_waits,

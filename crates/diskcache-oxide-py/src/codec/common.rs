@@ -122,53 +122,53 @@ pub fn types(py: Python<'_>) -> PyResult<&'static Types> {
 
 /// The entries of a dict, as the encoder iterates them.
 ///
-/// PyO3's dict iterator panics if the dict changes size mid-iteration, and on the free-threaded
-/// build another thread can do that between any two steps. There the entries are copied into a
-/// Vec under one critical section (the iterator is created inside it, and nothing in the section
-/// takes another lock, so it's never suspended): an atomic snapshot whose length matches what we
-/// iterate, which msgpack needs because it writes the length first. With the GIL nothing else runs
-/// while the encoder does, since it calls only C methods that never release it, so the dict is
-/// iterated in place.
+/// PyO3's dict iterator panics if the dict changes size mid-iteration. On the free-threaded build
+/// another thread can do that between any two steps, and on any build user code can once a type is
+/// registered (plan 16): a registered `encode` function, or a dataclass field reached through a
+/// property, can release the GIL while the dict is half written. In either case the entries are
+/// copied into a Vec under one critical section (the iterator is created inside it, and nothing
+/// in the section takes another lock, so it's never suspended): an atomic snapshot whose length
+/// matches what we iterate, which msgpack needs because it writes the length first. With the GIL
+/// and nothing registered, nothing else runs while the encoder does, since it then calls only C
+/// methods that never release it, so the dict is iterated in place.
 #[derive(Debug)]
-pub struct DictEntries<'py> {
-    #[cfg(Py_GIL_DISABLED)]
-    items: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
-    #[cfg(not(Py_GIL_DISABLED))]
-    dict: Bound<'py, PyDict>,
+pub enum DictEntries<'py> {
+    /// A copy of the entries, taken under the dict's critical section.
+    Copied(Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>),
+    /// The dict itself, iterated in place.
+    Live(Bound<'py, PyDict>),
 }
 
 impl<'py> DictEntries<'py> {
-    #[cfg(Py_GIL_DISABLED)]
-    pub fn of(d: &Bound<'py, PyDict>) -> Self {
-        let items = pyo3::sync::critical_section::with_critical_section(d, || {
-            d.iter().fold(Vec::with_capacity(d.len()), |mut v, kv| {
-                v.push(kv);
-                v
-            })
-        });
-        Self { items }
-    }
-
-    #[cfg(not(Py_GIL_DISABLED))]
-    pub fn of(d: &Bound<'py, PyDict>) -> Self {
-        Self { dict: d.clone() }
+    /// `may_run_user_code`: whether anything is registered, so a Python function could run while
+    /// the entries are encoded.
+    pub fn of(d: &Bound<'py, PyDict>, may_run_user_code: bool) -> Self {
+        if cfg!(Py_GIL_DISABLED) || may_run_user_code {
+            let items = pyo3::sync::critical_section::with_critical_section(d, || {
+                d.iter().fold(Vec::with_capacity(d.len()), |mut v, kv| {
+                    v.push(kv);
+                    v
+                })
+            });
+            Self::Copied(items)
+        } else {
+            Self::Live(d.clone())
+        }
     }
 
     pub fn len(&self) -> usize {
-        #[cfg(Py_GIL_DISABLED)]
-        return self.items.len();
-        #[cfg(not(Py_GIL_DISABLED))]
-        return self.dict.len();
+        match self {
+            Self::Copied(items) => items.len(),
+            Self::Live(d) => d.len(),
+        }
     }
 
-    #[cfg(Py_GIL_DISABLED)]
     pub fn iter(&self) -> impl Iterator<Item = (Bound<'py, PyAny>, Bound<'py, PyAny>)> + '_ {
-        self.items.iter().cloned()
-    }
-
-    #[cfg(not(Py_GIL_DISABLED))]
-    pub fn iter(&self) -> impl Iterator<Item = (Bound<'py, PyAny>, Bound<'py, PyAny>)> + '_ {
-        self.dict.iter()
+        let (copied, live) = match self {
+            Self::Copied(items) => (Some(items.iter().cloned()), None),
+            Self::Live(d) => (None, Some(d.iter())),
+        };
+        copied.into_iter().flatten().chain(live.into_iter().flatten())
     }
 }
 

@@ -168,11 +168,11 @@ It covers [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), `cache[key
 |----|----|----|----|
 | A foreign value | raises [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError), row kept | returns the default and reports, row kept | the same as `'miss'` |
 | [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) | raises, row kept | raises, row kept | raises, row kept |
-| An unreadable value (malformed bytes, a failing unpickle) | deletes that version, then raises | deletes that version, returns the default and reports | the same as `'miss'` |
+| An unreadable value (malformed bytes, a failing unpickle, a registered type's `decode` raising about the row) | deletes that version, then raises | deletes that version, returns the default and reports | the same as `'miss'` |
 | An unreadable value, and that delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default and reports both, row kept |
-| [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), an I/O error or `RecursionError` from a pickle hook | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
+| [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), an I/O error or `RecursionError` from a pickle hook or a registered type's `decode` | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
 | `RecursionError` from a value too deep for this thread's stack | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
-| `MemoryError` or a `BaseException` from a pickle hook | raises, row kept | raises, row kept | raises, row kept |
+| `MemoryError` or a `BaseException` from a pickle hook or a `decode` | raises, row kept | raises, row kept | raises, row kept |
 | The value decoded, and the delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default, never the value, row kept |
 
 `durable=True` with an explicit `on_decode_error='raise'` follows the `'raise'` column, except that when an unreadable value's delete fails it raises the decode error rather than the delete's.
