@@ -23,20 +23,54 @@ if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
     refresh_feeds()
 ```
 
-> **Status: pre-release, version 0.1.0.dev2, not yet on PyPI.** `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. They pass the conformance suite run against real diskcache, apart from the [documented divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html), and a 24-hour soak that threw processes, threads, forks and `SIGKILL` at one directory. Two gates remain: a whole-codebase sanitizer pass and a fresh soak on the final commit. Then it goes into production at Talk Python, and `0.1.0` goes to PyPI once it has run there. The name on PyPI holds a `0.0.1` placeholder with no code; until `0.1.0`, install from GitHub (needs a Rust toolchain): `uv pip install git+https://github.com/mikeckennedy/diskcache-oxide`.
+## Status
+
+**Pre-release, version 0.1.0.dev2, not yet on PyPI.** `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. They pass the conformance suite run against real diskcache, apart from the [documented divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html), and a 24-hour soak that threw processes, threads, forks and `SIGKILL` at one directory. Two gates remain, a sanitizer pass over the whole codebase and a fresh soak on the final commit. Then it goes into production at Talk Python, and `0.1.0` goes to PyPI once it has run there.
+
+## Install
+
+The `diskcache-oxide` name on PyPI currently holds a `0.0.1` placeholder with no code in it. Until `0.1.0`, install from GitHub, which builds the extension locally and needs a Rust toolchain:
+
+```bash
+uv pip install git+https://github.com/mikeckennedy/diskcache-oxide
+```
+
+- **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
+- **Platforms:** macOS and Linux. Windows support is planned.
+- **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter.
+
+[Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html) walks through the everyday operations and what changes once several processes share a cache.
 
 ## Why
 
 - **[Fast.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html)** A cached `get` is about 0.75 µs, 0.42× diskcache's latency, cheap enough to call from the event loop. With 8 threads at a 99:1 read/write mix on a GIL build, diskcache's per-thread connections pile into each other and its throughput falls to a trickle; oxide's stays flat, 16× ahead.
 - **[Safe for threads, processes and `fork()`](https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html)**, including free-threaded Python (3.14t, 3.15t). A fork copies whatever SQLite lock a thread held at that instant, and in diskcache a child born that way stalls on its first write for up to a minute. Here a fork barrier makes sure no child is born holding half a transaction.
 - **[No pickle by default.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html)** Values are stored as msgpack (or JSON), with exact type tags for tuples, sets, datetimes, big ints and NaN. `pickle=True` is opt-in, and a cache without it refuses to unpickle anything it finds, however it got there.
-- **[Correct under pressure.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)** `clear()` keeps writes that land while it runs, `expire()` removes every expired entry, and a read during an overwrite never misses. Each is a diskcache bug, found by running one test suite against both libraries, with a repro in [upstream/](upstream/README.md).
+- **[Correct under pressure.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)** `clear()` keeps writes that land while it runs, `expire()` removes every expired entry, and a read during an overwrite never misses. Each is a diskcache bug, found by running one test suite against both libraries, with a standalone repro in the repository's [upstream/](https://github.com/mikeckennedy/diskcache-oxide/tree/main/upstream) folder.
 - **[Bounded memory and predictable disk use.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html)** At most `max_connections` SQLite connections per cache directory, each with a page cache of `sqlite_cache_size` pages (1 MiB by default). The write-ahead log trims itself back to `wal_size_limit / 2` (32 MiB by default) whenever it resets, and `checkpoint()` truncates it on demand.
 - **[Sharding for many writers.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html)** A plain cache has one write lock per file, one checkout lane. `FanoutCache` spreads keys over several databases, so eight worker processes that write often keep their rate instead of queueing.
 - **[Transactions.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/transactions.html)** `with cache.transact() as tx:` lands several writes together, or none of them.
 - **[A real off switch, and a registry.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html)** `NullCache` turns caching off without changing call sites, and [`Caches`](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html) names an app's caches, opens them on first use, and hands out a `NullCache` while one can't open.
 - **[A cache that can't take a request down.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html#a-cache-that-cant-take-a-request-down)** `durable=True` answers an outage as a miss and logs it, so a full disk at 3 a.m. costs speed, not requests.
 - Type hints included (`py.typed`), with `CacheLike` for code that accepts any cache, and an [errors page](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html) that says what each exception means and what to do.
+
+## Switching from diskcache
+
+diskcache-oxide is API compatible with diskcache 5.6.3's `Cache`, and deliberately not data compatible. For most apps the switch is the import line:
+
+```python
+# from diskcache import Cache, Timeout
+from diskcache_oxide import Cache, Timeout
+```
+
+What you'll notice afterwards:
+
+- **The cache starts cold.** Data lives in `diskcache-oxide.sqlite`, never in diskcache's `cache.db`, and the old database is never opened or converted. The two can share a directory without seeing each other's data.
+- **Values that can't round-trip exactly raise `TypeError` at `set()`**, unless that cache was opened with `pickle=True`.
+- **Keys are `str` only** for now, `directory` is required, and `size_limit` must be at least 1 MiB.
+- **`Timeout` is a `TimeoutError`** and `bool(cache)` is always True.
+
+[Switching from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/switching-from-diskcache.html) has the full comparison table, and [Divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html) explains the reason behind each difference.
 
 ## Where it's going
 
@@ -50,18 +84,22 @@ See [Vision and roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/
 
 Call `cache.checkpoint()` at shutdown if you can, though it isn't required. With readers in other processes, a burst of writes (a big fill, or a `clear()`) can leave SQLite's write-ahead log much larger than the database, and SQLite only shrinks it when it gets a moment with no readers. `checkpoint()` makes that moment: it waits briefly for in-flight reads, copies the log into the database, and truncates it. It returns `False` instead of raising if other processes keep it busy.
 
-`close()` does the same by default, but only when the log is large (over half of `wal_size_limit`), and waits at most a second, so closing stays cheap. Pass `close(checkpoint=False)` to skip it. Long-running apps with heavy write bursts can also call `checkpoint()` from a maintenance job, or opt in to `Cache(..., wal_checkpoint="auto")` (see D-024 in [tests/DIVERGENCES.md](tests/DIVERGENCES.md)). [Storage and WAL](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html) in the docs has the details.
+`close()` does the same by default, but only when the log is large (over half of `wal_size_limit`), and waits at most a second, so closing stays cheap. Pass `close(checkpoint=False)` to skip it. Long-running apps with heavy write bursts can also call `checkpoint()` from a maintenance job, or opt in to `Cache(..., wal_checkpoint="auto")`. [Storage and WAL](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html) in the docs has the details.
 
 ## For AI coding agents
 
 The docs publish an [agent skill](https://mkennedy.codes/docs/diskcache-oxide/skill.md) with the rules of the package (what raises, what a `NullCache` does to `add()`, when to use `FanoutCache`), plus [llms.txt](https://mkennedy.codes/docs/diskcache-oxide/llms.txt) and [llms-full.txt](https://mkennedy.codes/docs/diskcache-oxide/llms-full.txt). Install the skill with `npx skills add https://mkennedy.codes/docs/diskcache-oxide/`.
 
-## Where things are
+## Learn more
 
-- [The docs](https://mkennedy.codes/docs/diskcache-oxide/): the user guide, recipes and API reference.
-- [plans/00-roadmap.md](plans/00-roadmap.md): the phases and what each one delivers.
-- [plans/04-design.md](plans/04-design.md): the design.
-- [tests/DIVERGENCES.md](tests/DIVERGENCES.md): every deliberate difference from diskcache, and why.
-- [upstream/README.md](upstream/README.md): diskcache bugs found along the way, with standalone repros.
-- `scripts/check.sh`: everything CI would run, locally, on Python 3.14, 3.14t, 3.15 and 3.15t.
-- `make docs`: builds the docs site into `site/`.
+- [User guide](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html): getting started, serialization, `FanoutCache`, transactions, concurrency and forks, storage and the WAL.
+- [Recipes](https://mkennedy.codes/docs/diskcache-oxide/recipes/): caching expensive calls, invalidating groups, rate limiting, run-once jobs, web workers, testing.
+- [API reference](https://mkennedy.codes/docs/diskcache-oxide/reference/): every class, method and exception.
+- [Errors and what to do about them](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html).
+- Questions and bug reports: [GitHub issues](https://github.com/mikeckennedy/diskcache-oxide/issues).
+
+Working on diskcache-oxide itself? [CLAUDE.md](CLAUDE.md) has the layout, the build and test commands, and the project's conventions.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
