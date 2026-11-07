@@ -1,6 +1,6 @@
 # Plan 17: empty value-file directories
 
-Status: draft, for the architect's review. Work starts after the htz soak ends (2026-11-07).
+Status: ready to build after the htz soak ends (2026-11-07). Design in sections 3 and 4 (Michael's decisions in 3, 7 and 8); two architect reviews in section 9, both folded in.
 
 ## 1. The problem
 
@@ -22,81 +22,111 @@ The fanout store was 959 MiB on disk for about 40 MiB of live data. The ceiling 
 
 diskcache removes them. `Disk.remove(file_path)` (core.py:312) unlinks the file, then calls `os.removedirs(full_dir)`, both under `suppress(OSError)`: `removedirs` removes `aa/bb`, then `aa`, stopping at the first that isn't empty (the cache directory always holds the database, so it stops there). `Cache.check(fix=True)` also walks the tree and `rmdir`s every empty directory (core.py:1979). The write side copes with the race this opens: `Disk.store` loops up to 10 times over `os.makedirs(full_dir)` then `open(full_path)`, because "another cache may have deleted the directory before the file could be opened" (core.py:233).
 
-So this is a fix, not a divergence: oxide differs from the oracle today, untested. No D-entry exists for it, and no conformance test looks at directories after a delete.
+Oxide differs from the oracle today, untested: no D-entry exists for it, and no conformance test looks at directories after a delete. The design in section 3 differs from diskcache on purpose (one level, and a sweep instead of removal on delete), so it gets D-entries. The end state after a close matches diskcache's for any directory untouched for 30 seconds (no empty directory left); the black-box tests backdate the directories' mtimes before closing to check it (review 2, change 1).
 
-## 3. Options
+Two places diskcache does more than we will (section 9): `os.removedirs` would climb past `aa` if it could (it stops at the cache directory only because the database lives there), and `os.makedirs` is recursive, so diskcache re-creates a deleted cache root on its next large write. And one where it does less: a value file written inside a rolled-back `transact()` leaks, because `_transact` removes files only on commit (core.py:732-747; confirmed on 5.6.3 by the architect). That leak is an upstream bug for `upstream/README.md`.
 
-**A. Remove a directory when its last file goes (diskcache's way).** After unlinking a value file, `rmdir` its `aa/bb`, then `aa`; `ENOTEMPTY`, `ENOENT` and `EEXIST` are the expected answers and are ignored. The writer retries its directory create and temp-file create on `ENOENT`. Directories then track the live files: at most two per value file, usually far fewer.
+## 3. Decision (Michael, 2026-11-06)
 
-**B. One level of directories instead of two (`aa/<hex>.val`).** At most 256 directories, about 1 MiB, ever, with no new race: nothing is removed. Existing rows keep working, since `filename` stores the relative path and reads join whatever is stored. The cost is entries per directory: a million value files is about 3,900 per directory, which ext4's htree and APFS handle without trouble; diskcache's two levels were for "older filesystems".
+**One level of 256 directories, `aa/<32 hex>.val`, removed only by a sweep, not on every delete.** Two earlier designs, both reviewed in section 9, are superseded: A (two levels, a directory removed when its last file goes, as diskcache does) and C (one level plus that removal). Backward compatibility doesn't matter here (Michael: we already use our own file format), so existing caches are deleted once at deploy and nothing reads or migrates the old two-level shape.
 
-**C. Both.** One level, and remove the leaf when it empties.
+Why flat 256 and no removal on delete. With removal, a directory goes only when its last file does, so it pays off only when directories far outnumber live files, which is exactly today's 65,536 and the reason for this plan. At 256 the worst case without any removal is 256 directories, about 1 MiB and 256 inodes per store (8 MiB and 2,048 at 8 shards), so per-delete removal would buy almost nothing for its cost: two directory updates per large write-and-delete in a sparse cache, a race on every one, and a mixed-version deploy hazard. Not 1,024: four times the worst case, and its advantage (a quarter of the entries per directory) only matters in the millions. A million live value files is about 3,900 per directory, which ext4's htree and APFS index without trouble; diskcache's two levels were for "older filesystems". Talk Python's caches will hold thousands.
 
-## 4. Recommendation: A, keeping two levels
+Why a sweep anyway (Michael). With few live files most of the 256 stay, but once a cache's large values are gone, and across a FanoutCache's shards, the empties add up, and a sweep at 256 entries is a few milliseconds.
 
-A matches the oracle exactly, so behavior and on-disk shape agree with diskcache and the conformance suite can pin it on both backends. It bounds disk use by the live files rather than by a constant, and it keeps the layout every existing cache already has (no format change, no mixed layouts to reason about). B is simpler and race-free, but leaves oxide different from diskcache in a test-visible way (empty directories remain after a delete) and needs a D-entry for what would otherwise be a plain fix. C adds B's format change to A's work for no gain A doesn't already give.
+## 4. Design
 
-The race A opens is narrow and has a known shape (diskcache has lived with it for years); section 5 makes the writer's side airtight rather than "retry 10 times".
+### 4.1 Layout and the write
 
-## 5. Design (option A)
+`PendingFile::write` names a new file `aa/<32 hex>.tmp`, renamed to `.val` at commit, where `aa` is the hex's first two characters. A `pub(crate) fn write_named(directory, hex, data)` does the work and `write` calls it with `random_hex()`, so core tests can put any number of files in one directory with no static state (review 1, change 5).
 
-### 5.1 Removal
+The create loop, inside `PendingFile::write`'s existing `run_blocking` closure, non-recursive and relative to the cache directory:
 
-A new `spill::prune_dirs(directory, relative)` takes a value file's relative path (`aa/bb/<hex>.val`) and tries `rmdir(directory/aa/bb)`, then, only if that succeeded, `rmdir(directory/aa)`. Every error is ignored: `ENOTEMPTY`/`EEXIST` (another file lives there), `ENOENT` (someone else pruned it), anything else (a permissions oddity must never fail a `delete`). `rmdir` only ever removes an empty directory, atomically, so it can never lose a file. It never goes above `aa`, and never touches the cache directory itself, unlike `os.removedirs`.
+1. `mkdir(directory/aa, 0700)`. `AlreadyExists` means go on, with no `stat` (review 1, change 1: an `is_dir()` after `EEXIST` races a sweep and turns a retry into a hard failure). `NotFound` is terminal at once: with a non-recursive `mkdir` it means the cache directory is gone, and nothing in oxide removes that (review 1, change 2). Anything else is terminal.
+2. `create_new(directory/aa/<hex>.tmp)`. `NotFound` means a sweep removed `aa` after step 1: restart at step 1. `NotADirectory` (`aa` is a file) and anything else are terminal.
 
-Called from every place a value file is removed:
+At most 64 rounds, then the `NotFound` is returned as the write's `OSError` naming the path. No sleep. Since only a sweep removes directories, and each sweep visits a directory once, a racing writer loses at most a round or two per sweep; the bound is for a pathological loop, not for traffic.
 
-- `Store::unlink` (deletes, overwrites' old versions, `pop`, `cull`, `expire`, `clear`, eviction, the end of a held transaction, a rewound savepoint's orphans). For a batch it collects the distinct `aa/bb` parents and prunes each once after all the unlinks, inside the same detached `gate::run_blocking` section when the batch is detached.
-- `PendingFile::discard` (a write that didn't commit) and `write_new`'s failure cleanup.
+A terminal error after this call made `aa` tries `rmdir(aa)` before returning (ignoring every error), so a failed create (`EMFILE`, `ENOSPC`, `EACCES`, `EDQUOT`, or the 64th `NotFound`) doesn't leave an empty directory it made (review 1, change 3). Not required for correctness now, since the next sweep would remove it, but it keeps the tests' "no empty directory" assertions exact.
 
-Cost: one extra `rmdir` per removed value file, which fails fast with `ENOTEMPTY` when the directory has other files. Value files are 64 KiB or more, so the unlink and the write that made the file dominate. Measured in step 4, not assumed.
+The non-recursive create closes plan 15's known note: a process still holding a shard open after its root was deleted no longer re-creates `root/000/aa`. Its large write fails with `OSError` after one `mkdir`, where diskcache's recursive `makedirs` re-creates the tree and succeeds, while a small `set` in oxide still succeeds into the unlinked database. Test-visible against the oracle, so a D-entry (review 1, change 7a).
 
-### 5.2 The writer's race
+`commit_name`'s rename stays within one directory, and the `.tmp` keeps it non-empty from `create_new` until its owner renames or removes it, so neither a rename nor a held transaction's uncommitted file can lose to a sweep. Readers are unchanged: a missing directory is `NotFound` like a missing file (D-013, D-016).
 
-The interleaving: writer W creates `aa/bb` (or finds it), then pruner P, having unlinked the last file in it, `rmdir`s `aa/bb` before W creates its temp file. W's `create_new` then fails with `ENOENT`. Once W's `.tmp` exists the directory isn't empty, so P can't remove it; the rename to `.val` stays inside the same directory, so nothing after the temp file's creation is exposed.
+Deletes, overwrites, `cull`, `expire`, `clear`, eviction and the end of a held transaction keep unlinking files only, as today (`Store::unlink`, `PendingFile::discard`). No per-delete cost.
 
-So only one step needs the retry: "ensure `aa` and `aa/bb` exist, then `create_new` the temp file". `PendingFile::write` loops on `ENOENT` from either the `mkdir` of `aa/bb` (P removed `aa` in between) or `create_new`, re-creating both levels each time. Each round makes progress unless a pruner wins the window again; the window is two syscalls wide. Bound: 64 attempts, then the `ENOENT` is returned as the write's `OSError` (with the path), a far-fetched outcome that the tests in step 2 show never happens in practice. No sleep: the retry is immediate.
+### 4.2 The sweep
 
-Directory creation becomes non-recursive and relative to the cache directory: `mkdir(directory/aa, 0700)` then `mkdir(directory/aa/bb, 0700)`, each accepting `AlreadyExists` only for a directory (as `open::ensure_shard_directory` does). If the cache directory itself is gone, `mkdir(aa)` fails with `ENOENT` every round and the write fails after the bound, instead of silently re-creating the tree. That also closes plan 15's known note: a process still holding a shard open after its root was deleted no longer re-creates `root/000/aa/bb`. To avoid spinning 64 times on a deleted root, `ENOENT` from `mkdir(aa)` is checked once against the cache directory: if it's gone, fail at once.
+`spill::sweep(directory, deadline, min_age, start)` lists the store's directory, and for each entry whose name is exactly two lowercase hex characters, tries `rmdir` if the directory's modification time is at least `min_age` old: 30 seconds on close (Michael, 2026-11-06), zero on `clear()` (review 2, change 1: `clear()` has just touched every directory it emptied, so a 30 s filter would make its sweep remove nothing). The mtime is read with `symlink_metadata` (no following links); a future mtime or a failed `stat` counts as young. `start` is the entry to begin at (random in production, from `RandomState`; a parameter so tests can pin wrapping); an already-passed `deadline` sweeps nothing. A directory's mtime changes whenever an entry is added to or removed from it, so the age check leaves alone any directory a writer or a delete has touched recently: no churn on hot directories, and a writer that has just made a fresh `aa` and not yet created its file is never raced. It does not close the race, which is why 4.1's retry stays: a writer whose `mkdir` found an old directory (`AlreadyExists` doesn't change its mtime) can still lose it to a sweep between that `mkdir` and its `create_new`, and the age check and the `rmdir` are two steps anyway. One `stat` per entry, at most 256. A directory with files fails at once (`DirectoryNotEmpty`, or `EEXIST`, which POSIX also allows), a file named `ab` fails with `NotADirectory`, and every error is ignored. It removes nothing but empty directories and never removes a file: a `.tmp` may be another process's write in flight (review 1, change 9). It never recurses, so a leftover two-level tree from an old cache isn't touched (`aa` holds `bb` and isn't empty), and it never looks at anything else in the directory: a FanoutCache shard folder (`000`), the database, the user's own files. It runs in a store's own directory, never a FanoutCache root, so a FanoutCache sweeps each shard. It starts at `start` and wraps, and stops at `deadline`, so a sweep cut short leaves the rest for the next one without storing any state. It never raises and returns nothing.
 
-`commit_name`'s rename and the read path don't change: a rename within one directory can't lose to `rmdir`, and a reader whose file was unlinked already treats `ENOENT` as "overwritten or gone" (D-013, D-016).
+When it runs (review 2, changes 2 to 4):
 
-### 5.3 Fork and the gate
+- **On close, decided by the release itself.** Today "last handle" is a `handles == 1` check before the release (store.rs:1069-1072), so two threads closing the last two handles at once could both see 2 and neither sweep. Instead `release_under` (store.rs:709-718), which knows for certain whether this release retired the store, returns that, and the sweep runs after the release, with no gate level held. Order: checkpoint-on-close, release, sweep. Skipped if the thread still holds a gate level (`GATE.own_depth() > 0`). Not skipped in a fork child: removing an empty directory never touches SQLite, so D-020's reasoning doesn't apply. Not tied to `checkpoint=`: that flag is documented as a WAL switch, and the sweep never waits on other processes, so no new flag either (review 2, answer 1).
+- **On drop without `close()`.** A handle dropped without `close()` releases with no checkpoint (cache.rs:1048-1063, cache/fanout.rs:908-923); it sweeps the same way when its release retires the store. No `atexit` hook. A process that dies with neither leaves at most 256 empty directories per store, swept by a later close.
+- **On `clear()`:** after the chunk loop, with no write lock or gate level held, with `min_age` zero. Skipped inside a held transaction (its files go at commit) and when the clear was `Interrupted`. Never changes `clear()`'s return.
+- **Budget.** The sweep has its own budget of 100 ms, not `clear()`'s timeout: maintenance deadlines bound waiting, not work (maintenance.rs:9-14), and the sweep never waits. A FanoutCache's close or `clear()` shares one 100 ms deadline across its shards (store/shards.rs:89-98), not 100 ms each.
+- **Attached** for one store, as `unlink` is below `UNLINK_DETACH_AT`; inside `close()`'s existing detach when that's already taken; through `run_blocking` for a FanoutCache's shards only if step 4 shows it pays (review 2, answer 2).
 
-`rmdir` and `mkdir` take no locks of ours and hold nothing across a `fork()`. Pruning runs where the unlink runs, so it inherits the existing gate rules: detached batches stay inside `gate::run_blocking`, attached single unlinks stay attached (section 5.1's cost is microseconds). No new state, so nothing for `model-check.sh` to model.
+A sweep is one more remover for a racing writer, which 4.1's loop handles.
 
-### 5.4 Existing caches
+### 4.4 Sweeping a FanoutCache's shards in parallel (Michael, 2026-11-06)
 
-Directories that are already empty stay empty until a file in them is written and removed again. Options for the leftovers, for Michael to choose (section 8):
+Production caches may sit on network block storage (a Hetzner Volume, EBS), where each uncached `stat` or directory listing waits a network round trip and the device handles many requests in flight far better than one at a time. A FanoutCache's close and `clear()` therefore sweep its shards in parallel, and both versions are built so step 4 can compare them:
 
-1. Nothing: they drain slowly as pairs are reused; delete the folder on a deploy to start clean.
-2. `clear()` also prunes every empty `aa/bb` and `aa` (it already walks every row; a directory walk of 65,792 entries is tens of milliseconds, detached).
-3. A one-time sweep at open, recorded in the settings table so it runs once per cache.
+- `spill::sweep_all(directories, deadline, min_age)` runs one `spill::sweep` per shard under `std::thread::scope`: one thread per shard (8 by default), all joined before it returns, so nothing outlives the call. Each thread checks the shared `deadline` between syscalls, so the join comes at most one syscall after it; nothing is ever abandoned.
+- The threads run no Python and take no gate level, lock or connection of ours: they only list, `stat` and `rmdir`. A `fork()` from another thread while they run gives the child only the forking thread and nothing of ours held. Thread creation allocates; that is the same exposure every other thread in the process already has.
+- If a thread can't be spawned (`EAGAIN` from a process at its thread limit), that shard is swept on the calling thread instead. Never an error.
+- A plain `Cache` (one store) never spawns: its sweep runs on the calling thread.
+- Sequential and parallel sit behind `sweep_all`, chosen by a constant, so step 4 measures both from the same build. Parallel stays unless it loses on a fast local disk by more than noise.
 
-Recommendation: 2. `clear()` is already the "empty this cache" call, a sweep there is cheap relative to what `clear()` does, and it gives Talk Python a way to reclaim the space without a restart. Not 3: an open must stay cheap and predictable, and a sweep there races other processes' writers for no benefit over 2.
+The budget (100 ms in 4.2) is a placeholder until step 4 has measured how long a sweep really takes (Michael: "maybe it's two seconds"). Step 4 reports the number; the budget is then chosen from it, and recorded here with the measurement behind it.
 
-## 6. Steps
+### 4.3 Filename validation
 
-1. **Conformance tests first** (`tests/conformance/test_value_files.py` or the existing large-value module): after `delete`, `pop`, an overwrite with a small value, `cull`, `expire`, `clear`, and a rolled-back `transact`, the cache directory holds no empty directory and no `aa/bb` without a file. They pass on diskcache, fail on oxide today. Same for FanoutCache shards (diskcache's FanoutCache shards are Caches, so the oracle covers them).
-2. **Core.** `prune_dirs`, the batch pruning in `Store::unlink`, `discard`'s pruning, and the retrying non-recursive create in `PendingFile::write`. Unit tests: prune stops at `aa`, never removes the cache directory, ignores every error; a writer racing a pruner on one forced `aa/bb` (a test-only hook fixes the hex prefix so every write and delete share one directory) across 8 threads for a few seconds, with no write failing and no directory left empty at the end; a deleted cache directory fails a large write with `OSError` at once and creates nothing.
-3. **Python stress.** A unit test under `tests/unit/` with 4 processes and threads writing and deleting large values under one forced prefix, on 3.14 and 3.14t, checking every value read back and the final tree. Marked slow if it runs past a few seconds.
-4. **Measure.** `bench.gate` for the large-value delete and overwrite paths, before and after, 3.14 and 3.14t. The bar: no regression beyond noise on the headline 99:1 mix; the large-value delete may cost one syscall more.
-5. **`clear()` sweep** (if Michael picks section 5.4's option 2), with a test that an old-style tree full of empty directories is clean after `clear()` and that a concurrent writer's directory survives it.
-6. **Soak.** The file scan in `soak/soak.py` counts empty value directories per store and reports them in `status.txt`; a count that keeps growing over hours is a PROBLEM. The next soak runs with it.
-7. **Docs.** CHANGELOG (Fixed: value-file directories are removed when their last file goes, as in diskcache, so a long-lived cache no longer accumulates up to 65,792 empty directories per store). Mention in the user guide where value files are described, if anywhere. `make docs`.
+One shared `value_path` parser, used by every place that turns a stored `filename` into a path (`Store::unlink`, `spill::read`, `spill::open`), accepts exactly `[0-9a-f]{2}/[0-9a-f]{32}.val` and builds the path from those parts. `directory.join` follows absolute paths and `..`, so today a damaged row can make `unlink` remove a file outside the cache (review 1, change 4 and suggestion 1). An invalid `filename` reads as a missing value (the D-013 path: a miss, and the row is deleted) and unlinks nothing. A miss rather than a raise matches D-013, and deleting the row repairs it (review 2, answer 3). An old two-level cache that someone didn't delete would degrade silently to misses and keep its old files and up to 65,792 directories forever, since validation won't unlink the old names and the sweep doesn't recurse; section 8's format-version question is about that.
 
-## 7. Risks
+## 5. Steps
 
-- **A writer loses the race 64 times.** Requires a pruner to empty and remove the same `aa/bb` within a two-syscall window 64 times in a row. Step 2's forced-prefix test is far harsher than real traffic (one directory instead of 65,536) and must show zero failures.
-- **Filesystems where `rmdir` on a non-empty directory is slow or odd** (network filesystems). Out of scope: SQLite in WAL mode already rules out network filesystems.
-- **Cost on a delete-heavy workload of large values.** Step 4 measures it.
+1. **Conformance tests first.** For both backends: after large values are written and then removed by each of `delete`, `pop`, an overwrite with a small value, a large-to-large overwrite, `add` on an existing key, `incr` over an expired large value, `cull` through `size_limit`, `expire`, `clear`, a committed held `transact()` and a rolled-back one, and the directories' mtimes are set a minute back with `os.utime` and the cache is closed, the directory holds no empty directory. That passes on diskcache (it removes on delete) and fails on oxide today. Run the same on FanoutCache. Oxide-only (`backend_only`): every value file sits directly under a two-hex directory, and after the rolled-back transaction no value file is left. diskcache leaks that file (section 2): log it in `upstream/README.md` with a repro in `upstream/repros/`.
+2. **Core.** `write_named` and the create loop, `sweep`, validation, and the close and `clear` hooks. Unit tests:
+   - Deterministic retry, through a `#[cfg(test)]` thread-local injection point between `mkdir(aa)` and `create_new` in the style of `FAIL_NEXT_END_BUSY` (store.rs:1803), which removes `aa` the next `n` times and counts the rounds it saw (review 2, change 6: without the count, retrying a deleted root 64 times looks the same as failing after one `mkdir`): `n = 1` and `n = 63` succeed, the re-created directory is 0700 (D-015), `n = 64` fails with `OSError` naming the path and leaves no empty directory, and a deleted root fails after exactly one `mkdir` and creates nothing (catches a spin and a recursive create kept by mistake).
+   - A failed `create_new` (an injected error) leaves no empty directory.
+   - The sweep skips an empty directory younger than `min_age` and removes it once it's older: through the parameter, and once with a real backdated mtime (`File::set_modified` on the directory, std only). A future mtime counts as young.
+   - The sweep removes only empty two-hex directories: a directory with a `.val`, one with only a `.tmp`, a file named `ab`, a shard-style `000`, a user's `notes/`, names a loose matcher would take (`AB`, `a`, `abc`, and an empty `db/`), an old two-level `aa` holding an empty `bb` (catches a recursive sweep), and the database all survive. With `start` pinned in the middle it wraps and covers every entry; a deadline stops it partway and a second sweep finishes the job; an already-passed deadline removes nothing.
+   - `FORMAT_VERSION` 2: a format-1 database is refused with `FormatMismatchError`, and the registry serves a reported `NullCache` for it.
+   - Validation: absolute paths, `..`, wrong lengths, uppercase hex and the old two-level shape read as missing and unlink nothing.
+   - The hooks (review 2, change 6): the last close sweeps and a non-last close doesn't; two threads closing the last two handles at once sweep exactly once; a drop without `close()` sweeps; close and `clear()` inside `transact()` don't; an interrupted `clear()` doesn't; `clear()` sweeps directories it just emptied; a FanoutCache sweeps every shard and never its root, within one shared deadline.
+   - For confidence: 8 threads writing and deleting under one directory through `write_named` while another thread sweeps in a loop, no write failing.
+3. **Python stress.** A unit test under `tests/unit/`: processes and threads write and delete large values while an adversary process loops `os.rmdir` over every two-hex directory (always safe; no hook needed). Every value read back is checked, and after the last close the tree has no empty directory. On 3.14 and 3.14t; slow-marked if it runs past a few seconds.
+4. **Measure how long a sweep really takes, before choosing the budget** (Michael, 2026-11-06). Run the sweep with no deadline and record the time to finish, sequential and parallel, for a plain `Cache` and an 8-shard FanoutCache, with 256 empty and with 256 non-empty folders per store, warm and cold (OS caches dropped). On three devices: the Mac's local APFS, htz's local `sda`, and htz's attached Hetzner Volume (`sdc`), which behaves like network storage (with Michael, later, small and short). Report the full table (median and worst of at least 10 runs), then set the budget from it and record both in 4.4. Then:
+   **Close and `with Cache()` costs.** The close of the last handle on a plain cache and on an 8-shard FanoutCache, with a clean tree, with 256 empty directories per store, and with 256 old non-empty ones (about 512 syscalls a close, the steady state of a busy cache), plus a per-request `with Cache(...)` read loop that pays the sweep on every exit (review 2), and **cold**: with the OS's caches dropped first (`echo 3 > /proc/sys/vm/drop_caches` on Linux), so every `stat` and listing reads from the device. Caches in production may sit on network block storage (a Hetzner Volume, EBS) rather than local NVMe (Michael, 2026-11-06). There an `rmdir` still costs little, since ext4 journals it in memory and the sweep never fsyncs, but each uncached metadata read is a network round trip, often about a millisecond, so a sequential sweep of 2,048 shard folders could run well past the 100 ms budget. The cold FanoutCache sweep on the network volume decides between sequential and parallel (4.4). Where: htz's attached Hetzner Volume (`sdc`), which behaves like network storage. Michael agreed to it on 2026-11-06 and will run it with us later; it holds production's containers, so it runs only then, small and short. on 3.14 and 3.14t, ext4 (htz or the mini's APFS for macOS). And `bench.baseline`'s `set_page_entry_450k` before and after (one `mkdir` attempt per large write when the directory exists, which today's recursive create also pays).
+5. **Soak.** The orphan scan's glob is `'??/??/*'` (soak/soak.py:761), so after this change it would find nothing and pass without checking: it becomes `'??/*'`, plus a check that no `??/??` exists (review 2, change 5). The file scan also counts, per store, empty two-hex directories and `.tmp` files older than an hour, and reports them in `status.txt`. Empties are expected between closes (at most 256 a store), so the PROBLEM is a store over 256 directories or an old `.tmp` that keeps growing (review 1, suggestion 5).
+6. **Divergences, docs, changelog.** D-entries: the one-level layout and the sweep on close and `clear()` (where diskcache removes on delete), including that an empty two-hex folder a user leaves in the cache directory (such as `db/`) may be removed; a large write after the root was deleted under a live process raising `OSError`. Plan 15 section 10's spill.rs note points here. `Cache.close`'s docstring and `_core.pyi` say what close does now. Everything that still shows two levels changes (review 2, change 7): user_guide/storage-and-wal.qmd:15-18, plans/04-design.md:76, 85 and 128, spill.rs:3 and :30, the D-015 and D-013 wording, and the rows.rs:374-404 test fixtures. CHANGELOG under Changed: value files live one level deep, at most 256 directories per store, empties removed on close and `clear()`; delete existing caches when upgrading (a format-1 cache now raises `FormatMismatchError`). `make docs`.
 
-## 8. Decisions for Michael
+## 6. Risks
 
-1. Option A, keeping two levels (recommended), or B or C.
-2. Existing empty directories: nothing, the `clear()` sweep (recommended), or a sweep at open.
+- **A writer racing a sweep.** Covered by 4.1's loop; the deterministic tests pin it.
+- **Network block storage.** Uncached metadata reads cost a network round trip, so a cold sweep can be tens of times slower than on NVMe. The 100 ms budget bounds it, and a sweep cut short resumes at the next close; 4.4 sweeps shards in parallel, and step 4 measures both ways.
+- **Close cost.** Up to 256 `stat`s and `rmdir` attempts per store, 2,048 at 8 shards, bounded at 100 ms in all. Step 4 measures it, including a short-lived `with Cache()` pattern.
+- **Mixed versions during the upgrade deploy.** Old workers write two-level files the new code reads as missing. Existing caches are deleted at deploy, with every worker stopped (plan 15's documented reset), so it doesn't arise.
+- **A large write after the root is deleted** now raises `OSError` (4.1, D-entry in step 6). Deleting a cache's folder while processes have it open is already unsupported.
+
+## 7. Decisions
+
+Michael, 2026-11-06: flat 256 directories (section 3), no removal on delete, the sweep on the last handle's close (about 100 ms, continuing at the next close) and on `clear()`, skipping directories modified in the last 30 seconds, and no compatibility with the two-level layout.
+
+## 8. Questions
+
+Answered by the second review (9.2): no new flag and not tied to `checkpoint=`; attached for one store; an invalid `filename` is a miss; mtime is good enough for a filter whose mistakes cost nothing, tested through `min_age` plus one real backdated mtime.
+
+Decided by Michael, 2026-11-06:
+
+1. **`FORMAT_VERSION` goes to 2** (schema.rs:11). Opening a format-1 cache raises `FormatMismatchError`, which the registry reports as a logged `NullCache`, so a cache not deleted at deploy fails loudly. Step 2 adds a test that a format-1 database is refused, and the CHANGELOG entry says so.
+2. **No dirty flag for now.** Step 4 measures the close sweep, including a short `with Cache()` loop; the flag comes back only if those numbers call for it.
 
 ## 9. Review
+
+### 9.1 First review, of the draft (option A, two levels with removal on delete), superseded by section 3
 
 2026-11-06, the architect, on the draft: **PASS with required changes.** Option A is the right call, the core race argument holds (an `rmdir` can only remove an empty directory, and a `.tmp` or `.val` keeps it non-empty from `create_new` until the owner's unlink), and the placement under the gate is right. The changes below tighten the create loop, close two leaks, protect `rmdir` from a hostile `filename`, make the tests deterministic, and account for one behavior change and one oracle bug the draft didn't mention.
 
@@ -143,6 +173,108 @@ Option 2 is right, with change 9's constraints. It's safe against concurrent wri
 4. Use `ErrorKind::DirectoryNotEmpty` (stable) in comments and tests rather than raw errno. POSIX allows `rmdir` to return `EEXIST` for a non-empty directory, and since every prune error is ignored, nothing needs to branch on it.
 5. Soak step 6: also count `aa` directories with no `bb`, and `.tmp` files older than an hour, so a leak on either path shows up.
 
+### 9.2 Second review, of sections 3 to 8 (flat 256, sweep on close and `clear()`)
+
+2026-11-06, the architect: **PASS with required changes.** The design is sound, and simpler than A. The 256 cap does the real work: it bounds the cost with or without any sweep, so the sweep is tidiness and can stay cheap and best-effort. The race argument holds. The changes below fix one internal contradiction (the 30 s filter makes the `clear()` sweep a no-op and fails the plan's own tests), pin down where "last handle" is decided and what the drop path does, fix a soak check that would pass vacuously, and fill test and doc gaps.
+
+#### Race analysis: correct
+
+- **Two-step create vs the sweep.** Every interleaving ends well. If the sweep's `rmdir` comes after the writer's `create_new`, it fails with `DirectoryNotEmpty`. If it comes between the writer's `mkdir` (`EEXIST` on an old empty directory) and `create_new`, `create_new` resolves the path through a missing `aa` and gets `NotFound`, which is 4.1's retry. `rmdir` and a create in the same directory are serialized on the directory's inode lock on ext4 and APFS, so no file can land in a directory that is being removed. A fresh `mkdir` gives `aa` an mtime of now, so a sweep with a non-zero `min_age` never races the window right after a new directory is made. The retry still covers `min_age = 0` (see change 1). Treating `AlreadyExists` with no `stat` (review 1, change 1) and a terminal `NotFound` from `mkdir` (change 2) are both right.
+- **Rename.** `commit_name` renames within `aa`, and the `.tmp` keeps `aa` non-empty from `create_new` until then. The `NotFound && val.exists()` retry (spill.rs:68) is unaffected.
+- **Held transactions.** Uncommitted `.tmp` and `.val` files keep their directories alive. A rollback's `discard` (spill.rs:74) and a commit's unlinks leave empties for the next sweep. Closing the last handle on thread B while thread A holds a transaction on the store, which the store supports (store.rs:750-766, `give_back` on a retired store), is safe for the same reason.
+- **Fork children and other processes.** The sweep touches no SQLite and no state of ours, so a child, or another process, is just one more remover. It needs no gate level: it can neither wait for a pending fork nor hold one up, and a fork in the middle of it hands the child nothing (see change 2).
+- **FanoutCache.** Each shard is its own `Store` with its own directory (shards.rs:58), shard names are `{index:03}` (fanout.rs:166-168, never two characters), and a root never has a `Store` of its own (D-038). Sweeping per store is therefore exactly "every shard, never the root".
+- **The rmdir after a terminal create error (4.1).** Safe. If another writer created a file in `aa` meanwhile, the `rmdir` fails. If another writer's `mkdir` got `EEXIST` just before the `rmdir`, that writer retries.
+
+#### Required changes
+
+1. **The 30 s filter turns the `clear()` sweep into dead code and fails the plan's own tests.** `clear()` has just unlinked every file, so every directory it emptied has an mtime of now, and 4.2's age check skips all of them (plan line 60 vs line 65). The same goes for the close right after a delete. Step 1's conformance test (line 75: write, remove, close, "holds no empty directory") and step 3's "after the last close the tree has no empty directory" (line 83) would both fail on oxide, and section 2's "the end state after a close, no empty directory, matches" (line 25) isn't true with the filter. Fix:
+   - Give `spill::sweep` a `min_age: Duration` parameter. It's real API, not a `#[cfg(test)]` constant, in the same spirit as `write_named`. `clear()` passes `Duration::ZERO`: it's the explicit "empty this cache" call, the writer's retry already covers the race, and with no age check it skips the `stat` and costs a readdir plus `rmdir`s. Close passes 30 s (Michael's decision).
+   - The black-box tests backdate the directories before the close: `os.utime(d, (t, t))` on every two-hex directory, with `t` a minute ago, then `close()`, then the assertion. That works against both backends (on diskcache there's nothing to backdate) and needs no hook.
+   - Reword line 25 to "after a `clear()`, or a close once the directories have been idle for 30 s".
+   - Worth Michael's second look, not required: the filter's two stated benefits are a fresh `mkdir`'s window, which the retry already handles, and churn, which is one `mkdir` per directory per close and closes are rare. Its cost is that the close sweep misses exactly the directories this process just emptied. Keeping 30 s at close is defensible. Just know that it mostly turns the close sweep into "clean up what earlier processes left".
+2. **Decide "last handle" from the release itself, sweep after it, and put that in core.** Section 4.2 says "after checkpoint-on-close and before the release". Today "last" is a pre-check, `handles == 1` (store.rs:1069-1072). Two threads closing the last two handles both see 2 and neither sweeps, and a concurrent open can make the pre-check wrong in the other direction. The exact answer is already computed under the registry in `release_under` (store.rs:709-718: `count_handle(-1)` and then `is_retired()`). So:
+   - Have `release_under` return whether this release retired the store, and sweep after it, with no gate level held. A deferred release (store.rs:733-743, behind a pending fork) doesn't sweep, which is fine.
+   - Sweeping after the release also lets the connections close first (D-018).
+   - Make it one core entry point, for example `Store::release_handle_with(Housekeeping)` and the `close_all` equivalent. `Cache.close` has two branches (cache.rs:390-400) and `FanoutCache.close` another (cache/fanout.rs:371-386), so a sweep wired up in the Python layer would have to be added in at least three places.
+   - Keep the `GATE.own_depth() > 0` skip, because a close inside a transaction would otherwise run up to 100 ms of file work while holding a level, and a pending fork would wait for it.
+   - Drop the fork-child skip, or at least stop justifying it as "follows checkpoint-on-close exactly". `checkpoint_on_close` "skips" in a poisoned child only because `checkpoint()` fails `check_writable` (store.rs:993) and the error is ignored (store.rs:1052-1056), and `rmdir` has nothing to do with D-020.
+3. **Say what the drop path does, and what happens when nothing closes.** `Cache`'s `Drop` (cache.rs:1048-1063) and `FanoutCache`'s (cache/fanout.rs:908-923) release with no checkpoint, and the library has no `atexit` hook (lib.rs:247-278 registers only the fork hooks). As written, the sweep follows the checkpoint, so a cache that is garbage-collected rather than closed never sweeps. Neither does a process that exits without deallocating its globals, or a gunicorn or multiprocessing worker that ends in `os._exit`. And the `Caches` registry, which is how Talk Python holds its caches, keeps its handles for the life of the process and closes them only in `close_all()` (caches.py:512-527).
+   - Recommendation: the drop path sweeps too. It's the same last-handle release, it costs milliseconds, it never fails, it runs no Python, and for many apps it is their close.
+   - Add no `atexit` hook. It would put hidden I/O at exit, it would interact with forked children, and `os._exit` skips it anyway.
+   - Write down that in practice the sweep runs on `clear()`, an explicit `close()` or `Caches.close_all()`, and drop. A process that dies without any of them leaves at most 256 empties per store, which the cap already bounds, and the next sweeping process removes them.
+4. **Give the sweep its own deadline rather than `clear()`'s timeout, and one deadline per FanoutCache close.** Maintenance deadlines bound waiting, not work (maintenance.rs:9-14), and the sweep never waits, so "with `clear`'s timeout as the deadline (at most 100 ms past it)" (line 65) has no clear meaning past the deadline. On a FanoutCache clear it could also mean 100 ms per shard after a short timeout. The sweep's deadline only guards against a pathological filesystem. So use a constant `SWEEP_BUDGET` of 100 ms from the sweep's start for each `clear_from` (each shard's clear sweeps its own directory), and one shared deadline across `close_all`'s shards, the way it already shares the checkpoint budget (store/shards.rs:89-98). Risks (line 91) says "bounded at about 100 ms" for 2,048 entries, while 4.2 says per store. Make them agree.
+5. **The soak's orphan scan hard-codes two levels.** `scan_files` globs `root.glob('??/??/*')` (soak/soak.py:761). After this change it finds no files, so `orphans` reads 0 and the orphan check passes vacuously, which is a silent loss of a soak guarantee. Step 5 must change it to `??/*`. Also add a check that fails if any `??/??` remains, so an old-layout leftover or a regression shows up. Existing Python tests use `rglob('*.val')` or `rglob('*')` (tests/unit/test_pop.py:83, test_cache_api.py:208, test_decode_errors.py:244, tests/conformance/backends.py:108) and work at either depth.
+6. **Tests for the hooks, and a few mutations that section 5 doesn't catch.**
+   - The hooks are unit-tested nowhere. Step 1 only checks "after close, no empties". Add oxide-only tests, backdating mtimes as in change 1:
+     - Closing a non-last handle leaves the empties.
+     - The last close removes them, on `Cache` and on every FanoutCache shard, and never touches the root's own entries.
+     - A close inside `transact()` (depth > 0) leaves them.
+     - A `clear()` inside `transact()` leaves them.
+     - An `Interrupted` `clear_until` leaves them (force it with the existing `FAIL_NEXT_END_BUSY`-style hooks).
+     - Drop and `checkpoint=False` behave as decided (change 3, Q1).
+     - Two threads closing the last two handles at once: exactly one sweeps. A `#[cfg(test)]` sweep counter on the `Store` is enough.
+   - The injection point should also count rounds. "A deleted root fails after exactly one `mkdir`" can't be observed otherwise: a mutation that retries `mkdir`'s `NotFound` 64 times also fails and also creates nothing.
+   - The old two-level tree in the sweep test must have an *empty* `bb` (`aa/bb/` with nothing in it). With a file in `bb`, a recursive sweep also passes.
+   - Add names a loose matcher would take: `AB` (uppercase), `a`, `abc`, and an empty `db/`.
+   - Make the random start a parameter too (`sweep_from(directory, start, deadline, min_age)`, with `sweep` choosing `start`), and test a start in the middle with a far deadline. Otherwise a "random start, no wrap" mutation passes every test.
+   - An already-passed deadline removes nothing (or exactly one entry, whichever 4.2 specifies). Then "a second sweep finishes the job" is deterministic.
+7. **Update the docs that show two levels.** Step 6 names only `Cache.close`'s docstring and `_core.pyi`, but CLAUDE.md requires every behavior claim to match the code:
+   - user_guide/storage-and-wal.qmd:15-18 draws `3f/a2/3fa2…c91e.val`.
+   - plans/04-design.md:76, 85 and 128 say `aa/bb`.
+   - spill.rs:3 and :30 (the module docs and `PendingFile.relative`) say `aa/bb`.
+   - D-015 (DIVERGENCES.md:110-116) says "any subdirectories it creates for value files", which is still true. Add that a re-created directory is also 0700, since step 2 now tests that.
+   - Put the invalid-filename-as-miss rule (4.3) in D-013's oxide line.
+   - The `rows.rs:374-404` fixtures (`aa/bb/x.val`) never reach the filesystem. Change them anyway, so nobody copies the old shape.
+8. **Decide whether to bump `FORMAT_VERSION` (Michael's call; I recommend 2).** With 4.3, a format-1 cache that someone forgets to delete keeps working with no error: every large value reads as a miss and its row is deleted. Its old `aa/bb/*.val` files are never unlinked (validation refuses the two-level name), and its 65,792 old directories are never swept (the sweep doesn't recurse). That is exactly the bloat this plan exists to remove, and it stays forever with nothing to show it. Bumping `FORMAT_VERSION` (schema.rs:11; checked at open.rs:249-253 and 309-326) makes "delete existing caches at deploy" fail loudly. Opening raises `FormatMismatchError`, and the `Caches` registry reports it as a logged `NullCache` (caches.py:76). An old binary refusing a new cache is also correct. This isn't backward compatibility, it's the opposite: it enforces "no compatibility". If Michael prefers not to, section 6 should say what an undeleted cache does, as above. The CHANGELOG line then reads "format 2: delete existing caches", and the tests that pin `found: 2, expected: 1` (error.rs:268, fanout.rs:518 for the manifest, which has its own version) need a look.
+
+#### Answers to section 8
+
+1. **Sweep flag vs `checkpoint=False`.** Don't tie them, and don't add a flag. `checkpoint` is about the WAL: the docstring (cache.rs:372-378), D-024 and `CacheLike.close` (protocol.py:107) all describe it that way, and its reason to exist is that a checkpoint can wait up to 1 s on other processes. The sweep never waits on anyone and costs a few milliseconds, so a caller who passes `checkpoint=False` to close fast has no reason to also give up the cleanup. And someone who reads `checkpoint=False` would not expect it to change what's left on disk. A dedicated flag would be new API that diskcache doesn't have, for a few milliseconds nobody has asked to save. If step 4 shows close is expensive, the fix is the optional dirty flag (suggestion 1), not a parameter. If Michael wants "close does no housekeeping" as one switch anyway, rename nothing, but say it in the docstring and in D-024's "At close" bullet.
+2. **Detached vs attached.** Follow the `UNLINK_DETACH_AT` reasoning (store.rs:298-303, 903-915): attached for one store, and inside the existing `detach` when `close()` already takes it on a large WAL (cache.rs:390-397). For `close_all` over many shards, run the sweeps through `gate::run_blocking`, which already avoids re-detaching on a thread that is detached (lib.rs `detached_wait`), if step 4 shows 2,048 entries well past a millisecond. Let step 4's numbers set the threshold, as they did for the unlinks: on a busy GIL build, getting the interpreter back costs up to the 5 ms switch interval, which is likely more than a 256-entry sweep.
+3. **Invalid filename: miss, not raise.** A miss is right. D-013 already defines "the file this row names can't be read" as a miss with the row removed. A damaged or hostile row that raises would make every `get` of that key an exception until someone repairs the database by hand. And the row deletion repairs it. Two details: put the parse in one `fn value_path(directory, relative) -> Option<PathBuf>` that `unlink`, `read` and `open` share (spill.rs:93, 103; store.rs:904), and `debug_assert!` in `write_named` that its own names pass it. With change 8's bump, "an old two-level cache degrades to misses" stops being a selling point, so drop that sentence from 4.3.
+4. **mtime and 30 s.** mtime is reliable enough for a filter whose mistakes cost nothing. Safety comes from `rmdir` plus the retry, never from the timestamp.
+   - **ext4 and APFS.** Both use nanosecond timestamps from the kernel's wall clock, and both update a directory's mtime on create, unlink and rename within it. So do tmpfs and overlayfs.
+   - **NFS.** It uses the server's clock, so client skew can make a directory look young (it's skipped, harmless) or old (the retry covers it).
+   - **A wall clock stepped backwards.** It leaves mtimes in the future: treat a failed `SystemTime::now().duration_since(mtime)` as young, and treat an error from `modified()` as young too.
+   - **Read it without following symlinks.** Use `DirEntry::file_type()` and `DirEntry::metadata()` (lstat).
+   - **30 s.** It's fine as a churn filter at close. Use 0 for `clear()` (change 1).
+   - **How to test.** Use the `min_age` parameter, plus a real backdated mtime, so the test exercises the age check rather than bypassing it. In core, `File::open(&dir)?.set_modified(SystemTime::now() - Duration::from_secs(60))` uses std only (`futimens` on a directory fd works for the owner on Linux and macOS), so no `filetime` dependency. In Python, `os.utime`. Backdate after the last create or delete in that directory, since either one resets the mtime.
+
+#### Close-time cost and placement
+
+Last handle only is right: it matches checkpoint-on-close, and a handle closed while the cache is in use never pays. Order: checkpoint, release, then sweep (change 2). If close is never called, see change 3: the sweep is skipped, and the cap still holds. For step 4, also measure:
+
+- a tree of 256 *non-empty*, old directories, which is the steady state of a live cache and the worst case for the close sweep (readdir, plus a `stat` and a failing `rmdir` per directory, about 512 syscalls);
+- a per-request `with Cache(d) as c: c.get(k)` loop, the pattern D-024's close backoff exists for (store.rs:1047-1051). With the sweep, it pays the cost above on every exit. Optional suggestion 1 removes it for readers.
+
+#### What carries over from 9.1, and what no longer applies
+
+- **No longer applies:**
+  - change 6's batch-sharing tests (nothing prunes in `unlink` now);
+  - change 8 (no per-delete `rmdir`s to measure; step 4 replaces it);
+  - suggestion 2 (two-pass prune);
+  - suggestion 5's "`aa` with no `bb`" (see change 5 instead);
+  - the gate-placement section (no pruning under the gate).
+- **Change 7b (mixed versions):** answered by "every worker stopped, caches deleted", and enforced if change 8 is taken.
+- **Change 4 / suggestion 1:** became 4.3, which is right.
+- **Change 9's sweep constraints:** carried into 4.2, now at one level.
+- **Changes 1, 2, 3, 5 and 7a, and suggestions 3 and 4:** folded in correctly.
+- **The upstream log of diskcache's rolled-back `transact()` leak:** still in step 1, and still needed.
+- **New and missing until now:** the soak glob (change 5), the docs (change 7) and the format version (change 8).
+
+#### Optional suggestions
+
+1. **A dirty flag.** Keep an `AtomicBool` on `Store`, set when `unlink` or `discard` actually removes a value file, and sweep at close only when it's set (`clear()` always sweeps). A read-only process, or a per-request `with Cache()` that only reads, then pays nothing. Empties left by a process that died are still swept by the next process that deletes anything, or by `clear()`.
+2. **Randomness for the start.** Take it from `std::hash::RandomState::new().build_hasher().finish()` rather than another `/dev/urandom` open (spill.rs:157-166). It needs no file descriptor, and it's plenty for picking a start.
+3. **Note the edge in the D-entry.** The cache directory belongs to the cache: an empty directory with a two-hex name that a user left in it (`db/`, `ad/`, `ff/`) may be removed. diskcache's `check(fix=True)` removes any empty directory, so this is narrower than the oracle.
+4. **A side benefit for the measure step.** On ext4 a directory never shrinks, so a sweep that removes one that once held thousands of entries also gives back its blocks.
+
 ## 10. Progress
 
-(not started)
+- 2026-11-06: drafted; the architect's review was PASS with required changes, and all nine plus suggestions 1 to 5 are folded into sections 2, 4, 5, 6 and 7. Waiting on Michael's two decisions (section 8). Building starts after the htz soak ends.
+- 2026-11-06: Michael first chose C (one level plus removal) with sweeps on `clear()` and close, then, after talking it through, flat 256 with no removal on delete and the sweep on close and `clear()`. Sections 3 to 8 rewritten for it; back with the architect.
+- 2026-11-06: the architect's second review (9.2): PASS with required changes, all eight folded into sections 2, 4, 5 and 6; the format-version bump and the optional dirty flag are in section 8 for Michael.
+- 2026-11-06: Michael: bump `FORMAT_VERSION` to 2, no dirty flag for now. The plan is ready to build after the htz soak.
+- 2026-11-06: Michael: production caches may be on network block volumes, not local NVMe. Step 4 adds a cold measurement on such a volume, which decides whether a FanoutCache sweeps its shards in parallel.
+- 2026-11-06: Michael: sweep a FanoutCache's shards in parallel (4.4), built alongside sequential so step 4 compares them, and measure how long a sweep really takes before choosing the budget; 100 ms is a placeholder. Sent to the architect.
