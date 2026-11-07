@@ -193,7 +193,7 @@ Each item gets conformance tests against diskcache first. Candidate groups, each
 - **6d. Deque and Index.**
 - **6e. Recipes:** Lock, RLock, BoundedSemaphore, throttle, barrier, memoize_stampede.
 
-### Phase 7: Network server (planned; Michael is increasingly keen)
+### Phase 7 (very speculative): A cache server, as a separate product
 
 **Storage mode for the server (measured 2026-10-28).** A server process that owns its cache files can run SQLite with `locking_mode=EXCLUSIVE`, which keeps the WAL index in heap memory instead of the shared `-shm` file. That removes the per-read `fcntl` system calls that dominate a multi-process read, and the shared-memory serialization behind poor free-threaded scaling. Measured with Python's sqlite3 on this machine:
 
@@ -205,7 +205,7 @@ Each item gets conformance tests against diskcache first. Candidate groups, each
 
 The library stays on WAL, since it must let several processes share a directory. The server uses exclusive locking, as the database's only owner.
 
-A self-contained Rust server on the core crate, shipped as a Docker image: one cache for every app on a machine, shared across languages (Python, Rust, .NET, TypeScript, Java), over HTTP with msgpack or JSON and later a binary protocol. The shape so far, including namespaces, the data model, clients and the NullCache failure model, is in [vision.md](vision.md#a-cache-server-for-every-language-michael-2026-11-06). Scope is decided when it gets its own plan.
+A self-contained Rust server on the core crate, shipped as a Docker image: one cache for every app on a machine, shared across languages (Python, Rust, .NET, TypeScript, Java), over HTTP with msgpack or JSON and later a binary protocol. The shape so far, including namespaces, the data model, clients and the NullCache failure model, is in [vision.md](vision.md#a-cache-server-for-every-language-michael-2026-11-06). It would be its own product on the same engine, not part of this library (Michael, 2026-11-06), and nothing is planned; the vision section also lists what library work should keep in mind so it stays cheap to build.
 
 ### Phase 8 (speculative): Encryption at rest
 

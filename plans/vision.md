@@ -128,7 +128,7 @@ Michael, 2026-10-30, after the architect found a hang that needed a fork, a held
 
 ## A cache server for every language (Michael, 2026-11-06)
 
-The shape of roadmap Phase 7, worked out in conversation. Nothing is built or planned yet; when it becomes real work it gets its own plan. The idea: a self-contained Rust binary on `diskcache-oxide-core` (no PyO3, no Python), shipped as a Docker image, serving named caches over HTTP and later a binary protocol, with thin clients for Python, Rust, .NET, TypeScript and Java. It speaks our own API, not RESP and not Redis's command set: it isn't meant to be a Redis clone.
+**Very speculative, and a separate product** (Michael, 2026-11-06): its own name, docs and pitch on the same engine, not a feature of diskcache-oxide, whose appeal stays "no server to run". Nothing is planned. It's recorded so the shape isn't re-derived, and so work on the library keeps it possible ("Keeping the door open", below). The idea: a self-contained Rust binary on `diskcache-oxide-core` (no PyO3, no Python), shipped as a Docker image, serving named caches over HTTP and later a binary protocol, with thin clients for Python, Rust, .NET, TypeScript and Java. It speaks our own API, not RESP and not Redis's command set: it isn't meant to be a Redis clone.
 
 **Why, in order of weight:**
 - **One cache for the machine.** Talk Python, Python Bytes, Training and InterviewCue each map their own cache volumes and think about them separately at deploy time. One container serves them all, and each app reaches it by hostname.
@@ -163,6 +163,7 @@ The shape of roadmap Phase 7, worked out in conversation. Nothing is built or pl
 **Clients:**
 - **Python first:** a `RemoteCache` that implements `CacheLike`, written in Rust inside `_core`, so there are no new Python dependencies and the connection pool reuses the fork-reset machinery we've already proven. The `Caches` registry decides whether a purpose is local or remote, so app code doesn't change.
 - **Then Rust** (nearly free), then .NET (C#) and TypeScript/Node, and Java when someone asks. Native and thin (a few hundred lines each, no native binaries, which .NET and Node developers avoid), rather than one Rust client wrapped through FFI everywhere.
+- **Framework adapters, where developers actually plug a cache in** (Michael, 2026-11-06): a Django cache backend (the remote twin of the Django backend above) and ASP.NET Core's `IDistributedCache` for .NET first, then the equivalents elsewhere (keyv for Node, Rails' `ActiveSupport::Cache::Store`, Spring's `Cache`) as demand shows. Each sits on that language's native client, so it inherits the failure model below. These are how we answer Redis's ecosystem: every framework ships a Redis backend, and an adapter for the few interfaces that matter most reaches most of those users.
 - **One shared test suite for clients:** a language-neutral spec plus test vectors (requests, expected responses, byte-level frames) that every client runs, like our conformance suite but aimed at the wire.
 
 **Failure model: unreachable means NullCache** (decided, to keep the story simple). A single server for the machine is a single point of failure for every app, so every client must hold to this:
@@ -172,7 +173,7 @@ The shape of roadmap Phase 7, worked out in conversation. Nothing is built or pl
 - While tripped, reads miss and writes are dropped. Coordination operations (`add`, `incr`, `pop`, locks, throttle) raise instead, because two workers each "acquiring" a lock against NullCache means the lock has silently stopped working. `incr`, `add` and `pop` are never retried, since a reply lost after the server applied them would double them.
 - A `delete` made during an outage is lost, so the server may serve the old value until it expires. The docs recommend an `expire` on everything stored remotely, and the client logs each dropped delete at WARNING with its key (deduped), so an operator can see what to clear.
 
-**Considered and set aside** (eventual consistency is hard to explain, and the pitch is simple): a local fallback cache in each client (a local `Cache` for Python, a memory LRU elsewhere); replaying the outage's deletes, `evict(tag)` and `clear` on reconnect; making them conditional on the row's `store_time` ("delete if not stored since T", with the client converting T to the server's clock using an offset learned from each reply); deleting only if the row's version is still the one the client saw; and request IDs that let the server spot a retried `incr`. Kept for its own sake: **compare-and-set** for writers racing on one key ("only if nobody changed it since I read it"). `store_seq` already gives every write a version that only goes up, per shard, so it needs no schema change.
+**Considered and set aside** (eventual consistency is hard to explain, and the pitch is simple): a local fallback cache in each client (a local `Cache` for Python, a memory LRU elsewhere); replaying the outage's deletes, `evict(tag)` and `clear` on reconnect; making them conditional on the row's `store_time` ("delete if not stored since T", with the client converting T to the server's clock using an offset learned from each reply); deleting only if the row's version is still the one the client saw; and request IDs that let the server spot a retried `incr`. Also set aside: a RESP (Redis protocol) compatibility subset, which would let existing Redis backends and tools (redis-cli, RedisInsight) connect unchanged. It would buy reach, but means chasing Redis's semantics; framework adapters on our own API are the chosen route (Michael, 2026-11-06). Kept for its own sake: **compare-and-set** for writers racing on one key ("only if nobody changed it since I read it"). `store_seq` already gives every write a version that only goes up, per shard, so it needs no schema change.
 
 **Open questions:**
 - Measure the memory claim first: `bench/memory.py` per process today, then the real total for the Talk Python apps on htz against one server container.
@@ -182,3 +183,10 @@ The shape of roadmap Phase 7, worked out in conversation. Nothing is built or pl
 - A disk budget for the whole machine, or only a `size_limit` per namespace.
 - Where it lives: `crates/diskcache-oxide-server` in this workspace, and whether each language's client gets its own repository.
 - Auth beyond a bearer token per namespace, and the server's name.
+
+**Keeping the door open while building the library.** No work on the library waits on the server, but these choices keep it cheap to build later:
+- `diskcache-oxide-core` stays free of PyO3 and Python types, dealing only in keys, modes, bytes and value files, and nothing in it should assume a Python host process.
+- Every Python-specific encoding (key types, msgpack, JSON and pickle of Python objects, `register_type`) stays in the extension's `codec/`, never in core.
+- Rows keep `store_time` and a `store_seq` that only goes up per database: the server's compare-and-set depends on it.
+- Single-key operations that are atomic in one call (`add`, `incr`, `pop`, compare-and-delete) stay atomic without `transact()`, since the server can't offer held transactions.
+- When it's cheap, SQLite settings stay core open options rather than hard-coded: the server wants `locking_mode=EXCLUSIVE` and a much larger page cache than the library's per-process budget.
