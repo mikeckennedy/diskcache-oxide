@@ -125,3 +125,60 @@ Michael, 2026-10-30, after the architect found a hang that needed a fork, a held
 - **Fork-safe output:** one file per pid (a child starts its own after its reset), written with plain `write` calls, never a lock the child could inherit held.
 - **A reader:** `python -m diskcache_oxide.trace report <file>` merges per-process files and prints the wait-for graph at the moment of the hang.
 - **Open questions:** the `tracing` crate against a hand-rolled ring buffer (it must not allocate or lock on the hot path), the overhead budget when on (aim for usable in production for an hour), and whether the snapshot is also worth exposing on its own as `Cache._debug_state()` for the soak.
+
+## A cache server for every language (Michael, 2026-11-06)
+
+The shape of roadmap Phase 7, worked out in conversation. Nothing is built or planned yet; when it becomes real work it gets its own plan. The idea: a self-contained Rust binary on `diskcache-oxide-core` (no PyO3, no Python), shipped as a Docker image, serving named caches over HTTP and later a binary protocol, with thin clients for Python, Rust, .NET, TypeScript and Java. It speaks our own API, not RESP and not Redis's command set: it isn't meant to be a Redis clone.
+
+**Why, in order of weight:**
+- **One cache for the machine.** Talk Python, Python Bytes, Training and InterviewCue each map their own cache volumes and think about them separately at deploy time. One container serves them all, and each app reaches it by hostname.
+- **Memory.** Today every worker process of every app pays for its own SQLite page caches: about 8 MiB per `Cache` and 16 MiB per 8-shard FanoutCache (D-023, D-037), plus up to about 48 fds per FanoutCache. With 8 apps, 4 workers each and two or three FanoutCaches per app, that's roughly 1-1.5 GiB of mostly duplicated hot pages. The server holds one copy, and can afford a much larger page cache (say 128 MiB in total), which also raises hit rates on wide, uniform reads. Caveat: the cached data itself isn't duplicated today, since the OS page cache holds a file once for every process; the saving is in SQLite's private caches, fds and WAL growth. Measure it before quoting it (open questions).
+- **The WAL stays small.** D-024's WAL growth (checkpoints failing at 1%, WALs reaching 6-21 GiB) comes from readers in other processes pinning old snapshots. A server that's the files' only owner, with `locking_mode=EXCLUSIVE`, has no such readers and checkpoints whenever it likes.
+- **One disk budget.** Each app now sizes its own `size_limit` for its own peak, and the headroom adds up. A server could hold one budget, with caps or floors per namespace.
+- **Every language shares one cache.** Python first, but .NET, Node, Java and Rust apps can read and write the same entries. That's new: today the technology is Python-only.
+- **A replacement for Redis or Valkey as a plain cache:** durable (it restarts warm, unlike Redis without persistence), bigger than RAM, much less memory, and almost nothing to configure.
+
+**Performance, honestly.** The server can't beat the in-process library, which reads in about 1 µs; a loopback round trip alone costs more. The claim to defend is Redis-class latency (both pay the same network cost, and our SQLite read is sub-microsecond), better throughput across cores than Redis's single-threaded command loop, and a fraction of the memory. Benchmark against Redis and Valkey on the same box, and lead with memory, durability and dataset size, not latency.
+
+**Storage:**
+- One FanoutCache per namespace, with its shard count fixed at creation (default 8; plan 15 already stores it on disk).
+- `locking_mode=EXCLUSIVE`, per the roadmap's measurement (0.69 µs reads against WAL's 1.18 µs). To verify: with EXCLUSIVE and WAL, the WAL index lives in the connection's heap, so only one connection can use each file, even in one process. If so, one thread per shard owns that shard's connection and requests are routed to it by key hash. At 0.69 µs a read, one shard thread outruns anything HTTP can send it.
+- Group commit: the shard thread gathers concurrent writes into one transaction, since most of a write's cost is the commit.
+
+**Namespaces, one per app** (decided): each its own FanoutCache with its own `size_limit`, eviction, stats and `clear`, and optionally its own auth token. Not a key prefix in one shared cache, where one busy app would evict the others' entries. Apps that cache the same data can share a namespace on purpose.
+
+**Data model, shared across languages:**
+- Keys are UTF-8 strings (perhaps raw bytes too), so `user:42` means the same key in every language. The local `Cache` keeps its Python key model; the remote one has its own, simpler model.
+- Values are bytes plus a format tag: `msgpack`, `json`, `bytes`, `text`, or `python` (pickle and `register_type` objects only Python can read). The server never decodes values; each client decodes what it understands and raises a clear error otherwise. msgpack is the shared format.
+
+**Operations:** `get`, `set`, `delete`, `add`, `incr`, `pop`, `expire`/`touch`, tags and `evict(tag)`, `get_many`/`set_many`/`delete_many`, and an atomic batch. No `transact()` over the wire: holding a shard's write lock across round trips lets one stalled client stall the shard, so atomic server-side operations take its place. Admin endpoints: `stats`, `volume`, `cull`, `check`, health, and backup through SQLite's online backup API.
+
+**Transports:** one Rust operation enum, with each transport a thin adapter into and out of it.
+- HTTP with msgpack and HTTP with JSON on the same endpoints, chosen by `Content-Type`. JSON means any language works with curl and no client at all.
+- Later, a binary protocol over TCP and Unix sockets: frames with a length prefix and a request ID, so many requests can be in flight on one connection. That's where we beat HTTP, mostly through pipelining. Build it when benchmarks show the gap, without a rewrite. Reliable transports only, no UDP.
+- Large values: stream spilled value files with `sendfile`.
+
+**Deployment:** a Docker image with a restart policy, bound to the Docker network, bearer tokens per namespace, TLS at Caddy or NGINX when traffic leaves the host. The server is a binary, so configuration through a file and environment variables is fine there; the library's no-environment-variables rule stays a library rule. On SIGTERM it signals clients that it's going away (`Connection: close`, HTTP/2 GOAWAY, or a frame), drains requests in flight, checkpoints and exits. Durable storage means a restart comes back warm.
+
+**Clients:**
+- **Python first:** a `RemoteCache` that implements `CacheLike`, written in Rust inside `_core`, so there are no new Python dependencies and the connection pool reuses the fork-reset machinery we've already proven. The `Caches` registry decides whether a purpose is local or remote, so app code doesn't change.
+- **Then Rust** (nearly free), then .NET (C#) and TypeScript/Node, and Java when someone asks. Native and thin (a few hundred lines each, no native binaries, which .NET and Node developers avoid), rather than one Rust client wrapped through FFI everywhere.
+- **One shared test suite for clients:** a language-neutral spec plus test vectors (requests, expected responses, byte-level frames) that every client runs, like our conformance suite but aimed at the wire.
+
+**Failure model: unreachable means NullCache** (decided, to keep the story simple). A single server for the machine is a single point of failure for every app, so every client must hold to this:
+- Each call has a short timeout (50-100 ms). `get`, `set`, `delete` and `touch` get one quick retry on a connection error, then that call misses and the request moves on.
+- Reconnecting happens in the background with backoff (100 ms, 250 ms, 500 ms, 1 s...), so requests never pay for it.
+- A 5-second grace window: only 5 s of continuous failure trips the breaker and logs one WARNING (and one on recovery, never one per call), so a container restart that finishes in 2 s makes no noise. "Connection refused" (port closed, usually a restart) is cheap to retry; timeouts (a hung server or a bad network) cost the full timeout each time, so they trip sooner and retry more gently. A planned restart's going-away signal puts clients straight into the grace window, logged at INFO.
+- While tripped, reads miss and writes are dropped. Coordination operations (`add`, `incr`, `pop`, locks, throttle) raise instead, because two workers each "acquiring" a lock against NullCache means the lock has silently stopped working. `incr`, `add` and `pop` are never retried, since a reply lost after the server applied them would double them.
+- A `delete` made during an outage is lost, so the server may serve the old value until it expires. The docs recommend an `expire` on everything stored remotely, and the client logs each dropped delete at WARNING with its key (deduped), so an operator can see what to clear.
+
+**Considered and set aside** (eventual consistency is hard to explain, and the pitch is simple): a local fallback cache in each client (a local `Cache` for Python, a memory LRU elsewhere); replaying the outage's deletes, `evict(tag)` and `clear` on reconnect; making them conditional on the row's `store_time` ("delete if not stored since T", with the client converting T to the server's clock using an offset learned from each reply); deleting only if the row's version is still the one the client saw; and request IDs that let the server spot a retried `incr`. Kept for its own sake: **compare-and-set** for writers racing on one key ("only if nobody changed it since I read it"). `store_seq` already gives every write a version that only goes up, per shard, so it needs no schema change.
+
+**Open questions:**
+- Measure the memory claim first: `bench/memory.py` per process today, then the real total for the Talk Python apps on htz against one server container.
+- Confirm that EXCLUSIVE with WAL means one connection per file, and measure one thread per shard against a small pool in plain WAL mode.
+- When a write is acknowledged: after its commit (durable), or on group commit's schedule (fast), or chosen per call.
+- Keys: strings only, or bytes too.
+- A disk budget for the whole machine, or only a `size_limit` per namespace.
+- Where it lives: `crates/diskcache-oxide-server` in this workspace, and whether each language's client gets its own repository.
+- Auth beyond a bearer token per namespace, and the server's name.

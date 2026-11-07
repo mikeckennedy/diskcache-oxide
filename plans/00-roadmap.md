@@ -205,7 +205,7 @@ Each item gets conformance tests against diskcache first. Candidate groups, each
 
 The library stays on WAL, since it must let several processes share a directory. The server uses exclusive locking, as the database's only owner.
 
-An HTTP + msgspec service that serves a cache directory to many clients, giving a Redis-like central cache with SQLite underneath. Scope to be decided when we get here.
+A self-contained Rust server on the core crate, shipped as a Docker image: one cache for every app on a machine, shared across languages (Python, Rust, .NET, TypeScript, Java), over HTTP with msgpack or JSON and later a binary protocol. The shape so far, including namespaces, the data model, clients and the NullCache failure model, is in [vision.md](vision.md#a-cache-server-for-every-language-michael-2026-11-06). Scope is decided when it gets its own plan.
 
 ### Phase 8 (speculative): Encryption at rest
 
