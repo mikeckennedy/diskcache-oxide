@@ -13,9 +13,9 @@ survives restarts. The entry points:
   them.
 - `register_type(cls, name=..., encode=..., decode=...)`: store your own types without pickle; a
   dataclass needs only a name. `registry` is the process-wide `TypeRegistry` behind it.
-- Exceptions: `Timeout` (a `TimeoutError`), `TransactionBusy`, `UnsafeValueError` (a `TypeError`),
-  `CorruptValueError` and `ForeignValueError` (`ValueError`s), `FormatMismatchError` and
-  `LayoutMismatchError` (`RuntimeError`s).
+- Exceptions: `Timeout` (a `TimeoutError`), `TransactionBusy` (a `Timeout`), `TransactionAborted`,
+  `FormatMismatchError` and `LayoutMismatchError` (`RuntimeError`s), `UnsafeValueError` (a
+  `TypeError`), `CorruptValueError` and `ForeignValueError` (`ValueError`s).
 
 There is no command-line interface and no environment variable to set. Warnings and swallowed
 failures go to the `diskcache_oxide` logger.
@@ -46,6 +46,7 @@ from diskcache_oxide._core import (
     FormatMismatchError,
     LayoutMismatchError,
     Timeout,
+    TransactionAborted,
     TransactionBusy,
     TypeRegistry,
     UnsafeValueError,
@@ -109,6 +110,7 @@ __all__ = [
     'NullCache',
     'ShardedCacheLike',
     'Timeout',
+    'TransactionAborted',
     'TransactionBusy',
     'TransactionalCacheLike',
     'TypeRegistry',

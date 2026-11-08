@@ -1339,7 +1339,7 @@ impl Transaction {
             // A second exit, or the owner's exit after another thread ended it.
             TxState::Done { committed } => {
                 if commit && !*committed {
-                    return Err(to_py_err(Error::TransactionAborted));
+                    return Err(not_committed());
                 }
                 return Ok(false);
             }
@@ -1352,7 +1352,7 @@ impl Transaction {
                 }
                 return match self.wait_for_end(py) {
                     Some(true) => Ok(false),
-                    Some(false) => Err(to_py_err(Error::TransactionAborted)),
+                    Some(false) => Err(not_committed()),
                     None => Err(crate::Timeout::new_err(
                         "this transaction is still being ended on another thread; whether it committed is unknown",
                     )),
@@ -1373,6 +1373,15 @@ impl Transaction {
         result.map_err(to_py_err)?;
         Ok(false)
     }
+}
+
+/// The owner's exit, with no exception, of a transaction that ended without committing: another
+/// thread ended it (D-031), an earlier exit did, or it was rolled back after an error. The core's
+/// `TransactionAborted` message ("rolled back after an error") is only right for the last.
+fn not_committed() -> PyErr {
+    crate::TransactionAborted::new_err(
+        "the transaction did not commit: another thread or an earlier exit ended it, or it was rolled back after an error",
+    )
 }
 
 /// Converts a row's value column for the codec and decodes it. Returns the decode result rather

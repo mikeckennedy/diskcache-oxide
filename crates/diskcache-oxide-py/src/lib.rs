@@ -38,6 +38,13 @@ create_exception!(
 );
 create_exception!(
     diskcache_oxide,
+    TransactionAborted,
+    PyRuntimeError,
+    "A held transaction didn't commit and can't: it was rolled back (after an error inside it, or by another \
+     thread or an earlier exit), so nothing written in it will be committed."
+);
+create_exception!(
+    diskcache_oxide,
     UnsafeValueError,
     PyTypeError,
     "A pickle=False cache read a value that was stored with pickle."
@@ -121,8 +128,8 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
         | Error::ForkPoisoned
         | Error::NestedTransaction
         | Error::NoTransaction
-        | Error::EndInsideOperation
-        | Error::TransactionAborted => PyRuntimeError::new_err(message),
+        | Error::EndInsideOperation => PyRuntimeError::new_err(message),
+        Error::TransactionAborted => TransactionAborted::new_err(message),
         Error::FormatMismatch { .. } | Error::ManifestInvalid { .. } => FormatMismatchError::new_err(message),
         Error::RoleMismatch { .. } | Error::ShardCountMismatch { .. } | Error::StoredShardsRefuseSettings { .. } => {
             layout_mismatch(message)
@@ -378,6 +385,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("_DEBUG_BUILD", cfg!(debug_assertions))?;
     m.add("Timeout", py.get_type::<Timeout>())?;
     m.add("TransactionBusy", py.get_type::<TransactionBusy>())?;
+    m.add("TransactionAborted", py.get_type::<TransactionAborted>())?;
     m.add("UnsafeValueError", py.get_type::<UnsafeValueError>())?;
     m.add("CorruptValueError", py.get_type::<CorruptValueError>())?;
     m.add("ForeignValueError", py.get_type::<ForeignValueError>())?;

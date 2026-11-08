@@ -454,14 +454,23 @@ impl Store {
         // Before the retry, so the gate level below isn't kept across it.
         let canonical = std::fs::canonicalize(&options.directory).unwrap_or_else(|_| options.directory.clone());
 
-        // Open outside the registry lock (the open sequence may wait on other processes), then
-        // insert if absent; if another thread won the race, use its store and drop this connection.
-        // The pin is opened in the same gate level, so a failure closes `conn` under the gate too.
-        // That level also covers the insert below: it holds `conn` and the pin, which must close
-        // under the gate, so it mustn't have to wait to get back in.
-        let (gate, conn, limits, pin, file_id) = lockwait::retry(left(), |attempt_deadline| {
+        // Open outside the registry lock (the open sequence may wait on other processes). Then, if
+        // another thread registered a live store for the file meanwhile (two first opens racing),
+        // join it and hand it this connection, before any pin is opened: a connection or pin closed
+        // beside its live pool would stay open as a pending descriptor (D-017, plan 20). Otherwise
+        // open the pin and insert if absent. One gate level covers the open, the pin and the insert
+        // below: they hold `conn` and the pin, which must close under the gate, and the adopted
+        // connection's generation must be the one it was opened in.
+        let opening = lockwait::retry(left(), |attempt_deadline| {
             let gate = enter_until(attempt_deadline)?;
+            // Which file the connection is on (plan 20): taken as X when the path showed X right after
+            // the open, and X or nothing (a new cache) right before it. With both reads on X, the
+            // connection is on another file only if something outside replaced the path twice around
+            // the open; a file replaced once fails the checks below.
+            let before = file_id_at(&db_path);
             let mut conn = open::connect(&options.directory, options.timeout)?;
+            let generation = gate::generation();
+            let conn_file = file_id_at(&db_path).filter(|opened| before.is_none_or(|b| b == *opened));
             let limits = open::prepare_creating(
                 &mut conn,
                 options.requested,
@@ -469,9 +478,31 @@ impl Store {
                 options.default_size_limit,
                 options.timeout,
             )?;
+            #[cfg(test)]
+            open_race::after_prepare(&options.directory);
+            if let Some(id) = conn_file {
+                let stores = registry(&gate);
+                if let Some(store) = Self::claim_live(&stores, id) {
+                    drop(stores);
+                    // The claim is the closure's last fallible step, so `retry` never runs it twice.
+                    store.adopt(&gate, conn, generation, options.max_connections);
+                    return Ok(Opening::Joined(store));
+                }
+            }
             let (pin, file_id) = open_pin(&gate, &db_path)?;
-            Ok((gate, conn, limits, pin, file_id))
+            Ok(Opening::Opened { gate, conn, generation, conn_file, limits, pin, file_id })
         })?;
+        let (gate, conn, generation, conn_file, limits, pin, file_id) = match opening {
+            // No gate level here: `join`'s write enters the gate itself, as on the fast path.
+            Opening::Joined(store) => {
+                store.join(options, left())?;
+                return Ok(store);
+            }
+            Opening::Opened { gate, conn, generation, conn_file, limits, pin, file_id } => {
+                (gate, conn, generation, conn_file, limits, pin, file_id)
+            }
+        };
+        let conn_on_file = conn_file == Some(file_id);
 
         let mut stores = registry(&gate);
         // A live store for this file, or a retired one that a closed handle still holds: join it
@@ -483,10 +514,23 @@ impl Store {
             }
             drop(stores);
             drop(unused);
-            drop(conn);
+            if conn_on_file {
+                existing.adopt(&gate, conn, generation, options.max_connections);
+            } else {
+                drop(conn);
+            }
             drop(gate);
             existing.join(options, left())?;
             return Ok(existing);
+        }
+        if !conn_on_file {
+            // The file was replaced while it was opened: `prepare_creating` checked the old one's
+            // role and format, and its connection would serve the old file's rows.
+            drop(stores);
+            drop((conn, pin));
+            drop(gate);
+            let replaced = std::io::Error::other("the database file was replaced while it was being opened");
+            return Err(Error::Io { path: db_path, source: replaced });
         }
         let store = Arc::new(Self {
             directory: options.directory.clone(),
@@ -516,8 +560,7 @@ impl Store {
         stores.push(Arc::downgrade(&store));
         drop(stores);
         // Seed the pool with the connection the open sequence used.
-        let seeded = store.pool.checkout(&gate, || Ok(conn))?;
-        store.pool.checkin(&gate, seeded);
+        store.adopt(&gate, conn, generation, options.max_connections);
         Ok(store)
     }
 
@@ -528,13 +571,35 @@ impl Store {
         let id = (metadata.dev(), metadata.ino());
         let gate = enter_until(deadline)?;
         let stores = registry(&gate);
-        let Some(store) = stores.iter().filter_map(Weak::upgrade).find(|s| s.file_id == id && !s.is_retired()) else {
-            return Ok(None);
-        };
-        let (_, unused) = store.claim(&stores, None);
-        drop(stores);
-        drop(unused);
-        Ok(Some(store))
+        Ok(Self::claim_live(&stores, id))
+    }
+
+    /// The live store for the file `id`, with one more handle registered on it, or None. A live store
+    /// already has its pin, so the claim takes none and hands none back.
+    fn claim_live(stores: &MutexGuard<'_, Vec<Weak<Self>>>, id: FileId) -> Option<Arc<Self>> {
+        let store = stores.iter().filter_map(Weak::upgrade).find(|s| s.file_id == id && !s.is_retired())?;
+        let (_, unused) = store.claim(stores, None);
+        debug_assert!(unused.is_none(), "a live store handed back a pin it was never given");
+        Some(store)
+    }
+
+    /// Takes a connection the open sequence made into this store's pool (see [`Pool::adopt`]), raising
+    /// the pool's idle cap to `max_connections` first so a handle that asks for more keeps its own
+    /// (`join` raises it too, afterwards). A retired store doesn't pool: the connection is closed.
+    fn adopt(&self, gate: &SharedGuard<'_>, conn: Connection, generation: u64, max_connections: u64) {
+        // Raised before `join`, which may still refuse this handle: harmless, since the cap only ever
+        // rises, and `join` would raise it the same way.
+        self.pool.raise_max_idle(usize::try_from(max_connections).unwrap_or(usize::MAX));
+        if self.is_retired() {
+            drop(conn);
+            return;
+        }
+        self.pool.adopt(gate, conn, generation);
+        // As in `give_back`: a release that retired the store meanwhile cleared the pool before this
+        // push (then this clears it) or after (then it already did).
+        if self.is_retired() {
+            self.pool.clear(gate);
+        }
     }
 
     /// The store for `file_id` in `stores`: a live one, else a retired one for the same directory
@@ -1857,6 +1922,27 @@ thread_local! {
     static FAIL_NEXT_END_BUSY: Cell<bool> = const { Cell::new(false) };
 }
 
+/// What `Store::open_store`'s open sequence ends with: a live store it joined, or what a new or
+/// revived store needs. `Joined` carries no gate level, so the join runs without one.
+#[expect(clippy::large_enum_variant, reason = "one short-lived value per slow-path open")]
+enum Opening {
+    Joined(Arc<Store>),
+    Opened {
+        gate: SharedGuard<'static>,
+        conn: Connection,
+        generation: u64,
+        conn_file: Option<FileId>,
+        limits: Limits,
+        pin: FilePin,
+        file_id: FileId,
+    },
+}
+
+/// The `(dev, ino)` of the file at `path` now, or None if there's none.
+fn file_id_at(path: &Path) -> Option<FileId> {
+    std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
+}
+
 /// Opens a store's pin on its database file, and the file's id. The pin is a SQLite connection that
 /// never runs a statement, not a plain `File`: closing any descriptor on a file drops every POSIX
 /// lock the process holds on it, SQLite's included. SQLite's own descriptors share its per-file
@@ -1952,6 +2038,9 @@ mod fork_timeout;
 
 #[cfg(test)]
 mod shard_identity;
+
+#[cfg(test)]
+mod open_race;
 
 #[cfg(test)]
 mod tests {

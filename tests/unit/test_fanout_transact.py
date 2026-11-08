@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from diskcache_oxide import Cache, Caches, FanoutCache, NullCache, ShardedCacheLike, Timeout
+from diskcache_oxide import Cache, Caches, FanoutCache, NullCache, ShardedCacheLike, Timeout, TransactionAborted
 from diskcache_oxide._core import Transaction
 
 from tests.unit.test_durable import SHORT, peer_holding_the_write_lock
@@ -74,6 +74,17 @@ def test_the_block_gets_the_fanout_cache_and_commits_on_exit(cache: FanoutCache,
         assert _on_thread(lambda: cache.get(a)) is None, 'another thread saw an uncommitted write'
     assert (cache.get(a), cache.get(b)) == (1, 2)
     assert repr(txn) == '<diskcache_oxide.Transaction Done(committed) on shard 0>'
+
+
+def test_the_owners_exit_after_another_thread_rolled_it_back_raises_transaction_aborted(
+    cache: FanoutCache, keys: tuple[str, str, str]
+) -> None:
+    a, _, _ = keys
+    txn = cache.transact(key=a)
+    with pytest.raises(TransactionAborted, match='did not commit'), txn:
+        cache.set(a, 1)
+        assert _on_thread(lambda: txn.__exit__(ValueError, ValueError(), None)) is False
+    assert cache.get(a) is None
 
 
 def test_the_key_neednt_exist_and_a_block_that_raises_rolls_back(

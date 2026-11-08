@@ -15,6 +15,8 @@ Cache.transact(retry=False)
 
 A transaction belongs to a thread, not an asyncio task: another coroutine's writes on the same thread during an `await` inside the block join it and roll back with it.
 
+A block that exits with no exception but didn't commit (another thread ended it, or it was rolled back after an error inside it) raises `TransactionAborted` at its exit, so it never exits cleanly when its writes are gone.
+
 
 ## Parameters
 

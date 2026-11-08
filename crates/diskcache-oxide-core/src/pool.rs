@@ -220,6 +220,33 @@ impl Pool {
         drop(surplus);
     }
 
+    /// Takes a connection opened outside the pool (an open sequence's) as idle, without counting it
+    /// as checked out, or closes it if the pool already holds `max_idle` idle connections. Not
+    /// `checkout` + `checkin`: `checkout` pops an idle connection when there is one, and this one
+    /// would be dropped unused. `generation` is the one current when it was opened: the caller holds
+    /// one gate level from the open to here, so no fork came between (asserted).
+    pub fn adopt(&self, _gate: &SharedGuard<'_>, conn: Connection, generation: u64) {
+        let current = gate::generation();
+        debug_assert_eq!(generation, current, "a connection adopted across a fork");
+        let pooled = PooledConn { conn, generation, applied: Applied::default() };
+        let surplus = {
+            let mut state = self.shared.lock();
+            reset_if_stale(&mut state, current);
+            if pooled.generation != current {
+                pooled.forget();
+                return;
+            }
+            if state.idle.len() < self.max_idle.load(Ordering::Relaxed) {
+                state.idle.push(pooled);
+                None
+            } else {
+                Some(pooled)
+            }
+        };
+        // Closed outside the pool's mutex, still under the caller's gate level.
+        drop(surplus);
+    }
+
     /// Takes back a checked-out connection without pooling it: closes it (or forgets it, if it was
     /// inherited across `fork()`), and stops counting it as checked out.
     pub fn discard(&self, _gate: &SharedGuard<'_>, pooled: PooledConn) {

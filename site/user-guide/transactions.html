@@ -388,7 +388,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </section>
 <section id="when-a-block-doesnt-commit" class="level1">
 <h1>When a block doesn’t commit</h1>
-<p>A <code>with</code> block never exits cleanly when its writes are gone. Its exit raises <code>RuntimeError</code> (“the write transaction was rolled back …”) when the transaction didn’t commit:</p>
+<p>A <code>with</code> block never exits cleanly when its writes are gone. Its exit raises <code>TransactionAborted</code>, a <code>RuntimeError</code>, when the transaction didn’t commit:</p>
 <ul>
 <li>an operation inside it failed in a way that left the transaction unusable (a full disk, an I/O error). Later writes in the block fail at once, and nothing in it commits;</li>
 <li>it was ended from another thread, which rolled it back (below);</li>
@@ -400,7 +400,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>diskcache says a transaction “may not be shared between threads”. In diskcache-oxide, any thread may call the transaction’s <a href="../reference/Cache.__exit__.html#diskcache_oxide.Cache.__exit__" class="gdls-link gdls-code">__exit__</a>, to commit (no exception) or roll back the owner’s transaction. The rules:</p>
 <ul>
 <li>While the owner is inside one of its own operations (decoding a value, say), a rollback is left to that operation, and happens when it returns. A commit waits for it, up to the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>. A commit that can’t run by then raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> and rolls back.</li>
-<li>The owner’s own exit afterwards raises <code>RuntimeError</code> unless the transaction committed.</li>
+<li>The owner’s own exit afterwards raises <code>TransactionAborted</code> unless the transaction committed.</li>
 <li>An owner’s exit that comes while the other thread is still committing waits for the outcome, up to the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, and reports it. Past that, it raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> (“whether it committed is unknown”). An exit with an exception passing doesn’t wait.</li>
 <li>Writes the owner makes after another thread ended the transaction run on their own, outside it.</li>
 </ul>

@@ -10,6 +10,7 @@ from __future__ import annotations
 import _thread
 import asyncio
 import gc
+import pickle
 import signal
 import subprocess
 import sys
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from diskcache_oxide import Cache, Timeout, TransactionBusy
+from diskcache_oxide import Cache, Timeout, TransactionAborted, TransactionBusy
 from diskcache_oxide._core import Transaction
 
 from tests.unit.test_durable import BIG, NOT_AS_ROOT, SHORT, _value_file, peer_holding_the_write_lock, unreadable
@@ -105,6 +106,26 @@ def test_exiting_a_transaction_that_was_never_entered_raises(cache: Cache) -> No
         cache.transact().__exit__(None, None, None)
 
 
+def test_misuse_is_a_plain_runtime_error_not_transaction_aborted(cache: Cache) -> None:
+    # TransactionAborted means "your writes are gone"; a programming error is a plain RuntimeError.
+    txn = cache.transact()
+    with pytest.raises(RuntimeError, match='never entered') as never_entered:
+        txn.__exit__(None, None, None)
+    with txn, pytest.raises(RuntimeError, match='only once') as reentered:
+        txn.__enter__()
+    assert not isinstance(never_entered.value, TransactionAborted)
+    assert not isinstance(reentered.value, TransactionAborted)
+
+
+def test_transaction_aborted_is_a_runtime_error_that_pickles_under_the_package_name() -> None:
+    error = TransactionAborted('the transaction did not commit')
+    assert isinstance(error, RuntimeError)
+    assert TransactionAborted.__module__ == 'diskcache_oxide'
+    copy = pickle.loads(pickle.dumps(error))
+    assert type(copy) is TransactionAborted
+    assert copy.args == error.args
+
+
 @pytest.mark.parametrize('retry', [1, 0, None, 'yes'])
 def test_a_retry_that_isnt_a_bool_raises(cache: Cache, retry: object) -> None:
     with pytest.raises(TypeError):
@@ -159,7 +180,7 @@ def test_an_exit_after_a_rollback_raises_unless_an_exception_is_passing(cache: C
     with pytest.raises(KeyError), txn:
         cache.set('k', 1)
         raise KeyError('k')
-    with pytest.raises(RuntimeError, match='rolled back'):
+    with pytest.raises(TransactionAborted, match='did not commit'):
         txn.__exit__(None, None, None)
     assert txn.__exit__(KeyError, KeyError('k'), None) is False
     assert cache.get('k') is None
@@ -280,7 +301,7 @@ ENDED_ELSEWHERE_MID_OPERATION = """
 import sys
 import threading
 import time
-from diskcache_oxide import Cache, Timeout
+from diskcache_oxide import Cache, Timeout, TransactionAborted
 
 mode, directory = sys.argv[1], sys.argv[2]
 HOOK_SECONDS = 1.0 if mode == 'timeout' else 0.3
@@ -321,8 +342,8 @@ ender.join()  # The owner's own exit comes after the other thread's end has retu
 outcome = 'exited'
 try:
     TXN.__exit__(None, None, None)
-except RuntimeError as e:
-    assert 'rolled back' in str(e), e
+except TransactionAborted as e:
+    assert 'did not commit' in str(e), e
     outcome = 'aborted'
 result, took = ended
 if mode == 'commit':
@@ -455,7 +476,7 @@ class _ExitsWithAnException:
 def test_the_owners_exit_after_a_rollback_elsewhere_raises(cache: Cache) -> None:
     txn = cache.transact()
     rolled_back: list[bool] = []
-    with pytest.raises(RuntimeError, match='rolled back'), txn:
+    with pytest.raises(TransactionAborted, match='did not commit'), txn:
         cache.set('k', 1)
         thread = threading.Thread(target=lambda: rolled_back.append(txn.__exit__(ValueError, ValueError(), None)))
         thread.start()
@@ -534,7 +555,7 @@ def test_an_exit_from_inside_its_own_operation_raises_and_the_block_then_aborts(
     cache.set('obj', _ExitsItsOwnTransaction())
     txn = cache.transact()
     _ExitsItsOwnTransaction.txn = txn
-    with pytest.raises(RuntimeError, match='rolled back'), txn:
+    with pytest.raises(TransactionAborted, match='did not commit'), txn:
         cache.set('inside', 1)
         assert cache.get('obj').n == 1
     assert len(_ExitsItsOwnTransaction.refused) == 1

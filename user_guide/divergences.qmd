@@ -114,7 +114,7 @@ Inside one cache's transaction, diskcache's `transact()` on a second cache waits
 
 ### D-031: a transaction can end on another thread
 
-diskcache says a transaction "may not be shared between threads". In diskcache-oxide any thread may commit or roll back the owner's transaction through its `__exit__`, within the transaction's `timeout`. A commit that can't run in time raises `Timeout` and rolls back, and the owner's own exit afterwards raises `RuntimeError` unless the transaction committed, so a `with` block never exits cleanly when its writes are gone. An owner's exit during another thread's commit waits for the outcome.
+diskcache says a transaction "may not be shared between threads". In diskcache-oxide any thread may commit or roll back the owner's transaction through its `__exit__`, within the transaction's `timeout`. A commit that can't run in time raises `Timeout` and rolls back, and the owner's own exit afterwards raises `TransactionAborted` (a `RuntimeError`) unless the transaction committed, so a `with` block never exits cleanly when its writes are gone. An owner's exit during another thread's commit waits for the outcome.
 
 ## Resources
 

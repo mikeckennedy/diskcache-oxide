@@ -428,6 +428,10 @@ undo the inner block's writes.
 A transaction belongs to a thread, not an asyncio task: another coroutine's writes on the
 same thread during an `await` inside the block join it and roll back with it.
 
+A block that exits with no exception but didn't commit (another thread ended it, or it was
+rolled back after an error inside it) raises `TransactionAborted` at its exit, so it never
+exits cleanly when its writes are gone.
+
 Args:
     retry: Keep trying to begin while it times out, instead of raising `Timeout`. Never
         retries `TransactionBusy`. Each attempt waits up to `timeout`.
@@ -651,8 +655,9 @@ The check costs one atomic load while no transaction is open anywhere in the pro
 one is (any thread's, any cache's), keyed calls, calls over every shard and iterator `next()`s also
 look at each shard that holds one.
 
-As on `Cache`, a transaction belongs to a thread, not an asyncio task, and under
-`durable=True` a failure to begin, or inside the block, raises.
+As on `Cache`, a transaction belongs to a thread, not an asyncio task, a block that didn't
+commit raises `TransactionAborted` at its exit, and under `durable=True` a failure to begin,
+or inside the block, raises.
 
 Args:
     key: Keyword-only. Any key on the shard to hold; it needn't exist.
@@ -1794,8 +1799,8 @@ Only `str` keys are accepted today; anything else raises `TypeError`. Keys are a
 
 - **`tx` is the cache** instead of `None`, and a second `Cache` handle on the same directory joins the transaction instead of waiting for it (D-029).
 - **A transaction on a second cache whose write lock another thread holds** raises `TransactionBusy`, a `Timeout` subclass, at once, and `retry=True` retries only `Timeout`, never `TransactionBusy`. diskcache waits, and its `retry=True` loops on any `OperationalError` (D-030).
-- **Another thread may end it.** Its commit or rollback runs within the transaction's `timeout`, and the owner's own exit then raises `RuntimeError` unless it committed (D-031). The object `transact()` returns can be entered once.
-- **A block that didn't commit raises at its exit** with `RuntimeError`, for example after a write inside it failed on a full disk.
+- **Another thread may end it.** Its commit or rollback runs within the transaction's `timeout`, and the owner's own exit then raises `TransactionAborted` (a `RuntimeError`) unless it committed (D-031). The object `transact()` returns can be entered once.
+- **A block that didn't commit raises at its exit** with `TransactionAborted`, a `RuntimeError`, for example after a write inside it failed on a full disk.
 - **`durable=True`**, which diskcache doesn't have, still raises when a transaction can't begin and for any failure inside one (D-028).
 - **Forking inside your own transaction** poisons the child's copy, whose writes raise `RuntimeError` at once, instead of stalling for the timeout (D-020).
 - **It belongs to a thread, not an asyncio task**, as in diskcache: don't `await` inside the block.
@@ -1845,12 +1850,13 @@ You don't have to change anything for these:
 
 ### Errors and what to do about them
 
-Sooner or later a traceback ends in `diskcache_oxide`, and the question is whether it's your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that `except` clauses you already have keep working: `Timeout` is a `TimeoutError`, `UnsafeValueError` is a `TypeError`, `LayoutMismatchError` is a `ValueError`. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you'll get.
+Sooner or later a traceback ends in `diskcache_oxide`, and the question is whether it's your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that `except` clauses you already have keep working: `Timeout` is a `TimeoutError`, `TransactionAborted` is a `RuntimeError`, `UnsafeValueError` is a `TypeError`, `LayoutMismatchError` is a `ValueError`. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you'll get.
 
 | Exception | Base classes | Where |
 |---|---|---|
 | `Timeout` | `TimeoutError` (so `OSError`) | any call that waits for a lock or a fork |
 | `TransactionBusy` | `Timeout` | `transact()` on a second cache |
+| `TransactionAborted` | `RuntimeError` | a `transact()` block that didn't commit |
 | `UnsafeValueError` | `TypeError` | reading a pickled value without `pickle=True` |
 | `CorruptValueError` | `ValueError` | reading a value no build could decode |
 | `ForeignValueError` | `CorruptValueError` | reading a value another version or host could decode |
@@ -1910,13 +1916,23 @@ Inside one cache's `transact()` block, beginning a transaction on a second cache
 
 Nest the two caches in the same order everywhere in your app. When `TransactionBusy` reaches you, leave the outer block, so your lock is released, and try the whole thing again. See [Transactions](transactions.qmd#two-caches-at-once-transactionbusy).
 
-## `RuntimeError` from a transaction
+## `TransactionAborted`: a block that didn't commit
 
 ```text
-RuntimeError: the write transaction was rolled back after an error; nothing in it can commit
+TransactionAborted: the write transaction was rolled back after an error; nothing in it can commit
 ```
 
-A `with cache.transact():` block never exits cleanly when its writes are gone. One of its operations failed in a way that left the transaction unusable (a full disk, an I/O error), another thread rolled it back, or it was ended from inside one of its own operations. Nothing in the block was kept. Treat it as you would the original failure: log it, and run the block again if the work is idempotent.
+A `with cache.transact():` block never exits cleanly when its writes are gone. This one comes from a write inside the block, or from the block's exit, after one of its operations failed in a way that left the transaction unusable (a full disk, an I/O error).
+
+```text
+TransactionAborted: the transaction did not commit: another thread or an earlier exit ended it, or it was rolled back after an error
+```
+
+This one comes from the block's exit, when the transaction had already ended without committing: another thread rolled it back, or an earlier `__exit__` call on the same object ended it (including one made from inside the block's own operations, such as a pickle hook, which raises `RuntimeError` where it's called and rolls the transaction back when that operation returns).
+
+Either way nothing in the block was kept. Treat it as you would the original failure: log it, and run the block again if the work is idempotent. `TransactionAborted` is a `RuntimeError`, so an `except RuntimeError` you already have still catches it; catch `TransactionAborted` to handle this case alone.
+
+## `RuntimeError` from a transaction
 
 ```text
 RuntimeError: this database can't be written in a process forked inside a transaction
@@ -2663,7 +2679,7 @@ To use two caches in one block, always nest them in the same order everywhere in
 
 ## When a block doesn't commit
 
-A `with` block never exits cleanly when its writes are gone. Its exit raises `RuntimeError` ("the write transaction was rolled back ...") when the transaction didn't commit:
+A `with` block never exits cleanly when its writes are gone. Its exit raises `TransactionAborted`, a `RuntimeError`, when the transaction didn't commit:
 
 - an operation inside it failed in a way that left the transaction unusable (a full disk, an I/O error). Later writes in the block fail at once, and nothing in it commits;
 - it was ended from another thread, which rolled it back (below);
@@ -2676,7 +2692,7 @@ A commit that can't finish raises too: a busy or failed `COMMIT` raises `Timeout
 diskcache says a transaction "may not be shared between threads". In diskcache-oxide, any thread may call the transaction's `__exit__`, to commit (no exception) or roll back the owner's transaction. The rules:
 
 - While the owner is inside one of its own operations (decoding a value, say), a rollback is left to that operation, and happens when it returns. A commit waits for it, up to the cache's `timeout`. A commit that can't run by then raises `Timeout` and rolls back.
-- The owner's own exit afterwards raises `RuntimeError` unless the transaction committed.
+- The owner's own exit afterwards raises `TransactionAborted` unless the transaction committed.
 - An owner's exit that comes while the other thread is still committing waits for the outcome, up to the cache's `timeout`, and reports it. Past that, it raises `Timeout` ("whether it committed is unknown"). An exit with an exception passing doesn't wait.
 - Writes the owner makes after another thread ended the transaction run on their own, outside it.
 
@@ -3069,7 +3085,7 @@ Inside one cache's transaction, diskcache's `transact()` on a second cache waits
 
 ### D-031: a transaction can end on another thread
 
-diskcache says a transaction "may not be shared between threads". In diskcache-oxide any thread may commit or roll back the owner's transaction through its `__exit__`, within the transaction's `timeout`. A commit that can't run in time raises `Timeout` and rolls back, and the owner's own exit afterwards raises `RuntimeError` unless the transaction committed, so a `with` block never exits cleanly when its writes are gone. An owner's exit during another thread's commit waits for the outcome.
+diskcache says a transaction "may not be shared between threads". In diskcache-oxide any thread may commit or roll back the owner's transaction through its `__exit__`, within the transaction's `timeout`. A commit that can't run in time raises `Timeout` and rolls back, and the owner's own exit afterwards raises `TransactionAborted` (a `RuntimeError`) unless the transaction committed, so a `with` block never exits cleanly when its writes are gone. An owner's exit during another thread's commit waits for the outcome.
 
 ## Resources
 

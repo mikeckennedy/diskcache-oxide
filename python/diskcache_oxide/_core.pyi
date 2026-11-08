@@ -12,6 +12,7 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     '_DEBUG_BUILD',
     'Timeout',
     'TransactionBusy',
+    'TransactionAborted',
     'UnsafeValueError',
     'CorruptValueError',
     'ForeignValueError',
@@ -46,6 +47,12 @@ class Timeout(TimeoutError):
 class TransactionBusy(Timeout):
     """A thread holding one cache's transaction couldn't begin another's, because another thread holds its write
     lock. It fails at once rather than waiting, since the holder could be waiting on a lock this thread holds."""
+
+class TransactionAborted(RuntimeError):
+    """A held transaction didn't commit and can't: it was rolled back (after an error inside it, or by another thread
+    or an earlier exit), so nothing written in it will be committed. Raised by a write inside a transaction SQLite
+    already rolled back (a full disk, an I/O error), and by a `with` block's exit, with no exception passing, when the
+    block didn't commit. A `RuntimeError`, so code that catches that keeps working."""
 
 class UnsafeValueError(TypeError):
     """A pickle=False cache read a value that was stored with pickle."""
@@ -578,6 +585,10 @@ class Cache:
         A transaction belongs to a thread, not an asyncio task: another coroutine's writes on the
         same thread during an `await` inside the block join it and roll back with it.
 
+        A block that exits with no exception but didn't commit (another thread ended it, or it was
+        rolled back after an error inside it) raises `TransactionAborted` at its exit, so it never
+        exits cleanly when its writes are gone.
+
         Args:
             retry: Keep trying to begin while it times out, instead of raising `Timeout`. Never
                 retries `TransactionBusy`. Each attempt waits up to `timeout`.
@@ -763,8 +774,9 @@ class FanoutCache:
         one is (any thread's, any cache's), keyed calls, calls over every shard and iterator `next()`s also
         look at each shard that holds one.
 
-        As on `Cache`, a transaction belongs to a thread, not an asyncio task, and under
-        `durable=True` a failure to begin, or inside the block, raises.
+        As on `Cache`, a transaction belongs to a thread, not an asyncio task, a block that didn't
+        commit raises `TransactionAborted` at its exit, and under `durable=True` a failure to begin,
+        or inside the block, raises.
 
         Args:
             key: Keyword-only. Any key on the shard to hold; it needn't exist.
@@ -981,9 +993,9 @@ class Transaction[C]:
         returns at once.
 
         Raises:
-            RuntimeError: With no exception, the transaction didn't commit: it was rolled back by
-                another thread, an earlier exit, or an error inside it (`TransactionAborted`). Also
-                raised if it was never entered or is still being entered.
+            TransactionAborted: With no exception, the transaction didn't commit: another thread
+                or an earlier exit ended it, or it was rolled back after an error inside it.
+            RuntimeError: It was never entered, or is still being entered on another thread.
             Timeout: The commit couldn't run within `timeout`; it rolled back. Or another thread's
                 end was still running after `timeout`, and whether it committed is unknown.
         """

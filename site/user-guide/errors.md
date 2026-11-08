@@ -1,11 +1,12 @@
 # Errors and what to do about them
 
-Sooner or later a traceback ends in `diskcache_oxide`, and the question is whether it's your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that `except` clauses you already have keep working: [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) is a `TimeoutError`, [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) is a `TypeError`, [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) is a `ValueError`. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you'll get.
+Sooner or later a traceback ends in `diskcache_oxide`, and the question is whether it's your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that `except` clauses you already have keep working: [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) is a `TimeoutError`, `TransactionAborted` is a `RuntimeError`, [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) is a `TypeError`, [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) is a `ValueError`. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you'll get.
 
 | Exception | Base classes | Where |
 |----|----|----|
 | [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) | `TimeoutError` (so `OSError`) | any call that waits for a lock or a fork |
 | [TransactionBusy](../reference/TransactionBusy.md#diskcache_oxide.TransactionBusy) | [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) | [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) on a second cache |
+| `TransactionAborted` | `RuntimeError` | a [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) block that didn't commit |
 | [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) | `TypeError` | reading a pickled value without `pickle=True` |
 | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | `ValueError` | reading a value no build could decode |
 | [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError) | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | reading a value another version or host could decode |
@@ -70,13 +71,24 @@ Inside one cache's [transact()](../reference/Cache.transact.md#diskcache_oxide.C
 Nest the two caches in the same order everywhere in your app. When [TransactionBusy](../reference/TransactionBusy.md#diskcache_oxide.TransactionBusy) reaches you, leave the outer block, so your lock is released, and try the whole thing again. See [Transactions](transactions.md#two-caches-at-once-transactionbusy).
 
 
-# `RuntimeError` from a transaction
+# `TransactionAborted`: a block that didn't commit
 
 ``` text
-RuntimeError: the write transaction was rolled back after an error; nothing in it can commit
+TransactionAborted: the write transaction was rolled back after an error; nothing in it can commit
 ```
 
-A `with cache.transact():` block never exits cleanly when its writes are gone. One of its operations failed in a way that left the transaction unusable (a full disk, an I/O error), another thread rolled it back, or it was ended from inside one of its own operations. Nothing in the block was kept. Treat it as you would the original failure: log it, and run the block again if the work is idempotent.
+A `with cache.transact():` block never exits cleanly when its writes are gone. This one comes from a write inside the block, or from the block's exit, after one of its operations failed in a way that left the transaction unusable (a full disk, an I/O error).
+
+``` text
+TransactionAborted: the transaction did not commit: another thread or an earlier exit ended it, or it was rolled back after an error
+```
+
+This one comes from the block's exit, when the transaction had already ended without committing: another thread rolled it back, or an earlier [__exit__](../reference/Cache.__exit__.md#diskcache_oxide.Cache.__exit__) call on the same object ended it (including one made from inside the block's own operations, such as a pickle hook, which raises `RuntimeError` where it's called and rolls the transaction back when that operation returns).
+
+Either way nothing in the block was kept. Treat it as you would the original failure: log it, and run the block again if the work is idempotent. `TransactionAborted` is a `RuntimeError`, so an `except RuntimeError` you already have still catches it; catch `TransactionAborted` to handle this case alone.
+
+
+# `RuntimeError` from a transaction
 
 ``` text
 RuntimeError: this database can't be written in a process forked inside a transaction

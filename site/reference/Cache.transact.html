@@ -1305,7 +1305,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L568-L595" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L575-L606" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Cache</span><span class="op">.</span><span class="sig-name">transact</span>(<span class="va">retry</span><span class="op">=</span><span class="cn-bool">False</span>)</span></code></pre></div>
@@ -1313,6 +1313,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <div class="doc-text">
 <p><code>tx</code> is the cache itself. On the thread that entered the block, every call on this cache directory inside it, through any handle, runs in the transaction: it commits when the block exits and rolls back if the block raises. Other threads’ and processes’ writes wait for it. Entered on a thread that already holds a transaction on this directory, it joins that one: the inner block’s exit doesn’t commit, and an exception the caller catches inside doesn’t undo the inner block’s writes.</p>
 <p>A transaction belongs to a thread, not an asyncio task: another coroutine’s writes on the same thread during an <code>await</code> inside the block join it and roll back with it.</p>
+<p>A block that exits with no exception but didn’t commit (another thread ended it, or it was rolled back after an error inside it) raises <code>TransactionAborted</code> at its exit, so it never exits cleanly when its writes are gone.</p>
 </div>
 <section id="parameters" class="level2 doc-parameters">
 <h2 class="doc-parameters">Parameters</h2>

@@ -281,6 +281,7 @@ ul.task-list li input[type="checkbox"] {
   <li><a href="#typeerror-for-keys-and-booleans" id="toc-typeerror-for-keys-and-booleans" class="nav-link" data-scroll-target="#typeerror-for-keys-and-booleans"><code>TypeError</code> for keys and booleans</a></li>
   <li><a href="#timeout-a-lock-or-a-fork-outlasted-timeout" id="toc-timeout-a-lock-or-a-fork-outlasted-timeout" class="nav-link" data-scroll-target="#timeout-a-lock-or-a-fork-outlasted-timeout"><code>Timeout</code>: a lock or a fork outlasted <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a></a></li>
   <li><a href="#transactionbusy-two-caches-in-one-transaction" id="toc-transactionbusy-two-caches-in-one-transaction" class="nav-link" data-scroll-target="#transactionbusy-two-caches-in-one-transaction"><code>TransactionBusy</code>: two caches in one transaction</a></li>
+  <li><a href="#transactionaborted-a-block-that-didnt-commit" id="toc-transactionaborted-a-block-that-didnt-commit" class="nav-link" data-scroll-target="#transactionaborted-a-block-that-didnt-commit"><code>TransactionAborted</code>: a block that didn’t commit</a></li>
   <li><a href="#runtimeerror-from-a-transaction" id="toc-runtimeerror-from-a-transaction" class="nav-link" data-scroll-target="#runtimeerror-from-a-transaction"><code>RuntimeError</code> from a transaction</a></li>
   <li><a href="#unsafevalueerror-a-pickled-value-read-without-pickletrue" id="toc-unsafevalueerror-a-pickled-value-read-without-pickletrue" class="nav-link" data-scroll-target="#unsafevalueerror-a-pickled-value-read-without-pickletrue"><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>: a pickled value, read without <code>pickle=True</code></a></li>
   <li><a href="#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" id="toc-corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" class="nav-link" data-scroll-target="#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded"><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> and <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>: a value that can’t be decoded</a></li>
@@ -318,7 +319,7 @@ ul.task-list li input[type="checkbox"] {
 </header>
 
 
-<p>Sooner or later a traceback ends in <code>diskcache_oxide</code>, and the question is whether it’s your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that <code>except</code> clauses you already have keep working: <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> is a <code>TimeoutError</code>, <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> is a <code>TypeError</code>, <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> is a <code>ValueError</code>. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you’ll get.</p>
+<p>Sooner or later a traceback ends in <code>diskcache_oxide</code>, and the question is whether it’s your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that <code>except</code> clauses you already have keep working: <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> is a <code>TimeoutError</code>, <code>TransactionAborted</code> is a <code>RuntimeError</code>, <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> is a <code>TypeError</code>, <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> is a <code>ValueError</code>. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you’ll get.</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
@@ -339,31 +340,36 @@ ul.task-list li input[type="checkbox"] {
 <td><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> on a second cache</td>
 </tr>
 <tr class="odd">
+<td><code>TransactionAborted</code></td>
+<td><code>RuntimeError</code></td>
+<td>a <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block that didn’t commit</td>
+</tr>
+<tr class="even">
 <td><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a></td>
 <td><code>TypeError</code></td>
 <td>reading a pickled value without <code>pickle=True</code></td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a></td>
 <td><code>ValueError</code></td>
 <td>reading a value no build could decode</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a></td>
 <td><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a></td>
 <td>reading a value another version or host could decode</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a></td>
 <td><code>RuntimeError</code></td>
 <td>opening a database or manifest this version can’t read</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a></td>
 <td><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>, <code>ValueError</code></td>
 <td>opening a directory as the wrong kind of cache</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>TypeError</code>, <code>ValueError</code>, <code>KeyError</code>, <code>RuntimeError</code>, <code>OSError</code>, <code>MemoryError</code></td>
 <td>built-in</td>
 <td>described below</td>
@@ -412,10 +418,16 @@ TypeError: expire must be a number of seconds or None, not bool</code></pre>
 <p>Inside one cache’s <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block, beginning a transaction on a second cache whose write lock another thread holds raises <a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a> at once instead of waiting. That thread could be waiting for the lock you hold, and then neither would ever finish. It’s a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> subclass, so existing handlers catch it, and <code>retry=True</code> never retries it.</p>
 <p>Nest the two caches in the same order everywhere in your app. When <a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a> reaches you, leave the outer block, so your lock is released, and try the whole thing again. See <a href="../user-guide/transactions.html#two-caches-at-once-transactionbusy">Transactions</a>.</p>
 </section>
+<section id="transactionaborted-a-block-that-didnt-commit" class="level1">
+<h1><code>TransactionAborted</code>: a block that didn’t commit</h1>
+<pre class="text"><code>TransactionAborted: the write transaction was rolled back after an error; nothing in it can commit</code></pre>
+<p>A <code>with cache.transact():</code> block never exits cleanly when its writes are gone. This one comes from a write inside the block, or from the block’s exit, after one of its operations failed in a way that left the transaction unusable (a full disk, an I/O error).</p>
+<pre class="text"><code>TransactionAborted: the transaction did not commit: another thread or an earlier exit ended it, or it was rolled back after an error</code></pre>
+<p>This one comes from the block’s exit, when the transaction had already ended without committing: another thread rolled it back, or an earlier <a href="../reference/Cache.__exit__.html#diskcache_oxide.Cache.__exit__" class="gdls-link gdls-code">__exit__</a> call on the same object ended it (including one made from inside the block’s own operations, such as a pickle hook, which raises <code>RuntimeError</code> where it’s called and rolls the transaction back when that operation returns).</p>
+<p>Either way nothing in the block was kept. Treat it as you would the original failure: log it, and run the block again if the work is idempotent. <code>TransactionAborted</code> is a <code>RuntimeError</code>, so an <code>except RuntimeError</code> you already have still catches it; catch <code>TransactionAborted</code> to handle this case alone.</p>
+</section>
 <section id="runtimeerror-from-a-transaction" class="level1">
 <h1><code>RuntimeError</code> from a transaction</h1>
-<pre class="text"><code>RuntimeError: the write transaction was rolled back after an error; nothing in it can commit</code></pre>
-<p>A <code>with cache.transact():</code> block never exits cleanly when its writes are gone. One of its operations failed in a way that left the transaction unusable (a full disk, an I/O error), another thread rolled it back, or it was ended from inside one of its own operations. Nothing in the block was kept. Treat it as you would the original failure: log it, and run the block again if the work is idempotent.</p>
 <pre class="text"><code>RuntimeError: this database can't be written in a process forked inside a transaction</code></pre>
 <p>A process forked while the forking thread itself held a <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block, and this is the child. The parent’s transaction carries on and commits; the child’s copy is poisoned, and its writes to that database raise this instead of stalling for a minute. Don’t fork from inside a transaction: start worker processes before the block, or after it. See <a href="../user-guide/concurrency-and-forks.html#forking-from-inside-your-own-transaction">Forking from inside your own transaction</a>.</p>
 </section>

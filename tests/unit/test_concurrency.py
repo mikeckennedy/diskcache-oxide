@@ -13,7 +13,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 
 import pytest
-from diskcache_oxide import Cache, Timeout, TransactionBusy
+from diskcache_oxide import Cache, Timeout, TransactionAborted, TransactionBusy
 
 from tests.conformance.proc_workers import SqlitePeer
 
@@ -555,7 +555,7 @@ def test_a_hold_exited_inside_its_own_operation_fails_its_with_statement(
     cache.set('obj', _ExitsTheHold())
     hold = cache.transact()
     _ExitsTheHold.hold = hold
-    with pytest.raises(RuntimeError, match='rolled back'), hold:
+    with pytest.raises(TransactionAborted, match='did not commit'), hold:
         cache.set('inside', 1)
         cache.get('obj')
     assert len(_ExitsTheHold.refused) == 1, _ExitsTheHold.refused

@@ -40,3 +40,27 @@ impl Drop for TempDir {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+
+/// This process's open file descriptors on the file at `path`, pending ones SQLite hasn't closed
+/// yet included: `/proc/self/fd` on Linux, `lsof` on macOS (where `stat` of `/dev/fd/N` doesn't
+/// reach the file, and opening it to `fstat` would add a descriptor whose close drops SQLite's locks).
+pub(crate) fn fds_on(path: &Path) -> usize {
+    let path = std::fs::canonicalize(path).unwrap();
+    if cfg!(target_os = "linux") {
+        return std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .filter_map(|e| std::fs::read_link(e.path()).ok())
+            .filter(|target| *target == path)
+            .count();
+    }
+    let output = std::process::Command::new("lsof")
+        .args(["-n", "-P", "-F", "n", "-p", &std::process::id().to_string()])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix('n'))
+        .filter(|name| Path::new(name) == path)
+        .count()
+}

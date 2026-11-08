@@ -51,7 +51,7 @@ To use two caches in one block, always nest them in the same order everywhere in
 
 ## When a block doesn't commit
 
-A `with` block never exits cleanly when its writes are gone. Its exit raises `RuntimeError` ("the write transaction was rolled back ...") when the transaction didn't commit:
+A `with` block never exits cleanly when its writes are gone. Its exit raises `TransactionAborted`, a `RuntimeError`, when the transaction didn't commit:
 
 - an operation inside it failed in a way that left the transaction unusable (a full disk, an I/O error). Later writes in the block fail at once, and nothing in it commits;
 - it was ended from another thread, which rolled it back (below);
@@ -64,7 +64,7 @@ A commit that can't finish raises too: a busy or failed `COMMIT` raises `Timeout
 diskcache says a transaction "may not be shared between threads". In diskcache-oxide, any thread may call the transaction's `__exit__`, to commit (no exception) or roll back the owner's transaction. The rules:
 
 - While the owner is inside one of its own operations (decoding a value, say), a rollback is left to that operation, and happens when it returns. A commit waits for it, up to the cache's `timeout`. A commit that can't run by then raises `Timeout` and rolls back.
-- The owner's own exit afterwards raises `RuntimeError` unless the transaction committed.
+- The owner's own exit afterwards raises `TransactionAborted` unless the transaction committed.
 - An owner's exit that comes while the other thread is still committing waits for the outcome, up to the cache's `timeout`, and reports it. Past that, it raises `Timeout` ("whether it committed is unknown"). An exit with an exception passing doesn't wait.
 - Writes the owner makes after another thread ended the transaction run on their own, outside it.
 

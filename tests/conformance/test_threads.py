@@ -346,6 +346,49 @@ def test_a_closed_handle_used_again_beside_a_live_one_adds_no_fd(
     assert _stable_fds_inside(cache_dir) == 0
 
 
+RACING_OPENERS = 16
+
+
+@pytest.mark.backend_only('oxide')
+@pytest.mark.covers('D-017')
+def test_racing_first_opens_all_read_the_seed_and_close_leaves_no_fd(
+    make_cache: Callable[..., Any], tmp_path: Path
+) -> None:
+    """Many threads opening one directory at once, each the process's first open of it: the openers
+    that lose the race to register its store join the winner's and hand it their connection (plan 20),
+    and closing every handle leaves no fd. Not within D-017's budget while they're open: openers that
+    connected before any store registered each hold a connection, and those over the pool's idle cap
+    are closed beside the live pool, where SQLite keeps them pending until the pool empties (D-017)."""
+    for round_ in range(5):
+        directory = tmp_path / f'race-{round_}'
+        seed = make_cache(directory)
+        seed.set('k', round_)
+        seed.close()  # The database exists, and no store for it is live.
+        barrier = threading.Barrier(RACING_OPENERS)
+        handles: list[Any] = []
+        seen: list[Any] = []
+        lock = threading.Lock()
+
+        def open_and_read(directory: Path = directory, barrier: threading.Barrier = barrier) -> None:
+            barrier.wait()
+            cache = make_cache(directory)
+            value = cache.get('k')
+            with lock:
+                handles.append(cache)
+                seen.append(value)
+
+        threads = [threading.Thread(target=open_and_read) for _ in range(RACING_OPENERS)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+        assert seen == [round_] * RACING_OPENERS, seen
+        assert len(handles) == RACING_OPENERS
+        for cache in handles:
+            cache.close()
+        assert _stable_fds_inside(directory) == 0, 'closing every racing handle left an fd open'
+
+
 @pytest.mark.diverges(
     backend='diskcache',
     ref='D-018',
