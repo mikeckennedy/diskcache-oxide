@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import _thread
 import asyncio
+import faulthandler
 import gc
+import signal
 import subprocess
 import sys
 import threading
@@ -205,11 +207,25 @@ def test_retry_is_interruptible_between_attempts(tmp_path: Path) -> None:
     cache.set('k', 1)
     txn = cache.transact(retry=True)
     with peer_holding_the_write_lock(tmp_path / 'c'):
-        timer = threading.Timer(0.3, _thread.interrupt_main)
-        timer.start()
+        # Once, in check.sh on the mini (2026-11-07, 3.14, 1 of 6 full runs, never in 50 runs alone), the
+        # interrupt never arrived and pytest's 60 s timeout ended the test. Until that recurs with these
+        # on: the timer says when it fired and what SIGINT's handler was, and faulthandler dumps every
+        # thread's stack at 10 s, both to stderr, which pytest shows for a failed test.
         started = time.monotonic()
-        with pytest.raises(KeyboardInterrupt):
-            txn.__enter__()
+
+        def interrupt() -> None:
+            handler = signal.getsignal(signal.SIGINT)
+            print(f'timer fired at {time.monotonic() - started:.3f}s; SIGINT handler {handler!r}', file=sys.stderr)
+            _thread.interrupt_main()
+
+        timer = threading.Timer(0.3, interrupt)
+        faulthandler.dump_traceback_later(10, repeat=False, file=2)
+        timer.start()
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                txn.__enter__()
+        finally:
+            faulthandler.cancel_dump_traceback_later()
         assert time.monotonic() - started < 5
         timer.join()
     assert 'Ready' in repr(txn)
