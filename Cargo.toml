@@ -38,7 +38,8 @@ shuttle = "0.9.9"
 # deny, not forbid: the py crate's PyO3 macros expand to unsafe code. Core allows it only in its `stack` and `sqlite_mutex` modules.
 unsafe_code = "deny"
 missing_debug_implementations = "warn"
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(shuttle)', 'cfg(dco_spin_sweep)'] }
+# `coverage` is set by cargo-llvm-cov (scripts/coverage.sh).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(shuttle)', 'cfg(dco_spin_sweep)', 'cfg(coverage)'] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

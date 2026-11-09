@@ -304,6 +304,21 @@ fn _sqlite_memory(reset: bool) -> (i64, i64) {
     unsafe { (rusqlite::ffi::sqlite3_memory_used(), rusqlite::ffi::sqlite3_memory_highwater(i32::from(reset))) }
 }
 
+/// Coverage builds only (`scripts/coverage.sh`): writes this process's coverage profile now. A
+/// forked child that leaves through `os._exit` skips the exit handler that would write it, so the
+/// script's `sitecustomize` calls this first.
+#[cfg(coverage)]
+#[pyfunction]
+#[allow(unsafe_code)]
+fn _write_coverage() -> i32 {
+    unsafe extern "C" {
+        fn __llvm_profile_write_file() -> std::ffi::c_int;
+    }
+    // SAFETY: `-C instrument-coverage` links LLVM's profile runtime, which defines this function. It
+    // takes no arguments and writes the counters to the file `LLVM_PROFILE_FILE` names.
+    unsafe { __llvm_profile_write_file() }
+}
+
 /// Test hook: whether SQLite runs on this crate's mutex methods, as `MutexStatus::as_str` names it
 /// (`"installed"`, `"too_late"`, `"raced"` or `"init_failed"`). Live: `init_failed` becomes
 /// `installed` once a later initialization ran them. Not part of the public API.
@@ -393,6 +408,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("CorruptValueError", py.get_type::<CorruptValueError>())?;
     m.add("ForeignValueError", py.get_type::<ForeignValueError>())?;
     m.add_function(wrap_pyfunction!(sqlite_version, m)?)?;
+    #[cfg(coverage)]
+    m.add_function(wrap_pyfunction!(_write_coverage, m)?)?;
     m.add_function(wrap_pyfunction!(sqlite_compile_options, m)?)?;
     // Test hooks for the value codec; not part of the public API.
     m.add_function(wrap_pyfunction!(codec::_encode, m)?)?;

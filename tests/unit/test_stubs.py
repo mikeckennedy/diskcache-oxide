@@ -95,11 +95,16 @@ def _check_defaults(where: str, stub: Function, runtime: inspect.Signature) -> N
             assert param.default == value, where_param
 
 
+# In a coverage build only (`cfg(coverage)`, scripts/coverage.sh), never in a wheel: not in the stub.
+COVERAGE_ONLY = {'_write_coverage'}
+EXPORTS = [name for name in _core.__all__ if name not in COVERAGE_ONLY]
+
+
 def test_the_stub_lists_what_the_module_exports() -> None:
-    assert _literal_all() == list(_core.__all__)
+    assert _literal_all() == EXPORTS
 
 
-@pytest.mark.parametrize('name', list(_core.__all__))
+@pytest.mark.parametrize('name', EXPORTS)
 def test_every_export_is_defined_in_the_stub(name: str) -> None:
     assert name in CLASSES or name in FUNCTIONS or name in CONSTANTS, f'{name} is missing from _core.pyi'
 

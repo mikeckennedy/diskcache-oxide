@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # Line coverage for the whole library: both Rust crates and the Python package, in one report.
 #
-# Usage: scripts/coverage.sh [--html] [pytest args...]
+# Usage: scripts/coverage.sh [--html] [--ft] [pytest args...]     (--ft: on 3.14t, from .venv-ft/)
 #
 # Needs cargo-llvm-cov (`cargo install --locked cargo-llvm-cov`) and the llvm-tools rustup component.
 # Most of diskcache-oxide-py is reachable only from Python, so `cargo test` alone undercounts it. This
 # runs `cargo test`, then builds an instrumented copy of the extension, stages it beside a copy of
 # python/diskcache_oxide, and runs the unit and oxide conformance suites against it with coverage.py
-# on top. Every process that exits normally writes its own profile, and llvm-cov merges them. A forked
-# child that leaves through os._exit skips the profile write, so code that runs only in fork children
-# (e.g. lib.rs's _after_fork_in_child) reads as uncovered although the fork tests run it. Its own
-# target dir (target/llvm-cov-target), so the normal build is never invalidated.
+# on top. Every process writes its own profile, and llvm-cov merges them. A process that leaves
+# through os._exit (every forked child the tests make) would skip the profile write, so the staged
+# sitecustomize.py wraps os._exit to call the coverage build's `_core._write_coverage()` first; it
+# reaches every Python process the tests start, since they inherit PYTHONPATH. Its own target dir
+# (target/llvm-cov-target, or target/llvm-cov-target-ft for --ft), so the normal build is never
+# invalidated. --ft measures the free-threaded build, whose code paths differ in places.
 #
-# Output: the summary tables on stdout, target/llvm-cov-target/lcov.info (Rust),
-# target/llvm-cov-target/python-coverage.xml, and with --html target/llvm-cov-target/html/ plus
-# target/llvm-cov-target/python-html/.
+# Output (in the target dir): the summary tables on stdout, lcov.info (Rust), python-coverage.xml,
+# and with --html html/ plus python-html/.
 #
 # The coverage build is unoptimised, so its stack frames are larger. The small-stack scenario that
 # expects a deep value to decode on a reduced thread stack trips the RecursionError guard early, so
@@ -23,17 +24,22 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 html=0
-if [[ "${1:-}" == "--html" ]]; then
-    html=1
-    shift
-fi
+env_dir=venv
+target="$PWD/target/llvm-cov-target"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --html) html=1; shift ;;
+        --ft) env_dir=.venv-ft; target="$PWD/target/llvm-cov-target-ft"; shift ;;
+        *) break ;;
+    esac
+done
 
-py="$PWD/venv/bin/python"
-[[ -x "$py" ]] || { echo "venv/ is missing: UV_PROJECT_ENVIRONMENT=venv uv sync --locked --python 3.14" >&2; exit 1; }
+py="$PWD/$env_dir/bin/python"
+[[ -x "$py" ]] || { echo "$env_dir/ is missing: see CLAUDE.md's Environments" >&2; exit 1; }
 cargo llvm-cov --version >/dev/null 2>&1 || { echo "cargo-llvm-cov is missing: cargo install --locked cargo-llvm-cov" >&2; exit 1; }
-"$py" -c 'import coverage' 2>/dev/null || { echo "coverage is missing from venv/: UV_PROJECT_ENVIRONMENT=venv uv sync --locked" >&2; exit 1; }
+"$py" -c 'import coverage' 2>/dev/null || { echo "coverage is missing from $env_dir/: uv sync --locked into it" >&2; exit 1; }
 
-export CARGO_TARGET_DIR="$PWD/target/llvm-cov-target"
+export CARGO_TARGET_DIR="$target"
 export PYO3_PYTHON="$py"
 eval "$(cargo llvm-cov show-env --sh 2>/dev/null)"
 cargo llvm-cov clean --workspace
@@ -60,6 +66,24 @@ rm -f "$stage"/diskcache_oxide/_core.*.so
 built=$(find "$CARGO_TARGET_DIR/debug" -maxdepth 1 \( -name 'lib_core.dylib' -o -name 'lib_core.so' \) | head -1)
 suffix=$("$py" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')
 cp "$built" "$stage/diskcache_oxide/_core$suffix"
+cat > "$stage/sitecustomize.py" <<'PY'
+"""Coverage runs only (scripts/coverage.sh): a process leaving through os._exit writes its profile first."""
+
+import os
+import sys
+
+_exit = os._exit
+
+
+def _exit_writing_coverage(status: int, /) -> None:
+    core = sys.modules.get('diskcache_oxide._core')
+    if core is not None and hasattr(core, '_write_coverage'):
+        core._write_coverage()
+    _exit(status)
+
+
+os._exit = _exit_writing_coverage
+PY
 
 echo "== pytest (unit + conformance against oxide)"
 ulimit -n 10240 2>/dev/null || true
