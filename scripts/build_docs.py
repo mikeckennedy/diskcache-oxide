@@ -10,6 +10,13 @@ mirrors ``_site/`` into ``site/`` (full replace), then applies post-processing f
 ``_postprocess`` below), and fails if ``llms.txt``, ``llms-full.txt`` or the hand-written
 skill is missing from the output (see ``_check_outputs``).
 
+Great Docs takes the version badge in the navbar and the Changelog page from the repository's
+latest GitHub Release, fetched at build time. The docs are built and committed before the release
+exists, so the badge would show the previous version (or nothing, before the first release).
+``_local_releases`` builds the same release records from Cargo.toml and CHANGELOG.md instead, and
+``main`` installs it in place of the GitHub fetch, so the badge and the Changelog page always
+describe this checkout. ``_check_outputs`` fails the build if no page got the badge.
+
 Great Docs writes ``llms-full.txt`` by importing the package and reading each object's
 ``__doc__`` and signature. The compiled extension carries one-line docstrings and bare
 signatures; the full ones live in ``_core.pyi``, which the reference pages already use through
@@ -44,7 +51,66 @@ SKILL = PKG_DIR / 'skills' / 'diskcache-oxide' / 'SKILL.md'
 # The files an agent reads, and the paths Great Docs publishes the skill to. Each must exist after
 # a build, and each skill copy must be the hand-written file, or the build failed quietly.
 REQUIRED = ('llms.txt', 'llms-full.txt', 'skill.md')
+CARGO_TOML = REPO_ROOT / 'Cargo.toml'
+CHANGELOG = REPO_ROOT / 'CHANGELOG.md'
+_VERSION_BADGE = re.compile(r'<span class="version-badge"[^>]*>v([^<]*)</span>')
+# `## [0.1.0] - 2026-11-09`, with a trailing marker such as `[YANKED]` allowed.
+_CHANGELOG_HEADING = re.compile(r'^## \[(?P<version>[^\]]+)\](?: - (?P<date>\d{4}-\d{2}-\d{2}))?.*$', re.MULTILINE)
+_LINK_DEFINITION = re.compile(r'^\[[^\]]+\]:\s+\S+\s*$', re.MULTILINE)
 SKILL_COPIES = ('skill.md', '.well-known/agent-skills/diskcache-oxide/SKILL.md', '.well-known/skills/default/SKILL.md')
+
+
+def _package_version() -> str:
+    """The version from ``[workspace.package]`` in Cargo.toml, which pyproject.toml reads dynamically."""
+    import tomllib
+
+    return str(tomllib.loads(CARGO_TOML.read_text(encoding='utf-8'))['workspace']['package']['version'])
+
+
+def _local_releases(repo_url: str, max_releases: int = 50) -> list[dict[str, Any]]:
+    """Release records shaped like the GitHub API's, built from Cargo.toml and CHANGELOG.md.
+
+    Great Docs reads ``tag_name``, ``name``, ``body``, ``published_at``, ``html_url``, ``prerelease`` and
+    ``draft`` from each record: the first one feeds the navbar's version badge, and all of them the
+    Changelog page. The first record is always the version in Cargo.toml. When CHANGELOG.md has a dated
+    heading for it, that date and body are used; otherwise it is the ``Unreleased`` section, marked as
+    such and undated, so a build between releases still shows the version it was built from. The
+    remaining records are the changelog's other dated entries, newest first. Link-reference
+    definitions at the end of the file are dropped from the last body.
+    """
+    version = _package_version()
+    text = CHANGELOG.read_text(encoding='utf-8') if CHANGELOG.is_file() else ''
+    text = _LINK_DEFINITION.sub('', text)
+    headings = list(_CHANGELOG_HEADING.finditer(text))
+    sections: dict[str, tuple[str | None, str]] = {}
+    for i, m in enumerate(headings):
+        end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        sections[m.group('version')] = (m.group('date'), text[m.end() : end].strip())
+    base = repo_url.rstrip('/')
+
+    def record(ver: str, date: str | None, body: str, *, unreleased: bool = False) -> dict[str, Any]:
+        return {
+            'tag_name': f'v{ver}',
+            'name': f'v{ver} (unreleased)' if unreleased else f'v{ver}',
+            'body': body,
+            'published_at': f'{date}T00:00:00Z' if date else '',
+            'html_url': f'{base}/blob/main/CHANGELOG.md' if unreleased else f'{base}/releases/tag/v{ver}',
+            'prerelease': False,
+            'draft': False,
+        }
+
+    releases: list[dict[str, Any]] = []
+    date, body = sections.get(version, (None, ''))
+    if date:
+        releases.append(record(version, date, body))
+    else:
+        unreleased_body = sections.get('Unreleased', (None, ''))[1]
+        releases.append(record(version, None, unreleased_body, unreleased=True))
+    for ver, (date, body) in sections.items():
+        if ver == version or not date:
+            continue
+        releases.append(record(ver, date, body))
+    return releases[:max_releases]
 
 
 def _site_url() -> str:
@@ -228,6 +294,20 @@ def _postprocess(dest: Path) -> None:
     # 3) Append User Guide and skill links to llms.txt.
     _append_llms_sections(dest, base)
 
+    # 3b) The Changelog page is built from CHANGELOG.md (see _local_releases), not GitHub Releases.
+    changelog = dest / 'changelog.html'
+    if changelog.is_file():
+        html = changelog.read_text(encoding='utf-8')
+        new = re.sub(
+            r'This changelog is generated automatically from\s*<a href="[^"]*/releases">GitHub Releases</a>\.',
+            'This changelog is the repository\'s <a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/'
+            'CHANGELOG.md">CHANGELOG.md</a>, rendered at build time.',
+            html,
+        )
+        if new != html:
+            changelog.write_text(new, encoding='utf-8')
+            print('  changelog.html: credited CHANGELOG.md instead of GitHub Releases')
+
     # 4) One-line descriptions for the method entries.
     _describe_llms_entries(dest)
 
@@ -235,6 +315,20 @@ def _postprocess(dest: Path) -> None:
 def _check_outputs(dest: Path) -> list[str]:
     """What's missing or wrong in the mirrored site. Empty when the build is good."""
     problems = [f'{name} is missing from {dest}' for name in REQUIRED if not (dest / name).is_file()]
+    version = _package_version()
+    badged = {
+        page.relative_to(dest).as_posix(): set(_VERSION_BADGE.findall(page.read_text(encoding='utf-8')))
+        for page in dest.rglob('*.html')
+    }
+    pages = [page for page, versions in badged.items() if versions]
+    if not pages:
+        problems.append(
+            'no page has a version badge (Great Docs changed its markup, or _local_releases was not installed)'
+        )
+    elif wrong := sorted(page for page, versions in badged.items() if versions - {version}):
+        problems.append(f'version badge is not v{version} on: {", ".join(wrong[:5])}')
+    else:
+        print(f'  version badge v{version} on {len(pages)} page(s)')
     if not SKILL.is_file():
         problems.append(f'the hand-written skill {SKILL} is missing')
         return problems
@@ -391,6 +485,18 @@ def main() -> int:
 
     GriffeLoader.__init__ = _safe_init
     _install_stub_twins()
+
+    # The version badge and the Changelog page come from this checkout, not from GitHub Releases.
+    from great_docs.core import GreatDocs
+
+    if not callable(getattr(GreatDocs, '_fetch_github_releases', None)):
+        print('great-docs no longer has GreatDocs._fetch_github_releases; update _local_releases', file=sys.stderr)
+        return 1
+
+    def _releases_from_checkout(self: GreatDocs, owner: str, repo: str, max_releases: int = 50) -> list[dict[str, Any]]:
+        return _local_releases(f'https://github.com/{owner}/{repo}', max_releases)
+
+    GreatDocs._fetch_github_releases = _releases_from_checkout  # type: ignore[method-assign]
 
     from great_docs.cli import main as gd_main
 

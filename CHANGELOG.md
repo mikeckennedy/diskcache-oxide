@@ -4,6 +4,11 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+### Added
+
+- Seven more recipes in the documentation: serving stale values while refreshing, caching responses from other services, storing your own types, counting things, single-use keys, server-side sessions, and using the cache from asyncio. The web workers recipe gains Django and Celery sections.
+- The documentation's version badge and Changelog page now come from the repository's `Cargo.toml` and `CHANGELOG.md` at build time, so they describe the build rather than the latest GitHub Release.
+
 ## [0.1.0] - 2026-11-09
 
 The first release: diskcache's `Cache` API on a Rust engine and SQLite storage, shared safely by threads, processes and `fork()`, on CPython 3.14 and 3.15 including the free-threaded builds. Wheels for macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64.

@@ -163,7 +163,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <img src="./diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="./index.html">
-    <span class="navbar-title">diskcache-oxide</span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.0</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -182,6 +182,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li class="nav-item">
     <a class="nav-link" href="./reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="./changelog.html"> 
+<span class="menu-text">Changelog</span></a>
   </li>  
 </ul>
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
@@ -353,7 +357,7 @@ Note
 <li><a href="./user-guide/storage-and-wal.html">Storage and WAL</a>: what’s on disk, memory bounds, and the write-ahead log.</li>
 <li><a href="./user-guide/performance.html">Performance</a>: the measured numbers, and where the next speedups come from.</li>
 <li><a href="./user-guide/divergences.html">Divergences</a>: every deliberate difference from diskcache, with the reason.</li>
-<li><a href="./recipes/index.html">Recipes</a>: caching expensive calls, invalidation, job claims, rate limiting, deployment and testing.</li>
+<li><a href="./recipes/index.html">Recipes</a>: caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidation, your own types, job claims, rate limiting, counters, single-use keys, sessions, web workers, asyncio and testing.</li>
 <li><a href="./skills.html">Agent skill</a>: a cheat sheet for AI coding agents, with <a href="llms.txt">llms.txt</a> and <a href="llms-full.txt">llms-full.txt</a> alongside.</li>
 </ul>
 

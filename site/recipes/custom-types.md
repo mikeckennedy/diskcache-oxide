@@ -1,0 +1,119 @@
+# Storing your own types
+
+The cache stores the built-in types exactly ([Serialization](../user-guide/serialization.md#exact-types) has the table: `str`, numbers, `bytes`, `bool`, `None`, lists, tuples, sets, dicts, `datetime`, `date`, `Decimal`) and refuses anything else with a `TypeError` at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set), rather than pickling it behind your back. For everything else, you tell the codec once how to store the type. This recipe collects the registrations a typical web app needs.
+
+
+# The standard library's types
+
+`uuid.UUID`, `datetime.timedelta` and `pathlib.Path` aren't built-in types to the codec. Each needs an `encode` that turns an instance into something storable and a `decode` that turns it back:
+
+
+``` python
+import datetime
+import pathlib
+import tempfile
+import uuid
+
+import diskcache_oxide
+from diskcache_oxide import Cache
+
+diskcache_oxide.register_type(uuid.UUID, name='std.uuid', encode=lambda u: u.bytes, decode=lambda b: uuid.UUID(bytes=b))
+diskcache_oxide.register_type(datetime.timedelta, name='std.timedelta', encode=datetime.timedelta.total_seconds, decode=lambda s: datetime.timedelta(seconds=s))
+diskcache_oxide.register_type(type(pathlib.Path()), name='std.path', encode=str, decode=pathlib.Path)
+
+cache = Cache(tempfile.mkdtemp())
+cache.set('upload', {'id': uuid.uuid4(), 'ttl': datetime.timedelta(hours=2), 'file': pathlib.Path('/srv/uploads/a.png')})
+print({k: type(v).__name__ for k, v in cache.get('upload').items()})
+```
+
+
+    {'id': 'UUID', 'ttl': 'timedelta', 'file': 'PosixPath'}
+
+
+The `Path` registration says `type(pathlib.Path())`, not `pathlib.Path`, for a reason: lookup is by exact type, and `pathlib.Path()` builds a `PosixPath` or a `WindowsPath`. Registering the base class would match nothing. The same applies to any factory that returns a subclass.
+
+
+# Enums
+
+Store the value, and let the enum class turn it back into a member. A `StrEnum` or `IntEnum` is a subclass of `str` or `int`, and a subclass is never stored as its base, so it needs this too:
+
+
+``` python
+import enum
+
+class Plan(enum.StrEnum):
+    FREE = 'free'
+    PRO = 'pro'
+
+diskcache_oxide.register_type(Plan, name='app.Plan', encode=lambda p: p.value, decode=Plan)
+
+cache.set('account:42:plan', Plan.PRO)
+print(repr(cache.get('account:42:plan')))
+```
+
+
+    <Plan.PRO: 'pro'>
+
+
+# Dataclasses
+
+A dataclass needs only a name. Its fields are stored and it's rebuilt with `cls(**fields)`, so defaults and `__post_init__` run. Fields can hold other registered types, nested as deep as you like:
+
+
+``` python
+import dataclasses
+
+@dataclasses.dataclass
+class Invoice:
+    id: uuid.UUID
+    plan: Plan
+    issued: datetime.date
+    paid_within: datetime.timedelta | None = None
+
+diskcache_oxide.register_type(Invoice, name='app.Invoice')
+
+cache.set('invoice:latest', Invoice(uuid.UUID('2b7e1c4a-5d3f-4e8b-9a6c-0f1d2e3a4b5c'), Plan.PRO, datetime.date(2026, 11, 8)))
+print(cache.get('invoice:latest'))
+```
+
+
+    Invoice(id=UUID('2b7e1c4a-5d3f-4e8b-9a6c-0f1d2e3a4b5c'), plan=<Plan.PRO: 'pro'>, issued=datetime.date(2026, 11, 8), paid_within=None)
+
+
+# Pydantic models
+
+Pydantic can produce and consume a plain dict, so a model registers with its own two methods. `mode='json'` makes `model_dump()` emit only JSON-compatible values (UUIDs and dates as strings), which `model_validate()` parses back, so the model's field types need no registrations of their own:
+
+``` python
+from pydantic import BaseModel
+
+class User(BaseModel):
+    id: uuid.UUID
+    name: str
+    plan: Plan
+
+diskcache_oxide.register_type(User, name='app.User', encode=lambda u: u.model_dump(mode='json'), decode=User.model_validate)
+```
+
+attrs classes and msgspec structs follow the same pattern with `attrs.asdict()` and `msgspec.to_builtins()`, and the class as the decoder.
+
+
+# Where the registrations live
+
+Registrations are process-wide and must exist in every process that opens the directory: the web workers, the Celery workers, the management command that warms the cache. A row written with a tag the reading process doesn't know is a [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError), and the row is left for a process that does. Put them in one module and import it early:
+
+``` python
+# myapp/cache_types.py: imported from myapp/__init__.py, so every entry point gets it
+import diskcache_oxide
+
+from myapp.models import Invoice, Plan, User
+
+diskcache_oxide.register_type(Plan, name='app.Plan', encode=lambda p: p.value, decode=Plan)
+diskcache_oxide.register_type(Invoice, name='app.Invoice')
+diskcache_oxide.register_type(User, name='app.User', encode=lambda u: u.model_dump(mode='json'), decode=User.model_validate)
+```
+
+
+# When the shape changes
+
+The name is the contract. Renaming or moving the class changes nothing, because rows carry the name you chose. Changing the fields does: a dataclass row written before a required field was added raises [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) when it's read, and `on_decode_error='miss'` turns that into a miss and deletes the row, so the next writer replaces it. For a change the old rows can't survive, give the type a new name (`app.Invoice.v2`). The old rows become [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError), treated as misses under the same policy, and expire on their own. See [Errors](../user-guide/errors.md#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded).

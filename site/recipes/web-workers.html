@@ -7,7 +7,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
-<meta name="description" content="Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI and Flask.">
+<meta name="description" content="Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI, Flask, Django and Celery.">
 
 <title>Sharing a cache across web workers – diskcache-oxide | diskcache-oxide</title>
 <style>
@@ -126,13 +126,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
   <meta property="og:type" content="website">
   <meta property="og:title" content="Sharing a cache across web workers – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI and Flask.">
+  <meta property="og:description" content="Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI, Flask, Django and Celery.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/recipes/web-workers.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Sharing a cache across web workers – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI and Flask.">
+  <meta name="twitter:description" content="Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI, Flask, Django and Celery.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -148,7 +148,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide</span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.0</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -167,6 +167,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../changelog.html"> 
+<span class="menu-text">Changelog</span></a>
   </li>  
 </ul>
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
@@ -207,8 +211,32 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/asyncio.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Using the cache from asyncio</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/caching-expensive-calls.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Caching expensive calls</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/caching-http-responses.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caching responses from other services</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/counters.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Counting things</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/custom-types.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Storing your own types</span></a>
   </div>
 </li>
         <li class="sidebar-item">
@@ -227,6 +255,24 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <div class="sidebar-item-container"> 
   <a href="../recipes/run-once.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Running a job once across workers</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/sessions.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Server-side sessions</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/single-use-keys.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Single-use keys</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/stale-while-revalidate.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Serving stale values while refreshing</span></a>
   </div>
 </li>
         <li class="sidebar-item">
@@ -256,6 +302,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <ul class="collapse">
   <li><a href="#fastapi" id="toc-fastapi" class="nav-link" data-scroll-target="#fastapi">FastAPI</a></li>
   <li><a href="#flask" id="toc-flask" class="nav-link" data-scroll-target="#flask">Flask</a></li>
+  <li><a href="#django" id="toc-django" class="nav-link" data-scroll-target="#django">Django</a></li>
+  <li><a href="#celery-and-other-background-workers" id="toc-celery-and-other-background-workers" class="nav-link" data-scroll-target="#celery-and-other-background-workers">Celery and other background workers</a></li>
   <li><a href="#pre-forking-servers" id="toc-pre-forking-servers" class="nav-link" data-scroll-target="#pre-forking-servers">Pre-forking servers</a></li>
   </ul></li>
   <li><a href="#keep-the-request-path-fast" id="toc-keep-the-request-path-fast" class="nav-link" data-scroll-target="#keep-the-request-path-fast">Keep the request path fast</a></li>
@@ -275,7 +323,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 <div>
   <div class="description">
-    Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI and Flask.
+    Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI, Flask, Django and Celery.
   </div>
 </div>
 
@@ -339,6 +387,26 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>    cache.checkpoint()</span>
 <span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>    cache.close()</span></code></pre></div>
 </section>
+<section id="django" class="level2">
+<h2 class="anchored" data-anchor-id="django">Django</h2>
+<p>diskcache-oxide isn’t a Django cache backend (<code>DjangoCache</code> is a <a href="../user-guide/roadmap.html#non-goals">non-goal</a>), so <code>django.core.cache</code> keeps whatever it has. Open the shared cache in a module of its own and import it where it’s needed; the settings module says where it lives.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># myapp/caching.py</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> django.conf <span class="im">import</span> settings</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(settings.SHARED_CACHE_DIR, timeout<span class="op">=</span><span class="fl">1.0</span>)</span></code></pre></div>
+<p>Register the <a href="../recipes/custom-types.html">types</a> you store in the same module, so every process that imports the cache gets them too.</p>
+</section>
+<section id="celery-and-other-background-workers" class="level2">
+<h2 class="anchored" data-anchor-id="celery-and-other-background-workers">Celery and other background workers</h2>
+<p>Celery’s prefork pool, RQ and <code>multiprocessing</code> workers are pre-forking servers like gunicorn: open the cache at import time, and each child gets its own connections on first use. Register your types the same way the web workers do, or a worker that reads a web worker’s value gets <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>. Closing at shutdown is optional; Celery’s <code>worker_process_shutdown</code> signal is the place for it.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> celery.signals <span class="im">import</span> worker_process_shutdown</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="at">@worker_process_shutdown.connect</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> close_cache(<span class="op">**</span>kwargs) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    cache.close()</span></code></pre></div>
+</section>
 <section id="pre-forking-servers" class="level2">
 <h2 class="anchored" data-anchor-id="pre-forking-servers">Pre-forking servers</h2>
 <p>With gunicorn (including <code>--preload</code>), uvicorn <code>--workers</code>, or Celery’s prefork pool, it doesn’t matter whether you open the cache before or after the fork. diskcache-oxide’s fork barrier makes sure no worker starts life holding half a database transaction, and each child opens its own fresh connections on first use. See <a href="../user-guide/concurrency-and-forks.html">Concurrency and forks</a>.</p>
@@ -347,13 +415,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="keep-the-request-path-fast" class="level1">
 <h1>Keep the request path fast</h1>
 <p>Reads never wait for writers, so a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> stays fast however busy the cache is. Writes are different: only one process can commit to a cache file at a time, and a write waits up to the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> for its turn (60 seconds by default, matching diskcache). In a web request you’d rather skip a cache write than make the user wait, so give the cache a short timeout and treat <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> as “don’t cache this time”:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Timeout</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache_quietly(key: <span class="bu">str</span>, value: <span class="bu">object</span>, expire: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">try</span>:</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>        cache.<span class="bu">set</span>(key, value, expire<span class="op">=</span>expire)</span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">except</span> Timeout:</span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>        log.warning(<span class="st">'cache busy; skipped storing </span><span class="sc">%s</span><span class="st">'</span>, key)</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Timeout</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache_quietly(key: <span class="bu">str</span>, value: <span class="bu">object</span>, expire: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">try</span>:</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>        cache.<span class="bu">set</span>(key, value, expire<span class="op">=</span>expire)</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">except</span> Timeout:</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>        log.warning(<span class="st">'cache busy; skipped storing </span><span class="sc">%s</span><span class="st">'</span>, key)</span></code></pre></div>
 <p>Under normal load a write takes about 25 µs and never comes near the timeout. The timeout matters during bursts, such as a big <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> from a maintenance script, and even then <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> steps aside between chunks to let waiting writes in.</p>
 </section>
 <section id="maintenance" class="level1">
@@ -371,11 +439,11 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="switching-caching-off" class="level1">
 <h1>Switching caching off</h1>
 <p>To run with caching off (local development, or chasing a stale-data bug in production), build the cache in one factory function and return a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> when it’s disabled. Nothing else in the app changes. Pass <code>invalidate=</code> so deletes still reach the real cache while it’s off. See <a href="../user-guide/null-cache.html">NullCache</a>.</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, CacheLike, NullCache</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> make_cache(settings) <span class="op">-&gt;</span> CacheLike:</span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    real <span class="op">=</span> Cache(settings.cache_dir, timeout<span class="op">=</span><span class="fl">1.0</span>)</span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> real <span class="cf">if</span> settings.cache_enabled <span class="cf">else</span> NullCache(invalidate<span class="op">=</span>real)</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, CacheLike, NullCache</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> make_cache(settings) <span class="op">-&gt;</span> CacheLike:</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>    real <span class="op">=</span> Cache(settings.cache_dir, timeout<span class="op">=</span><span class="fl">1.0</span>)</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> real <span class="cf">if</span> settings.cache_enabled <span class="cf">else</span> NullCache(invalidate<span class="op">=</span>real)</span></code></pre></div>
 
 
 </section>

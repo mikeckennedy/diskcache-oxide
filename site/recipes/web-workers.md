@@ -56,6 +56,35 @@ def close_cache() -> None:
 ```
 
 
+## Django
+
+diskcache-oxide isn't a Django cache backend (`DjangoCache` is a [non-goal](../user-guide/roadmap.md#non-goals)), so `django.core.cache` keeps whatever it has. Open the shared cache in a module of its own and import it where it's needed; the settings module says where it lives.
+
+``` python
+# myapp/caching.py
+from django.conf import settings
+
+from diskcache_oxide import Cache
+
+cache = Cache(settings.SHARED_CACHE_DIR, timeout=1.0)
+```
+
+Register the [types](custom-types.md) you store in the same module, so every process that imports the cache gets them too.
+
+
+## Celery and other background workers
+
+Celery's prefork pool, RQ and `multiprocessing` workers are pre-forking servers like gunicorn: open the cache at import time, and each child gets its own connections on first use. Register your types the same way the web workers do, or a worker that reads a web worker's value gets [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError). Closing at shutdown is optional; Celery's `worker_process_shutdown` signal is the place for it.
+
+``` python
+from celery.signals import worker_process_shutdown
+
+@worker_process_shutdown.connect
+def close_cache(**kwargs) -> None:
+    cache.close()
+```
+
+
 ## Pre-forking servers
 
 With gunicorn (including `--preload`), uvicorn `--workers`, or Celery's prefork pool, it doesn't matter whether you open the cache before or after the fork. diskcache-oxide's fork barrier makes sure no worker starts life holding half a database transaction, and each child opens its own fresh connections on first use. See [Concurrency and forks](../user-guide/concurrency-and-forks.md).

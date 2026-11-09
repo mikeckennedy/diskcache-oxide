@@ -1,0 +1,113 @@
+---
+title: "Using the cache from asyncio"
+description: "Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends until AsyncCache lands."
+---
+
+diskcache-oxide's API is synchronous. An `AsyncCache` is on the [roadmap](../user-guide/roadmap.qmd), but the sync cache already works well in an asyncio app, provided you know which calls can block the event loop and for how long.
+
+## Reads: call them inline
+
+A cached read costs a few microseconds (the [performance](../user-guide/performance.qmd) page has the measurements), less than the event loop spends scheduling a task. Reads never take the write lock and never wait for writers, so `cache.get()` on the loop is the right call, and `await asyncio.to_thread(cache.get, ...)` would cost more than the read it protects.
+
+The exception is a read of a large value that keeps losing to concurrent overwrites, which can wait up to the cache's `timeout` before raising `Timeout`. That's rare; `durable=True` turns it into a miss.
+
+## Writes: move them off the loop
+
+A write has to take the cache's write lock, and if another process holds it (a `clear()` in a maintenance script, a long transaction, a fork in flight) the write waits up to `timeout`. Under normal load that wait is nothing. In the worst case it's `timeout` seconds during which every request on that loop stops. Two ways to make sure that never happens:
+
+- **Run writes in a worker thread** with `asyncio.to_thread()`. The thread does the waiting; the loop keeps serving. The thread hop costs tens of microseconds, which is fine for a write.
+- **Or keep writes inline with a short `timeout` and `durable=True`.** Then the worst case is a dropped cache write logged once a minute, not a stalled loop.
+
+```{python}
+import asyncio
+import tempfile
+
+from diskcache_oxide import Cache
+
+cache = Cache(tempfile.mkdtemp(), timeout=1.0)
+
+async def load_user(user_id: int) -> dict:
+    await asyncio.sleep(0.001)                        # stands in for a database query
+    return {'id': user_id}
+
+async def handle_request(request_id: int) -> dict:
+    key = f'user:{request_id % 10}'
+    user = cache.get(key)                             # a read, on the event loop
+    if user is None:
+        user = await load_user(request_id % 10)
+        await asyncio.to_thread(cache.set, key, user, expire=300)   # a write, off the loop
+    return user
+
+results = await asyncio.gather(*(handle_request(i) for i in range(100)))
+print(f'{len(results)} requests served, {len(cache)} users cached')
+```
+
+Some of the 100 requests for one user miss together and each stores the same value; that's harmless, and the [stale-while-revalidate](stale-while-revalidate.qmd) recipe shows how to make only one of them do the work when it isn't.
+
+### Fire and forget
+
+When the response shouldn't wait for the write at all, schedule it as a task. Keep a reference to the task until it finishes, or the loop may drop it half done:
+
+```python
+background: set[asyncio.Task] = set()
+
+def cache_later(key: str, value: object, expire: float) -> None:
+    task = asyncio.create_task(asyncio.to_thread(cache.set, key, value, expire=expire))
+    background.add(task)
+    task.add_done_callback(background.discard)
+```
+
+## Transactions: one thread, no `await` inside
+
+A [transaction](../user-guide/transactions.qmd) belongs to the thread that opened it, and it holds the write lock for the length of the block. Never `await` inside one: the loop would run other requests on that thread while the lock is held, and one of them may try to write. Put the whole block in a function and run that function in a thread:
+
+```python
+def record_request(path: str, status: int) -> None:
+    with cache.transact() as tx:
+        tx.incr('requests:total')
+        tx.incr(f'requests:{path}')
+        tx.incr(f'requests:{path}:{status}')
+
+async def middleware(request, call_next):
+    response = await call_next(request)
+    await asyncio.to_thread(record_request, request.url.path, response.status_code)
+    return response
+```
+
+## In a FastAPI app
+
+Open the cache once, in the lifespan, and use it from any endpoint. Starlette's `run_in_threadpool` does the same job as `asyncio.to_thread()`; under Trio or AnyIO use `anyio.to_thread.run_sync()`.
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from starlette.concurrency import run_in_threadpool
+
+from diskcache_oxide import Cache
+
+cache = Cache('/var/cache/my-app', timeout=1.0)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    cache.close()
+
+app = FastAPI(lifespan=lifespan)
+
+@app.get('/episodes/{episode_id}')
+async def episode(episode_id: int) -> dict:
+    key = f'episode:{episode_id}'
+    if (cached := cache.get(key)) is not None:
+        return cached
+    data = await fetch_episode(episode_id)
+    await run_in_threadpool(cache.set, key, data, expire=600)
+    return data
+```
+
+See [Sharing a cache across web workers](web-workers.qmd) for where the directory goes and what to do at shutdown.
+
+```{python}
+#| echo: false
+cache.close()
+```

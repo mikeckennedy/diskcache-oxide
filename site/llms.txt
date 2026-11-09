@@ -233,10 +233,17 @@
 
 ### Recipes
 
+- [Using the cache from asyncio](https://mkennedy.codes/docs/diskcache-oxide/recipes/asyncio.html)
 - [Caching expensive calls](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-expensive-calls.html)
+- [Caching responses from other services](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-http-responses.html)
+- [Counting things](https://mkennedy.codes/docs/diskcache-oxide/recipes/counters.html)
+- [Storing your own types](https://mkennedy.codes/docs/diskcache-oxide/recipes/custom-types.html)
 - [Invalidating groups of keys](https://mkennedy.codes/docs/diskcache-oxide/recipes/invalidating-groups.html)
 - [Rate limiting](https://mkennedy.codes/docs/diskcache-oxide/recipes/rate-limiting.html)
 - [Running a job once across workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/run-once.html)
+- [Server-side sessions](https://mkennedy.codes/docs/diskcache-oxide/recipes/sessions.html)
+- [Single-use keys](https://mkennedy.codes/docs/diskcache-oxide/recipes/single-use-keys.html)
+- [Serving stale values while refreshing](https://mkennedy.codes/docs/diskcache-oxide/recipes/stale-while-revalidate.html)
 - [Testing code that uses a cache](https://mkennedy.codes/docs/diskcache-oxide/recipes/testing.html)
 - [Sharing a cache across web workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/web-workers.html)
 
