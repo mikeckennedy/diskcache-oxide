@@ -468,8 +468,18 @@ def main() -> int:
     # Ensure GriffeLoader runs in pure static mode for compiled PyO3 classes
     # so that .pyi stubs are parsed without cyclic alias errors between
     # compiled extension re-exports.
-    import griffe
-    from griffe import GriffeLoader
+    try:
+        import griffe
+        from griffe import GriffeLoader
+    except ModuleNotFoundError:
+        env = Path(sys.prefix).name
+        print(
+            f'The docs tooling is not installed in {env}/. It lives in the `docs` dependency group, which is not a '
+            f'default group, so install it with:\n\n    UV_PROJECT_ENVIRONMENT={env} uv sync --locked --group docs\n\n'
+            'or run `make docs`, which uses venv/.',
+            file=sys.stderr,
+        )
+        return 1
 
     _orig_init = GriffeLoader.__init__
     stub_fixes = _stub_extension()
