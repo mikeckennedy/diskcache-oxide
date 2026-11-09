@@ -47,7 +47,7 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 
 diskcache pickles every value. That's convenient, but anyone who can write to the cache directory can make your app run arbitrary code the next time it reads, and objects that were never meant to be cached get stored without complaint.
 
-diskcache-oxide stores values as msgpack (or JSON), and tags the types those formats would otherwise change, so tuples, sets, datetimes, big ints, NaN, nested bytes and non-`str` dict keys all come back exactly as stored. Something that can't be represented raises `TypeError` when you store it, not later when you read it:
+diskcache-oxide stores values as msgpack (or JSON), and tags the types those formats would otherwise change, so tuples, sets, frozensets, datetimes, dates, Decimals, big ints, NaN, nested bytes and non-`str` dict keys all come back exactly as stored. Something that can't be represented raises `TypeError` when you store it, not later when you read it:
 
 ``` python
 cache.set('job', MyJob())

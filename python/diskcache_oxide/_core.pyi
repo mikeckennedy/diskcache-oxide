@@ -291,8 +291,8 @@ class Cache:
 
         Args:
             key: The key.
-            value: The value: `str`, `bytes`, numbers, `bool`, `None`, and lists, tuples, dicts,
-                sets and datetimes of those, or anything picklable with `pickle=True`.
+            value: The value: `str`, `bytes`, numbers, `Decimal`, `bool`, `None`, and lists, tuples, dicts,
+                sets, frozensets, datetimes and dates of those, or anything picklable with `pickle=True`.
             expire: Seconds until the entry expires, or None for never.
 
         Returns:

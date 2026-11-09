@@ -54,7 +54,7 @@ Every build runs from a clean checkout of the bump commit: each build log record
 - **Linux x86_64:** on talk-python-htz in `/root/diskcache-run`. The private repo arrives as a `COPYFILE_DISABLE=1` tarball of the bump commit (`git archive`), checked by hash. Before building: `docker info -f '{{.DockerRootDir}}'` is on the root disk, not sdc; the out dir is `chown 1000` (the container runs as uid 1000, `linux-check.sh` creates `--out` as root); `--cpus` and `--memory` are passed, since `nice` doesn't reach inside the container. A cold image build pulls the nightly and clang, several GB. No production container, mount or network is touched.
 - **Linux aarch64:** the same in the mini's OrbStack container after the soak finishes.
 - Linux builds pass `--compatibility manylinux_2_34`, so a symbol that needs a newer glibc fails the build instead of quietly getting a newer tag (plan 10 recorded `manylinux_2_34` from this image, within Ubuntu 22.04's glibc 2.35).
-- **sdist:** `uv build --sdist`, `COPYFILE_DISABLE=1`. `tar tzf` shows no `.so` or `.profraw`, and includes `Cargo.lock`, `LICENSE`, both crates and `.cargo/config.toml`; if maturin leaves the config out, a source build silently loses the SQLite flags (STAT4 on, about 30% slower sets), so add `include = [{ path = ".cargo/config.toml", format = "sdist" }]` (that edit is to `pyproject.toml`, inside the allowlist).
+- **sdist:** `uv build --sdist`, `COPYFILE_DISABLE=1`. The wheels come from `scripts/build_pgo.sh`, which calls maturin directly because PGO needs two compiles with different `RUSTFLAGS`; `uv build` drives the same maturin backend, so the wheels are the same kind. Moving `build_pgo.sh` onto `uv build --wheel` is a post-release change, since `scripts/` is outside the allowlist. `tar tzf` shows no `.so` or `.profraw`, and includes `Cargo.lock`, `LICENSE`, both crates and `.cargo/config.toml`; if maturin leaves the config out, a source build silently loses the SQLite flags (STAT4 on, about 30% slower sets), so add `include = [{ path = ".cargo/config.toml", format = "sdist" }]` (that edit is to `pyproject.toml`, inside the allowlist).
 - Each wheel: `ldd` (or `otool -L`) shows only libc and libgcc, and it holds exactly one `_core` `.so` matching its tag.
 
 ## Step 4: Verify the artifacts
@@ -64,13 +64,13 @@ Every build runs from a clean checkout of the bump commit: each build log record
 - The sdist builds and installs from scratch on the Studio and passes the same `sqlite_compile_options()` check.
 - On htz: plan 084 Step 12 precondition 4 (Michael's test) with the x86_64 cp314 wheel.
 - The README quickstart runs against the installed wheel.
-- `twine check --strict` on every file (it also renders the README as METADATA). A TestPyPI upload of the exact set, which catches rejected classifiers and a half-finished upload. 13 files, all `0.1.0`; `SHA256SUMS` regenerated.
+- `uvx twine check --strict` on every file (validation only: it renders the README as METADATA). A TestPyPI rehearsal of the exact set with `uv publish --publish-url https://test.pypi.org/legacy/`, which catches rejected classifiers and a half-finished upload. 13 files, all `0.1.0`; `SHA256SUMS` regenerated.
 
 ## Step 5: Publish (Michael)
 
 - The soak's PASS is recorded in plan 14; the allowlist check holds; the architect has reviewed the finished release.
 - Annotated tag `v0.1.0` on the bump commit (not `34b3796`), pushed.
-- Michael makes the repo public and uploads `dist/0.1.0/` to PyPI from his account. The upload command is handed over as one line with absolute paths.
+- Michael makes the repo public and uploads `dist/0.1.0/` to PyPI from his account with `uv publish` (the project builds with `uv build` and publishes with `uv publish`). The command is handed over as one line with absolute paths.
 - A GitHub release for `v0.1.0` with the changelog entry and the wheels attached (plan 10's 2026-11-06 decision), once the repo is public.
 - Talk Python's plan 084 Step 12 proceeds from PyPI.
 

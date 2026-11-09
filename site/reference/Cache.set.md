@@ -25,7 +25,7 @@ Values of 64 KiB or more (after encoding) are stored in their own file.
 The key.
 
 `value: Any`  
-The value: `str`, `bytes`, numbers, `bool`, `None`, and lists, tuples, dicts, sets and datetimes of those, or anything picklable with `pickle=True`.
+The value: `str`, `bytes`, numbers, `Decimal`, `bool`, `None`, and lists, tuples, dicts, sets, frozensets, datetimes and dates of those, or anything picklable with `pickle=True`.
 
 `expire: float | None = None`  
 Seconds until the entry expires, or None for never.

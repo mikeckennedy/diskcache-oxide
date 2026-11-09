@@ -128,8 +128,8 @@ Values of 64 KiB or more (after encoding) are stored in their own file.
 
 Args:
     key: The key.
-    value: The value: `str`, `bytes`, numbers, `bool`, `None`, and lists, tuples, dicts,
-        sets and datetimes of those, or anything picklable with `pickle=True`.
+    value: The value: `str`, `bytes`, numbers, `Decimal`, `bool`, `None`, and lists, tuples, dicts,
+        sets, frozensets, datetimes and dates of those, or anything picklable with `pickle=True`.
     expire: Seconds until the entry expires, or None for never.
 
 Returns:
@@ -1778,7 +1778,7 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 
 diskcache pickles every value. That's convenient, but anyone who can write to the cache directory can make your app run arbitrary code the next time it reads, and objects that were never meant to be cached get stored without complaint.
 
-diskcache-oxide stores values as msgpack (or JSON), and tags the types those formats would otherwise change, so tuples, sets, datetimes, big ints, NaN, nested bytes and non-`str` dict keys all come back exactly as stored. Something that can't be represented raises `TypeError` when you store it, not later when you read it:
+diskcache-oxide stores values as msgpack (or JSON), and tags the types those formats would otherwise change, so tuples, sets, frozensets, datetimes, dates, Decimals, big ints, NaN, nested bytes and non-`str` dict keys all come back exactly as stored. Something that can't be represented raises `TypeError` when you store it, not later when you read it:
 
 ```python
 cache.set('job', MyJob())

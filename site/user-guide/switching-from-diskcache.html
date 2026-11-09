@@ -450,7 +450,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="values-no-pickle-unless-you-ask" class="level1">
 <h1>Values: no pickle unless you ask</h1>
 <p>diskcache pickles every value. That’s convenient, but anyone who can write to the cache directory can make your app run arbitrary code the next time it reads, and objects that were never meant to be cached get stored without complaint.</p>
-<p>diskcache-oxide stores values as msgpack (or JSON), and tags the types those formats would otherwise change, so tuples, sets, datetimes, big ints, NaN, nested bytes and non-<code>str</code> dict keys all come back exactly as stored. Something that can’t be represented raises <code>TypeError</code> when you store it, not later when you read it:</p>
+<p>diskcache-oxide stores values as msgpack (or JSON), and tags the types those formats would otherwise change, so tuples, sets, frozensets, datetimes, dates, Decimals, big ints, NaN, nested bytes and non-<code>str</code> dict keys all come back exactly as stored. Something that can’t be represented raises <code>TypeError</code> when you store it, not later when you read it:</p>
 <div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'job'</span>, MyJob())</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co"># TypeError: values of type MyJob can't be stored without pickle (only exact built-in types round-trip)</span></span></code></pre></div>
 <p>If you really do need to cache arbitrary objects, opt in for that cache:</p>
