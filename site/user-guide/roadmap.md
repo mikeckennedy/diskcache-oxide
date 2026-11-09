@@ -57,7 +57,7 @@ The concurrency core is where serious bugs hide, so it got its own phase before 
 
 ## Done: release (Phase 3)
 
-`0.1.0` is on PyPI, after a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython built under it, AddressSanitizer and LeakSanitizer, with the bundled SQLite built under them) and a fresh 24-hour soak on the released code. Next it replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers.
+`0.1.1` is on PyPI, after a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython built under it, AddressSanitizer and LeakSanitizer, with the bundled SQLite built under them) and a fresh 24-hour soak on the released code. Next it replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers.
 
 
 ## Next

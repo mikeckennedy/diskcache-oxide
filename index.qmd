@@ -37,7 +37,7 @@ if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
 
 And here is what it does under load. Every thread shares one cache, the x axis adds threads, and the two libraries go in opposite directions:
 
-::: {.dco-chart data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: the defunct diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Pro, Python 3.14 with the GIL, four interleaved rounds, the 0.1.0 code (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers."}
+::: {.dco-chart data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: the defunct diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Pro, Python 3.14 with the GIL, four interleaved rounds, the release code (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers."}
 | Mix | diskcache-oxide | Defunct diskcache 5.6.3 |
 |---|---|---|
 | 99 reads to 1 write | 646k / 633k / 637k / 648k | 406k / 235k / 76k / 19k |
@@ -70,7 +70,7 @@ See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
 ## Status
 
 ::: {.callout-note}
-**0.1.0, the first release.** The core `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. Before it shipped, the code ran three gauntlets. A conformance suite runs the same tests against real diskcache 5.6.3, so every difference is a decision written down in [Divergences](user-guide/divergences.qmd), never an accident. A sanitizer pass put the whole codebase, bundled SQLite included, under Miri, ThreadSanitizer (with a free-threaded CPython built under it too), AddressSanitizer and LeakSanitizer. And a 24-hour soak threw processes, threads, forks, `SIGKILL` and `clear()` under load at one directory for a day, then checked it for corruption, lost writes and leaks. It's on its way into production at [Talk Python](https://talkpython.fm).
+**0.1.1, the first release.** The core `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. Before it shipped, the code ran three gauntlets. A conformance suite runs the same tests against real diskcache 5.6.3, so every difference is a decision written down in [Divergences](user-guide/divergences.qmd), never an accident. A sanitizer pass put the whole codebase, bundled SQLite included, under Miri, ThreadSanitizer (with a free-threaded CPython built under it too), AddressSanitizer and LeakSanitizer. And a 24-hour soak threw processes, threads, forks, `SIGKILL` and `clear()` under load at one directory for a day, then checked it for corruption, lost writes and leaks. It's on its way into production at [Talk Python](https://talkpython.fm).
 
 Not here yet: `memoize`, tags, `AsyncCache`, `Deque` and `Index`, keys other than `str`, custom `disk=` classes, eviction policies other than least-recently-stored, and the coordination recipes. See [Vision and roadmap](user-guide/roadmap.qmd).
 :::

@@ -29,7 +29,7 @@ if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
 
 ## Status
 
-**0.1.0, the first release.** `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. Before release they passed the conformance suite run against real diskcache 5.6.3 (apart from the [documented divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)), a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython, AddressSanitizer and LeakSanitizer), and a 24-hour soak that threw processes, threads, forks and `SIGKILL` at one directory. It's on its way into production at [Talk Python](https://talkpython.fm).
+**0.1.1, the first release.** `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. Before release they passed the conformance suite run against real diskcache 5.6.3 (apart from the [documented divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)), a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython, AddressSanitizer and LeakSanitizer), and a 24-hour soak that threw processes, threads, forks and `SIGKILL` at one directory. It's on its way into production at [Talk Python](https://talkpython.fm).
 
 Not here yet: `memoize`, tags, `AsyncCache`, `Deque` and `Index`, keys other than `str`, custom `disk=` classes and eviction policies other than least-recently-stored. See [where it's going](#where-its-going).
 

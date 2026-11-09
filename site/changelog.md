@@ -3,9 +3,9 @@
 This changelog is generated automatically from [GitHub Releases](https://github.com/mikeckennedy/diskcache-oxide/releases).
 
 
-# v0.1.0
+# v0.1.1
 
-*2026-11-09* · [GitHub](https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.1.0)
+*2026-11-09* · [GitHub](https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.1.1)
 
 The first release: diskcache's [Cache](reference/Cache.html#diskcache_oxide.Cache) API on a Rust engine and SQLite storage, shared safely by threads, processes and `fork()`, on CPython 3.14 and 3.15 including the free-threaded builds. Wheels for macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64.
 
@@ -36,4 +36,4 @@ The first release: diskcache's [Cache](reference/Cache.html#diskcache_oxide.Cach
 
 `memoize`, tags, `AsyncCache`, `Deque` and `Index`, keys other than `str`, `disk=`, other eviction policies, the coordination recipes (locks, semaphores, throttles), and Windows. See the [roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html).
 
-Development before this release, including the `0.1.0.dev` builds (`0.1.0.dev1` was yanked from PyPI), is in the git history. The `0.0.1` on PyPI is a name placeholder with no code.
+Development before this release, including the `0.1.0.dev` builds (`0.1.0.dev1` was yanked from PyPI), is in the git history. A `0.1.0` was built and verified but never published: two bugs found by new tests just before the upload were fixed first, so `0.1.1` is the first release on PyPI. The `0.0.1` on PyPI is a name placeholder with no code.

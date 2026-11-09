@@ -4,19 +4,7 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
-### Added
-
-- A user guide page for readers new to caching: what a cache is, why it's worth it, the vocabulary, invalidation and key naming, and where a directory cache sits between an in-process dict and a cache server.
-- Seven more recipes in the documentation: serving stale values while refreshing, caching responses from other services, storing your own types, counting things, single-use keys, server-side sessions, and using the cache from asyncio. The web workers recipe gains Django and Celery sections.
-- The documentation's version badge and Changelog page now come from the repository's `Cargo.toml` and `CHANGELOG.md` at build time, so they describe the build rather than the latest GitHub Release.
-- The benchmark tables in the FanoutCache, performance and roadmap pages are now drawn as interactive charts in the browser, from the tables themselves, so rerunning a benchmark means editing the table and nothing else. The tables stay in the page, the markdown mirrors and `llms-full.txt`.
-
-### Fixed
-
-- A read of a large value that kept losing the race to writers overwriting it could report a miss when the last of those overwrites was small, though the key was present the whole time. It now returns that value. It took eight lost races in a row, and the cost was one recompute, never a wrong value.
-- A `Timeout` raised by a handle that had been closed and was used again named slightly less than the cache's timeout (`0.199793708 s` for `timeout=0.2`), because the moment spent rejoining the store was subtracted first. It now names the timeout itself. The wait was always right.
-
-## [0.1.0] - 2026-11-09
+## [0.1.1] - 2026-11-09
 
 The first release: diskcache's `Cache` API on a Rust engine and SQLite storage, shared safely by threads, processes and `fork()`, on CPython 3.14 and 3.15 including the free-threaded builds. Wheels for macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64.
 
@@ -44,7 +32,7 @@ The first release: diskcache's `Cache` API on a Rust engine and SQLite storage, 
 
 `memoize`, tags, `AsyncCache`, `Deque` and `Index`, keys other than `str`, `disk=`, other eviction policies, the coordination recipes (locks, semaphores, throttles), and Windows. See the [roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html).
 
-Development before this release, including the `0.1.0.dev` builds (`0.1.0.dev1` was yanked from PyPI), is in the git history. The `0.0.1` on PyPI is a name placeholder with no code.
+Development before this release, including the `0.1.0.dev` builds (`0.1.0.dev1` was yanked from PyPI), is in the git history. A `0.1.0` was built and verified but never published: two bugs found by new tests just before the upload were fixed first, so `0.1.1` is the first release on PyPI. The `0.0.1` on PyPI is a name placeholder with no code.
 
-[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.1.0
+[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.1.1
