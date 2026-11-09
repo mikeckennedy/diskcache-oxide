@@ -3,7 +3,7 @@ title: "Caching expensive calls"
 description: "The cache-aside pattern, and a decorator that caches any function's results."
 ---
 
-The most common use of a cache: before doing something slow (a database query, an API call, rendering a big page), check whether the answer is already cached. If it is, use it. If not, compute it and store it for next time. Every worker process on the machine shares the result, and it survives restarts.
+The page takes 900 ms, and 850 of them are one query that returns the same ten rows it returned a second ago. Everyone has met this page. Caching is how you stop paying for the same answer twice: before doing something slow (a database query, an API call, rendering a big page), ask the cache. If it knows, you're done in a microsecond or two. If not, do the work and leave the answer for whoever asks next, which with a shared directory means every worker process on the machine, today and after the next restart.
 
 ## Cache-aside
 

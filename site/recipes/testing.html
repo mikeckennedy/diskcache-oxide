@@ -332,7 +332,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>Code that uses a cache needs tests of two kinds: tests where caching shouldn’t get in the way, and tests of the caching behavior itself (is the value cached, does it expire, is it invalidated). diskcache-oxide gives you a tool for each.</p>
+<p>Code that uses a cache has a talent for passing its tests for the wrong reason: the second assertion was green because the first one left the answer behind, and the test that “covers” expiry sleeps for two seconds and hopes. Such code needs tests of two kinds: tests where caching shouldn’t get in the way, and tests of the caching behavior itself (is the value cached, does it expire, is it invalidated). diskcache-oxide gives you a tool for each, and neither involves sleeping.</p>
 <section id="a-real-cache-per-test" class="level1">
 <h1>A real cache per test</h1>
 <p>A <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> in pytest’s <code>tmp_path</code> is fast and isolated: each test gets its own empty cache, and it’s thrown away afterwards.</p>
@@ -359,7 +359,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="testing-expiry-without-sleeping" class="level1">
 <h1>Testing expiry without sleeping</h1>
 <p>diskcache-oxide reads the clock natively in Rust, so patching <code>time.time</code> doesn’t affect it on its own. Pass <code>clock=</code> instead. A small fake clock lets a test jump forward in time:</p>
-<div id="01f7ee1c" class="cell" data-execution_count="1">
+<div id="e8aaa6ba" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>

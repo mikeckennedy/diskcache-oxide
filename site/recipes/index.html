@@ -292,7 +292,7 @@ ul.task-list li input[type="checkbox"] {
 </header>
 
 
-<p>A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. These are the patterns for those jobs. The examples marked as runnable execute against diskcache-oxide every time these docs are built, so they’re known to work.</p>
+<p>A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you’d reach for one, then shows the pattern, then says where it stops working. The examples with output under them execute against diskcache-oxide every time these docs are built, so they’re known to work, not merely believed to.</p>
 <section id="caching" class="level1">
 <h1>Caching</h1>
 <p><strong><a href="../recipes/caching-expensive-calls.html">Caching expensive calls</a>.</strong> The cache-aside pattern, and a small decorator that turns any function into a cached one, with keys built safely from its arguments.</p>

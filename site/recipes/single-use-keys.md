@@ -1,6 +1,6 @@
 # Single-use keys
 
-Some things must happen exactly once however many times they're asked for: a password reset link is good for one click, a verification code for one entry, a payment request for one charge even when the client retries. Two cache calls are atomic across every worker on the machine, [pop()](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) and [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add), and between them they cover all of these.
+At 2 a.m. a tired user double-clicks a password reset link, and two requests arrive on two workers a few milliseconds apart. Both find the token. Both accept it. Some things must happen exactly once however many times they're asked for: a reset link is good for one click, a verification code for one entry, a payment request for one charge even when the client retries. Two cache calls are atomic across every worker on the machine, [pop()](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) and [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add), and between them they cover all of these.
 
 
 # One-time tokens with [pop()](../reference/Cache.pop.md#diskcache_oxide.Cache.pop)

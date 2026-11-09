@@ -1,6 +1,6 @@
 # Serving stale values while refreshing
 
-When a popular entry expires, every worker that asks for it in the next instant misses, and all of them recompute it at once. The [caching recipe](caching-expensive-calls.md#thundering-herds) calls this a thundering herd. For most values it's harmless. When the value is slow to build (a front page that takes 400 ms, a report that queries a warehouse), there are two ways to make sure readers never see the gap, and only one worker does the work.
+The newsletter goes out at 9:00. At 9:00:01, four hundred readers land on the front page, and the cached copy expired at 8:59:58. Every worker misses at the same instant, every one of them starts rendering the same page, and the database spends its morning answering one question four hundred times. The [caching recipe](caching-expensive-calls.md#thundering-herds) calls this a thundering herd. For most values it's harmless. When the value is slow to build (a front page that takes 400 ms, a report that queries a warehouse), there are two ways to make sure readers never see the gap, and only one worker does the work.
 
 
 # Stale-while-revalidate

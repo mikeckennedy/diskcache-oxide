@@ -1476,7 +1476,7 @@ This is the User Guide documentation for the package.
 
 ### Getting started
 
-A `Cache` is a directory. That's the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn't restart. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.
+A `Cache` is a directory. That's the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn't restart. Hold on to that sentence; most of what follows is a consequence of it. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.
 
 ## Install
 
@@ -1523,7 +1523,7 @@ value, expires_at = cache.get('user:42', expire_time=True)
 ```
 
 - Keys are `str`. Other key types raise `TypeError` for now (they're planned).
-- Values can be `str`, `bytes`, `int`, `float`, `bool`, `None`, and lists, tuples, dicts, sets and datetimes made of those. They come back as the types you stored. See [Serialization](serialization.qmd).
+- Values can be `str`, `bytes`, `int`, `float`, `bool`, `None`, `Decimal`, and lists, tuples, dicts, sets, frozensets, datetimes and dates made of those. They come back as the types you stored. See [Serialization](serialization.qmd).
 - `expire` is in seconds. Leave it out for an entry that never expires. `touch(key, expire=...)` changes the expiry of an existing entry.
 
 ### Dictionary syntax
@@ -1735,7 +1735,7 @@ cache = Cache(tmp_path, clock=lambda: time.time())
 
 ### Switching from python-diskcache
 
-diskcache-oxide is **API compatible** with [python-diskcache](https://github.com/grantjenks/python-diskcache) 5.6.3's `Cache`, and deliberately **not data compatible**. Keeping diskcache's API makes switching a one-line change. Not keeping its on-disk format is what made it possible to fix the design instead of inheriting it. So the switch itself is small, and the rest of this page is about what you'll notice afterwards, which is mostly things getting better and now and then things getting stricter.
+If you're here, the question is a practical one: what breaks? Very little, and on purpose. diskcache-oxide is **API compatible** with [python-diskcache](https://github.com/grantjenks/python-diskcache) 5.6.3's `Cache`, and deliberately **not data compatible**. Keeping diskcache's API makes switching a one-line change. Not keeping its on-disk format is what made it possible to fix the design instead of inheriting it, pickle and all. So the switch itself is small, and the rest of this page is about what you'll notice afterwards, which is mostly things getting better and now and then things getting stricter.
 
 For most apps, switching looks like this:
 
@@ -2118,7 +2118,7 @@ Ideas being considered, not yet committed to:
 
 ### Serialization
 
-A serializer has three jobs. What goes into the cache should come out as exactly what you put in. Encoding and decoding should be fast, because they happen on every call. And reading the cache should never run code that someone else left there. diskcache's default, pickle, does the first two well and fails the third by design: unpickling runs whatever the bytes tell it to. diskcache-oxide gets all three, and pickle becomes something you opt into, one cache at a time.
+A cache has a quiet second job: it's a program that reads bytes it didn't write, left on disk by whatever process got there first. That makes the serializer the most security-relevant piece of the whole library, and it has three jobs. What goes into the cache should come out as exactly what you put in. Encoding and decoding should be fast, because they happen on every call. And reading the cache should never run code that someone else left there. diskcache's default, pickle, does the first two well and fails the third by design: unpickling runs whatever the bytes tell it to. diskcache-oxide gets all three, and pickle becomes something you opt into, one cache at a time.
 
 ## Two formats
 
@@ -2144,7 +2144,10 @@ diskcache-oxide's encoder, written in Rust, notices anything its format would ch
 |---|---|
 | `tuple` | a `tuple`, not a list |
 | `set` | a `set` |
+| `frozenset` | a `frozenset` |
 | `datetime.datetime` | a `datetime`, with its timezone and microseconds |
+| `datetime.date` | a `date` |
+| `decimal.Decimal` | a `Decimal`, exact |
 | `int` wider than 64 bits | the same int |
 | `float('nan')`, `inf`, `-inf` | the same float |
 | `bytes` nested in a container | `bytes` |
@@ -2909,7 +2912,7 @@ All of these work in chunks, release the database between chunks so other writer
 
 ### Performance
 
-Web apps call their cache on almost every request, often straight from the asyncio event loop, where every microsecond the cache spends is a microsecond every other request on that loop waits. So diskcache-oxide's performance work starts with read latency, then throughput under many threads, then predictable resource use. Correctness always comes first: every speedup has to keep the conformance suite green, or it doesn't ship.
+A microsecond is nothing until you multiply it. Web apps call their cache on almost every request, often straight from the asyncio event loop, where every microsecond the cache spends is a microsecond every other request on that loop waits. So diskcache-oxide's performance work starts with read latency, then throughput under many threads, then predictable resource use. Correctness always comes first: every speedup has to keep the conformance suite green, or it doesn't ship. The numbers below are the ones that survived.
 
 ## The numbers
 

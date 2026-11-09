@@ -331,11 +331,11 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>To limit each client to, say, 100 requests a minute, every worker process has to see the same count. An in-memory counter gives each worker its own limit; Redis is the usual fix. A diskcache-oxide counter is shared by every worker on the machine, and <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> is atomic across processes, so concurrent requests never lose a count.</p>
+<p>Someone has pointed a script at your search endpoint. It’s a polite script: it stays under your limit of 100 requests a minute. Per worker. With eight workers and an in-memory counter in each, the limit you meant is 100 and the limit you have is 800. To limit each client for real, every worker process has to see the same count, and Redis is the usual fix. A diskcache-oxide counter is shared by every worker on the machine, and <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> is atomic across processes, so concurrent requests never lose a count.</p>
 <section id="a-fixed-window-limiter" class="level1">
 <h1>A fixed-window limiter</h1>
 <p>Each client gets a counter for the current window, with the window’s number in the key. When the window ends, requests move on to a new key and the old one simply expires.</p>
-<div id="b2e85c89" class="cell" data-execution_count="1">
+<div id="2c4238b2" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>

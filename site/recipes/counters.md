@@ -1,6 +1,6 @@
 # Counting things
 
-Counting is the job an in-process counter can't do once there's more than one worker, and the job that's hardest on a database if every event is a row. A cache counter sits in between: [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) is atomic across every thread and process on the machine, costs tens of microseconds, and the totals can be moved to the database on a schedule.
+A download counter is the simplest feature on the site, and the first one to start lying once there's more than one worker: each process counts what it saw, and the number on the page depends on which worker rendered it. Moving the count to the database fixes the lie and makes every download a write to your busiest table. A cache counter sits in between: [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) is atomic across every thread and process on the machine, costs tens of microseconds, and the totals can be moved to the database on a schedule, by one worker, without losing a single count on the way.
 
 
 # Count from every worker

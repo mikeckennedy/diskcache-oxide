@@ -335,7 +335,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>diskcache-oxide’s API is synchronous. An <code>AsyncCache</code> is on the <a href="../user-guide/roadmap.html">roadmap</a>, but the sync cache already works well in an asyncio app, provided you know which calls can block the event loop and for how long.</p>
+<p>An async framework makes one promise to every request it’s serving: nothing blocks the loop. A synchronous cache call looks like a small risk to that promise, and whether it is depends entirely on which call. diskcache-oxide’s API is synchronous. An <code>AsyncCache</code> is on the <a href="../user-guide/roadmap.html">roadmap</a>, but the sync cache already works well in an asyncio app, provided you know which calls can block the event loop and for how long. Here are the three rules.</p>
 <section id="reads-call-them-inline" class="level1">
 <h1>Reads: call them inline</h1>
 <p>A cached read costs a few microseconds (the <a href="../user-guide/performance.html">performance</a> page has the measurements), less than the event loop spends scheduling a task. Reads never take the write lock and never wait for writers, so <code>cache.get()</code> on the loop is the right call, and <code>await asyncio.to_thread(cache.get, ...)</code> would cost more than the read it protects.</p>
@@ -348,7 +348,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <li><strong>Run writes in a worker thread</strong> with <code>asyncio.to_thread()</code>. The thread does the waiting; the loop keeps serving. The thread hop costs tens of microseconds, which is fine for a write.</li>
 <li><strong>Or keep writes inline with a short <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> and <code>durable=True</code>.</strong> Then the worst case is a dropped cache write logged once a minute, not a stalled loop.</li>
 </ul>
-<div id="80473a96" class="cell" data-execution_count="1">
+<div id="49a926fc" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> asyncio</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>

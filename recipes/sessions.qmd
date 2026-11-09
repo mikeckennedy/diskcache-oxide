@@ -3,7 +3,7 @@ title: "Server-side sessions"
 description: "Sessions every worker can read, with a sliding idle timeout from touch(), an absolute lifetime, and log-out-everywhere by key prefix."
 ---
 
-A session is the one piece of per-user state almost every web app keeps server side: who's logged in, when, with which roles. Keeping it in a cache directory means every worker sees the same session the instant it's written, with no database row per request and no Redis to run. The cookie holds only a random id.
+Every request arrives with a cookie and a question: who is this? A session is the one piece of per-user state almost every web app keeps server side to answer it: who's logged in, since when, with which roles. Keeping it in a cache directory means every worker sees the same session the instant it's written, a login on one worker is a login on all of them, and there's no database row per request and no Redis to run. The cookie holds only a random id.
 
 ## Start, load, end
 

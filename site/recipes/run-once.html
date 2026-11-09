@@ -332,7 +332,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>A web app served by eight gunicorn workers often has eight copies of its scheduler too, and each one fires the hourly cleanup at the top of the hour. You want the job to run once.</p>
+<p>At the top of the hour, eight gunicorn workers wake up at the same instant with the same idea: time for the hourly cleanup. Each one has its own copy of the scheduler, none of them knows the others exist, and the only thing they share is a cache directory. You want the job to run once, and it turns out the directory is enough.</p>
 <p><a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> stores a value only if the key is missing or expired, and it’s atomic across every thread and process using the cache directory. When several callers race to add the same key, exactly one gets <code>True</code>. That makes the key a claim on the job.</p>
 <section id="claim-the-run" class="level1">
 <h1>Claim the run</h1>
@@ -352,7 +352,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="see-it-work" class="level1">
 <h1>See it work</h1>
 <p>Here eight threads race for the same claim. Processes behave the same way.</p>
-<div id="d2a40c11" class="cell" data-execution_count="1">
+<div id="a6ed221a" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>

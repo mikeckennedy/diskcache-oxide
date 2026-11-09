@@ -1,6 +1,6 @@
 # Sharing a cache across web workers
 
-The usual deployment: several worker processes, each opening the same cache directory, all sharing one cache. diskcache-oxide is built for exactly this, so there isn't much to it. This page covers the few choices that matter.
+Deployment is where a cache meets the real world: several worker processes that don't know each other's names, a server that forks and recycles them while they're busy, a cron job that opens the same directory on the side. diskcache-oxide is built for exactly this, so there isn't much to it. This page covers the few choices that matter and leaves out the ones that don't.
 
 
 # Pick a directory

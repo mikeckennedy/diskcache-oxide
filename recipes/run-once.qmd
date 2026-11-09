@@ -3,7 +3,7 @@ title: "Running a job once across workers"
 description: "Use add() to make sure only one worker process runs a scheduled job."
 ---
 
-A web app served by eight gunicorn workers often has eight copies of its scheduler too, and each one fires the hourly cleanup at the top of the hour. You want the job to run once.
+At the top of the hour, eight gunicorn workers wake up at the same instant with the same idea: time for the hourly cleanup. Each one has its own copy of the scheduler, none of them knows the others exist, and the only thing they share is a cache directory. You want the job to run once, and it turns out the directory is enough.
 
 `add()` stores a value only if the key is missing or expired, and it's atomic across every thread and process using the cache directory. When several callers race to add the same key, exactly one gets `True`. That makes the key a claim on the job.
 

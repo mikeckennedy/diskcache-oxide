@@ -2,7 +2,7 @@
 title: "Serialization"
 ---
 
-A serializer has three jobs. What goes into the cache should come out as exactly what you put in. Encoding and decoding should be fast, because they happen on every call. And reading the cache should never run code that someone else left there. diskcache's default, pickle, does the first two well and fails the third by design: unpickling runs whatever the bytes tell it to. diskcache-oxide gets all three, and pickle becomes something you opt into, one cache at a time.
+A cache has a quiet second job: it's a program that reads bytes it didn't write, left on disk by whatever process got there first. That makes the serializer the most security-relevant piece of the whole library, and it has three jobs. What goes into the cache should come out as exactly what you put in. Encoding and decoding should be fast, because they happen on every call. And reading the cache should never run code that someone else left there. diskcache's default, pickle, does the first two well and fails the third by design: unpickling runs whatever the bytes tell it to. diskcache-oxide gets all three, and pickle becomes something you opt into, one cache at a time.
 
 ## Two formats
 
@@ -28,7 +28,10 @@ diskcache-oxide's encoder, written in Rust, notices anything its format would ch
 |---|---|
 | `tuple` | a `tuple`, not a list |
 | `set` | a `set` |
+| `frozenset` | a `frozenset` |
 | `datetime.datetime` | a `datetime`, with its timezone and microseconds |
+| `datetime.date` | a `date` |
+| `decimal.Decimal` | a `Decimal`, exact |
 | `int` wider than 64 bits | the same int |
 | `float('nan')`, `inf`, `-inf` | the same float |
 | `bytes` nested in a container | `bytes` |

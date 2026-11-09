@@ -330,11 +330,11 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>When a popular entry expires, every worker that asks for it in the next instant misses, and all of them recompute it at once. The <a href="../recipes/caching-expensive-calls.html#thundering-herds">caching recipe</a> calls this a thundering herd. For most values it’s harmless. When the value is slow to build (a front page that takes 400 ms, a report that queries a warehouse), there are two ways to make sure readers never see the gap, and only one worker does the work.</p>
+<p>The newsletter goes out at 9:00. At 9:00:01, four hundred readers land on the front page, and the cached copy expired at 8:59:58. Every worker misses at the same instant, every one of them starts rendering the same page, and the database spends its morning answering one question four hundred times. The <a href="../recipes/caching-expensive-calls.html#thundering-herds">caching recipe</a> calls this a thundering herd. For most values it’s harmless. When the value is slow to build (a front page that takes 400 ms, a report that queries a warehouse), there are two ways to make sure readers never see the gap, and only one worker does the work.</p>
 <section id="stale-while-revalidate" class="level1">
 <h1>Stale-while-revalidate</h1>
 <p>Store the value with its own freshness deadline inside, and give the entry a longer hard expiry. A reader that finds the entry fresh returns it. One that finds it stale returns it anyway, and the first of them to win a claim starts a refresh in the background. Readers never wait, and the herd is one worker.</p>
-<div id="ac9241ab" class="cell" data-execution_count="1">
+<div id="672eb848" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>

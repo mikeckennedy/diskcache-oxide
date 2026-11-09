@@ -3,7 +3,7 @@ title: "Storing your own types"
 description: "UUIDs, enums, timedeltas, Paths, Pydantic models and dataclasses in the cache with register_type(), and no pickle."
 ---
 
-The cache stores the built-in types exactly ([Serialization](../user-guide/serialization.qmd#exact-types) has the table: `str`, numbers, `bytes`, `bool`, `None`, lists, tuples, sets, dicts, `datetime`, `date`, `Decimal`) and refuses anything else with a `TypeError` at `set()`, rather than pickling it behind your back. For everything else, you tell the codec once how to store the type. This recipe collects the registrations a typical web app needs.
+The first `TypeError` from `set()` is a small shock. You've been storing dicts for weeks, and today one of them has a `UUID` in it and the cache says no. That refusal is the design: the cache stores the built-in types exactly ([Serialization](../user-guide/serialization.qmd#exact-types) has the table: `str`, numbers, `bytes`, `bool`, `None`, lists, tuples, sets, dicts, `datetime`, `date`, `Decimal`) and refuses anything else rather than pickling it behind your back. For everything else, you tell the codec once how to store the type, and the shock never comes back. This recipe collects the registrations a typical web app needs.
 
 ## The standard library's types
 

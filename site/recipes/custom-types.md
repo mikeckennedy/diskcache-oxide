@@ -1,6 +1,6 @@
 # Storing your own types
 
-The cache stores the built-in types exactly ([Serialization](../user-guide/serialization.md#exact-types) has the table: `str`, numbers, `bytes`, `bool`, `None`, lists, tuples, sets, dicts, `datetime`, `date`, `Decimal`) and refuses anything else with a `TypeError` at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set), rather than pickling it behind your back. For everything else, you tell the codec once how to store the type. This recipe collects the registrations a typical web app needs.
+The first `TypeError` from [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) is a small shock. You've been storing dicts for weeks, and today one of them has a `UUID` in it and the cache says no. That refusal is the design: the cache stores the built-in types exactly ([Serialization](../user-guide/serialization.md#exact-types) has the table: `str`, numbers, `bytes`, `bool`, `None`, lists, tuples, sets, dicts, `datetime`, `date`, `Decimal`) and refuses anything else rather than pickling it behind your back. For everything else, you tell the codec once how to store the type, and the shock never comes back. This recipe collects the registrations a typical web app needs.
 
 
 # The standard library's types

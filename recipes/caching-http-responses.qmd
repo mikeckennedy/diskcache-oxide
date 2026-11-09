@@ -3,7 +3,7 @@ title: "Caching responses from other services"
 description: "Cache what an upstream API returns, honor its max-age, revalidate with ETags, and keep serving the last good answer when it's down."
 ---
 
-An app that calls other services (a payments API, a headless CMS, your own microservices) spends most of its latency waiting on them, and most of those answers don't change between calls. Caching them in a directory every worker shares means one request to the upstream per machine instead of one per worker, and a last known good answer to serve when the upstream is slow or down.
+Your dashboard endpoint takes 1.2 seconds, and 1.1 of them are spent waiting for a partner API to return the same JSON it returned to the previous request. An app that calls other services (a payments API, a headless CMS, your own microservices) spends most of its latency waiting on them, and most of those answers don't change between calls. Caching them in a directory every worker shares means one request to the upstream per machine instead of one per worker, and a last known good answer to serve when the upstream is slow, or down, or has started returning the wrong thing with a 500.
 
 ## A cached fetch
 

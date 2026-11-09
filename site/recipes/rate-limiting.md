@@ -1,6 +1,6 @@
 # Rate limiting
 
-To limit each client to, say, 100 requests a minute, every worker process has to see the same count. An in-memory counter gives each worker its own limit; Redis is the usual fix. A diskcache-oxide counter is shared by every worker on the machine, and [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) is atomic across processes, so concurrent requests never lose a count.
+Someone has pointed a script at your search endpoint. It's a polite script: it stays under your limit of 100 requests a minute. Per worker. With eight workers and an in-memory counter in each, the limit you meant is 100 and the limit you have is 800. To limit each client for real, every worker process has to see the same count, and Redis is the usual fix. A diskcache-oxide counter is shared by every worker on the machine, and [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) is atomic across processes, so concurrent requests never lose a count.
 
 
 # A fixed-window limiter

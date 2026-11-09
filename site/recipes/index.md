@@ -1,6 +1,6 @@
 # Recipes
 
-A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. These are the patterns for those jobs. The examples marked as runnable execute against diskcache-oxide every time these docs are built, so they're known to work.
+A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you'd reach for one, then shows the pattern, then says where it stops working. The examples with output under them execute against diskcache-oxide every time these docs are built, so they're known to work, not merely believed to.
 
 
 # Caching

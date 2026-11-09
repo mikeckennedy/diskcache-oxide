@@ -124,16 +124,16 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="A serializer has three jobs. What goes into the cache should come out as exactly what you put in. Encoding and decoding should be fast, because they...">
+  <meta name="description" content="A cache has a quiet second job: it’s a program that reads bytes it didn’t write, left on disk by whatever process got there first. That makes the...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Serialization – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A serializer has three jobs. What goes into the cache should come out as exactly what you put in. Encoding and decoding should be fast, because they...">
+  <meta property="og:description" content="A cache has a quiet second job: it’s a program that reads bytes it didn’t write, left on disk by whatever process got there first. That makes the...">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Serialization – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A serializer has three jobs. What goes into the cache should come out as exactly what you put in. Encoding and decoding should be fast, because they...">
+  <meta name="twitter:description" content="A cache has a quiet second job: it’s a program that reads bytes it didn’t write, left on disk by whatever process got there first. That makes the...">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -348,7 +348,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>A serializer has three jobs. What goes into the cache should come out as exactly what you put in. Encoding and decoding should be fast, because they happen on every call. And reading the cache should never run code that someone else left there. diskcache’s default, pickle, does the first two well and fails the third by design: unpickling runs whatever the bytes tell it to. diskcache-oxide gets all three, and pickle becomes something you opt into, one cache at a time.</p>
+<p>A cache has a quiet second job: it’s a program that reads bytes it didn’t write, left on disk by whatever process got there first. That makes the serializer the most security-relevant piece of the whole library, and it has three jobs. What goes into the cache should come out as exactly what you put in. Encoding and decoding should be fast, because they happen on every call. And reading the cache should never run code that someone else left there. diskcache’s default, pickle, does the first two well and fails the third by design: unpickling runs whatever the bytes tell it to. diskcache-oxide gets all three, and pickle becomes something you opt into, one cache at a time.</p>
 <section id="two-formats" class="level1">
 <h1>Two formats</h1>
 <p>Each cache picks a structured format with <code>serializer=</code>:</p>
@@ -381,22 +381,34 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <td>a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a></td>
 </tr>
 <tr class="odd">
+<td><code>frozenset</code></td>
+<td>a <code>frozenset</code></td>
+</tr>
+<tr class="even">
 <td><code>datetime.datetime</code></td>
 <td>a <code>datetime</code>, with its timezone and microseconds</td>
 </tr>
+<tr class="odd">
+<td><code>datetime.date</code></td>
+<td>a <code>date</code></td>
+</tr>
 <tr class="even">
+<td><code>decimal.Decimal</code></td>
+<td>a <code>Decimal</code>, exact</td>
+</tr>
+<tr class="odd">
 <td><code>int</code> wider than 64 bits</td>
 <td>the same int</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>float('nan')</code>, <code>inf</code>, <code>-inf</code></td>
 <td>the same float</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>bytes</code> nested in a container</td>
 <td><code>bytes</code></td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>dict</code> with <code>int</code> (or other non-<code>str</code>) keys</td>
 <td>the same keys</td>
 </tr>

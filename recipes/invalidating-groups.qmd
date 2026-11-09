@@ -3,7 +3,7 @@ title: "Invalidating groups of keys"
 description: "Clear everything cached for one user or one object, by key prefix or by generation number."
 ---
 
-A single change often makes many cache entries stale. When a user edits their profile, their profile page, their sidebar widget and every API response that embeds their name may all need to go. There are two good ways to handle this. Both start with a naming convention.
+A user changes their display name, and for the next five minutes half the site still uses the old one: the profile page, the sidebar widget, three API responses, each cached on its own schedule and each wrong in its own way. A single change often makes many cache entries stale, and deleting them one by one means knowing every key that was ever derived from that user. There are two good ways to handle this. Both start with a naming convention.
 
 ## Name keys hierarchically
 

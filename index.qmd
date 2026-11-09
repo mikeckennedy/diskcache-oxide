@@ -5,15 +5,15 @@ pagetitle: "diskcache-oxide"
 
 **Python cache. Rust engine. SQLite storage.**
 
-Every Python web app arrives at the same situation. A query that was fine at launch is now the slowest thing on the page, so you cache its result in a dict. That works until the app runs under gunicorn with four workers, and now there are four dicts, each warming up on its own and each forgetting everything when its worker is recycled. So you reach for Redis, and you've added a server to deploy, secure, monitor and pay for, to remember the answer to one query.
+Every Python web app arrives at the same crossroads. A query that was fine at launch is now the slowest thing on the page, so you cache its result in a dict, and for one afternoon you're a hero. Then the app goes under gunicorn with four workers, and there are four dicts, each warming up alone and each forgetting everything the moment its worker is recycled. So you reach for Redis, and now there's a server to deploy, secure, monitor and pay for, whose entire job is to remember the answer to one query.
 
-[python-diskcache](https://github.com/grantjenks/python-diskcache) showed there was a third way: a cache that is just a directory on disk. Every thread and every process on the machine opens the same path and sees the same entries, and they're still there after a restart, because a directory doesn't restart. No daemon, no network hop, no second system to keep alive.
+[python-diskcache](https://github.com/grantjenks/python-diskcache) showed there was a third road: a cache that is just a directory. Every thread and every process on the machine opens the same path and sees the same entries, and the entries are still there tomorrow, because a directory doesn't restart. No daemon, no network hop, no second system to keep alive. It's the kind of idea that sounds too simple to be fast, and for years that was the catch.
 
-diskcache-oxide takes that idea and rebuilds it for where Python is going: many cores, many worker processes, free-threaded CPython, and async frameworks that can't afford a slow call on the event loop. The engine is Rust. The storage is SQLite. The Python layer is as thin as it can be. You keep the diskcache API you already know. In return, a cached read comes back in well under a microsecond, threads stop fighting each other over the cache, nothing on your disk is a pickle unless you asked for one, and memory and disk use stay where you set them.
+diskcache-oxide removes the catch. It keeps the diskcache API you already know and rebuilds everything beneath it for where Python is going: many cores, many worker processes, free-threaded CPython, and async frameworks that can't afford a slow call on the event loop. The engine is Rust. The storage is SQLite. The Python layer is as thin as it can be. A cached read comes back in well under a microsecond, throughput stays flat as you add threads instead of collapsing, nothing on your disk is a pickle unless you asked for one, and memory and disk use stay where you set them.
 
 **Source on GitHub: <https://github.com/mikeckennedy/diskcache-oxide>** · [Issues](https://github.com/mikeckennedy/diskcache-oxide/issues)
 
-Here is the whole idea on one screen. Every worker opens the same directory, the cache makes the slow query cheap, and `add()` elects exactly one worker to run the hourly job, because a write that's atomic across processes is a lock if you squint:
+Here is the whole idea on one screen. Four workers, one directory. The cache makes the slow query cheap, and `add()` elects exactly one worker to run the hourly job, because a write that's atomic across processes is a lock if you squint:
 
 ```python
 import os
@@ -61,7 +61,7 @@ See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
 ## Status
 
 ::: {.callout-note}
-**0.1.0, the first release.** The core `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. Before release they passed a conformance suite that runs the same tests against real diskcache 5.6.3, apart from the [documented divergences](user-guide/divergences.qmd); a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython, AddressSanitizer and LeakSanitizer); and a 24-hour soak that threw processes, threads, forks, `SIGKILL` and `clear()` under load at one directory and checked afterwards for corruption, lost writes and leaks. It's on its way into production at [Talk Python](https://talkpython.fm).
+**0.1.0, the first release.** The core `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. Before it shipped, the code ran three gauntlets. A conformance suite runs the same tests against real diskcache 5.6.3, so every difference is a decision written down in [Divergences](user-guide/divergences.qmd), never an accident. A sanitizer pass put the whole codebase, bundled SQLite included, under Miri, ThreadSanitizer (with a free-threaded CPython built under it too), AddressSanitizer and LeakSanitizer. And a 24-hour soak threw processes, threads, forks, `SIGKILL` and `clear()` under load at one directory for a day, then checked it for corruption, lost writes and leaks. It's on its way into production at [Talk Python](https://talkpython.fm).
 
 Not here yet: `memoize`, tags, `AsyncCache`, `Deque` and `Index`, keys other than `str`, custom `disk=` classes, eviction policies other than least-recently-stored, and the coordination recipes. See [Vision and roadmap](user-guide/roadmap.qmd).
 :::

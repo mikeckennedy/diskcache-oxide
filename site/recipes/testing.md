@@ -1,6 +1,6 @@
 # Testing code that uses a cache
 
-Code that uses a cache needs tests of two kinds: tests where caching shouldn't get in the way, and tests of the caching behavior itself (is the value cached, does it expire, is it invalidated). diskcache-oxide gives you a tool for each.
+Code that uses a cache has a talent for passing its tests for the wrong reason: the second assertion was green because the first one left the answer behind, and the test that "covers" expiry sleeps for two seconds and hopes. Such code needs tests of two kinds: tests where caching shouldn't get in the way, and tests of the caching behavior itself (is the value cached, does it expire, is it invalidated). diskcache-oxide gives you a tool for each, and neither involves sleeping.
 
 
 # A real cache per test

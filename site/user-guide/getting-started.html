@@ -364,7 +364,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>A <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is a directory. That’s the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn’t restart. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.</p>
+<p>A <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is a directory. That’s the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn’t restart. Hold on to that sentence; most of what follows is a consequence of it. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.</p>
 <section id="install" class="level1">
 <h1>Install</h1>
 <div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install diskcache-oxide</span></code></pre></div>
@@ -399,7 +399,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>value, expires_at <span class="op">=</span> cache.get(<span class="st">'user:42'</span>, expire_time<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
 <ul>
 <li>Keys are <code>str</code>. Other key types raise <code>TypeError</code> for now (they’re planned).</li>
-<li>Values can be <code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code>, and lists, tuples, dicts, sets and datetimes made of those. They come back as the types you stored. See <a href="../user-guide/serialization.html">Serialization</a>.</li>
+<li>Values can be <code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code>, <code>Decimal</code>, and lists, tuples, dicts, sets, frozensets, datetimes and dates made of those. They come back as the types you stored. See <a href="../user-guide/serialization.html">Serialization</a>.</li>
 <li><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> is in seconds. Leave it out for an entry that never expires. <code>touch(key, expire=...)</code> changes the expiry of an existing entry.</li>
 </ul>
 <section id="dictionary-syntax" class="level2">

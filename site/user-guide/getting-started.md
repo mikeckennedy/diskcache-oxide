@@ -1,6 +1,6 @@
 # Getting started
 
-A [Cache](../reference/Cache.md#diskcache_oxide.Cache) is a directory. That's the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn't restart. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.
+A [Cache](../reference/Cache.md#diskcache_oxide.Cache) is a directory. That's the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn't restart. Hold on to that sentence; most of what follows is a consequence of it. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.
 
 
 # Install
@@ -51,7 +51,7 @@ value, expires_at = cache.get('user:42', expire_time=True)
 ```
 
 - Keys are `str`. Other key types raise `TypeError` for now (they're planned).
-- Values can be `str`, `bytes`, `int`, `float`, `bool`, `None`, and lists, tuples, dicts, sets and datetimes made of those. They come back as the types you stored. See [Serialization](serialization.md).
+- Values can be `str`, `bytes`, `int`, `float`, `bool`, `None`, `Decimal`, and lists, tuples, dicts, sets, frozensets, datetimes and dates made of those. They come back as the types you stored. See [Serialization](serialization.md).
 - [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) is in seconds. Leave it out for an entry that never expires. `touch(key, expire=...)` changes the expiry of an existing entry.
 
 

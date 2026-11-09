@@ -334,11 +334,11 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>The cache stores the built-in types exactly (<a href="../user-guide/serialization.html#exact-types">Serialization</a> has the table: <code>str</code>, numbers, <code>bytes</code>, <code>bool</code>, <code>None</code>, lists, tuples, sets, dicts, <code>datetime</code>, <code>date</code>, <code>Decimal</code>) and refuses anything else with a <code>TypeError</code> at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>, rather than pickling it behind your back. For everything else, you tell the codec once how to store the type. This recipe collects the registrations a typical web app needs.</p>
+<p>The first <code>TypeError</code> from <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> is a small shock. You’ve been storing dicts for weeks, and today one of them has a <code>UUID</code> in it and the cache says no. That refusal is the design: the cache stores the built-in types exactly (<a href="../user-guide/serialization.html#exact-types">Serialization</a> has the table: <code>str</code>, numbers, <code>bytes</code>, <code>bool</code>, <code>None</code>, lists, tuples, sets, dicts, <code>datetime</code>, <code>date</code>, <code>Decimal</code>) and refuses anything else rather than pickling it behind your back. For everything else, you tell the codec once how to store the type, and the shock never comes back. This recipe collects the registrations a typical web app needs.</p>
 <section id="the-standard-librarys-types" class="level1">
 <h1>The standard library’s types</h1>
 <p><code>uuid.UUID</code>, <code>datetime.timedelta</code> and <code>pathlib.Path</code> aren’t built-in types to the codec. Each needs an <code>encode</code> that turns an instance into something storable and a <code>decode</code> that turns it back:</p>
-<div id="16b2d653" class="cell" data-execution_count="1">
+<div id="d589f133" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> datetime</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pathlib</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
@@ -363,7 +363,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="enums" class="level1">
 <h1>Enums</h1>
 <p>Store the value, and let the enum class turn it back into a member. A <code>StrEnum</code> or <code>IntEnum</code> is a subclass of <code>str</code> or <code>int</code>, and a subclass is never stored as its base, so it needs this too:</p>
-<div id="2f58a9da" class="cell" data-execution_count="2">
+<div id="05c03ed8" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> enum</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Plan(enum.StrEnum):</span>
@@ -382,7 +382,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="dataclasses" class="level1">
 <h1>Dataclasses</h1>
 <p>A dataclass needs only a name. Its fields are stored and it’s rebuilt with <code>cls(**fields)</code>, so defaults and <code>__post_init__</code> run. Fields can hold other registered types, nested as deep as you like:</p>
-<div id="361d4b66" class="cell" data-execution_count="3">
+<div id="ef07af87" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> dataclasses</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclasses.dataclass</span></span>
