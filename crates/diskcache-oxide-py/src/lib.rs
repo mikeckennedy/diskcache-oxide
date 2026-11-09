@@ -355,7 +355,10 @@ fn install_sqlite_mutex(py: Python<'_>) -> PyResult<()> {
 /// (`tests/unit/test_version.py`), including a tag with no number (`-alpha` is `a0`). maturin
 /// refuses to build any other tag, so the fallback below never ships.
 fn pep440_version() -> String {
-    let version = env!("CARGO_PKG_VERSION");
+    pep440(env!("CARGO_PKG_VERSION"))
+}
+
+fn pep440(version: &str) -> String {
     let Some((release, pre)) = version.split_once('-') else { return version.to_owned() };
     let (tag, number) = pre.split_once('.').unwrap_or((pre, "0"));
     let tag = match tag {
@@ -409,4 +412,30 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("registry", codec::registry::global(py)?)?;
     install_fork_barrier(m)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pep440;
+
+    /// maturin's mapping of Cargo pre-release tags; `tests/unit/test_version.py` only sees the
+    /// version being built, so every tag is pinned here.
+    #[test]
+    fn pep440_matches_maturin() {
+        for (cargo, wheel) in [
+            ("0.1.0", "0.1.0"),
+            ("0.1.0-dev.1", "0.1.0.dev1"),
+            ("0.1.0-dev", "0.1.0.dev0"),
+            ("1.2.3-alpha.4", "1.2.3a4"),
+            ("1.2.3-alpha", "1.2.3a0"),
+            ("1.2.3-beta.2", "1.2.3b2"),
+            ("1.2.3-rc.1", "1.2.3rc1"),
+            ("1.2.3-pre.1", "1.2.3rc1"),
+            ("1.2.3-c.1", "1.2.3rc1"),
+            ("1.2.3-preview.5", "1.2.3rc5"),
+            ("1.2.3-nightly.1", "1.2.3-nightly.1"),
+        ] {
+            assert_eq!(pep440(cargo), wheel, "{cargo}");
+        }
+    }
 }

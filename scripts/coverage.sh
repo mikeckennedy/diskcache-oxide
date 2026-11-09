@@ -7,8 +7,10 @@
 # Most of diskcache-oxide-py is reachable only from Python, so `cargo test` alone undercounts it. This
 # runs `cargo test`, then builds an instrumented copy of the extension, stages it beside a copy of
 # python/diskcache_oxide, and runs the unit and oxide conformance suites against it with coverage.py
-# on top. Every process, forks and subprocesses included, writes its own profile, and llvm-cov merges
-# them. Its own target dir (target/llvm-cov-target), so the normal build is never invalidated.
+# on top. Every process that exits normally writes its own profile, and llvm-cov merges them. A forked
+# child that leaves through os._exit skips the profile write, so code that runs only in fork children
+# (e.g. lib.rs's _after_fork_in_child) reads as uncovered although the fork tests run it. Its own
+# target dir (target/llvm-cov-target), so the normal build is never invalidated.
 #
 # Output: the summary tables on stdout, target/llvm-cov-target/lcov.info (Rust),
 # target/llvm-cov-target/python-coverage.xml, and with --html target/llvm-cov-target/html/ plus
