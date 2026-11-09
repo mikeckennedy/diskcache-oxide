@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Line coverage for the whole library: both Rust crates and the Python package, in one report.
 #
-# Usage: scripts/coverage.sh [--html] [--ft] [pytest args...]     (--ft: on 3.14t, from .venv-ft/)
+# Usage: scripts/coverage.sh [--html] [--ft] [--fail-under N] [pytest args...]
+#   --ft             on 3.14t, from .venv-ft/
+#   --fail-under N   fail if Rust or Python line coverage is below N percent (scripts/check.sh --coverage)
 #
 # Needs cargo-llvm-cov (`cargo install --locked cargo-llvm-cov`) and the llvm-tools rustup component.
 # Most of diskcache-oxide-py is reachable only from Python, so `cargo test` alone undercounts it. This
@@ -24,12 +26,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 html=0
+floor=0
 env_dir=venv
 target="$PWD/target/llvm-cov-target"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --html) html=1; shift ;;
         --ft) env_dir=.venv-ft; target="$PWD/target/llvm-cov-target-ft"; shift ;;
+        --fail-under) floor="$2"; shift 2 ;;
         *) break ;;
     esac
 done
@@ -96,11 +100,12 @@ PYTHONPATH="$stage" "$py" -m coverage run --source="$stage/diskcache_oxide" -m p
 
 echo
 echo "== Rust"
-cargo llvm-cov report --summary-only
+floor_status=0
+cargo llvm-cov report --summary-only --fail-under-lines "$floor" || floor_status=$?
 cargo llvm-cov report --lcov --output-path "$CARGO_TARGET_DIR/lcov.info"
 echo
 echo "== Python"
-"$py" -m coverage report
+"$py" -m coverage report --fail-under="$floor" || floor_status=$?
 "$py" -m coverage xml -q -o "$CARGO_TARGET_DIR/python-coverage.xml"
 if (( html )); then
     cargo llvm-cov report --html --output-dir "$CARGO_TARGET_DIR"
@@ -114,4 +119,7 @@ fi
 if (( py_status != 0 )); then
     echo "pytest failed (exit $py_status); the coverage above is from a partial run." >&2
 fi
-(( rust_status == 0 && py_status == 0 ))
+if (( floor_status != 0 )); then
+    echo "line coverage is below the ${floor}% floor." >&2
+fi
+(( rust_status == 0 && py_status == 0 && floor_status == 0 ))

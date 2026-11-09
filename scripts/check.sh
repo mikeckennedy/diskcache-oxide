@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Everything a CI job would run, locally. Usage: scripts/check.sh [--slow]
+# Everything a CI job would run, locally. Usage: scripts/check.sh [--slow] [--coverage]
 #
 # Builds the extension into one environment per supported Python, then runs the Rust checks, the
 # extension smoke test, ty and ruff, and the conformance suite against diskcache 5.6.3
@@ -8,7 +8,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SLOW=0
-[[ "${1:-}" == "--slow" ]] && SLOW=1
+COVERAGE=0
+for arg in "$@"; do
+    case "$arg" in
+        --slow) SLOW=1 ;;
+        --coverage) COVERAGE=1 ;;
+        *) echo "unknown option: $arg" >&2; exit 2 ;;
+    esac
+done
 
 # environment directory : uv Python request
 ENVS=("venv:3.14" ".venv-ft:3.14t" ".venv-315:3.15" ".venv-315t:3.15t")
@@ -81,5 +88,15 @@ LIBSQLITE3_FLAGS="$(memstatus_flags)" CARGO_TARGET_DIR="$PWD/target/memstatus" \
 DCO_REQUIRE_MEMSTATUS=1 .venv-mem/bin/pytest -q -p no:cacheprovider tests/unit/test_memory.py
 # Memory numbers only; its throughput column is informational (take performance from bench.gate).
 .venv-mem/bin/python -m bench.memory --threads 1,8,32 --seconds 1
+
+# Line coverage on 3.14 and 3.14t (scripts/coverage.sh: about 10 minutes, needs cargo-llvm-cov). The
+# floor sits a little under where coverage is (96.3% Rust and 98% Python lines, 2026-11-08), so a
+# change that drops it shows up without every small dip failing the run.
+if (( COVERAGE )); then
+    step 'line coverage, 3.14 (floor 95%)'
+    scripts/coverage.sh --fail-under 95
+    step 'line coverage, 3.14t (floor 95%)'
+    scripts/coverage.sh --ft --fail-under 95
+fi
 
 step 'all checks passed'
