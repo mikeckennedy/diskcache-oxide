@@ -390,6 +390,20 @@ def test_maintenance_timeout_is_validated(tmp_path: Path, make, method: str) -> 
     cache.close()
 
 
+@pytest.mark.parametrize('make', [Cache, FanoutCache], ids=['Cache', 'FanoutCache'])
+def test_sqlite_cache_size_is_bounded(tmp_path: Path, make: Any) -> None:
+    # SQLite reads `PRAGMA cache_size` as a 32-bit int, so a larger setting would wrap.
+    for pages, message in [
+        (0, 'at least 1 page'),
+        (-1, 'at least 1 page'),
+        (2**31, f'at most {2**31 - 1} pages'),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            make(tmp_path / 'c', sqlite_cache_size=pages)
+    for pages in (1, 2**31 - 1):
+        make(tmp_path / 'c', sqlite_cache_size=pages).close()
+
+
 def test_null_cache_validates_its_timeout_like_cache(tmp_path: Path) -> None:
     for make in (Cache, NullCache):
         with pytest.raises(ValueError):

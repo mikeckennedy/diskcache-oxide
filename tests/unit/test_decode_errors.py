@@ -247,6 +247,11 @@ def test_a_refused_spilled_pickle_is_never_read(directory: Path) -> None:
         p.write_bytes(b'')  # If the reader opened it, it would see a short file and miss.
     with pytest.raises(UnsafeValueError):
         Cache(directory).get('big')
+    # pop refuses it before opening the file, so the row stays for a pickle=True reader.
+    for on_decode_error in ('raise', 'miss'):
+        with pytest.raises(UnsafeValueError):
+            Cache(directory, on_decode_error=on_decode_error).pop('big')
+        assert _stored(directory, 'big')
 
 
 # -- deleting exactly what failed, without waiting ------------------------------------------------

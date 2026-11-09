@@ -8,8 +8,10 @@ vector is a format break, never a test update.
 from __future__ import annotations
 
 import gc
+import os
 import random
 import resource
+import signal
 import subprocess
 import sys
 import threading
@@ -189,6 +191,23 @@ def test_an_explicit_size_limit_is_split_floored_and_kept_on_reopen(tmp_path: Pa
         assert cache.size_limit == 80 * MiB, 'a reopen without size_limit keeps what each shard stores'
     with FanoutCache(tmp_path / 'odd', shards=8, size_limit=9 * MiB + 7) as cache:
         assert cache.size_limit == 8 * ((9 * MiB + 7) // 8)
+
+
+def test_cull_limit_is_every_shards_own_and_kept_on_reopen(tmp_path: Path) -> None:
+    with FanoutCache(tmp_path, shards=4) as cache:
+        assert cache.cull_limit == 10
+    with FanoutCache(tmp_path, cull_limit=3) as cache:
+        assert cache.cull_limit == 3, 'not divided between the shards'
+    with FanoutCache(tmp_path) as cache:
+        assert cache.cull_limit == 3
+
+
+def test_an_empty_fanout_cache_is_enabled_and_truthy(tmp_path: Path) -> None:
+    # D-009: a cache is usable even when empty.
+    with FanoutCache(tmp_path, shards=2) as cache:
+        assert len(cache) == 0
+        assert cache.enabled is True
+        assert bool(cache) is True
 
 
 def test_a_size_limit_under_a_mebibyte_per_shard_is_refused(tmp_path: Path) -> None:
@@ -514,6 +533,61 @@ def test_at_a_zero_timeout_every_idle_shard_is_still_emptied(tmp_path: Path) -> 
     assert cache.clear(timeout=0) == 1
     assert len(cache) == 0
     assert cache.checkpoint(timeout=0) is True
+    cache.close()
+
+
+def _unopenable(root: Path, shard: int) -> None:
+    """Replaces a closed shard's database with bytes SQLite won't open ("file is not a database")."""
+    for p in (root / f'{shard:03d}').glob(f'{DB}*'):
+        p.unlink()
+    (root / f'{shard:03d}' / DB).write_bytes(b'not a database' * 300)
+
+
+def test_a_checkpoint_that_fails_on_one_shard_names_it(tmp_path: Path) -> None:
+    cache = FanoutCache(tmp_path, shards=8)
+    cache.set('k', 'v')
+    cache.close()
+    _unopenable(tmp_path, 3)
+    with pytest.raises(OSError, match='not a database') as raised:
+        cache.checkpoint(timeout=1)
+    error: Any = raised.value
+    assert error.failed_shards == (3,)
+    assert not hasattr(error, 'removed'), 'checkpoint removes nothing'
+    assert 'FanoutCache.checkpoint() failed on shard 3 of 8' in error.__notes__
+
+
+def test_a_signal_after_a_shard_failed_carries_the_partial_failure(tmp_path: Path) -> None:
+    # Shard 0 can't open; shard 1's write lock holds clear() there past the signal, so the
+    # KeyboardInterrupt is pending when clear() checks for signals before shard 2. SIGUSR1 from a
+    # timer thread, since pytest-timeout owns SIGALRM.
+    cache = FanoutCache(tmp_path, shards=4)
+    keys = [f'k{i}' for i in range(200)]
+    for key in keys:
+        cache.set(key, 'v')
+    later = [key for key in keys if cache.shard_of(key) >= 2]
+    cache.close()
+    _unopenable(tmp_path, 0)
+
+    def interrupt(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGUSR1, interrupt)
+    sender = threading.Timer(0.1, os.kill, (os.getpid(), signal.SIGUSR1))
+    try:
+        with _locked(tmp_path, [1]):
+            sender.start()
+            with pytest.raises(KeyboardInterrupt) as raised:
+                cache.clear(timeout=0.6)
+    finally:
+        sender.cancel()
+        sender.join()
+        signal.signal(signal.SIGUSR1, previous)
+    error: Any = raised.value
+    assert error.failed_shards == (0, 1)
+    assert error.removed == 0
+    assert 'FanoutCache.clear() failed on shards 0, 1 of 4; it removed 0 entries in all' in error.__notes__
+    # Keyed reads open only their own shard, so the unopenable shard 0 is never touched here.
+    assert all(key in cache for key in later), 'the shards after the interrupt were never cleared'
     cache.close()
 
 
