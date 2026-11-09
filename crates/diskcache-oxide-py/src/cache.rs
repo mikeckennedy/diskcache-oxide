@@ -230,8 +230,8 @@ impl Cache {
     }
 
     fn __len__(&self) -> PyResult<usize> {
-        let timeout = self.handle.ensure_open(self.config.timeout).map_err(to_py_err)?;
-        let count = self.handle.store.len(timeout).map_err(to_py_err)?;
+        let count =
+            self.handle.run(self.config.timeout, |timeout| self.handle.store.len(timeout)).map_err(to_py_err)?;
         Ok(usize::try_from(count).unwrap_or(0))
     }
 
@@ -242,8 +242,7 @@ impl Cache {
     }
 
     fn volume(&self) -> PyResult<i64> {
-        let timeout = self.handle.ensure_open(self.config.timeout).map_err(to_py_err)?;
-        self.handle.store.volume(timeout).map_err(to_py_err)
+        self.handle.run(self.config.timeout, |timeout| self.handle.store.volume(timeout)).map_err(to_py_err)
     }
 
     /// Checkpoints the write-ahead log and truncates it to zero (D-024), retrying until `timeout`.
@@ -327,8 +326,8 @@ impl Cache {
     fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
         let now = self.config.now(py)?;
-        let timeout = self.handle.ensure_open(timeout).map_err(to_py_err)?;
-        crate::detach(py, || self.handle.store.expire(timeout, now)).map_err(to_py_err)
+        crate::detach(py, || self.handle.run(timeout, |timeout| self.handle.store.expire(timeout, now)))
+            .map_err(to_py_err)
     }
 
     /// Removes every entry stored before the call. Returns how many it removed. `timeout` as for
@@ -336,8 +335,7 @@ impl Cache {
     #[pyo3(signature = (*, timeout = None))]
     fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
-        let timeout = self.handle.ensure_open(timeout).map_err(to_py_err)?;
-        crate::detach(py, || self.handle.store.clear(timeout)).map_err(to_py_err)
+        crate::detach(py, || self.handle.run(timeout, |timeout| self.handle.store.clear(timeout))).map_err(to_py_err)
     }
 
     /// Removes expired entries, then evicts until the cache is under `size_limit`. Returns how many
@@ -346,8 +344,8 @@ impl Cache {
     fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
         let now = self.config.now(py)?;
-        let timeout = self.handle.ensure_open(timeout).map_err(to_py_err)?;
-        crate::detach(py, || self.handle.store.cull(timeout, now)).map_err(to_py_err)
+        crate::detach(py, || self.handle.run(timeout, |timeout| self.handle.store.cull(timeout, now)))
+            .map_err(to_py_err)
     }
 
     /// Keys in sorted order (code-point order, like `sorted()`), optionally only those starting
@@ -514,6 +512,20 @@ impl StoreHandle {
         if self.closed.load(Ordering::Acquire) { self.reopen(timeout) } else { Ok(timeout) }
     }
 
+    /// Runs `call` with what's left of `timeout` once the handle is open: `ensure_open` then `call`,
+    /// except that a `Timeout` from `call` on a handle that had to rejoin names `timeout`, the call's
+    /// whole budget, not the part left over. The default; `ensure_open` is for callers that read a
+    /// `Timeout` as an answer or rename it themselves.
+    fn run<T>(&self, timeout: Duration, call: impl FnOnce(Duration) -> Result<T, Error>) -> Result<T, Error> {
+        if !self.closed.load(Ordering::Acquire) {
+            return call(timeout);
+        }
+        call(self.reopen(timeout)?).map_err(|error| match error {
+            Error::Timeout { .. } => Error::Timeout { seconds: timeout.as_secs_f64() },
+            other => other,
+        })
+    }
+
     /// The closed flag flips under the gate level the count is taken on. A timeout before that
     /// changes nothing: the handle stays closed and isn't counted. Flipping it first would leave the
     /// count one too low once another thread's `close` released it.
@@ -655,7 +667,7 @@ impl HandleConfig {
 
     fn contains(&self, py: Python<'_>, handle: &StoreHandle, key: &str) -> PyResult<bool> {
         let now = self.now(py)?;
-        let found = handle.ensure_open(self.timeout).and_then(|timeout| handle.store.contains(timeout, key, now));
+        let found = handle.run(self.timeout, |timeout| handle.store.contains(timeout, key, now));
         Ok(self.attempt(py, &handle.store, Op::Contains, now, found)?.unwrap_or(false))
     }
 
@@ -671,8 +683,7 @@ impl HandleConfig {
         let encoded = self.codec.encode(py, value)?;
         let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
         let now = self.now(py)?;
-        let stored =
-            handle.ensure_open(self.timeout).and_then(|timeout| handle.store.set(timeout, key, value, expire, now));
+        let stored = handle.run(self.timeout, |timeout| handle.store.set(timeout, key, value, expire, now));
         Ok(self.attempt(py, &handle.store, Op::Set, now, stored)?.unwrap_or(false))
     }
 
@@ -688,22 +699,20 @@ impl HandleConfig {
         let encoded = self.codec.encode(py, value)?;
         let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
         let now = self.now(py)?;
-        let added =
-            handle.ensure_open(self.timeout).and_then(|timeout| handle.store.add(timeout, key, value, expire, now));
+        let added = handle.run(self.timeout, |timeout| handle.store.add(timeout, key, value, expire, now));
         Ok(self.attempt(py, &handle.store, Op::Add, now, added)?.unwrap_or(false))
     }
 
     fn delete(&self, py: Python<'_>, handle: &StoreHandle, key: &str) -> PyResult<bool> {
         let now = self.now(py)?;
-        let deleted = handle.ensure_open(self.timeout).and_then(|timeout| handle.store.delete(timeout, key, now));
+        let deleted = handle.run(self.timeout, |timeout| handle.store.delete(timeout, key, now));
         Ok(self.attempt(py, &handle.store, Op::Delete, now, deleted)?.unwrap_or(false))
     }
 
     fn pop(&self, py: Python<'_>, handle: &StoreHandle, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
         let now = self.now(py)?;
         // In a child that can't write (D-020) a read could report a miss; a pop fails.
-        let ready =
-            handle.ensure_open(self.timeout).and_then(|timeout| handle.store.check_writable().map(|()| timeout));
+        let ready = handle.run(self.timeout, |timeout| handle.store.check_writable().map(|()| timeout));
         let popped = match self.attempt(py, &handle.store, Op::Pop, now, ready)? {
             Some(timeout) => self.pop_value(py, handle, key, now, timeout)?,
             None => None,
@@ -720,8 +729,7 @@ impl HandleConfig {
     ) -> PyResult<bool> {
         let expire = optional_seconds("expire", expire)?;
         let now = self.now(py)?;
-        let touched =
-            handle.ensure_open(self.timeout).and_then(|timeout| handle.store.touch(timeout, key, expire, now));
+        let touched = handle.run(self.timeout, |timeout| handle.store.touch(timeout, key, expire, now));
         Ok(self.attempt(py, &handle.store, Op::Touch, now, touched)?.unwrap_or(false))
     }
 
@@ -733,7 +741,7 @@ impl HandleConfig {
         now: f64,
     ) -> PyResult<Option<(Py<PyAny>, Option<f64>)>> {
         let store = &*handle.store;
-        let read = handle.ensure_open(self.timeout).and_then(|timeout| self.read_row(py, store, timeout, key, now));
+        let read = handle.run(self.timeout, |timeout| self.read_row(py, store, timeout, key, now));
         let Some(Some(hit)) = self.attempt(py, store, Op::Get, now, read)? else { return Ok(None) };
         match hit.value {
             Ok(value) => Ok(Some((value, hit.expire_time))),
@@ -1026,8 +1034,7 @@ impl HandleConfig {
         let now = self.now(py)?;
         let op = if negate { Op::Decr } else { Op::Incr };
         let store = &*handle.store;
-        let stored =
-            handle.ensure_open(self.timeout).and_then(|timeout| store.incr(timeout, name, delta, default, now));
+        let stored = handle.run(self.timeout, |timeout| store.incr(timeout, name, delta, default, now));
         let number = match stored {
             Ok(number) => number,
             Err(Error::KeyMissing) => return Err(PyKeyError::new_err(key.clone().unbind())),
@@ -1114,11 +1121,11 @@ impl KeyIterator {
             return Ok(None);
         }
         let cache = self.cache.get();
-        let timeout = cache.handle.ensure_open(cache.config.timeout).map_err(to_py_err)?;
         let (keys, next) = cache
             .handle
-            .store
-            .keys_page(timeout, self.order, self.prefix.as_deref(), &state.cursor)
+            .run(cache.config.timeout, |timeout| {
+                cache.handle.store.keys_page(timeout, self.order, self.prefix.as_deref(), &state.cursor)
+            })
             .map_err(to_py_err)?;
         if keys.is_empty() {
             state.done = true;
@@ -1250,8 +1257,7 @@ impl Transaction {
             return Ok(TxState::PassThrough);
         }
         loop {
-            let began =
-                handle.ensure_open(timeout).and_then(|timeout| crate::detach(py, || handle.store.begin_hold(timeout)));
+            let began = crate::detach(py, || handle.run(timeout, |timeout| handle.store.begin_hold(timeout)));
             match began {
                 Ok(held) => return Ok(TxState::Held(held)),
                 Err(Error::Timeout { .. }) if self.retry => py.check_signals()?,

@@ -11,9 +11,10 @@ import threading
 import time
 from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import Any
 
 import pytest
-from diskcache_oxide import Cache, Timeout, TransactionAborted, TransactionBusy
+from diskcache_oxide import Cache, FanoutCache, Timeout, TransactionAborted, TransactionBusy
 
 from tests.conformance.proc_workers import SqlitePeer
 
@@ -561,4 +562,42 @@ def test_a_hold_exited_inside_its_own_operation_fails_its_with_statement(
     assert len(_ExitsTheHold.refused) == 1, _ExitsTheHold.refused
     assert cache.get('inside') is None, 'nothing in the transaction may commit'
     assert cache.set('after', 1) is True  # The write lock was released.
+    cache.close()
+
+
+WRITES = {
+    'set': lambda c: c.set('k', 1),
+    'add': lambda c: c.add('new', 1),
+    'delete': lambda c: c.delete('k'),
+    'touch': lambda c: c.touch('k', 5),
+    'incr': lambda c: c.incr('n'),
+    'pop': lambda c: c.pop('k'),
+    'expire': lambda c: c.expire(),
+    'clear': lambda c: c.clear(),
+    'cull': lambda c: c.cull(),
+    # retry=False, so it raises. A FanoutCache's needs the key whose shard it locks.
+    'transact': lambda c: (c.transact(key='k') if isinstance(c, FanoutCache) else c.transact()).__enter__(),
+}
+
+
+@pytest.mark.parametrize('fanout', [False, True], ids=['Cache', 'FanoutCache'])
+@pytest.mark.parametrize('call', WRITES)
+def test_a_reused_closed_handles_timeout_names_the_whole_budget(tmp_path: Path, call: str, fanout: bool) -> None:
+    # Rejoining the store takes a moment of the budget; the error still names the budget itself.
+    if fanout:
+        cache: Any = FanoutCache(tmp_path / 'c', shards=1, timeout=0.2)
+        db = tmp_path / 'c' / '000' / 'diskcache-oxide.sqlite'
+    else:
+        cache = Cache(tmp_path / 'c', timeout=0.2)
+        db = tmp_path / 'c' / 'diskcache-oxide.sqlite'
+    cache.set('k', 1)
+    cache.set('n', 1)
+    for closed in (False, True):
+        if closed:
+            cache.close()
+        with SqlitePeer(db) as peer:
+            peer.begin('IMMEDIATE')
+            with pytest.raises(Timeout, match=r'timed out after 0\.2 s\b'):
+                WRITES[call](cache)
+            peer.rollback()
     cache.close()

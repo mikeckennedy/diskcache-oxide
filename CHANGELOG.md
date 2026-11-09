@@ -14,6 +14,7 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 ### Fixed
 
 - A read of a large value that kept losing the race to writers overwriting it could report a miss when the last of those overwrites was small, though the key was present the whole time. It now returns that value. It took eight lost races in a row, and the cost was one recompute, never a wrong value.
+- A `Timeout` raised by a handle that had been closed and was used again named slightly less than the cache's timeout (`0.199793708 s` for `timeout=0.2`), because the moment spent rejoining the store was subtracted first. It now names the timeout itself. The wait was always right.
 
 ## [0.1.0] - 2026-11-09
 
