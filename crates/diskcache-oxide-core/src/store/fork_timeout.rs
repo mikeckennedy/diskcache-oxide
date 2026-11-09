@@ -1318,7 +1318,8 @@ fn a_fork_arriving_mid_round_stops_the_tries_and_counts_as_fork_pending() {
     let window = lockwait::ATTACHED_WINDOW;
     let all_windows = window * crate::wal::TRUNCATE_TRIES;
     let mut stopped_mid_round = 0;
-    for _ in 0..50 {
+    // Rounds a loaded machine schedules late don't count, so there are plenty: three that do are enough.
+    for _ in 0..200 {
         let (done, finished) = mpsc::channel();
         let (outcome, took) = std::thread::scope(|s| {
             let store = &store;
@@ -1357,7 +1358,9 @@ fn a_reader_that_outlasts_a_few_windows_doesnt_fail_the_round() {
     let store = open_store(tmp.path());
     put(&store, "k0");
     let mut outcomes = Vec::new();
-    for _ in 0..20 {
+    // One round that outlasts the reader is enough, and a lowered count fails every round, so the
+    // extra rounds only absorb a loaded machine's late wake-ups (20 failed 5 runs in 20 under load).
+    for _ in 0..100 {
         assert!(matches!(store.checkpoint_once(Instant::now() + T), crate::wal::Outcome::Done));
         let peer = crate::sqlite::open(&open::db_path(tmp.path())).unwrap();
         peer.execute_batch("BEGIN; SELECT count(*) FROM cache;").unwrap();
