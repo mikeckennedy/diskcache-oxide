@@ -658,7 +658,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>The page takes 900 ms, and 850 of them are one query that returns the same ten rows it returned a second ago. Everyone has met this page. Caching is how you stop paying for the same answer twice: before doing something slow (a database query, an API call, rendering a big page), ask the cache. If it knows, you’re done in a microsecond or two. If not, do the work and leave the answer for whoever asks next, which with a shared directory means every worker process on the machine, today and after the next restart.</p>
 <section id="cache-aside" class="level1">
 <h1>Cache-aside</h1>
-<div id="dbd185d3" class="cell" data-execution_count="1">
+<div id="04f04f01" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -686,7 +686,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>    popular_episodes()</span>
 <span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f'cached:      </span><span class="sc">{</span>(time.perf_counter() <span class="op">-</span> start) <span class="op">*</span> <span class="dv">1000</span><span class="sc">:.1f}</span><span class="ss"> µs per call'</span>)  <span class="co"># 1000 calls, so ms total = µs each</span></span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>first call:  202.7 ms
+<pre><code>first call:  205.3 ms
 cached:      1.1 µs per call</code></pre>
 </div>
 </div>
@@ -705,7 +705,7 @@ cached:      1.1 µs per call</code></pre>
 <section id="a-caching-decorator" class="level1">
 <h1>A caching decorator</h1>
 <p>The same pattern wrapped up for reuse. The key is the function’s full name plus its arguments, encoded as JSON so that different arguments always give different keys.</p>
-<div id="dea9b9d3" class="cell" data-execution_count="2">
+<div id="3b9502ba" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> functools</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> json</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> collections.abc <span class="im">import</span> Callable</span>

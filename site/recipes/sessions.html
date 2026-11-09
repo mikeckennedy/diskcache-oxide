@@ -657,7 +657,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>Every request arrives with a cookie and a question: who is this? A session is the one piece of per-user state almost every web app keeps server side to answer it: who’s logged in, since when, with which roles. Keeping it in a cache directory means every worker sees the same session the instant it’s written, a login on one worker is a login on all of them, and there’s no database row per request and no Redis to run. The cookie holds only a random id.</p>
 <section id="start-load-end" class="level1">
 <h1>Start, load, end</h1>
-<div id="385c17e9" class="cell" data-execution_count="1">
+<div id="34843ad2" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> secrets</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -710,7 +710,7 @@ after 71 min: False</code></pre>
 <section id="log-out-everywhere" class="level1">
 <h1>Log out everywhere</h1>
 <p>A password change or a stolen laptop should end every session a user has. The second key written at login, <code>user-sessions:{user_id}:{sid}</code>, is an index for exactly this: a prefix scan finds them all.</p>
-<div id="c3c52d10" class="cell" data-execution_count="2">
+<div id="6a08b81d" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>other <span class="op">=</span> start_session(<span class="dv">42</span>, [<span class="st">'member'</span>])</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>sid <span class="op">=</span> start_session(<span class="dv">42</span>, [<span class="st">'member'</span>])</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
