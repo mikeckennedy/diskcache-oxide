@@ -1,7 +1,8 @@
 """A stateful model test: random sequences of single-key calls against a dict with expiry times.
 
-Hypothesis drives `set`, `add`, `get`, `pop`, `delete`, `touch`, `incr`, `expire`, a clock that jumps
-across expiry boundaries, and closing and reopening the cache, over a few keys so the calls collide.
+Hypothesis drives `set`, `add`, `get`, `pop`, `delete`, `touch`, `incr`, `expire`, `clear`, `iterkeys`,
+committed and aborted transactions, a clock that jumps across expiry boundaries, and closing and
+reopening the cache, over a few keys so the calls collide.
 Values straddle the 64 KiB spill threshold, so inline and file-backed values replace one another.
 After every step each key reads back as the model says. Runs on `Cache` and on a `FanoutCache`.
 """
@@ -53,6 +54,9 @@ class CacheModel(RuleBasedStateMachine):
 
     def make(self, directory: Path) -> Any:
         return Cache(directory, clock=lambda: self.now)
+
+    def transaction(self, key: str) -> Any:
+        return self.cache.transact()
 
     def __init__(self) -> None:
         super().__init__()
@@ -147,6 +151,46 @@ class CacheModel(RuleBasedStateMachine):
         assert len(self.cache) == len(self.model), 'expire() leaves exactly the unexpired entries'
 
     @rule()
+    def clear(self) -> None:
+        # Rows that expired before now may already be gone (every write sweeps a few), so the count
+        # is bounded by the live rows below and every row the model holds above.
+        live = sum(1 for k in self.model if self.live(k) is not MISSING)
+        removed = self.cache.clear()
+        assert live <= removed <= len(self.model), (removed, live, len(self.model))
+        self.model = {}
+        assert len(self.cache) == 0
+
+    @rule(prefix=st.sampled_from(['', 'a', 'b', 'z']), reverse=st.booleans())
+    def iterkeys(self, prefix: str, reverse: bool) -> None:
+        keys = list(self.cache.iterkeys(prefix=prefix or None, reverse=reverse))
+        assert keys == sorted(keys, reverse=reverse), keys
+        # Expired rows not yet removed are included, so: every live key, and only keys the model holds.
+        live = {k for k in self.model if k.startswith(prefix) and self.live(k) is not MISSING}
+        held = {k for k in self.model if k.startswith(prefix)}
+        assert live <= set(keys) <= held, (keys, live, held)
+
+    @rule(key=KEYS, value=VALUES, delta=st.integers(-5, 5), abort=st.booleans())
+    def transact(self, key: str, value: Any, delta: int, abort: bool) -> None:
+        # One key, so a FanoutCache's one-shard transaction covers every call inside it.
+        class Abort(Exception):
+            pass
+
+        try:
+            with self.transaction(key):
+                self.cache.set(key, value)
+                inside = self.cache.get(key, MISSING)
+                assert same(inside, value), (inside, value)
+                if isinstance(value, (int, float)):
+                    self.cache.incr(key, delta)
+                if abort:
+                    raise Abort
+        except Abort:
+            pass  # Rolled back: the model is unchanged.
+        else:
+            stored = value + delta if isinstance(value, (int, float)) else value
+            self.model[key] = (stored, None)
+
+    @rule()
     def reopen(self) -> None:
         self.cache.close()
         self.cache = self.make(self.root / 'c')
@@ -171,6 +215,9 @@ class FanoutCacheModel(CacheModel):
 
     def make(self, directory: Path) -> Any:
         return FanoutCache(directory, shards=4, clock=lambda: self.now)
+
+    def transaction(self, key: str) -> Any:
+        return self.cache.transact(key=key)
 
 
 # A tenth of the suite's example count: each example is up to 40 steps. HYPOTHESIS_EXAMPLES=30000 for a long run.
