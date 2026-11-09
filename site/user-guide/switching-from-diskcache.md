@@ -14,7 +14,12 @@ cache = Cache('/var/cache/my-app-oxide')
 
 # Start with a fresh cache
 
-diskcache-oxide stores its data in `diskcache-oxide.sqlite`, not diskcache's `cache.db`, and never opens or converts a diskcache database. The two can even share a directory without seeing each other's data. Your cache starts cold after the switch, which for a cache is usually fine. Once you've switched, delete the old `cache.db*` files and value files to get the disk space back.
+diskcache-oxide stores its data in `diskcache-oxide.sqlite`, not diskcache's `cache.db`, and never opens or converts a diskcache database. The two can even share a directory without seeing each other's data. Your cache starts cold after the switch, which for a cache is usually fine. The cleanest switch gives diskcache-oxide a new directory and deletes the old one once every worker has moved. If the two share a directory, diskcache's files are `cache.db*` and its value folders, which nest two levels deep (`3f/a2/….val`); diskcache-oxide's folders are one level deep and hold `.val` files directly, so a two-hex-digit folder that contains folders is diskcache's.
+
+
+## Upgrading diskcache-oxide
+
+During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. Delete existing caches when you upgrade to it, with every worker stopped. Until you do, opening one raises [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError), which a [Caches](../reference/Caches.md#diskcache_oxide.Caches) registry reports and answers with a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache). A release that keeps the format needs nothing.
 
 
 # What you might notice
@@ -60,7 +65,7 @@ A cache opened without `pickle=True` never unpickles. If it finds a pickled valu
 
 # String keys
 
-Only `str` keys are accepted today; anything else raises `TypeError`. Keys are already stored with a type tag, so other key types can be added in Phase 6a without changing the file format. In the meantime, build string keys yourself (`f'user:{user_id}'`).
+Only `str` keys are accepted today; anything else raises `TypeError`. Keys are already stored with a type tag, so other key types can be added later without changing the file format (see the [roadmap](roadmap.md)). In the meantime, build string keys yourself (`f'user:{user_id}'`).
 
 
 # [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact)

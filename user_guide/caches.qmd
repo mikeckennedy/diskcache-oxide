@@ -95,17 +95,17 @@ caches.close_all()                  # at shutdown; `with Caches(...) as caches:`
 - `expire_all()` runs every cache, logging and reporting `None` for one that fails. Run it from a scheduled job rather than inside a request: a large expire takes seconds.
 - Maintenance calls hold the write lock once per chunk, so give them a longer `timeout=` than the request path's.
 
-## Coming from `DurableCache`
+## Coming from your own diskcache wrapper
 
-Talk Python's apps wrap diskcache in a `DurableCache` class and a `cache_service` module. Each piece now has a home in the library:
+Apps that run diskcache in production tend to grow the same wrapper around it: a class that turns errors into misses, a null cache for turning caching off, and a module that creates, lists and maintains the app's caches. Talk Python's, for one, are a `DurableCache` class and a `cache_service` module, and the left column uses their names. Each piece now has a home in the library:
 
-| `DurableCache` / `cache_service` | diskcache-oxide |
+| A typical wrapper | diskcache-oxide |
 |---|---|
 | `bool()` is always True | `Cache` is always truthy (D-009); `NullCache` is falsy |
 | `CacheProtocol` | `CacheLike` |
 | `NullCache`, `PerfTestNullCache` | `NullCache`, and `NullCache(invalidate=real)` |
 | `get` that logs, deletes and misses on any error | `Cache(on_decode_error='miss')` or a reporting function ([details](getting-started.qmd#values-that-cant-be-read)) |
-| A cache that can't take a request down | `Caches(base_dir, durable=True)`, which also covers `set`, whose failures `DurableCache` raises ([details](getting-started.qmd#a-cache-that-cant-take-a-request-down)) |
+| A cache that can't take a request down | `Caches(base_dir, durable=True)`, which also covers `set`, whose failures such a wrapper usually raises ([details](getting-started.qmd#a-cache-that-cant-take-a-request-down)) |
 | `create_cache(name, size_limit)` | `caches.register(name, size_limit=...)`, then `caches[name]` |
 | `timeout=1.0` on every open | `Caches(base_dir, timeout=1.0)` |
 | A `NullCache` when opening fails | the same, reported through `on_open_error` and retried after 10 s |

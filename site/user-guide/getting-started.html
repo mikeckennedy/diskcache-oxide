@@ -363,11 +363,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <p>A <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is a directory. That’s the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn’t restart. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.</p>
 <section id="install" class="level1">
 <h1>Install</h1>
-<p>diskcache-oxide isn’t released yet: the version in the repository is <code>0.1.0.dev2</code>, and the <code>diskcache-oxide</code> name on PyPI holds a <code>0.0.1</code> placeholder with no code in it. Until <code>0.1.0</code>, build it from source, which needs a Rust toolchain:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install git+https://github.com/mikeckennedy/diskcache-oxide</span></code></pre></div>
+<div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install diskcache-oxide</span></code></pre></div>
 <ul>
 <li><strong>Python:</strong> CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).</li>
-<li><strong>Platforms:</strong> macOS and Linux. Windows support is planned.</li>
+<li><strong>Platforms:</strong> macOS and Linux. Wheels cover macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. Windows support is planned.</li>
 <li><strong>Dependencies:</strong> none at runtime. SQLite is bundled and compiled in, so your system’s SQLite version doesn’t matter (<a href="../reference/sqlite_version.html#diskcache_oxide.sqlite_version" class="gdls-link gdls-code">diskcache_oxide.sqlite_version()</a> reports the one in use).</li>
 </ul>
 </section>
@@ -377,6 +376,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>)</span></code></pre></div>
 <p>The directory is required. If it doesn’t exist, diskcache-oxide creates it, readable and writable only by your user (<code>0700</code>). That’s deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.</p>
+<p>So a cron job, an admin script or a container running as a different user can’t open a directory your app created: it gets <code>PermissionError</code> (“Permission denied”). Run everything that shares a cache as the same user. Loosening the directory’s mode yourself doesn’t help, since the folders diskcache-oxide creates inside it for large values are owner-only too.</p>
 <p>Every process that should share the cache opens the same path. Inside one process, opening the same directory twice gives two handles on one shared engine, with one connection pool between them.</p>
 <section id="close-it-or-use-with" class="level2">
 <h2 class="anchored" data-anchor-id="close-it-or-use-with">Close it, or use <code>with</code></h2>

@@ -85,7 +85,7 @@ The generations are timestamps rather than a counter starting at 0 for a reason.
 
 If you turn caching off with `NullCache`, pass the real cache as `invalidate=`. Prefix deletes still reach the real cache (`iterkeys` and `delete` are both forwarded), so nothing stale is waiting when caching comes back on. See [NullCache](../user-guide/null-cache.qmd).
 
-Tags, which group keys without a naming convention, are planned for Phase 6a.
+Tags, which group keys without a naming convention, are planned (see the [roadmap](../user-guide/roadmap.qmd)).
 
 ```{python}
 #| echo: false

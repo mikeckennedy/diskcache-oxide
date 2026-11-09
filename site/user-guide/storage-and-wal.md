@@ -14,7 +14,7 @@ Open the directory and this is what you find:
     └── 3f/
         └── 3fa2…c91e.val             # one large value
 
-The database file carries a format version. A future build that can't read it raises [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) rather than guessing.
+The database file carries a format version, and a build that can't read it raises [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) rather than guessing. During 0.x, a release that changes the format bumps the minor version and says so first in its changelog entry; existing caches are deleted on that upgrade, not migrated (see [Upgrading](switching-from-diskcache.md#upgrading-diskcache-oxide)).
 
 
 # Small values inline, large values in files
@@ -39,7 +39,7 @@ cache = Cache('/var/cache/my-app', size_limit=500 * 1024 * 1024, cull_limit=10)
 - When a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) finds the cache over its limit, it evicts up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of the least recently stored entries (default 10). [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) evicts down to the limit on demand.
 - [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) reports the current size.
 
-Least-recently-stored eviction means a [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU policies are planned for Phase 6a.
+Least-recently-stored eviction means a [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU policies are planned (see the [roadmap](roadmap.md)).
 
 
 # Memory: `max_connections` and `sqlite_cache_size`

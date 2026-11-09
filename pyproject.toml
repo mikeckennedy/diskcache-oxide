@@ -12,10 +12,21 @@ requires-python = ">=3.14"
 authors = [
     { name = "Michael Kennedy", email = "michael@mkennedy.tech" },
 ]
+keywords = ["cache", "diskcache", "sqlite", "rust", "free-threading", "multiprocessing"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Free Threading :: 3 - Stable",
     "Programming Language :: Rust",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
 
@@ -23,6 +34,7 @@ classifiers = [
 Homepage = "https://mkennedy.codes/docs/diskcache-oxide/"
 Documentation = "https://mkennedy.codes/docs/diskcache-oxide/"
 Repository = "https://github.com/mikeckennedy/diskcache-oxide"
+Changelog = "https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md"
 Issues = "https://github.com/mikeckennedy/diskcache-oxide/issues"
 
 [dependency-groups]
@@ -70,6 +82,8 @@ cache-keys = [
 python-source = "python"
 module-name = "diskcache_oxide._core"
 manifest-path = "crates/diskcache-oxide-py/Cargo.toml"
+# The bundled SQLite's compile flags live in .cargo/config.toml; a source build without them is slower and differs from the wheels.
+include = [{ path = ".cargo/config.toml", format = "sdist" }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

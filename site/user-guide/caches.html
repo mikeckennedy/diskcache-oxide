@@ -317,7 +317,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#sharded-caches" id="toc-sharded-caches" class="nav-link" data-scroll-target="#sharded-caches">Sharded caches</a></li>
   <li><a href="#switching-caches-off" id="toc-switching-caches-off" class="nav-link" data-scroll-target="#switching-caches-off">Switching caches off</a></li>
   <li><a href="#admin-and-shutdown" id="toc-admin-and-shutdown" class="nav-link" data-scroll-target="#admin-and-shutdown">Admin and shutdown</a></li>
-  <li><a href="#coming-from-durablecache" id="toc-coming-from-durablecache" class="nav-link" data-scroll-target="#coming-from-durablecache">Coming from <code>DurableCache</code></a></li>
+  <li><a href="#coming-from-your-own-diskcache-wrapper" id="toc-coming-from-your-own-diskcache-wrapper" class="nav-link" data-scroll-target="#coming-from-your-own-diskcache-wrapper">Coming from your own diskcache wrapper</a></li>
   </ul>
 </nav>
     </div>
@@ -408,13 +408,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <li>Maintenance calls hold the write lock once per chunk, so give them a longer <code>timeout=</code> than the request path’s.</li>
 </ul>
 </section>
-<section id="coming-from-durablecache" class="level1">
-<h1>Coming from <code>DurableCache</code></h1>
-<p>Talk Python’s apps wrap diskcache in a <code>DurableCache</code> class and a <code>cache_service</code> module. Each piece now has a home in the library:</p>
+<section id="coming-from-your-own-diskcache-wrapper" class="level1">
+<h1>Coming from your own diskcache wrapper</h1>
+<p>Apps that run diskcache in production tend to grow the same wrapper around it: a class that turns errors into misses, a null cache for turning caching off, and a module that creates, lists and maintains the app’s caches. Talk Python’s, for one, are a <code>DurableCache</code> class and a <code>cache_service</code> module, and the left column uses their names. Each piece now has a home in the library:</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
-<th><code>DurableCache</code> / <code>cache_service</code></th>
+<th>A typical wrapper</th>
 <th>diskcache-oxide</th>
 </tr>
 </thead>
@@ -437,7 +437,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </tr>
 <tr class="odd">
 <td>A cache that can’t take a request down</td>
-<td><code>Caches(base_dir, durable=True)</code>, which also covers <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, whose failures <code>DurableCache</code> raises (<a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">details</a>)</td>
+<td><code>Caches(base_dir, durable=True)</code>, which also covers <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, whose failures such a wrapper usually raises (<a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">details</a>)</td>
 </tr>
 <tr class="even">
 <td><code>create_cache(name, size_limit)</code></td>

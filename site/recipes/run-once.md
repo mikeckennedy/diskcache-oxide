@@ -90,4 +90,4 @@ A separate cache directory just for coordination, which is never swapped for a [
 coordination = Cache('/var/cache/my-app-coordination')
 ```
 
-Proper cross-process `Lock` and `BoundedSemaphore` recipes are planned for Phase 6e.
+Proper cross-process `Lock` and `BoundedSemaphore` recipes are planned (see the [roadmap](../user-guide/roadmap.md)).

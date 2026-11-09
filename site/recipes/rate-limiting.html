@@ -289,7 +289,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="a-fixed-window-limiter" class="level1">
 <h1>A fixed-window limiter</h1>
 <p>Each client gets a counter for the current window, with the window’s number in the key. When the window ends, requests move on to a new key and the old one simply expires.</p>
-<div id="dc0ef351" class="cell" data-execution_count="1">
+<div id="12b73450" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -348,7 +348,7 @@ True</code></pre>
 <ul>
 <li><strong>Don’t rate limit with a cache that might be a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>.</strong> Its <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> always returns <code>default + delta</code>, so every request would be allowed. That’s often what you want with caching switched off, but make it a deliberate choice.</li>
 </ul>
-<p>A ready-made <code>throttle</code> recipe is planned for Phase 6e.</p>
+<p>A ready-made <code>throttle</code> recipe is planned (see the <a href="../user-guide/roadmap.html">roadmap</a>).</p>
 
 
 </section>

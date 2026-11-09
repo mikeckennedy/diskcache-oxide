@@ -282,7 +282,7 @@ ul.task-list li input[type="checkbox"] {
   <li><a href="#prefix-scans-at-scale" id="toc-prefix-scans-at-scale" class="nav-link" data-scroll-target="#prefix-scans-at-scale">Prefix scans at scale</a></li>
   <li><a href="#memory-that-stays-flat" id="toc-memory-that-stays-flat" class="nav-link" data-scroll-target="#memory-that-stays-flat">Memory that stays flat</a></li>
   <li><a href="#known-slow-spots" id="toc-known-slow-spots" class="nav-link" data-scroll-target="#known-slow-spots">Known slow spots</a></li>
-  <li><a href="#next-phase-4" id="toc-next-phase-4" class="nav-link" data-scroll-target="#next-phase-4">Next: Phase 4</a></li>
+  <li><a href="#next-free-threaded-scaling" id="toc-next-free-threaded-scaling" class="nav-link" data-scroll-target="#next-free-threaded-scaling">Next: free-threaded scaling</a></li>
   </ul>
 </nav>
     </div>
@@ -311,7 +311,7 @@ ul.task-list li input[type="checkbox"] {
 <p>Web apps call their cache on almost every request, often straight from the asyncio event loop, where every microsecond the cache spends is a microsecond every other request on that loop waits. So diskcache-oxide’s performance work starts with read latency, then throughput under many threads, then predictable resource use. Correctness always comes first: every speedup has to keep the conformance suite green, or it doesn’t ship.</p>
 <section id="the-numbers" class="level1">
 <h1>The numbers</h1>
-<p>Measured with <code>bench/gate.py</code>, which runs diskcache 5.6.3 and diskcache-oxide in the same session on the same machine, in four interleaved rounds. This is the Phase 2 final gate, on Linux (Ubuntu 26.04 LTS in Docker on Apple Silicon), matching Talk Python’s servers. Latencies are p50 in microseconds. Ratios are oxide’s time divided by diskcache’s, so lower is better.</p>
+<p>Measured with <code>bench/gate.py</code>, which runs diskcache 5.6.3 and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from Linux (Ubuntu 26.04 LTS) in a container on an Apple Silicon Mac. Both libraries ran in the same container, so the ratios compare like with like, but the absolute numbers on an x86-64 server will differ. Latencies are p50 in microseconds. Ratios are oxide’s time divided by diskcache’s, so lower is better.</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
@@ -373,7 +373,7 @@ ul.task-list li input[type="checkbox"] {
 <p>Two things stand out:</p>
 <ul>
 <li><strong>On GIL builds, diskcache collapses as threads are added and oxide doesn’t.</strong> At 99:1, diskcache drops from about 375k to 44k operations per second going from 1 to 8 threads; oxide stays flat around 720-750k. diskcache’s per-thread connections end up fighting over the GIL and SQLite’s locks.</li>
-<li><strong>On free-threaded builds, oxide is faster at every thread count, but it doesn’t scale yet.</strong> 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That’s the Phase 4 target, below.</li>
+<li><strong>On free-threaded builds, oxide is faster at every thread count, but it doesn’t scale yet.</strong> 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That’s the next target, below.</li>
 </ul>
 <p>Run them yourself with <code>python -m bench.gate</code>. Numbers vary by machine; the ratios are what the gate enforces.</p>
 </section>
@@ -405,9 +405,9 @@ ul.task-list li input[type="checkbox"] {
 <li><strong>A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> at <code>max_connections=32</code> with 8 threads, on macOS only:</strong> 5-12% slower. The same case on Linux is 41-56% faster.</li>
 </ul>
 </section>
-<section id="next-phase-4" class="level1">
-<h1>Next: Phase 4</h1>
-<p>Profiling a cached <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the <code>-shm</code> file, under a process-wide mutex. It’s the biggest single cost on every read, and it’s also what keeps free-threaded throughput from scaling. Phase 4 goes after it, along with:</p>
+<section id="next-free-threaded-scaling" class="level1">
+<h1>Next: free-threaded scaling</h1>
+<p>Profiling a cached <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the <code>-shm</code> file, under a process-wide mutex. It’s the biggest single cost on every read, and it’s also what keeps free-threaded throughput from scaling. The next stage goes after it, along with:</p>
 <ul>
 <li>a per-process lock-caching layer under SQLite, or longer-lived read snapshots;</li>
 <li>thread-affine connections;</li>

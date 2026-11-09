@@ -306,7 +306,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <section id="see-it-work" class="level1">
 <h1>See it work</h1>
 <p>Here eight threads race for the same claim. Processes behave the same way.</p>
-<div id="c7600f7b" class="cell" data-execution_count="1">
+<div id="558e8c8e" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -356,7 +356,7 @@ claim holds: 7</code></pre>
 </ul>
 <p>A separate cache directory just for coordination, which is never swapped for a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and holds only a handful of tiny keys, avoids both:</p>
 <div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>coordination <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-coordination'</span>)</span></code></pre></div>
-<p>Proper cross-process <code>Lock</code> and <code>BoundedSemaphore</code> recipes are planned for Phase 6e.</p>
+<p>Proper cross-process <code>Lock</code> and <code>BoundedSemaphore</code> recipes are planned (see the <a href="../user-guide/roadmap.html">roadmap</a>).</p>
 
 
 </section>

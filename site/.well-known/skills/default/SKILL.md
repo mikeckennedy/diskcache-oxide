@@ -12,7 +12,7 @@ A cache that is a directory: every thread and process that opens the same path s
 
 ## Install
 
-Until 0.1.0 is released, install from GitHub (needs a Rust toolchain): `uv pip install git+https://github.com/mikeckennedy/diskcache-oxide`. The `diskcache-oxide` name on PyPI holds a 0.0.1 placeholder with no code, so `pip install diskcache-oxide` is not yet the answer. The import is `diskcache_oxide`.
+Install with `pip install diskcache-oxide` (CPython 3.14 or 3.15, GIL or free-threaded; wheels for macOS arm64 and Linux x86_64/aarch64, elsewhere a source build that needs the latest stable Rust). The import is `diskcache_oxide`. During 0.x a release that changes the on-disk format bumps the minor version; caches from the older format raise `FormatMismatchError` and must be deleted.
 
 ## Use
 

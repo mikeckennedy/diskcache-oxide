@@ -54,16 +54,15 @@ The same Rust core, served over HTTP to many clients: a Redis-style central cach
 The concurrency core is where serious bugs hide, so it got its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) under load, checking for corruption, lost writes, leaks and latency drift. The 24-hour soak passed, and it paid for itself along the way: it found the unbounded WAL growth that `wal_size_limit` and [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) now rein in. The limit is a target, not a bound: several processes writing flat out can still take the log well past it (see [Storage and WAL](storage-and-wal.md)).
 
 
-## Now: the last gates before production (Phase 3)
+## Done: release (Phase 3)
 
-The version in the repository is `0.1.0.dev2`. What's left before Talk Python runs it in production and `0.1.0` goes to PyPI: a sanitizer pass over the whole codebase (ThreadSanitizer, AddressSanitizer and Miri, with the bundled SQLite built under them), and a fresh 24-hour soak on the final commit, since the performance work since the last one changed [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr), held transactions and locking.
+`0.1.0` is on PyPI, after a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython built under it, AddressSanitizer and LeakSanitizer, with the bundled SQLite built under them) and a fresh 24-hour soak on the released code. Next it replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers.
 
 
 ## Next
 
 | Phase | What it delivers |
 |----|----|
-| **3. Production** | diskcache-oxide replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers. `0.1.0` goes to PyPI after that; until then the name there holds a placeholder. |
 | **4. Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
 | **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. |
 | **6a. Cache options** | More eviction policies (LRU, LFU, none), tags and `evict(tag)`, statistics, `memoize`, `peek`/`pull`/`push`, `check()`, `retry=`, and non-`str` keys. |

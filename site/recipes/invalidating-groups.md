@@ -97,4 +97,4 @@ The generations are timestamps rather than a counter starting at 0 for a reason.
 
 If you turn caching off with [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), pass the real cache as `invalidate=`. Prefix deletes still reach the real cache ([iterkeys](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) and [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) are both forwarded), so nothing stale is waiting when caching comes back on. See [NullCache](../user-guide/null-cache.md).
 
-Tags, which group keys without a naming convention, are planned for Phase 6a.
+Tags, which group keys without a naming convention, are planned (see the [roadmap](../user-guide/roadmap.md)).

@@ -312,7 +312,10 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#start-with-a-fresh-cache" id="toc-start-with-a-fresh-cache" class="nav-link active" data-scroll-target="#start-with-a-fresh-cache">Start with a fresh cache</a></li>
+  <li><a href="#start-with-a-fresh-cache" id="toc-start-with-a-fresh-cache" class="nav-link active" data-scroll-target="#start-with-a-fresh-cache">Start with a fresh cache</a>
+  <ul class="collapse">
+  <li><a href="#upgrading-diskcache-oxide" id="toc-upgrading-diskcache-oxide" class="nav-link" data-scroll-target="#upgrading-diskcache-oxide">Upgrading diskcache-oxide</a></li>
+  </ul></li>
   <li><a href="#what-you-might-notice" id="toc-what-you-might-notice" class="nav-link" data-scroll-target="#what-you-might-notice">What you might notice</a></li>
   <li><a href="#values-no-pickle-unless-you-ask" id="toc-values-no-pickle-unless-you-ask" class="nav-link" data-scroll-target="#values-no-pickle-unless-you-ask">Values: no pickle unless you ask</a></li>
   <li><a href="#string-keys" id="toc-string-keys" class="nav-link" data-scroll-target="#string-keys">String keys</a></li>
@@ -354,7 +357,11 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-oxide'</span>)</span></code></pre></div>
 <section id="start-with-a-fresh-cache" class="level1">
 <h1>Start with a fresh cache</h1>
-<p>diskcache-oxide stores its data in <code>diskcache-oxide.sqlite</code>, not diskcache’s <code>cache.db</code>, and never opens or converts a diskcache database. The two can even share a directory without seeing each other’s data. Your cache starts cold after the switch, which for a cache is usually fine. Once you’ve switched, delete the old <code>cache.db*</code> files and value files to get the disk space back.</p>
+<p>diskcache-oxide stores its data in <code>diskcache-oxide.sqlite</code>, not diskcache’s <code>cache.db</code>, and never opens or converts a diskcache database. The two can even share a directory without seeing each other’s data. Your cache starts cold after the switch, which for a cache is usually fine. The cleanest switch gives diskcache-oxide a new directory and deletes the old one once every worker has moved. If the two share a directory, diskcache’s files are <code>cache.db*</code> and its value folders, which nest two levels deep (<code>3f/a2/….val</code>); diskcache-oxide’s folders are one level deep and hold <code>.val</code> files directly, so a two-hex-digit folder that contains folders is diskcache’s.</p>
+<section id="upgrading-diskcache-oxide" class="level2">
+<h2 class="anchored" data-anchor-id="upgrading-diskcache-oxide">Upgrading diskcache-oxide</h2>
+<p>During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. Delete existing caches when you upgrade to it, with every worker stopped. Until you do, opening one raises <a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>, which a <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry reports and answers with a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. A release that keeps the format needs nothing.</p>
+</section>
 </section>
 <section id="what-you-might-notice" class="level1">
 <h1>What you might notice</h1>
@@ -448,7 +455,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </section>
 <section id="string-keys" class="level1">
 <h1>String keys</h1>
-<p>Only <code>str</code> keys are accepted today; anything else raises <code>TypeError</code>. Keys are already stored with a type tag, so other key types can be added in Phase 6a without changing the file format. In the meantime, build string keys yourself (<code>f'user:{user_id}'</code>).</p>
+<p>Only <code>str</code> keys are accepted today; anything else raises <code>TypeError</code>. Keys are already stored with a type tag, so other key types can be added later without changing the file format (see the <a href="../user-guide/roadmap.html">roadmap</a>). In the meantime, build string keys yourself (<code>f'user:{user_id}'</code>).</p>
 </section>
 <section id="transact" class="level1">
 <h1><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a></h1>

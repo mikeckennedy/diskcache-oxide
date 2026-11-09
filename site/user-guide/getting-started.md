@@ -5,14 +5,12 @@ A [Cache](../reference/Cache.md#diskcache_oxide.Cache) is a directory. That's th
 
 # Install
 
-diskcache-oxide isn't released yet: the version in the repository is `0.1.0.dev2`, and the `diskcache-oxide` name on PyPI holds a `0.0.1` placeholder with no code in it. Until `0.1.0`, build it from source, which needs a Rust toolchain:
-
 ``` bash
-uv pip install git+https://github.com/mikeckennedy/diskcache-oxide
+pip install diskcache-oxide
 ```
 
 - **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
-- **Platforms:** macOS and Linux. Windows support is planned.
+- **Platforms:** macOS and Linux. Wheels cover macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. Windows support is planned.
 - **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter ([diskcache_oxide.sqlite_version()](../reference/sqlite_version.md#diskcache_oxide.sqlite_version) reports the one in use).
 
 
@@ -25,6 +23,8 @@ cache = Cache('/var/cache/my-app')
 ```
 
 The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
+
+So a cron job, an admin script or a container running as a different user can't open a directory your app created: it gets `PermissionError` ("Permission denied"). Run everything that shares a cache as the same user. Loosening the directory's mode yourself doesn't help, since the folders diskcache-oxide creates inside it for large values are owner-only too.
 
 Every process that should share the cache opens the same path. Inside one process, opening the same directory twice gives two handles on one shared engine, with one connection pool between them.
 

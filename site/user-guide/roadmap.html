@@ -287,7 +287,7 @@ ul.task-list li input[type="checkbox"] {
   <ul class="collapse">
   <li><a href="#done-the-core-cache" id="toc-done-the-core-cache" class="nav-link" data-scroll-target="#done-the-core-cache">Done: the core <code>Cache</code></a></li>
   <li><a href="#done-concurrency-review-and-soak-phase-2.5" id="toc-done-concurrency-review-and-soak-phase-2.5" class="nav-link" data-scroll-target="#done-concurrency-review-and-soak-phase-2.5">Done: concurrency review and soak (Phase 2.5)</a></li>
-  <li><a href="#now-the-last-gates-before-production-phase-3" id="toc-now-the-last-gates-before-production-phase-3" class="nav-link" data-scroll-target="#now-the-last-gates-before-production-phase-3">Now: the last gates before production (Phase 3)</a></li>
+  <li><a href="#done-release-phase-3" id="toc-done-release-phase-3" class="nav-link" data-scroll-target="#done-release-phase-3">Done: release (Phase 3)</a></li>
   <li><a href="#next" id="toc-next" class="nav-link" data-scroll-target="#next">Next</a></li>
   </ul></li>
   <li><a href="#further-out" id="toc-further-out" class="nav-link" data-scroll-target="#further-out">Further out</a></li>
@@ -382,9 +382,9 @@ ul.task-list li input[type="checkbox"] {
 <h2 class="anchored" data-anchor-id="done-concurrency-review-and-soak-phase-2.5">Done: concurrency review and soak (Phase 2.5)</h2>
 <p>The concurrency core is where serious bugs hide, so it got its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> under load, checking for corruption, lost writes, leaks and latency drift. The 24-hour soak passed, and it paid for itself along the way: it found the unbounded WAL growth that <code>wal_size_limit</code> and <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> now rein in. The limit is a target, not a bound: several processes writing flat out can still take the log well past it (see <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>).</p>
 </section>
-<section id="now-the-last-gates-before-production-phase-3" class="level2">
-<h2 class="anchored" data-anchor-id="now-the-last-gates-before-production-phase-3">Now: the last gates before production (Phase 3)</h2>
-<p>The version in the repository is <code>0.1.0.dev2</code>. What’s left before Talk Python runs it in production and <code>0.1.0</code> goes to PyPI: a sanitizer pass over the whole codebase (ThreadSanitizer, AddressSanitizer and Miri, with the bundled SQLite built under them), and a fresh 24-hour soak on the final commit, since the performance work since the last one changed <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>, held transactions and locking.</p>
+<section id="done-release-phase-3" class="level2">
+<h2 class="anchored" data-anchor-id="done-release-phase-3">Done: release (Phase 3)</h2>
+<p><code>0.1.0</code> is on PyPI, after a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython built under it, AddressSanitizer and LeakSanitizer, with the bundled SQLite built under them) and a fresh 24-hour soak on the released code. Next it replaces diskcache at <a href="https://talkpython.fm">Talk Python</a>, with production latency watched against the old numbers.</p>
 </section>
 <section id="next" class="level2">
 <h2 class="anchored" data-anchor-id="next">Next</h2>
@@ -397,42 +397,38 @@ ul.task-list li input[type="checkbox"] {
 </thead>
 <tbody>
 <tr class="odd">
-<td><strong>3. Production</strong></td>
-<td>diskcache-oxide replaces diskcache at <a href="https://talkpython.fm">Talk Python</a>, with production latency watched against the old numbers. <code>0.1.0</code> goes to PyPI after that; until then the name there holds a placeholder.</td>
-</tr>
-<tr class="even">
 <td><strong>4. Free-threaded performance</strong></td>
 <td>Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that’s the first target.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><strong>5. <code>AsyncCache</code></strong></td>
 <td>An async API for asyncio frameworks that can’t slow down the sync one, including <code>transact_async()</code>.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><strong>6a. Cache options</strong></td>
 <td>More eviction policies (LRU, LFU, none), tags and <code>evict(tag)</code>, statistics, <code>memoize</code>, <code>peek</code>/<code>pull</code>/<code>push</code>, <code>check()</code>, <code>retry=</code>, and non-<code>str</code> keys.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><strong>6b. <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a></strong></td>
 <td>Multi-operation transactions. Done early: see <a href="../user-guide/transactions.html">Transactions</a>.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><strong>6c. <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a></strong></td>
 <td>Done: see <a href="../user-guide/fanoutcache.html">FanoutCache</a>.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><strong>6d. <code>Deque</code> and <code>Index</code></strong></td>
 <td>diskcache’s persistent collections.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><strong>6e. Recipes</strong></td>
 <td><code>Lock</code>, <code>RLock</code>, <code>BoundedSemaphore</code>, <code>throttle</code>, <code>barrier</code>, and stampede-proof <code>memoize</code>.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><strong>7. Network server</strong></td>
 <td>Stage 3, above.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><strong>Windows</strong></td>
 <td>Supported as a development platform once macOS and Linux are solid.</td>
 </tr>

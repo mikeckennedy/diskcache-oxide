@@ -1480,14 +1480,12 @@ A `Cache` is a directory. That's the whole mental model, and it carries further 
 
 ## Install
 
-diskcache-oxide isn't released yet: the version in the repository is `0.1.0.dev2`, and the `diskcache-oxide` name on PyPI holds a `0.0.1` placeholder with no code in it. Until `0.1.0`, build it from source, which needs a Rust toolchain:
-
 ```bash
-uv pip install git+https://github.com/mikeckennedy/diskcache-oxide
+pip install diskcache-oxide
 ```
 
 - **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
-- **Platforms:** macOS and Linux. Windows support is planned.
+- **Platforms:** macOS and Linux. Wheels cover macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. Windows support is planned.
 - **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter (`diskcache_oxide.sqlite_version()` reports the one in use).
 
 ## Open a cache
@@ -1499,6 +1497,8 @@ cache = Cache('/var/cache/my-app')
 ```
 
 The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
+
+So a cron job, an admin script or a container running as a different user can't open a directory your app created: it gets `PermissionError` ("Permission denied"). Run everything that shares a cache as the same user. Loosening the directory's mode yourself doesn't help, since the folders diskcache-oxide creates inside it for large values are owner-only too.
 
 Every process that should share the cache opens the same path. Inside one process, opening the same directory twice gives two handles on one shared engine, with one connection pool between them.
 
@@ -1748,7 +1748,11 @@ cache = Cache('/var/cache/my-app-oxide')
 
 ## Start with a fresh cache
 
-diskcache-oxide stores its data in `diskcache-oxide.sqlite`, not diskcache's `cache.db`, and never opens or converts a diskcache database. The two can even share a directory without seeing each other's data. Your cache starts cold after the switch, which for a cache is usually fine. Once you've switched, delete the old `cache.db*` files and value files to get the disk space back.
+diskcache-oxide stores its data in `diskcache-oxide.sqlite`, not diskcache's `cache.db`, and never opens or converts a diskcache database. The two can even share a directory without seeing each other's data. Your cache starts cold after the switch, which for a cache is usually fine. The cleanest switch gives diskcache-oxide a new directory and deletes the old one once every worker has moved. If the two share a directory, diskcache's files are `cache.db*` and its value folders, which nest two levels deep (`3f/a2/….val`); diskcache-oxide's folders are one level deep and hold `.val` files directly, so a two-hex-digit folder that contains folders is diskcache's.
+
+### Upgrading diskcache-oxide
+
+During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. Delete existing caches when you upgrade to it, with every worker stopped. Until you do, opening one raises `FormatMismatchError`, which a `Caches` registry reports and answers with a `NullCache`. A release that keeps the format needs nothing.
 
 ## What you might notice
 
@@ -1791,7 +1795,7 @@ A cache opened without `pickle=True` never unpickles. If it finds a pickled valu
 
 ## String keys
 
-Only `str` keys are accepted today; anything else raises `TypeError`. Keys are already stored with a type tag, so other key types can be added in Phase 6a without changing the file format. In the meantime, build string keys yourself (`f'user:{user_id}'`).
+Only `str` keys are accepted today; anything else raises `TypeError`. Keys are already stored with a type tag, so other key types can be added later without changing the file format (see the [roadmap](roadmap.qmd)). In the meantime, build string keys yourself (`f'user:{user_id}'`).
 
 ## `transact()`
 
@@ -2076,15 +2080,14 @@ The same Rust core, served over HTTP to many clients: a Redis-style central cach
 
 The concurrency core is where serious bugs hide, so it got its own phase before anyone runs it in production: independent deep reviews by several AI coding agents, model-checker tests for the lock state machines, and day-long soak runs with many processes and threads, forks, SIGKILLs and `clear()` under load, checking for corruption, lost writes, leaks and latency drift. The 24-hour soak passed, and it paid for itself along the way: it found the unbounded WAL growth that `wal_size_limit` and `checkpoint()` now rein in. The limit is a target, not a bound: several processes writing flat out can still take the log well past it (see [Storage and WAL](storage-and-wal.qmd)).
 
-### Now: the last gates before production (Phase 3)
+### Done: release (Phase 3)
 
-The version in the repository is `0.1.0.dev2`. What's left before Talk Python runs it in production and `0.1.0` goes to PyPI: a sanitizer pass over the whole codebase (ThreadSanitizer, AddressSanitizer and Miri, with the bundled SQLite built under them), and a fresh 24-hour soak on the final commit, since the performance work since the last one changed `incr`, held transactions and locking.
+`0.1.0` is on PyPI, after a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython built under it, AddressSanitizer and LeakSanitizer, with the bundled SQLite built under them) and a fresh 24-hour soak on the released code. Next it replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers.
 
 ### Next
 
 | Phase | What it delivers |
 |---|---|
-| **3. Production** | diskcache-oxide replaces diskcache at [Talk Python](https://talkpython.fm), with production latency watched against the old numbers. `0.1.0` goes to PyPI after that; until then the name there holds a placeholder. |
 | **4. Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
 | **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. |
 | **6a. Cache options** | More eviction policies (LRU, LFU, none), tags and `evict(tag)`, statistics, `memoize`, `peek`/`pull`/`push`, `check()`, `retry=`, and non-`str` keys. |
@@ -2453,17 +2456,17 @@ caches.close_all()                  # at shutdown; `with Caches(...) as caches:`
 - `expire_all()` runs every cache, logging and reporting `None` for one that fails. Run it from a scheduled job rather than inside a request: a large expire takes seconds.
 - Maintenance calls hold the write lock once per chunk, so give them a longer `timeout=` than the request path's.
 
-## Coming from `DurableCache`
+## Coming from your own diskcache wrapper
 
-Talk Python's apps wrap diskcache in a `DurableCache` class and a `cache_service` module. Each piece now has a home in the library:
+Apps that run diskcache in production tend to grow the same wrapper around it: a class that turns errors into misses, a null cache for turning caching off, and a module that creates, lists and maintains the app's caches. Talk Python's, for one, are a `DurableCache` class and a `cache_service` module, and the left column uses their names. Each piece now has a home in the library:
 
-| `DurableCache` / `cache_service` | diskcache-oxide |
+| A typical wrapper | diskcache-oxide |
 |---|---|
 | `bool()` is always True | `Cache` is always truthy (D-009); `NullCache` is falsy |
 | `CacheProtocol` | `CacheLike` |
 | `NullCache`, `PerfTestNullCache` | `NullCache`, and `NullCache(invalidate=real)` |
 | `get` that logs, deletes and misses on any error | `Cache(on_decode_error='miss')` or a reporting function ([details](getting-started.qmd#values-that-cant-be-read)) |
-| A cache that can't take a request down | `Caches(base_dir, durable=True)`, which also covers `set`, whose failures `DurableCache` raises ([details](getting-started.qmd#a-cache-that-cant-take-a-request-down)) |
+| A cache that can't take a request down | `Caches(base_dir, durable=True)`, which also covers `set`, whose failures such a wrapper usually raises ([details](getting-started.qmd#a-cache-that-cant-take-a-request-down)) |
 | `create_cache(name, size_limit)` | `caches.register(name, size_limit=...)`, then `caches[name]` |
 | `timeout=1.0` on every open | `Caches(base_dir, timeout=1.0)` |
 | A `NullCache` when opening fails | the same, reported through `on_open_error` and retried after 10 s |
@@ -2623,7 +2626,7 @@ def bump(cache: ShardedCacheLike, key: str) -> None:
 
 ## What `FanoutCache` doesn't have yet
 
-Stock's `FanoutCache` also has `cache()`, `deque()` and `index()` sub-collections, `stats()`, `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, the `retry=`, `read=` and `tag=` arguments, settings read as attributes, and pickling. None of those exist yet; the ones that belong to a feature come with Phase 6a and 6d, each designed across shards rather than copied. `directory` is required and there's no `disk=`, as for `Cache`.
+Stock's `FanoutCache` also has `cache()`, `deque()` and `index()` sub-collections, `stats()`, `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, the `retry=`, `read=` and `tag=` arguments, settings read as attributes, and pickling. None of those exist yet; the ones that belong to a feature come with that feature (see the [roadmap](roadmap.qmd)), each designed across shards rather than copied. `directory` is required and there's no `disk=`, as for `Cache`.
 
 The constructor takes `shards` as a keyword: stock's `FanoutCache(path, 4)` means four shards, but here the second argument is `timeout`, so write `shards=4`.
 
@@ -2702,7 +2705,7 @@ On a [`durable=True`](getting-started.qmd#a-cache-that-cant-take-a-request-down)
 
 ## A transaction belongs to a thread, not a task
 
-The calls that join a transaction are the ones made on the thread that entered the block. In asyncio, every task on a loop runs on that same thread. So if you `await` inside the block, another coroutine that runs meanwhile and writes to the same cache joins your transaction, and rolls back with it if your block raises. Don't `await` inside a `transact()` block. An `async with cache.transact_async()` form is planned for `AsyncCache` (Phase 5), where waiting for the write lock won't block the event loop.
+The calls that join a transaction are the ones made on the thread that entered the block. In asyncio, every task on a loop runs on that same thread. So if you `await` inside the block, another coroutine that runs meanwhile and writes to the same cache joins your transaction, and rolls back with it if your block raises. Don't `await` inside a `transact()` block. An `async with cache.transact_async()` form is planned for `AsyncCache` (see the [roadmap](roadmap.qmd)), where waiting for the write lock won't block the event loop.
 
 ## Transactions and forks
 
@@ -2793,7 +2796,7 @@ CPython won't let a library refuse a fork, so the barrier can't wait for a [tran
 
 ## Free-threaded performance today
 
-On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that's only about 1.6× its single-thread number, so threads don't scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is the goal of Phase 4. A [`FanoutCache`](fanoutcache.qmd) doesn't remove it for threads sharing one handle either; that is being worked on. See [Performance](performance.qmd).
+On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that's only about 1.6× its single-thread number, so threads don't scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is the next stage of the [roadmap](roadmap.qmd). A [`FanoutCache`](fanoutcache.qmd) doesn't remove it for threads sharing one handle either; that is being worked on. See [Performance](performance.qmd).
 
 
 ### Storage and WAL
@@ -2813,7 +2816,7 @@ Open the directory and this is what you find:
     └── 3fa2…c91e.val             # one large value
 ```
 
-The database file carries a format version. A future build that can't read it raises `FormatMismatchError` rather than guessing.
+The database file carries a format version, and a build that can't read it raises `FormatMismatchError` rather than guessing. During 0.x, a release that changes the format bumps the minor version and says so first in its changelog entry; existing caches are deleted on that upgrade, not migrated (see [Upgrading](switching-from-diskcache.qmd#upgrading-diskcache-oxide)).
 
 ## Small values inline, large values in files
 
@@ -2836,7 +2839,7 @@ cache = Cache('/var/cache/my-app', size_limit=500 * 1024 * 1024, cull_limit=10)
 - When a `set()` finds the cache over its limit, it evicts up to `cull_limit` of the least recently stored entries (default 10). `cull()` evicts down to the limit on demand.
 - `volume()` reports the current size.
 
-Least-recently-stored eviction means a `get` never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU policies are planned for Phase 6a.
+Least-recently-stored eviction means a `get` never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU policies are planned (see the [roadmap](roadmap.qmd)).
 
 ## Memory: `max_connections` and `sqlite_cache_size`
 
@@ -2910,7 +2913,7 @@ Web apps call their cache on almost every request, often straight from the async
 
 ## The numbers
 
-Measured with `bench/gate.py`, which runs diskcache 5.6.3 and diskcache-oxide in the same session on the same machine, in four interleaved rounds. This is the Phase 2 final gate, on Linux (Ubuntu 26.04 LTS in Docker on Apple Silicon), matching Talk Python's servers. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
+Measured with `bench/gate.py`, which runs diskcache 5.6.3 and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from Linux (Ubuntu 26.04 LTS) in a container on an Apple Silicon Mac. Both libraries ran in the same container, so the ratios compare like with like, but the absolute numbers on an x86-64 server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
 
 | Workload | 3.14 | 3.14t (free-threaded) |
 |---|---|---|
@@ -2930,7 +2933,7 @@ Threaded throughput, every thread sharing one `Cache`, in thousands of operation
 Two things stand out:
 
 - **On GIL builds, diskcache collapses as threads are added and oxide doesn't.** At 99:1, diskcache drops from about 375k to 44k operations per second going from 1 to 8 threads; oxide stays flat around 720-750k. diskcache's per-thread connections end up fighting over the GIL and SQLite's locks.
-- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That's the Phase 4 target, below.
+- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That's the next target, below.
 
 Run them yourself with `python -m bench.gate`. Numbers vary by machine; the ratios are what the gate enforces.
 
@@ -2959,9 +2962,9 @@ Two oversubscribed cases measure slower than before the SQLite mutex spin and th
 - **A plain `Cache` with far more threads than cores**, all sharing one handle: 7% slower on an M-series Mac at 36 threads, and 5% in a Linux VM at 32. Faster hand-off lets more threads into SQLite at once.
 - **A `FanoutCache` at `max_connections=32` with 8 threads, on macOS only:** 5-12% slower. The same case on Linux is 41-56% faster.
 
-## Next: Phase 4
+## Next: free-threaded scaling
 
-Profiling a cached `get` shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. Phase 4 goes after it, along with:
+Profiling a cached `get` shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The next stage goes after it, along with:
 
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;
@@ -3109,12 +3112,12 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 
 - **D-002:** the database file is `diskcache-oxide.sqlite`, so the two libraries never misread each other's files.
 - **D-003:** the clock is read natively; pass `clock=` to control it in tests.
-- **D-004:** keys are `str` only until Phase 6a. They're stored with a type tag, so other key types won't need a format change.
+- **D-004:** keys are `str` only for now (other key types are on the [roadmap](roadmap.qmd)). They're stored with a type tag, so other key types won't need a format change.
 - **D-005:** `size_limit` must be at least 1 MiB. In diskcache, a limit below the empty database's size silently evicts every value, including the one just stored.
 - **D-006:** an empty cache's `volume()` differs, so a `size_limit` leaves slightly different room.
 - **D-007:** `Timeout` subclasses `TimeoutError`, so `except TimeoutError` catches it too.
 - **D-009:** `bool(Cache)` is always True and `bool(NullCache)` is False, so `if cache:` means "caching is on".
-- **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
+- **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until the other policies arrive (see the [roadmap](roadmap.qmd)).
 - **D-041:** a type the codec doesn't know is registered per type with `register_type(cls, name=..., encode=..., decode=...)` (a dataclass needs only a name), process-wide or per cache with `types=`. It's stored as a tagged value and read back only where the name is registered, so nothing is imported by name; a registered type is never pickled; a `decode` error about the row is a `CorruptValueError` with yours as `__cause__`. See [Your own types](serialization.qmd#your-own-types).
 - **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.qmd#a-cache-that-cant-take-a-request-down).
 - **D-042:** a large value's file sits one folder deep, in at most 256 folders. A delete removes only the file; the last close in a process removes folders left empty and untouched for 30 seconds, and `clear()` removes the ones it emptied. A `FanoutCache`'s shards don't sweep yet. Before this, empty folders were never removed and a long-lived cache could hold 65,536 of them, about 257 MiB on ext4. See [Storage and WAL](storage-and-wal.qmd).
@@ -3131,7 +3134,7 @@ These are covered together in [FanoutCache: sharded caches](fanoutcache.qmd), an
 - **D-035:** a maintenance job must finish in bounded time, and when it can't, it must say what it did.
 - **D-036 and D-037:** budgets (size, connections, file descriptors) follow configuration, not the number of threads or shards.
 - **D-038:** a typo shouldn't leave a directory that neither kind of cache can open, or a shard written behind the `FanoutCache`'s back.
-- **D-039:** the missing stock features each need their own design across shards, so they arrive with Phase 6a and 6d rather than as copies.
+- **D-039:** the missing stock features each need their own design across shards, so they arrive with those features on the [roadmap](roadmap.qmd) rather than as copies.
 - **D-040:** holding every shard's lock would serialize the whole cache behind one transaction, which is what sharding exists to avoid.
 
 ## diskcache-community

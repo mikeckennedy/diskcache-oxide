@@ -228,7 +228,7 @@ section.level2:first-of-type > h2:first-child,
 <div class="no-row-height column-margin column-container"><div class="">
 <section id="links" class="level3">
 <h3 class="anchored" data-anchor-id="links">Links</h3>
-<p><a href="https://pypi.org/project/diskcache-oxide/">View on PyPI</a><br> <a href="https://github.com/mikeckennedy/diskcache-oxide">Browse source code</a><br> <a href="https://github.com/mikeckennedy/diskcache-oxide/issues">Issues</a><br></p>
+<p><a href="https://pypi.org/project/diskcache-oxide/">View on PyPI</a><br> <a href="https://github.com/mikeckennedy/diskcache-oxide">Browse source code</a><br> <a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md">Changelog</a><br> <a href="https://github.com/mikeckennedy/diskcache-oxide/issues">Issues</a><br></p>
 </section>
 <section id="ai-agents" class="level3">
 <h3 class="anchored" data-anchor-id="ai-agents">AI / Agents</h3>
@@ -292,7 +292,7 @@ section.level2:first-of-type > h2:first-child,
 <section id="why-diskcache-oxide" class="level2">
 <h2 class="anchored" data-anchor-id="why-diskcache-oxide">Why diskcache-oxide</h2>
 <ul>
-<li><strong><a href="./user-guide/performance.html">Fast where web apps spend their time.</a></strong> A cached <a href="reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> takes about 0.75 µs, 0.42× diskcache’s latency, which is cheap enough to call straight from the event loop. Add threads and the gap opens: at a 99:1 read/write mix with 8 threads on a GIL build, diskcache’s per-thread connections pile into each other and its throughput falls to a trickle, while oxide’s stays flat, 16× ahead.</li>
+<li><strong><a href="./user-guide/performance.html">Fast where web apps spend their time.</a></strong> A cached <a href="reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> takes about 0.75 µs, less than half of diskcache’s latency, which is cheap enough to call straight from the event loop. Add threads and the gap opens: at a 99:1 read/write mix with 8 threads on a GIL build, diskcache’s per-thread connections pile into each other and its throughput falls to a trickle, while oxide’s stays flat, 16× ahead.</li>
 <li><strong><a href="./user-guide/concurrency-and-forks.html">Built for free-threaded Python.</a></strong> The extension is compiled with <code>gil_used = false</code> and never leans on the GIL for correctness, which matters on a build where there’s no GIL to lean on. Every change is tested on 3.14, 3.14t, 3.15 and 3.15t.</li>
 <li><strong><a href="./user-guide/concurrency-and-forks.html">Safe across <code>fork()</code>.</a></strong> gunicorn, Celery’s prefork pool and <code>multiprocessing</code> create workers by copying the parent, and the copy includes whatever SQLite lock a thread was holding at that instant. A process-wide fork barrier makes sure no child is ever born holding half a transaction.</li>
 <li><strong><a href="./user-guide/serialization.html">No pickle on your disk.</a></strong> Values are msgpack (or JSON) with exact type tags, so tuples, sets, datetimes, big ints and NaN come back as what you stored, not as whatever the format could manage. Your own types are registered once and read back only where the name is registered. Pickle is opt-in, and a cache that didn’t opt in refuses to unpickle anything it finds, however it got there.</li>
@@ -306,25 +306,26 @@ section.level2:first-of-type > h2:first-child,
 </section>
 <section id="status" class="level2">
 <h2 class="anchored" data-anchor-id="status">Status</h2>
-<div class="callout callout-style-default callout-warning callout-titled">
+<div class="callout callout-style-default callout-note callout-titled">
 <div class="callout-header d-flex align-content-center">
 <div class="callout-icon-container">
 <i class="callout-icon"></i>
 </div>
 <div class="callout-title-container flex-fill">
-Warning
+Note
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<p><strong>Pre-release: version 0.1.0.dev2, not yet on PyPI or in production.</strong> The core <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, <a href="reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>, <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and <a href="reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> are complete. They pass a conformance suite that runs the same tests against real diskcache 5.6.3, apart from the <a href="./user-guide/divergences.html">documented divergences</a>, and a 24-hour soak that threw processes, threads, forks, <code>SIGKILL</code> and <a href="reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> under load at one directory and checked afterwards for corruption, lost writes and leaks. Two gates stand between here and <code>0.1.0</code>: a sanitizer pass over the whole codebase, and a fresh soak on the final commit. Then it goes into production at <a href="https://talkpython.fm">Talk Python</a>, and <code>0.1.0</code> goes to PyPI once it has run there. <code>AsyncCache</code>, <code>memoize</code>, tags, non-<code>str</code> keys and the coordination recipes come in later phases. See <a href="./user-guide/roadmap.html">Vision and roadmap</a>.</p>
+<p><strong>0.1.0, the first release.</strong> The core <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, <a href="reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>, <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and <a href="reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> are complete. Before release they passed a conformance suite that runs the same tests against real diskcache 5.6.3, apart from the <a href="./user-guide/divergences.html">documented divergences</a>; a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython, AddressSanitizer and LeakSanitizer); and a 24-hour soak that threw processes, threads, forks, <code>SIGKILL</code> and <a href="reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> under load at one directory and checked afterwards for corruption, lost writes and leaks. It’s on its way into production at <a href="https://talkpython.fm">Talk Python</a>.</p>
+<p>Not here yet: <code>memoize</code>, tags, <code>AsyncCache</code>, <code>Deque</code> and <code>Index</code>, keys other than <code>str</code>, custom <code>disk=</code> classes, eviction policies other than least-recently-stored, and the coordination recipes. See <a href="./user-guide/roadmap.html">Vision and roadmap</a>.</p>
 </div>
 </div>
 </section>
 <section id="install" class="level2">
 <h2 class="anchored" data-anchor-id="install">Install</h2>
-<p>Until <code>0.1.0</code> is released, the way in is GitHub. Build it from source, which needs a Rust toolchain:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install git+https://github.com/mikeckennedy/diskcache-oxide</span></code></pre></div>
-<p>The <code>diskcache-oxide</code> name on PyPI holds a <code>0.0.1</code> placeholder with no code in it, so <code>pip install diskcache-oxide</code> gives you an empty package and a puzzled afternoon. It supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t and 3.15t), on macOS and Linux. Windows support is planned. Release wheels will include the compiled engine and a bundled SQLite, so there’s nothing else to install.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install diskcache-oxide</span></code></pre></div>
+<p>It supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t and 3.15t), on macOS and Linux. Wheels cover macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64 for all four Pythons, with the compiled engine and a bundled SQLite inside, so there’s nothing else to install. Anywhere else pip builds from source, which needs the latest stable Rust toolchain. Windows support is planned.</p>
+<p>During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry: delete existing caches when you upgrade to it. Until you do, opening one raises <a href="reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>. It’s a cache, so the cost is a cold start.</p>
 </section>
 <section id="coming-from-diskcache" class="level2">
 <h2 class="anchored" data-anchor-id="coming-from-diskcache">Coming from diskcache?</h2>

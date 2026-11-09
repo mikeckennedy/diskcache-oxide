@@ -404,7 +404,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </section>
 <section id="free-threaded-performance-today" class="level1">
 <h1>Free-threaded performance today</h1>
-<p>On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that’s only about 1.6× its single-thread number, so threads don’t scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is the goal of Phase 4. A <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> doesn’t remove it for threads sharing one handle either; that is being worked on. See <a href="../user-guide/performance.html">Performance</a>.</p>
+<p>On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that’s only about 1.6× its single-thread number, so threads don’t scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is the next stage of the <a href="../user-guide/roadmap.html">roadmap</a>. A <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> doesn’t remove it for threads sharing one handle either; that is being worked on. See <a href="../user-guide/performance.html">Performance</a>.</p>
 
 
 </section>

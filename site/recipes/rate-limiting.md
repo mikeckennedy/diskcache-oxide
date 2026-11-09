@@ -74,4 +74,4 @@ except Timeout:
 
 - **Don't rate limit with a cache that might be a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache).** Its [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) always returns `default + delta`, so every request would be allowed. That's often what you want with caching switched off, but make it a deliberate choice.
 
-A ready-made `throttle` recipe is planned for Phase 6e.
+A ready-made `throttle` recipe is planned (see the [roadmap](../user-guide/roadmap.md)).

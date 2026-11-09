@@ -11,39 +11,44 @@ Every Python web app arrives at the same situation. A query that was fine at lau
 **Docs: <https://mkennedy.codes/docs/diskcache-oxide/>**
 
 ```python
+import os
+
 from diskcache_oxide import Cache
 
-cache = Cache('/var/cache/my-app')  # every worker opens the same directory
+cache = Cache('/tmp/my-app-cache')  # every worker opens the same directory
 
-cache.set('episodes:popular', episodes, expire=300)
-episodes = cache.get('episodes:popular')
+popular = cache.get('episodes:popular')
+if popular is None:
+    popular = ['ep-501', 'ep-500']  # stand-in for a slow query
+    cache.set('episodes:popular', popular, expire=300)
 
 # Only one worker runs the hourly job: add() is atomic across processes.
 if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
-    refresh_feeds()
+    print('this worker refreshes the feeds')
 ```
 
 ## Status
 
-**Pre-release, version 0.1.0.dev2, not yet on PyPI.** `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. They pass the conformance suite run against real diskcache, apart from the [documented divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html), and a 24-hour soak that threw processes, threads, forks and `SIGKILL` at one directory. Two gates remain, a sanitizer pass over the whole codebase and a fresh soak on the final commit. Then it goes into production at Talk Python, and `0.1.0` goes to PyPI once it has run there.
+**0.1.0, the first release.** `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. Before release they passed the conformance suite run against real diskcache 5.6.3 (apart from the [documented divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)), a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython, AddressSanitizer and LeakSanitizer), and a 24-hour soak that threw processes, threads, forks and `SIGKILL` at one directory. It's on its way into production at [Talk Python](https://talkpython.fm).
+
+Not here yet: `memoize`, tags, `AsyncCache`, `Deque` and `Index`, keys other than `str`, custom `disk=` classes and eviction policies other than least-recently-stored. See [where it's going](#where-its-going).
 
 ## Install
 
-The `diskcache-oxide` name on PyPI currently holds a `0.0.1` placeholder with no code in it. Until `0.1.0`, install from GitHub, which builds the extension locally and needs a Rust toolchain:
-
 ```bash
-uv pip install git+https://github.com/mikeckennedy/diskcache-oxide
+pip install diskcache-oxide
 ```
 
-- **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
-- **Platforms:** macOS and Linux. Windows support is planned.
+- **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t). Older Pythons aren't supported.
+- **Wheels:** macOS on Apple Silicon, and Linux (glibc) on x86_64 and aarch64, for each of those four Pythons. Anywhere else pip builds from source, which needs the latest stable Rust toolchain. Windows support is planned.
 - **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter.
+- **Upgrading:** during 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. Delete existing caches when you upgrade to it; until you do, opening one raises `FormatMismatchError`. It's a cache, so the cost is a cold start.
 
 [Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html) walks through the everyday operations and what changes once several processes share a cache.
 
 ## Why
 
-- **[Fast.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html)** A cached `get` is about 0.75 µs, 0.42× diskcache's latency, cheap enough to call from the event loop. With 8 threads at a 99:1 read/write mix on a GIL build, diskcache's per-thread connections pile into each other and its throughput falls to a trickle; oxide's stays flat, 16× ahead.
+- **[Fast.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html)** A cached `get` is about 0.75 µs, less than half of diskcache's latency, cheap enough to call from the event loop. With 8 threads at a 99:1 read/write mix on a GIL build, diskcache's per-thread connections pile into each other and its throughput falls to a trickle; oxide's stays flat, 16× ahead.
 - **[Safe for threads, processes and `fork()`](https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html)**, including free-threaded Python (3.14t, 3.15t). A fork copies whatever SQLite lock a thread held at that instant, and in diskcache a child born that way stalls on its first write for up to a minute. Here a fork barrier makes sure no child is born holding half a transaction.
 - **[No pickle by default.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html)** Values are stored as msgpack (or JSON), with exact type tags for tuples, sets, datetimes, big ints and NaN. Your own types, and a library's, are registered once (`register_type(ObjectId, name='bson.ObjectId', encode=str, decode=ObjectId)`; a dataclass needs only a name) and read back only where the name is registered. `pickle=True` is opt-in, and a cache without it refuses to unpickle anything it finds, however it got there.
 - **[Correct under pressure.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)** `clear()` keeps writes that land while it runs, `expire()` removes every expired entry, and a read during an overwrite never misses. Each is a diskcache bug, found by running one test suite against both libraries, with a standalone repro in the repository's [upstream/](https://github.com/mikeckennedy/diskcache-oxide/tree/main/upstream) folder.
@@ -98,8 +103,8 @@ The docs publish an [agent skill](https://mkennedy.codes/docs/diskcache-oxide/sk
 - [Errors and what to do about them](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html).
 - Questions and bug reports: [GitHub issues](https://github.com/mikeckennedy/diskcache-oxide/issues).
 
-Working on diskcache-oxide itself? [CLAUDE.md](CLAUDE.md) has the layout, the build and test commands, and the project's conventions.
+Working on diskcache-oxide itself? The [repository](https://github.com/mikeckennedy/diskcache-oxide) has the layout, the build and test commands, and the project's conventions in [CLAUDE.md](https://github.com/mikeckennedy/diskcache-oxide/blob/main/CLAUDE.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/mikeckennedy/diskcache-oxide/blob/main/LICENSE).

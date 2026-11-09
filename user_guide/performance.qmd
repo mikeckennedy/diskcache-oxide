@@ -6,7 +6,7 @@ Web apps call their cache on almost every request, often straight from the async
 
 ## The numbers
 
-Measured with `bench/gate.py`, which runs diskcache 5.6.3 and diskcache-oxide in the same session on the same machine, in four interleaved rounds. This is the Phase 2 final gate, on Linux (Ubuntu 26.04 LTS in Docker on Apple Silicon), matching Talk Python's servers. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
+Measured with `bench/gate.py`, which runs diskcache 5.6.3 and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from Linux (Ubuntu 26.04 LTS) in a container on an Apple Silicon Mac. Both libraries ran in the same container, so the ratios compare like with like, but the absolute numbers on an x86-64 server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
 
 | Workload | 3.14 | 3.14t (free-threaded) |
 |---|---|---|
@@ -26,7 +26,7 @@ Threaded throughput, every thread sharing one `Cache`, in thousands of operation
 Two things stand out:
 
 - **On GIL builds, diskcache collapses as threads are added and oxide doesn't.** At 99:1, diskcache drops from about 375k to 44k operations per second going from 1 to 8 threads; oxide stays flat around 720-750k. diskcache's per-thread connections end up fighting over the GIL and SQLite's locks.
-- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That's the Phase 4 target, below.
+- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That's the next target, below.
 
 Run them yourself with `python -m bench.gate`. Numbers vary by machine; the ratios are what the gate enforces.
 
@@ -55,9 +55,9 @@ Two oversubscribed cases measure slower than before the SQLite mutex spin and th
 - **A plain `Cache` with far more threads than cores**, all sharing one handle: 7% slower on an M-series Mac at 36 threads, and 5% in a Linux VM at 32. Faster hand-off lets more threads into SQLite at once.
 - **A `FanoutCache` at `max_connections=32` with 8 threads, on macOS only:** 5-12% slower. The same case on Linux is 41-56% faster.
 
-## Next: Phase 4
+## Next: free-threaded scaling
 
-Profiling a cached `get` shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. Phase 4 goes after it, along with:
+Profiling a cached `get` shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The next stage goes after it, along with:
 
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;

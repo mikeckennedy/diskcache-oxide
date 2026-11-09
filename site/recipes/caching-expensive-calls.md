@@ -36,8 +36,8 @@ print(f'cached:      {(time.perf_counter() - start) * 1000:.1f} µs per call')  
 ```
 
 
-    first call:  205.3 ms
-    cached:      1.2 µs per call
+    first call:  205.4 ms
+    cached:      1.3 µs per call
 
 
 Always give cached values an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire). It bounds how stale a value can get if an invalidation is ever missed.
@@ -120,4 +120,4 @@ A few things to keep in mind:
 
 When a popular entry expires, every worker that asks for it in the next moment misses at the same time, and all of them recompute it. For most values that's harmless. If the computation is expensive enough that doing it eight times at once hurts, refresh it ahead of expiry from a background job (see [Running a job once across workers](run-once.md)), so readers never see it missing.
 
-A `memoize` with built-in stampede protection is planned for Phase 6.
+A `memoize` with built-in stampede protection is planned (see the [roadmap](../user-guide/roadmap.md)).

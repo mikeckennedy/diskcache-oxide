@@ -160,12 +160,12 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 
 - **D-002:** the database file is `diskcache-oxide.sqlite`, so the two libraries never misread each other's files.
 - **D-003:** the clock is read natively; pass `clock=` to control it in tests.
-- **D-004:** keys are `str` only until Phase 6a. They're stored with a type tag, so other key types won't need a format change.
+- **D-004:** keys are `str` only for now (other key types are on the [roadmap](roadmap.md)). They're stored with a type tag, so other key types won't need a format change.
 - **D-005:** [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) must be at least 1 MiB. In diskcache, a limit below the empty database's size silently evicts every value, including the one just stored.
 - **D-006:** an empty cache's [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) differs, so a [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) leaves slightly different room.
 - **D-007:** [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) subclasses `TimeoutError`, so `except TimeoutError` catches it too.
 - **D-009:** `bool(Cache)` is always True and `bool(NullCache)` is False, so `if cache:` means "caching is on".
-- **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until Phase 6a adds the other policies.
+- **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until the other policies arrive (see the [roadmap](roadmap.md)).
 - **D-041:** a type the codec doesn't know is registered per type with `register_type(cls, name=..., encode=..., decode=...)` (a dataclass needs only a name), process-wide or per cache with `types=`. It's stored as a tagged value and read back only where the name is registered, so nothing is imported by name; a registered type is never pickled; a `decode` error about the row is a [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) with yours as `__cause__`. See [Your own types](serialization.md#your-own-types).
 - **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.md#a-cache-that-cant-take-a-request-down).
 - **D-042:** a large value's file sits one folder deep, in at most 256 folders. A delete removes only the file; the last close in a process removes folders left empty and untouched for 30 seconds, and [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) removes the ones it emptied. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)'s shards don't sweep yet. Before this, empty folders were never removed and a long-lived cache could hold 65,536 of them, about 257 MiB on ext4. See [Storage and WAL](storage-and-wal.md).
@@ -183,7 +183,7 @@ These are covered together in [FanoutCache: sharded caches](fanoutcache.md), and
 - **D-035:** a maintenance job must finish in bounded time, and when it can't, it must say what it did.
 - **D-036 and D-037:** budgets (size, connections, file descriptors) follow configuration, not the number of threads or shards.
 - **D-038:** a typo shouldn't leave a directory that neither kind of cache can open, or a shard written behind the [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)'s back.
-- **D-039:** the missing stock features each need their own design across shards, so they arrive with Phase 6a and 6d rather than as copies.
+- **D-039:** the missing stock features each need their own design across shards, so they arrive with those features on the [roadmap](roadmap.md) rather than as copies.
 - **D-040:** holding every shard's lock would serialize the whole cache behind one transaction, which is what sharding exists to avoid.
 
 
