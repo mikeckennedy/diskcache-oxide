@@ -5,7 +5,7 @@ A microsecond is nothing until you multiply it. Web apps call their cache on alm
 
 # The numbers
 
-Measured with `bench/gate.py`, which runs diskcache 5.6.3 and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from Linux (Ubuntu 26.04 LTS) in a container on an Apple Silicon Mac. Both libraries ran in the same container, so the ratios compare like with like, but the absolute numbers on an x86-64 server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
+Measured with `bench/gate.py`, which runs the defunct python-diskcache (5.6.3, its last release, from August 2023) and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from Linux (Ubuntu 26.04 LTS) in a container on an Apple Silicon Mac. Both libraries ran in the same container, so the ratios compare like with like, but the absolute numbers on an x86-64 server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
 
 
 | Workload | 3.14 | 3.14t (free-threaded) |
@@ -17,13 +17,13 @@ Measured with `bench/gate.py`, which runs diskcache 5.6.3 and diskcache-oxide in
 | [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), small value | **22.6 µs** (0.77×) | **24.0 µs** (0.82×) |
 
 
-Threaded throughput, every thread sharing one [Cache](../reference/Cache.md#diskcache_oxide.Cache), in thousands of operations per second at 1/2/4/8 threads (ratios are oxide's throughput over diskcache's, so higher is better):
+Threaded throughput, every thread sharing one [Cache](../reference/Cache.md#diskcache_oxide.Cache), in operations per second at 1/2/4/8 threads (ratios are oxide's throughput over diskcache's, so higher is better):
 
 
 | Mix | 3.14 | 3.14t (free-threaded) |
 |----|----|----|
-| 99:1 reads to writes | **750 / 745 / 723 / 723** (2.0-16.5×) | **701 / 639 / 680 / 729** (1.7-1.8×) |
-| 1,000:1 reads to writes | **900 / 886 / 876 / 875** (2.1-18.9×) | **903 / 680 / 1,181 / 1,416** (1.25-2.2×) |
+| 99:1 reads to writes | **750k / 745k / 723k / 723k** (2.0-16.5×) | **701k / 639k / 680k / 729k** (1.7-1.8×) |
+| 1,000:1 reads to writes | **900k / 886k / 876k / 875k** (2.1-18.9×) | **903k / 680k / 1,181k / 1,416k** (1.25-2.2×) |
 
 
 Two things stand out:

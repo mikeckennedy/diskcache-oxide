@@ -18,14 +18,14 @@ cache.shard_of('ip:203.0.113.7')   # 0 to 7, the same in every process and every
 Use [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) when **several processes write to the same cache**. Use a plain [`Cache`](getting-started.md) when they don't. The honest picture, from the benchmark in the repository (`bench/fanout.py`, release builds, a 99:1 get:set mix with 1 KB values on a Mac with 18 cores):
 
 
-| Processes | Plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) | `FanoutCache(shards=8)` | Stock diskcache `FanoutCache(8)` |
+| Processes | Plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) | `FanoutCache(shards=8)` | Defunct diskcache `FanoutCache(8)` |
 |----|----|----|----|
 | 1 | 660k ops/s | 714k | 396k |
 | 4 | 607k | 1,553k | 987k |
 | 8 | 262k | 1,496k | 1,238k |
 
 
-- **It removes the multi-process write-lock ceiling.** A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) peaks at two processes and then falls, because the 1% of operations that are writes all queue on one database file's write lock. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) keeps climbing and holds its rate: 5.7x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) at 8 processes, and 1.2x stock [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache). If your app runs a pre-forking server with a worker per core and writes often (counters, rate limits, job claims), this is the case it's for.
+- **It removes the multi-process write-lock ceiling.** A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) peaks at two processes and then falls, because the 1% of operations that are writes all queue on one database file's write lock. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) keeps climbing and holds its rate: 5.7x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) at 8 processes, and 1.2x the defunct diskcache's [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache). If your app runs a pre-forking server with a worker per core and writes often (counters, rate limits, job claims), this is the case it's for.
 - **It does not yet make threads sharing one handle scale on free-threaded Python.** Four threads on one [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) handle read no faster than, and on Linux slower than, four threads on a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache), and well short of four separate handles. A larger `max_connections` helps but doesn't close the gap. This is a limit in what threads on one handle share, it's being worked on, and no numbers are promised here. If your concern is read throughput from many threads in one process, a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) doesn't fix it today.
 - **On GIL builds, threads are flat for every diskcache-oxide cache,** as the GIL says they must be, and a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) is about 10 to 15% ahead of a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) on that mix at one thread. It's well ahead of stock diskcache, which collapses as threads are added.
 - **A single process with a few threads and few writes gains little.** You pay the cost of more files (below) for a benefit you won't see.
@@ -113,7 +113,7 @@ except Timeout as exc:
 
 # Timeouts on single keys
 
-On a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache), stock diskcache silently turns a busy shard into a dropped write: [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) gives False after 10 ms. diskcache-oxide behaves as [Cache](../reference/Cache.md#diskcache_oxide.Cache) does: a busy shard raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) after [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) (60 seconds by default), and so do `cache[k]`, `cache[k] = v` and `del cache[k]`. If you want a miss instead, say so with [`durable=True`](getting-started.md#a-cache-that-cant-take-a-request-down), which also logs and counts the failures, with one report for the whole [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache).
+On a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache), the defunct diskcache silently turns a busy shard into a dropped write: [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) gives False after 10 ms. diskcache-oxide behaves as [Cache](../reference/Cache.md#diskcache_oxide.Cache) does: a busy shard raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) after [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) (60 seconds by default), and so do `cache[k]`, `cache[k] = v` and `del cache[k]`. If you want a miss instead, say so with [`durable=True`](getting-started.md#a-cache-that-cant-take-a-request-down), which also logs and counts the failures, with one report for the whole [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache).
 
 
 # Iteration order
