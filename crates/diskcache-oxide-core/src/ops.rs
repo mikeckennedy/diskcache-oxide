@@ -7,6 +7,8 @@
 //!
 //! Values of `spill::THRESHOLD` bytes or more are stored in value files (see `spill`).
 
+use std::fs::File;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use rusqlite::types::{Value as SqlValue, ValueRef};
@@ -151,10 +153,12 @@ fn expire_time(now: f64, expire: Option<f64>) -> Option<f64> {
 
 impl Store {
     /// Calls `decode(mode, value)` on the live value of `key` and returns its result with the entry's
-    /// expire time and version, or `None` on a miss. For an inline value `decode` runs while the connection is
-    /// held, straight from SQLite's row buffer; it may run more than once. It may call back into the
-    /// cache (a pickle hook): that nested operation runs at gate depth > 0, where nothing waits on
-    /// this thread, and inside a held transaction it reuses the transaction's connection. A value
+    /// expire time and version, or `None` on a miss. For an inline value `decode` runs while the
+    /// connection is held, straight from SQLite's row buffer; it may run more than once. An inline
+    /// value the locked fallback (D-016) finds is copied out under the write lock and decoded once
+    /// it's released, with no connection held. `decode` may call back into the cache (a pickle
+    /// hook): that nested operation runs at gate depth > 0, where nothing waits on this thread, and
+    /// inside a held transaction it reuses the transaction's connection. A value
     /// file is read with no connection held (see `spill`). For a value file whose mode `refuse`
     /// rejects, `decode` gets `ValueRef::Null` instead of the file, which is never read: the caller
     /// would only turn it away (a pickle on a `pickle=False` handle, an unknown mode).
@@ -180,7 +184,9 @@ impl Store {
             Error::Timeout { .. } => Error::Timeout { seconds: timeout.as_secs_f64() },
             other => other,
         };
-        for _ in 0..spill::OPTIMISTIC_ATTEMPTS {
+        let mut tries = 0;
+        loop {
+            // The last re-read is examined too: it may already have the answer.
             let file = match row {
                 Found::Miss => return Ok(None),
                 Found::Inline(hit) => return Ok(Some(hit)),
@@ -189,6 +195,12 @@ impl Store {
                 }
                 Found::File(file) => file,
             };
+            if tries == spill::OPTIMISTIC_ATTEMPTS {
+                break;
+            }
+            tries += 1;
+            #[cfg(test)]
+            run_hook(&BEFORE_OPTIMISTIC_READ, self);
             if let Some(bytes) = spill::read(self.directory(), &file.relative, file.size)? {
                 return Ok(Some(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?)));
             }
@@ -206,30 +218,51 @@ impl Store {
             }
         }
         // A writer keeps replacing the value faster than this reader can open it (D-016): take the
-        // row and open its file under the write lock, then read with the lock released. Skipped in a
-        // child that can't write this database (D-020): it reports a miss instead.
+        // row under the write lock, opening its file or copying an inline value, and read or decode
+        // with the lock released. Skipped in a child that can't write this database (D-020): it
+        // reports a miss instead. Inside this thread's own held transaction nothing else can replace
+        // the file, so it isn't reached there; if it were, in a doomed one, the write would give
+        // `TransactionAborted`.
         if self.check_writable().is_err() {
             return Ok(None);
         }
-        let opened = self
+        #[cfg(test)]
+        run_hook(&BEFORE_FALLBACK, self);
+        let locked = self
             .write(left(&mut budget), |_, conn| {
-                let Some(file) = file_row(conn, key, now, timeout)? else { return Ok(None) };
-                if refuse(file.mode) {
-                    return Ok(Some(Err(file)));
-                }
-                Ok(spill::open(self.directory(), &file.relative)?.map(|(handle, path)| Ok((handle, path, file))))
+                let mut copy = |mode: i64, value: ValueRef<'_>| Ok((mode, owned(value)));
+                Ok(match look_up(conn, key, now, timeout, &mut copy)? {
+                    Found::Miss => Locked::Miss,
+                    Found::Inline(hit) => Locked::Inline(hit),
+                    // Replaced by a value of a refused mode while this reader retried: never read it.
+                    Found::File(file) if refuse(file.mode) => Locked::Refused(file),
+                    Found::File(file) => match spill::open(self.directory(), &file.relative)? {
+                        Some((handle, path)) => Locked::Opened(handle, path, file),
+                        None => Locked::Lost(file.version),
+                    },
+                })
             })
             .map_err(whole_timeout)?;
-        let (handle, path, file) = match opened {
-            None => return Ok(None),
-            // Replaced by a value of a refused mode while this reader retried: never read it.
-            Some(Err(file)) => return Ok(Some(file.hit(decode(file.mode, ValueRef::Null)?))),
-            Some(Ok(opened)) => opened,
+        let (handle, path, file) = match locked {
+            Locked::Miss => return Ok(None),
+            Locked::Inline(Hit { value: (mode, value), expire_time, version }) => {
+                let value = decode(mode, (&value).into())?;
+                return Ok(Some(Hit { value, expire_time, version }));
+            }
+            Locked::Refused(file) => return Ok(Some(file.hit(decode(file.mode, ValueRef::Null)?))),
+            Locked::Lost(version) => {
+                // Gone though nothing could replace it: a true miss (D-013), as in the loop.
+                let _ = self.delete_version_nowait(version);
+                return Ok(None);
+            }
+            Locked::Opened(handle, path, file) => (handle, path, file),
         };
-        match spill::read_open(&handle, &path, file.size)? {
-            Some(bytes) => Ok(Some(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?))),
-            None => Ok(None),
+        if let Some(bytes) = spill::read_open(&handle, &path, file.size)? {
+            return Ok(Some(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?)));
         }
+        // Short: written before a crash and never completed (no fsync). A true miss.
+        let _ = self.delete_version_nowait(file.version);
+        Ok(None)
     }
 
     /// Deletes exactly `version` (nothing newer, D-013) and its value file, if that needs no waiting
@@ -381,14 +414,7 @@ impl Store {
                             spill::read(self.directory(), &relative, size)?
                                 .map(|bytes| Popped { mode, value: SqlValue::Blob(bytes) })
                         } else {
-                            // Copied byte for byte, as `get` borrows them: TEXT goes in as a BLOB
-                            // (the codec reads both as raw bytes), so no UTF-8 check can fail here.
-                            let value = match row.get_ref(1).map_err(|e| Error::from_sqlite(e, timeout))? {
-                                ValueRef::Text(bytes) | ValueRef::Blob(bytes) => SqlValue::Blob(bytes.to_vec()),
-                                ValueRef::Integer(n) => SqlValue::Integer(n),
-                                ValueRef::Real(x) => SqlValue::Real(x),
-                                ValueRef::Null => SqlValue::Null,
-                            };
+                            let value = owned(row.get_ref(1).map_err(|e| Error::from_sqlite(e, timeout))?);
                             Some(Popped { mode, value })
                         }
                     }
@@ -556,12 +582,52 @@ fn look_up<T>(
     }
 }
 
-/// The live row for `key` if its value is in a file (for the locked fallback).
-fn file_row(conn: &Connection, key: &str, now: f64, timeout: Duration) -> Result<Option<FileRow>> {
-    let mut never = |_: i64, _: ValueRef<'_>| Ok(());
-    match look_up(conn, key, now, timeout, &mut never)? {
-        Found::File(file) => Ok(Some(file)),
-        Found::Inline(..) | Found::Miss => Ok(None),
+/// What the locked fallback of [`Store::get_with`] found under the write lock.
+enum Locked {
+    Miss,
+    /// An inline value, copied out to decode after the lock is released.
+    Inline(Hit<(i64, SqlValue)>),
+    /// A value file of a refused mode, never opened.
+    Refused(FileRow),
+    /// A value file opened under the lock, to read after it.
+    Opened(File, PathBuf, FileRow),
+    /// A value file missing though nothing could replace it (D-013).
+    Lost(Version),
+}
+
+/// An owned copy of a stored value, byte for byte, as a read borrows it: TEXT goes in as a BLOB
+/// (the codec reads both as raw bytes), so no UTF-8 check can fail here.
+fn owned(value: ValueRef<'_>) -> SqlValue {
+    match value {
+        ValueRef::Text(bytes) | ValueRef::Blob(bytes) => SqlValue::Blob(bytes.to_vec()),
+        ValueRef::Integer(n) => SqlValue::Integer(n),
+        ValueRef::Real(x) => SqlValue::Real(x),
+        ValueRef::Null => SqlValue::Null,
+    }
+}
+
+#[cfg(test)]
+type TestHook = std::cell::RefCell<Option<Box<dyn FnMut(&Store)>>>;
+
+#[cfg(test)]
+thread_local! {
+    /// Tests only: runs in `get_with` just before each optimistic read of a value file.
+    static BEFORE_OPTIMISTIC_READ: TestHook = const { std::cell::RefCell::new(None) };
+    /// Tests only: runs in `get_with` just before the locked fallback takes the write lock.
+    static BEFORE_FALLBACK: TestHook = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs a test hook taken out of its slot, so it may call back into the store, then puts it back.
+#[cfg(test)]
+fn run_hook(hook: &'static std::thread::LocalKey<TestHook>, store: &Store) {
+    if let Some(mut run) = hook.with(|slot| slot.borrow_mut().take()) {
+        run(store);
+        hook.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(run);
+            }
+        });
     }
 }
 
@@ -737,6 +803,201 @@ mod tests {
     const T: Duration = Duration::from_secs(5);
     const NOW: f64 = 1_000_000.0;
 
+    /// Installs a test hook (`BEFORE_OPTIMISTIC_READ` or `BEFORE_FALLBACK`) until dropped.
+    struct Hook(&'static std::thread::LocalKey<TestHook>);
+    impl Hook {
+        fn install(slot: &'static std::thread::LocalKey<TestHook>, hook: impl FnMut(&Store) + 'static) -> Self {
+            let replaced = slot.with(|h| h.borrow_mut().replace(Box::new(hook)));
+            assert!(replaced.is_none(), "a hook is already installed in this slot");
+            Self(slot)
+        }
+    }
+    impl Drop for Hook {
+        fn drop(&mut self) {
+            self.0.with(|h| h.borrow_mut().take());
+        }
+    }
+
+    /// A mode the D-016 tests' `refuse` rejects, as a `pickle=False` handle rejects pickles.
+    const REFUSED: i64 = crate::schema::MODE_PICKLE;
+
+    fn set_big(s: &Store, mode: i64, byte: u8) {
+        let big = vec![byte; spill::THRESHOLD];
+        s.set(T, "k", Value::Bytes { mode, data: &big }, None, NOW).unwrap();
+    }
+
+    fn unlink_value_files(dir: &Path) {
+        for file in value_files(dir) {
+            std::fs::remove_file(file).unwrap();
+        }
+    }
+
+    /// What a hook does on its last call.
+    #[derive(Debug, Clone, Copy)]
+    enum Last {
+        /// Another spilled overwrite.
+        Spilled,
+        /// An overwrite small enough to be inline.
+        Inline,
+        Delete,
+        /// A spilled overwrite of a refused mode, whose file is then unlinked: a reader that opened
+        /// it would miss.
+        Refused,
+        /// The current value file unlinked, with no new version.
+        Unlink,
+        /// The current value file cut short, as a write a crash interrupted leaves it.
+        Truncate,
+    }
+
+    fn apply(s: &Store, dir: &Path, last: Last) {
+        match last {
+            Last::Spilled => set_big(s, MODE_BYTES, 0xff),
+            Last::Inline => s.set(T, "k", text("small"), None, NOW).map(drop).unwrap(),
+            Last::Delete => assert!(s.delete(T, "k", NOW).unwrap()),
+            Last::Refused => {
+                set_big(s, REFUSED, 0xee);
+                unlink_value_files(dir);
+            }
+            Last::Unlink => unlink_value_files(dir),
+            Last::Truncate => {
+                for file in value_files(dir) {
+                    std::fs::OpenOptions::new().write(true).open(file).unwrap().set_len(1).unwrap();
+                }
+            }
+        }
+    }
+
+    /// What a D-016 read returned, and each `decode` call's mode and whether it saw `Null`.
+    struct Read {
+        got: Result<Option<Vec<u8>>>,
+        decodes: Vec<(i64, bool)>,
+    }
+
+    /// A `get` of a spilled value that loses every optimistic read to an overwrite. `last` happens
+    /// on the eighth (and last) `BEFORE_OPTIMISTIC_READ` call, so the loop's last re-read sees it,
+    /// or with `at_fallback` just before the locked fallback takes the write lock.
+    fn lose_every_read(s: &Arc<Store>, dir: &Path, last: Last, at_fallback: bool, timeout: Duration) -> Read {
+        set_big(s, MODE_BYTES, 0);
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0_u8));
+        let counted = calls.clone();
+        let dir = dir.to_path_buf();
+        let fallback_dir = dir.clone();
+        let _optimistic = Hook::install(&BEFORE_OPTIMISTIC_READ, move |s| {
+            counted.set(counted.get() + 1);
+            if !at_fallback && usize::from(counted.get()) == spill::OPTIMISTIC_ATTEMPTS {
+                apply(s, &dir, last);
+            } else {
+                set_big(s, MODE_BYTES, counted.get());
+            }
+        });
+        let _fallback = at_fallback.then(|| Hook::install(&BEFORE_FALLBACK, move |s| apply(s, &fallback_dir, last)));
+        let mut decodes = Vec::new();
+        let got = s
+            .get_with(
+                timeout,
+                "k",
+                NOW,
+                |mode| mode == REFUSED,
+                |mode, v| {
+                    decodes.push((mode, matches!(v, ValueRef::Null)));
+                    Ok(match v {
+                        ValueRef::Blob(b) | ValueRef::Text(b) => b.to_vec(),
+                        _ => Vec::new(),
+                    })
+                },
+            )
+            .map(|hit| hit.map(|h| h.value));
+        assert_eq!(usize::from(calls.get()), spill::OPTIMISTIC_ATTEMPTS, "every optimistic read lost");
+        Read { got, decodes }
+    }
+
+    #[test]
+    fn a_reader_that_keeps_losing_to_overwrites_reads_the_latest_value_under_the_lock() {
+        for at_fallback in [false, true] {
+            let tmp = TempDir::new("ops-d016-spilled");
+            let s = store(tmp.path(), Requested::default());
+            let read = lose_every_read(&s, tmp.path(), Last::Spilled, at_fallback, T);
+            assert_eq!(read.got.unwrap(), Some(vec![0xff; spill::THRESHOLD]), "at_fallback={at_fallback}");
+            assert_eq!(read.decodes, [(MODE_BYTES, false)]);
+        }
+    }
+
+    #[test]
+    fn a_reader_that_keeps_losing_to_overwrites_never_misses_an_inline_value() {
+        for at_fallback in [false, true] {
+            let tmp = TempDir::new("ops-d016-inline");
+            let s = store(tmp.path(), Requested::default());
+            let read = lose_every_read(&s, tmp.path(), Last::Inline, at_fallback, T);
+            assert_eq!(
+                read.got.unwrap(),
+                Some(b"small".to_vec()),
+                "at_fallback={at_fallback}: the key was always there"
+            );
+            assert_eq!(read.decodes, [(MODE_STR, false)], "at_fallback={at_fallback}: decoded once");
+        }
+    }
+
+    #[test]
+    fn a_reader_that_keeps_losing_to_overwrites_sees_a_delete_as_a_miss() {
+        for at_fallback in [false, true] {
+            let tmp = TempDir::new("ops-d016-delete");
+            let s = store(tmp.path(), Requested::default());
+            let read = lose_every_read(&s, tmp.path(), Last::Delete, at_fallback, T);
+            assert_eq!(read.got.unwrap(), None, "at_fallback={at_fallback}");
+            assert_eq!(read.decodes, [], "at_fallback={at_fallback}");
+        }
+    }
+
+    #[test]
+    fn a_reader_that_keeps_losing_to_overwrites_never_opens_a_refused_file() {
+        for at_fallback in [false, true] {
+            let tmp = TempDir::new("ops-d016-refused");
+            let s = store(tmp.path(), Requested::default());
+            let read = lose_every_read(&s, tmp.path(), Last::Refused, at_fallback, T);
+            // The file is gone, so a reader that opened it would have missed.
+            assert_eq!(read.got.unwrap(), Some(Vec::new()), "at_fallback={at_fallback}");
+            assert_eq!(read.decodes, [(REFUSED, true)], "at_fallback={at_fallback}: decode saw Null");
+        }
+    }
+
+    #[test]
+    fn a_value_file_missing_or_short_under_the_lock_is_a_miss_and_its_row_goes() {
+        for last in [Last::Unlink, Last::Truncate] {
+            // No fork can be pending, so the fallback's own cleanup can't skip: the row is gone at
+            // once, not by a later read's.
+            let _forks = crate::testutil::one_global_fork_at_a_time();
+            let tmp = TempDir::new("ops-d016-lost");
+            let s = store(tmp.path(), Requested::default());
+            let read = lose_every_read(&s, tmp.path(), last, true, T);
+            assert_eq!(read.got.unwrap(), None, "{last:?}");
+            assert_eq!(read.decodes, [], "{last:?}");
+            assert_eq!(len(&s), 0, "{last:?}: the fallback removed the row (D-013)");
+        }
+    }
+
+    #[test]
+    fn the_fallback_waits_for_the_write_lock_within_the_whole_calls_timeout() {
+        let tmp = TempDir::new("ops-d016-timeout");
+        let s = store(tmp.path(), Requested::default());
+        let timeout = Duration::from_millis(400);
+        // A connection of its own, not a held transaction, so nothing here holds up another test's
+        // fork for the length of this wait.
+        let holder = std::rc::Rc::new(crate::open::connect(tmp.path(), T).unwrap());
+        let locker = holder.clone();
+        let _lock = Hook::install(&BEFORE_FALLBACK, move |_| locker.execute_batch("BEGIN IMMEDIATE").unwrap());
+        let started = std::time::Instant::now();
+        let read = lose_every_read(&s, tmp.path(), Last::Spilled, false, timeout);
+        match read.got {
+            Err(Error::Timeout { seconds }) => {
+                assert!((seconds - timeout.as_secs_f64()).abs() < f64::EPSILON, "{seconds}");
+            }
+            other => panic!("expected a timeout, got {other:?}"),
+        }
+        assert!(started.elapsed() >= timeout, "waited out the budget");
+        assert!(started.elapsed() < 4 * timeout, "one budget for the whole call");
+        holder.execute_batch("ROLLBACK").unwrap();
+    }
+
     /// `delete_version_nowait`, past another test's pending fork, behind which it skips.
     fn delete_nowait(s: &Store, version: Version) -> VersionDelete {
         for _ in 0..5_000 {
@@ -843,6 +1104,37 @@ mod tests {
         assert_eq!(s.pop(T, "k", NOW, |mode| mode == MODE_STR).unwrap(), Pop::Refused { mode: MODE_STR });
         assert_eq!(get(&s, "k", NOW).unwrap(), (b"v".to_vec(), None), "the refused row is still there");
         assert!(matches!(s.pop(T, "k", NOW, |_| false).unwrap(), Pop::Removed(_)));
+    }
+
+    #[test]
+    fn pop_returns_every_kind_of_stored_value_and_removes_it() {
+        let tmp = TempDir::new("ops-pop-kinds");
+        let s = store(tmp.path(), Requested::default());
+        let big = vec![b'x'; spill::THRESHOLD];
+        s.set(T, "file", Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
+        s.set(T, "int", Value::Int(-7), None, NOW).unwrap();
+        s.set(T, "real", Value::Real(2.5), None, NOW).unwrap();
+        for (key, mode, value) in [
+            ("file", MODE_BYTES, SqlValue::Blob(big.clone())),
+            ("int", MODE_INT, SqlValue::Integer(-7)),
+            ("real", MODE_REAL, SqlValue::Real(2.5)),
+        ] {
+            assert_eq!(s.pop(T, key, NOW, |_| false).unwrap(), Pop::Removed(Popped { mode, value }), "{key}");
+        }
+        assert_eq!(len(&s), 0);
+        assert!(value_files(tmp.path()).is_empty(), "the popped value's file went with it");
+        assert_eq!(s.pop(T, "never", NOW, |_| false).unwrap(), Pop::Missing);
+    }
+
+    #[test]
+    fn pop_of_a_spilled_value_whose_file_is_gone_is_a_miss_and_its_row_goes() {
+        let tmp = TempDir::new("ops-pop-lost-file");
+        let s = store(tmp.path(), Requested::default());
+        let big = vec![b'x'; spill::THRESHOLD];
+        s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
+        unlink_value_files(tmp.path());
+        assert_eq!(s.pop(T, "k", NOW, |_| false).unwrap(), Pop::Missing);
+        assert_eq!(len(&s), 0, "the row of the lost file was removed (D-013)");
     }
 
     fn version(store: &Store, key: &str) -> Option<Version> {

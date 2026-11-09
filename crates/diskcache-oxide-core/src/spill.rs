@@ -14,8 +14,9 @@
 //! **Read:** read the row, then the file, with no transaction held. The file's length must equal the
 //! row's `size` (no fsync, so a crash can leave a short file). A missing or short file means the
 //! value was just overwritten (retry with the new row) or is truly gone (a miss, and the D-013
-//! compare-and-delete). After [`OPTIMISTIC_ATTEMPTS`] tries a reader takes the row and opens the
-//! file while holding the write lock, so it can't keep losing to a fast writer (D-016).
+//! compare-and-delete). After [`OPTIMISTIC_ATTEMPTS`] tries a reader takes the row under the write
+//! lock, opening its file or copying an inline value, so it can't keep losing to a fast writer
+//! (D-016).
 //!
 //! **Names from the database** are checked before they become paths ([`value_path`]): a damaged row
 //! reads as a miss and unlinks nothing, instead of reaching outside the cache directory.

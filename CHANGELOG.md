@@ -11,6 +11,10 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 - The documentation's version badge and Changelog page now come from the repository's `Cargo.toml` and `CHANGELOG.md` at build time, so they describe the build rather than the latest GitHub Release.
 - The benchmark tables in the FanoutCache, performance and roadmap pages are now drawn as interactive charts in the browser, from the tables themselves, so rerunning a benchmark means editing the table and nothing else. The tables stay in the page, the markdown mirrors and `llms-full.txt`.
 
+### Fixed
+
+- A read of a large value that kept losing the race to writers overwriting it could report a miss when the last of those overwrites was small, though the key was present the whole time. It now returns that value. It took eight lost races in a row, and the cost was one recompute, never a wrong value.
+
 ## [0.1.0] - 2026-11-09
 
 The first release: diskcache's `Cache` API on a Rust engine and SQLite storage, shared safely by threads, processes and `fork()`, on CPython 3.14 and 3.15 including the free-threaded builds. Wheels for macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64.

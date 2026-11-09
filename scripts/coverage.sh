@@ -39,7 +39,10 @@ eval "$(cargo llvm-cov show-env --sh 2>/dev/null)"
 cargo llvm-cov clean --workspace
 
 echo "== cargo test"
-cargo test --workspace --quiet
+# A failing test (a timing test on a busy machine) is reported at the end, not a reason to skip the
+# Python run: the coverage is still worth seeing.
+rust_status=0
+cargo test --workspace --quiet || rust_status=$?
 
 echo "== instrumented extension"
 link_args=()
@@ -62,10 +65,10 @@ echo "== pytest (unit + conformance against oxide)"
 ulimit -n 10240 2>/dev/null || true
 export COVERAGE_FILE="$CARGO_TARGET_DIR/.coverage"
 rm -f "$COVERAGE_FILE"
-status=0
+py_status=0
 PYTHONPATH="$stage" "$py" -m coverage run --source="$stage/diskcache_oxide" -m pytest -q -p no:cacheprovider \
     --backend=oxide tests/unit tests/conformance \
-    --deselect 'tests/unit/test_stack.py::test_scenario[every-position]' "$@" || status=$?
+    --deselect 'tests/unit/test_stack.py::test_scenario[every-position]' "$@" || py_status=$?
 
 echo
 echo "== Rust"
@@ -81,7 +84,10 @@ if (( html )); then
     echo "HTML: $CARGO_TARGET_DIR/html/index.html and $CARGO_TARGET_DIR/python-html/index.html"
 fi
 
-if (( status != 0 )); then
-    echo "pytest failed (exit $status); the coverage above is from a partial run." >&2
+if (( rust_status != 0 )); then
+    echo "cargo test failed (exit $rust_status); the coverage above is from a partial run." >&2
 fi
-exit "$status"
+if (( py_status != 0 )); then
+    echo "pytest failed (exit $py_status); the coverage above is from a partial run." >&2
+fi
+(( rust_status == 0 && py_status == 0 ))
