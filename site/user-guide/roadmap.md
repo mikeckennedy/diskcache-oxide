@@ -24,6 +24,7 @@ Everything diskcache offers that real apps use, plus the things a modern Python 
 
 The same Rust core, served over HTTP to many clients: a Redis-style central cache with SQLite underneath, for when your app outgrows one machine. A server that is the only owner of its files can run SQLite in exclusive locking mode, which keeps the WAL index in heap memory instead of a shared file. Measured on the development machine:
 
+
 | Storage mode | Read | Write | Shared by several processes? |
 |----|----|----|----|
 | WAL (the library today) | 1.18 µs | 13.9 µs | Yes |

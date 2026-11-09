@@ -18,11 +18,13 @@ cache.shard_of('ip:203.0.113.7')   # 0 to 7, the same in every process and every
 
 Use `FanoutCache` when **several processes write to the same cache**. Use a plain [`Cache`](getting-started.qmd) when they don't. The honest picture, from the benchmark in the repository (`bench/fanout.py`, release builds, a 99:1 get:set mix with 1 KB values on a Mac with 18 cores):
 
+::: {.dco-chart data-type="lines" data-x="Processes" data-y="operations per second" data-title="Add writing processes and a plain Cache falls off; a FanoutCache holds its rate" data-note="bench/fanout.py: 99 reads to 1 write, 1 KB values, release builds, 18-core Mac. Higher is better. Hover for the numbers."}
 | Processes | Plain `Cache` | `FanoutCache(shards=8)` | Stock diskcache `FanoutCache(8)` |
 |---|---|---|---|
 | 1 | 660k ops/s | 714k | 396k |
 | 4 | 607k | 1,553k | 987k |
 | 8 | 262k | 1,496k | 1,238k |
+:::
 
 - **It removes the multi-process write-lock ceiling.** A plain `Cache` peaks at two processes and then falls, because the 1% of operations that are writes all queue on one database file's write lock. A `FanoutCache` keeps climbing and holds its rate: 5.7x a plain `Cache` at 8 processes, and 1.2x stock `FanoutCache`. If your app runs a pre-forking server with a worker per core and writes often (counters, rate limits, job claims), this is the case it's for.
 - **It does not yet make threads sharing one handle scale on free-threaded Python.** Four threads on one `FanoutCache` handle read no faster than, and on Linux slower than, four threads on a plain `Cache`, and well short of four separate handles. A larger `max_connections` helps but doesn't close the gap. This is a limit in what threads on one handle share, it's being worked on, and no numbers are promised here. If your concern is read throughput from many threads in one process, a `FanoutCache` doesn't fix it today.
