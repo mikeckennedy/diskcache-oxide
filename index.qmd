@@ -102,6 +102,7 @@ cache = Cache('/var/cache/my-app-oxide')
 
 Read them in order for the whole story, or jump straight to the one that bit you.
 
+- [New to caching? Start here](user-guide/new-to-caching.qmd): what a cache is, why it's worth it, the vocabulary, and the two hard things, invalidation and naming.
 - [Getting started](user-guide/getting-started.qmd): create a cache, store and read values, expiry, counters, eviction, timeouts and `durable=True`.
 - [Switching from diskcache](user-guide/switching-from-diskcache.qmd): what changes, and why.
 - [Errors and what to do about them](user-guide/errors.qmd): every exception the library raises, what it means and the fix.

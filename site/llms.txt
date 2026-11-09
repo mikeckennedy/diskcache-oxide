@@ -211,6 +211,7 @@
 
 #### Get started
 
+- [New to caching? Start here](https://mkennedy.codes/docs/diskcache-oxide/user-guide/new-to-caching.html)
 - [Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html)
 - [Switching from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/switching-from-diskcache.html)
 - [Errors and what to do about them](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html)

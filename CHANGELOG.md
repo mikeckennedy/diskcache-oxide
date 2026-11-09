@@ -6,6 +6,7 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ### Added
 
+- A user guide page for readers new to caching: what a cache is, why it's worth it, the vocabulary, invalidation and key naming, and where a directory cache sits between an in-process dict and a cache server.
 - Seven more recipes in the documentation: serving stale values while refreshing, caching responses from other services, storing your own types, counting things, single-use keys, server-side sessions, and using the cache from asyncio. The web workers recipe gains Django and Celery sections.
 - The documentation's version badge and Changelog page now come from the repository's `Cargo.toml` and `CHANGELOG.md` at build time, so they describe the build rather than the latest GitHub Release.
 - The benchmark tables in the FanoutCache, performance and roadmap pages are now drawn as interactive charts in the browser, from the tables themselves, so rerunning a benchmark means editing the table and nothing else. The tables stay in the page, the markdown mirrors and `llms-full.txt`.

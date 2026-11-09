@@ -97,7 +97,7 @@ The docs publish an [agent skill](https://mkennedy.codes/docs/diskcache-oxide/sk
 
 ## Learn more
 
-- [User guide](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html): getting started, serialization, `FanoutCache`, transactions, concurrency and forks, storage and the WAL.
+- [User guide](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html): a [primer for anyone new to caching](https://mkennedy.codes/docs/diskcache-oxide/user-guide/new-to-caching.html), getting started, serialization, `FanoutCache`, transactions, concurrency and forks, storage and the WAL.
 - [Recipes](https://mkennedy.codes/docs/diskcache-oxide/recipes/): caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidating groups, your own types, run-once jobs, rate limiting, counters, single-use keys, sessions, web workers, asyncio, testing.
 - [API reference](https://mkennedy.codes/docs/diskcache-oxide/reference/): every class, method and exception.
 - [Errors and what to do about them](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html).
