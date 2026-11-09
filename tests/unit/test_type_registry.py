@@ -247,6 +247,22 @@ def test_the_hooks_take_a_registry(serializer: str) -> None:
         _encode(Point(1, 2), serializer)
 
 
+@pytest.mark.parametrize(
+    ('mode', 'payload'),
+    [
+        (JSON, b'{"$t:t.Point":[1,2],"x":1}'),
+        (MSGPACK, b'\x82\xaa$t:t.Point\x92\x01\x02\xa1x\x01'),
+    ],
+    ids=['json', 'msgpack'],
+)
+def test_a_registered_tag_map_with_a_second_entry_is_corrupt(mode: int, payload: bytes) -> None:
+    reg = TypeRegistry()
+    reg.register(Point, name='t.Point', encode=point_encode, decode=point_decode)
+    with pytest.raises(CorruptValueError) as info:
+        _decode(mode, payload, types=reg)
+    assert not isinstance(info.value, ForeignValueError)
+
+
 # -- the registry's rules ------------------------------------------------------------------------
 
 

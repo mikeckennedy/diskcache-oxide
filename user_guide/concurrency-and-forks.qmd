@@ -1,5 +1,6 @@
 ---
 title: "Concurrency and forks"
+description: "Threads, worker processes, pre-forking servers and free-threaded Python sharing one cache, and the fork barrier that keeps a child from inheriting half a transaction."
 ---
 
 A production Python web app is a crowd. Several worker processes, often several threads in each, a pre-forking server that creates and recycles those workers while they're busy, and a cron job or an admin script opening the same cache on the side. More and more, it's also free-threaded Python, where the threads really do run at the same time. diskcache-oxide is designed for all of that at once, and its test suite runs each of these cases on every change, because this is where cache bugs hide: not in `get` and `set`, but in what happens when two of them collide.

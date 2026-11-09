@@ -2,6 +2,16 @@
 
 > A shared, durable disk cache for Python, with a Rust engine, SQLite storage, and a diskcache-compatible API.
 
+## Why choose it
+
+Measured against the defunct python-diskcache 5.6.3 (last release August 2023), same machine, same session:
+
+- A cached `get` in 0.76 µs at p50 (0.42× diskcache), a `set` in 22.6 µs (0.77×), on Python 3.14; the free-threaded build is within a few percent. See [Performance](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html).
+- Eight threads sharing one `Cache` at a 99:1 read:write mix: about 650,000 operations a second, flat from 1 to 8 threads, where diskcache falls from 406,000 to 19,000 (Apple M5 Pro, Python 3.14 with the GIL; `bench/results/macos/gate-3.14.txt`). See the chart on the [home page](https://mkennedy.codes/docs/diskcache-oxide/).
+- Eight worker processes writing to a `FanoutCache(shards=8)`: about 1.5 million operations a second, against 262,000 for a plain `Cache` and 1.24 million for diskcache's own `FanoutCache`. See [FanoutCache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html).
+- A prefix scan over 400,000 keys in about 10 ms, against about 25 seconds in diskcache, because `iterkeys(prefix=)` is an indexed range scan. See [Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html#list-keys).
+- Beyond speed: safe across `fork()` and on free-threaded CPython, no pickle on disk unless asked for, bounded connections, memory and write-ahead log, and three diskcache bugs fixed (`clear()` losing concurrent writes, `expire()` leaving entries behind, spurious misses during an overwrite). See [Divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html).
+
 ## Docs
 
 ### API Reference
@@ -171,11 +181,11 @@
 #### Caches Methods
 > Methods for the Caches class
 
-- [Caches.__repr__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__repr__.html): Return repr(self)
+- [Caches.__repr__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__repr__.html): Shows the base directory and the registered names
 - [Caches.register](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.register.html): Register a cache. Nothing opens until its first lookup
-- [Caches.__contains__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__contains__.html)
+- [Caches.__contains__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__contains__.html): Whether `name` is registered
 - [Caches.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__iter__.html): The registered names, in registration order
-- [Caches.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__len__.html)
+- [Caches.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__len__.html): How many caches are registered
 - [Caches.directory](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.directory.html): Where the named cache lives
 - [Caches.__getitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__getitem__.html): The named plain cache: opened on first use, then the same object every time
 - [Caches.fanout](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.fanout.html): The named sharded cache (one registered with `shards=`), looked up as `caches[name]` is
@@ -186,8 +196,8 @@
 - [Caches.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.clear.html): Clear the real cache, even while it's disabled. Returns how many entries were removed
 - [Caches.expire_all](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.expire_all.html): Remove expired entries from every cache. Returns how many each removed, or None for a
 - [Caches.close_all](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.close_all.html): Close every opened cache and forget it; a later lookup opens it again
-- [Caches.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__enter__.html)
-- [Caches.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__exit__.html)
+- [Caches.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__enter__.html): Return the registry, for `with Caches(...) as caches:`
+- [Caches.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__exit__.html): Close every opened cache, as `close_all()` does
 
 #### Errors
 > Exceptions raised by cache operations.
@@ -205,48 +215,48 @@
 
 - [sqlite_version](https://mkennedy.codes/docs/diskcache-oxide/reference/sqlite_version.html): The SQLite version reported at runtime by `sqlite3_libversion()`
 - [sqlite_compile_options](https://mkennedy.codes/docs/diskcache-oxide/reference/sqlite_compile_options.html): The compile-time options of the linked SQLite (`PRAGMA compile_options`)
-- [BUNDLED_SQLITE_VERSION](https://mkennedy.codes/docs/diskcache-oxide/reference/BUNDLED_SQLITE_VERSION.html): str(object='') -> str
+- [BUNDLED_SQLITE_VERSION](https://mkennedy.codes/docs/diskcache-oxide/reference/BUNDLED_SQLITE_VERSION.html): The SQLite version compiled into this build, as a string
 
 ### User Guide
 
 #### Get started
 
-- [New to caching? Start here](https://mkennedy.codes/docs/diskcache-oxide/user-guide/new-to-caching.html)
-- [Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html)
-- [Switching from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/switching-from-diskcache.html)
-- [Errors and what to do about them](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html)
-- [Vision and roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html)
+- [New to caching? Start here](https://mkennedy.codes/docs/diskcache-oxide/user-guide/new-to-caching.html): What a cache is, why it's worth it, the words people use, and the two famously hard problems: invalidation and naming things
+- [Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html): Install diskcache-oxide, open a cache, store and read values, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown
+- [Switching from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/switching-from-diskcache.html): The one-line switch from python-diskcache, and everything you might notice afterwards
+- [Errors and what to do about them](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html): Every exception diskcache-oxide raises, what it means, and what to do about it
+- [Vision and roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html): The vision in three stages, what exists today, what's next, and the non-goals
 
 #### Core Features
 
-- [Serialization](https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html)
-- [NullCache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html): A switched-off cache, so app code needs no `if cache is None` checks
-- [Caches: named caches](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html)
-- [FanoutCache: sharded caches](https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html)
-- [Transactions](https://mkennedy.codes/docs/diskcache-oxide/user-guide/transactions.html)
-- [Concurrency and forks](https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html)
-- [Storage and WAL](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html)
+- [Serialization](https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html): msgpack and JSON with exact type tags, registering your own types, and why pickle is off by default
+- [NullCache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html): Caching switched off without changing call sites: NullCache, the CacheLike protocol, and keeping invalidations flowing while it's off
+- [Caches: named caches](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html): A registry of named caches under one base directory: each opens on first use, a NullCache stands in while one can't open, any can be switched off by name, and an admin page gets counts and sizes
+- [FanoutCache: sharded caches](https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html): A cache sharded over several SQLite databases, so many writing processes stop queueing on one write lock, and when a plain Cache is the better choice
+- [Transactions](https://mkennedy.codes/docs/diskcache-oxide/user-guide/transactions.html): transact(): several writes that commit together or not at all, with TransactionBusy, TransactionAborted and retry
+- [Concurrency and forks](https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html): Threads, worker processes, pre-forking servers and free-threaded Python sharing one cache, and the fork barrier that keeps a child from inheriting half a transaction
+- [Storage and WAL](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html): What's in the cache directory, how memory and disk stay bounded, and the write-ahead log and checkpoint()
 
 #### Background & Reference
 
-- [Performance](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html)
-- [Divergences from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)
+- [Performance](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html): The measured numbers against the defunct python-diskcache, where the speed comes from, the known slow spots and what's next
+- [Divergences from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html): Every deliberate difference from python-diskcache 5.6.3, with the reason and the test that records it
 
 ### Recipes
 
-- [Using the cache from asyncio](https://mkennedy.codes/docs/diskcache-oxide/recipes/asyncio.html)
-- [Caching expensive calls](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-expensive-calls.html)
-- [Caching responses from other services](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-http-responses.html)
-- [Counting things](https://mkennedy.codes/docs/diskcache-oxide/recipes/counters.html)
-- [Storing your own types](https://mkennedy.codes/docs/diskcache-oxide/recipes/custom-types.html)
-- [Invalidating groups of keys](https://mkennedy.codes/docs/diskcache-oxide/recipes/invalidating-groups.html)
-- [Rate limiting](https://mkennedy.codes/docs/diskcache-oxide/recipes/rate-limiting.html)
-- [Running a job once across workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/run-once.html)
-- [Server-side sessions](https://mkennedy.codes/docs/diskcache-oxide/recipes/sessions.html)
-- [Single-use keys](https://mkennedy.codes/docs/diskcache-oxide/recipes/single-use-keys.html)
-- [Serving stale values while refreshing](https://mkennedy.codes/docs/diskcache-oxide/recipes/stale-while-revalidate.html)
-- [Testing code that uses a cache](https://mkennedy.codes/docs/diskcache-oxide/recipes/testing.html)
-- [Sharing a cache across web workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/web-workers.html)
+- [Using the cache from asyncio](https://mkennedy.codes/docs/diskcache-oxide/recipes/asyncio.html): Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends until AsyncCache lands
+- [Caching expensive calls](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-expensive-calls.html): The cache-aside pattern, and a decorator that caches any function's results
+- [Caching responses from other services](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-http-responses.html): Cache what an upstream API returns, honor its max-age, revalidate with ETags, and keep serving the last good answer when it's down
+- [Counting things](https://mkennedy.codes/docs/diskcache-oxide/recipes/counters.html): View counts, download totals and usage quotas with incr() and decr(), shared by every worker and flushed to the database without losing a count
+- [Storing your own types](https://mkennedy.codes/docs/diskcache-oxide/recipes/custom-types.html): UUIDs, enums, timedeltas, Paths, Pydantic models and dataclasses in the cache with register_type(), and no pickle
+- [Invalidating groups of keys](https://mkennedy.codes/docs/diskcache-oxide/recipes/invalidating-groups.html): Clear everything cached for one user or one object, by key prefix or by generation number
+- [Rate limiting](https://mkennedy.codes/docs/diskcache-oxide/recipes/rate-limiting.html): Fixed-window request limits shared by every worker on the machine, with add() and incr()
+- [Running a job once across workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/run-once.html): Use add() to make sure only one worker process runs a scheduled job
+- [Server-side sessions](https://mkennedy.codes/docs/diskcache-oxide/recipes/sessions.html): Sessions every worker can read, with a sliding idle timeout from touch(), an absolute lifetime, and log-out-everywhere by key prefix
+- [Single-use keys](https://mkennedy.codes/docs/diskcache-oxide/recipes/single-use-keys.html): One-time codes, reset links and idempotency keys: pop() hands a value to exactly one caller, and add() accepts a key exactly once
+- [Serving stale values while refreshing](https://mkennedy.codes/docs/diskcache-oxide/recipes/stale-while-revalidate.html): Give an entry a freshness deadline shorter than its expiry, so readers never wait for a recompute and only one worker does it
+- [Testing code that uses a cache](https://mkennedy.codes/docs/diskcache-oxide/recipes/testing.html): pytest fixtures for a real cache, a NullCache, and a fake clock for testing expiry
+- [Sharing a cache across web workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/web-workers.html): Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI, Flask, Django and Celery
 
 ### Agent Skill and Full Context
 

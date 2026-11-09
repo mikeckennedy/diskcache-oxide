@@ -51,6 +51,27 @@ SKILL = PKG_DIR / 'skills' / 'diskcache-oxide' / 'SKILL.md'
 # The files an agent reads, and the paths Great Docs publishes the skill to. Each must exist after
 # a build, and each skill copy must be the hand-written file, or the build failed quietly.
 REQUIRED = ('llms.txt', 'llms-full.txt', 'skill.md')
+# The measured case for the library, inserted near the top of llms.txt so an agent choosing a cache sees it before
+# the API index. Each line names the page or results file its numbers come from; update them together.
+WHY_CHOOSE_IT = (
+    'Measured against the defunct python-diskcache 5.6.3 (last release August 2023), same machine, same session:',
+    '',
+    '- A cached `get` in 0.76 µs at p50 (0.42× diskcache), a `set` in 22.6 µs (0.77×), on Python 3.14; the '
+    'free-threaded build is within a few percent. See [Performance]({base}user-guide/performance.html).',
+    '- Eight threads sharing one `Cache` at a 99:1 read:write mix: about 650,000 operations a second, flat from 1 to 8 '
+    'threads, where diskcache falls from 406,000 to 19,000 (Apple M5 Pro, Python 3.14 with the GIL; '
+    '`bench/results/macos/gate-3.14.txt`). See the chart on the [home page]({base}).',
+    '- Eight worker processes writing to a `FanoutCache(shards=8)`: about 1.5 million operations a second, against '
+    "262,000 for a plain `Cache` and 1.24 million for diskcache's own `FanoutCache`. See "
+    '[FanoutCache]({base}user-guide/fanoutcache.html).',
+    '- A prefix scan over 400,000 keys in about 10 ms, against about 25 seconds in diskcache, because '
+    '`iterkeys(prefix=)` is an indexed range scan. See '
+    '[Getting started]({base}user-guide/getting-started.html#list-keys).',
+    '- Beyond speed: safe across `fork()` and on free-threaded CPython, no pickle on disk unless asked for, bounded '
+    'connections, memory and write-ahead log, and three diskcache bugs fixed (`clear()` losing concurrent writes, '
+    '`expire()` leaving entries behind, spurious misses during an overwrite). See '
+    '[Divergences]({base}user-guide/divergences.html).',
+)
 CARGO_TOML = REPO_ROOT / 'Cargo.toml'
 CHANGELOG = REPO_ROOT / 'CHANGELOG.md'
 _VERSION_BADGE = re.compile(r'<span class="version-badge"[^>]*>v([^<]*)</span>')
@@ -122,6 +143,99 @@ def _site_url() -> str:
     return m.group(1).strip() if m else ''
 
 
+_FRONTMATTER = re.compile(r'\A---\n(.*?)\n---\n', re.S)
+
+
+def _frontmatter(qmd: Path) -> dict[str, str]:
+    """The ``key: value`` lines of a page's YAML front matter, quotes stripped. Only flat string keys."""
+    if not qmd.is_file():
+        return {}
+    m = _FRONTMATTER.match(qmd.read_text(encoding='utf-8'))
+    if not m:
+        return {}
+    out: dict[str, str] = {}
+    for line in m.group(1).splitlines():
+        km = re.match(r'^([\w-]+):\s*(.*)$', line)
+        if km:
+            out[km.group(1)] = km.group(2).strip().strip('"').strip("'")
+    return out
+
+
+def _source_qmd(rel: str) -> Path:
+    """The source page for a site path such as ``user-guide/caches`` or ``recipes/counters``."""
+    section, _, name = rel.partition('/')
+    return PKG_DIR / section.replace('-', '_') / f'{name}.qmd'
+
+
+def _page_entry(base: str, rel: str, title: str) -> str:
+    """An ``llms.txt`` line for a page, with its front-matter description when it has one."""
+    desc = _frontmatter(_source_qmd(rel)).get('description', '')
+    return f'- [{title}]({base}{rel}.html)' + (f': {desc.rstrip(".")}' if desc else '')
+
+
+def _clean_quarto(text: str) -> str:
+    """Make a page's Quarto source read as plain Markdown: drop fenced-div markers (the chart wrappers), turn
+    executable cells into Python code blocks, and drop their ``#|`` options and the hidden cleanup cells."""
+    out: list[str] = []
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith(':::'):
+            i += 1
+            continue
+        if line.strip() == '```{python}':
+            j = i + 1
+            while j < len(lines) and lines[j].strip() != '```':
+                j += 1
+            cell = lines[i + 1 : j]
+            if not any(c.strip() == '#| echo: false' for c in cell):
+                out.append('```python')
+                out.extend(c for c in cell if not c.startswith('#|'))
+                out.append('```')
+            i = j + 1
+            continue
+        out.append(line)
+        i += 1
+    return '\n'.join(out).strip() + '\n'
+
+
+def _recipe_order() -> list[str]:
+    """Recipe page names in the order the recipes index presents them."""
+    index = PKG_DIR / 'recipes' / 'index.qmd'
+    names = re.findall(r'\]\(([\w-]+)\.qmd\)', index.read_text(encoding='utf-8')) if index.is_file() else []
+    seen = list(dict.fromkeys(n for n in names if n != 'index'))
+    for qmd in sorted((PKG_DIR / 'recipes').glob('*.qmd')):
+        if qmd.stem != 'index' and qmd.stem not in seen:
+            seen.append(qmd.stem)
+    return seen
+
+
+def _fix_llms_full(dest: Path) -> None:
+    """great-docs 0.13.0 pastes the User Guide's Quarto source into ``llms-full.txt`` (fenced-div markers and
+    ``{python}`` cells included) and leaves the recipes out. Clean the source, and append the recipes."""
+    path = dest / 'llms-full.txt'
+    if not path.is_file():
+        return
+    text = _clean_quarto(path.read_text(encoding='utf-8'))
+    if '\n## Recipes\n' not in text:
+        parts = ['', '## Recipes', '']
+        for name in _recipe_order():
+            qmd = PKG_DIR / 'recipes' / f'{name}.qmd'
+            fm = _frontmatter(qmd)
+            body = _FRONTMATTER.sub('', qmd.read_text(encoding='utf-8'), count=1)
+            parts.append(f'### {fm.get("title", name)}')
+            parts.append('')
+            if fm.get('description'):
+                parts.extend([fm['description'], ''])
+            parts.append(_clean_quarto(body))
+        text = text.rstrip() + '\n' + '\n'.join(parts)
+        print(f'  llms-full.txt: cleaned Quarto markup and appended {len(_recipe_order())} recipes')
+    else:
+        print('  llms-full.txt: cleaned Quarto markup')
+    path.write_text(text, encoding='utf-8')
+
+
 def _md_title(md_file: Path, fallback: str) -> str:
     """Extract the first ``# Heading`` from a rendered ``.md`` page in ``site/``."""
     if md_file.is_file():
@@ -163,7 +277,7 @@ def _append_llms_sections(dest: Path, base: str) -> None:
                 extra.extend([f'#### {sec.strip()}', ''])
             elif rel:
                 title = _md_title(dest / f'{rel}.md', rel.rsplit('/', 1)[-1])
-                extra.append(f'- [{title}]({base}{rel}.html)')
+                extra.append(_page_entry(base, rel, title))
         extra.append('')
 
     for sec_id, heading in (('divergences', 'Divergences'), ('recipes', 'Recipes')):
@@ -178,7 +292,7 @@ def _append_llms_sections(dest: Path, base: str) -> None:
             if rel.endswith('/index'):
                 continue
             title = _md_title(dest / f'{rel}.md', rel.rsplit('/', 1)[-1])
-            extra.append(f'- [{title}]({base}{rel}.html)')
+            extra.append(_page_entry(base, rel, title))
         extra.append('')
 
     extra.extend(
@@ -310,6 +424,30 @@ def _postprocess(dest: Path) -> None:
 
     # 4) One-line descriptions for the method entries.
     _describe_llms_entries(dest)
+
+    # 5) The measured case for the library, right after the one-line blurb; and a `str` constant inherits str's
+    #    docstring, so say what it is instead.
+    llms = dest / 'llms.txt'
+    if llms.is_file():
+        text = llms.read_text(encoding='utf-8')
+        if '## Why choose it' not in text:
+            why = '\n'.join(line.format(base=base) for line in WHY_CHOOSE_IT)
+            text, n = re.subn(r'(?m)^(> .+)$', lambda m: f'{m.group(1)}\n\n## Why choose it\n\n{why}', text, count=1)
+            if n:
+                llms.write_text(text, encoding='utf-8')
+                print('  llms.txt: added the measured case under the blurb')
+        fixed = re.sub(
+            r'(- \[BUNDLED_SQLITE_VERSION\]\([^)]+\)): str\(object=.*$',
+            r'\1: The SQLite version compiled into this build, as a string',
+            text,
+            flags=re.MULTILINE,
+        )
+        if fixed != text:
+            llms.write_text(fixed, encoding='utf-8')
+            print('  llms.txt: described BUNDLED_SQLITE_VERSION')
+
+    # 6) llms-full.txt: plain Markdown, recipes included.
+    _fix_llms_full(dest)
 
 
 def _check_outputs(dest: Path) -> list[str]:

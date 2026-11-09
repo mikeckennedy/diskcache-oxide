@@ -1,5 +1,6 @@
 ---
 title: "Switching from python-diskcache"
+description: "The one-line switch from python-diskcache, and everything you might notice afterwards."
 ---
 
 If you're here, the question is a practical one: what breaks? Very little, and on purpose. diskcache-oxide is **API compatible** with [python-diskcache](https://github.com/grantjenks/python-diskcache) 5.6.3's `Cache`, and deliberately **not data compatible**. Keeping diskcache's API makes switching a one-line change. Not keeping its on-disk format is what made it possible to fix the design instead of inheriting it, pickle and all. So the switch itself is small, and the rest of this page is about what you'll notice afterwards, which is mostly things getting better and now and then things getting stricter.

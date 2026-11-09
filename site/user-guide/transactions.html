@@ -7,6 +7,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
+<meta name="description" content="transact(): several writes that commit together or not at all, with TransactionBusy, TransactionAborted and retry.">
 
 <title>Transactions – diskcache-oxide | diskcache-oxide</title>
 <style>
@@ -447,16 +448,15 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="Every write is already its own transaction, atomic across every thread and process using the directory. Sometimes one write at a time isn’t enough. A...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Transactions – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="Every write is already its own transaction, atomic across every thread and process using the directory. Sometimes one write at a time isn’t enough. A...">
+  <meta property="og:description" content="transact(): several writes that commit together or not at all, with TransactionBusy, TransactionAborted and retry.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/transactions.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Transactions – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="Every write is already its own transaction, atomic across every thread and process using the directory. Sometimes one write at a time isn’t enough. A...">
+  <meta name="twitter:description" content="transact(): several writes that commit together or not at all, with TransactionBusy, TransactionAborted and retry.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -669,6 +669,11 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1 class="title d-none d-lg-block">Transactions</h1>
 </div>
 
+<div>
+  <div class="description">
+    transact(): several writes that commit together or not at all, with TransactionBusy, TransactionAborted and retry.
+  </div>
+</div>
 
 
 <div class="quarto-title-meta">

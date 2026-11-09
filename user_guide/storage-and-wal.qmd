@@ -1,5 +1,6 @@
 ---
 title: "Storage and WAL"
+description: "What's in the cache directory, how memory and disk stay bounded, and the write-ahead log and checkpoint()."
 ---
 
 Nobody restarts a cache. It sits inside a worker process for weeks, and whatever it does to memory and disk, it does slowly and out of sight, until an alert fires at a bad hour. So how much a cache uses has to be something you set, not something you discover. This page covers what diskcache-oxide puts on disk, and the settings that keep memory and disk where you put them.

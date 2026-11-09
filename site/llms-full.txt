@@ -1269,6 +1269,8 @@ Methods for the Caches class
 
 __repr__(self) -> 'str'
 
+Shows the base directory and the registered names.
+
 register(self, name: 'N', *, directory: 'str | os.PathLike[str] | None' = None, **settings: 'Any') -> 'None'
 
 Register a cache. Nothing opens until its first lookup.
@@ -1302,11 +1304,15 @@ Examples:
 
 __contains__(self, name: 'object') -> 'bool'
 
+Whether `name` is registered.
+
 __iter__(self) -> 'Iterator[N]'
 
 The registered names, in registration order.
 
 __len__(self) -> 'int'
+
+How many caches are registered.
 
 directory(self, name: 'N') -> 'str'
 
@@ -1399,7 +1405,11 @@ closed handle reopens when it's used.
 
 __enter__(self) -> 'Self'
 
+Return the registry, for `with Caches(...) as caches:`.
+
 __exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | None', tb: 'TracebackType | None', /) -> 'None'
+
+Close every opened cache, as `close_all()` does.
 
 
 ## Errors
@@ -1490,7 +1500,7 @@ Something is worth caching when all three of these are true:
 
 Here it is in the smallest possible form. The first call does the work; the second gets the copy:
 
-```{python}
+```python
 import tempfile
 import time
 
@@ -1554,7 +1564,7 @@ Invalidation is hard because the cache can't know when the source changed. It ha
 
 Most apps use all three: an expiry on everything, a delete where the write is obvious, and versioned keys for things that have a natural version. Here's the expiry half, with a fake clock so it runs instantly:
 
-```{python}
+```python
 now = [1_000_000.0]
 cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
 
@@ -1601,10 +1611,6 @@ There are three usual places to keep a cache, and the choice is about who can se
 
 The in-process dict is unbeatable for a single process and useless the moment you have four gunicorn workers. The server is the right answer when the cache has to be shared across machines. diskcache-oxide is the middle: a cache that's just a directory, shared by every thread and process on the machine, still there after a restart, and fast enough that you stop thinking about the lookup. [Getting started](getting-started.qmd) is the next page.
 
-```{python}
-#| echo: false
-cache.close()
-```
 
 
 ### Getting started
@@ -2187,12 +2193,10 @@ Everything diskcache offers that real apps use, plus the things a modern Python 
 
 The same Rust core, served over HTTP to many clients: a Redis-style central cache with SQLite underneath, for when your app outgrows one machine. A server that is the only owner of its files can run SQLite in exclusive locking mode, which keeps the WAL index in heap memory instead of a shared file. Measured on the development machine:
 
-::: {.dco-chart data-type="hbars" data-facet="columns" data-shared-scale="no" data-y="µs" data-title="A server that owns its files reads about 40% faster, and writes a little slower" data-note="Measured on the development machine. Lower is better."}
 | Storage mode | Read | Write | Shared by several processes? |
 |---|---|---|---|
 | WAL (the library today) | 1.18 µs | 13.9 µs | Yes |
 | WAL with exclusive locking (the server) | 0.69 µs | 16.5 µs | No, one owner |
-:::
 
 ## Where things stand
 
@@ -2639,13 +2643,11 @@ cache.shard_of('ip:203.0.113.7')   # 0 to 7, the same in every process and every
 
 Use `FanoutCache` when **several processes write to the same cache**. Use a plain [`Cache`](getting-started.qmd) when they don't. The honest picture, from the benchmark in the repository (`bench/fanout.py`, release builds, a 99:1 get:set mix with 1 KB values on a Mac with 18 cores):
 
-::: {.dco-chart data-type="lines" data-x="Processes" data-y="operations per second" data-title="Add writing processes and a plain Cache falls off; a FanoutCache holds its rate" data-note="bench/fanout.py: 99 reads to 1 write, 1 KB values, release builds, 18-core Mac. Higher is better. Hover for the numbers."}
 | Processes | Plain `Cache` | `FanoutCache(shards=8)` | Defunct diskcache `FanoutCache(8)` |
 |---|---|---|---|
 | 1 | 660k ops/s | 714k | 396k |
 | 4 | 607k | 1,553k | 987k |
 | 8 | 262k | 1,496k | 1,238k |
-:::
 
 - **It removes the multi-process write-lock ceiling.** A plain `Cache` peaks at two processes and then falls, because the 1% of operations that are writes all queue on one database file's write lock. A `FanoutCache` keeps climbing and holds its rate: 5.7x a plain `Cache` at 8 processes, and 1.2x the defunct diskcache's `FanoutCache`. If your app runs a pre-forking server with a worker per core and writes often (counters, rate limits, job claims), this is the case it's for.
 - **It does not yet make threads sharing one handle scale on free-threaded Python.** Four threads on one `FanoutCache` handle read no faster than, and on Linux slower than, four threads on a plain `Cache`, and well short of four separate handles. A larger `max_connections` helps but doesn't close the gap. This is a limit in what threads on one handle share, it's being worked on, and no numbers are promised here. If your concern is read throughput from many threads in one process, a `FanoutCache` doesn't fix it today.
@@ -3055,7 +3057,6 @@ A microsecond is nothing until you multiply it. Web apps call their cache on alm
 
 Measured with `bench/gate.py`, which runs the defunct python-diskcache (5.6.3, its last release, from August 2023) and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from Linux (Ubuntu 26.04 LTS) in a container on an Apple Silicon Mac. Both libraries ran in the same container, so the ratios compare like with like, but the absolute numbers on an x86-64 server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
 
-::: {.dco-chart data-type="hbars" data-y="p50 latency, µs" data-title="A cached read in under a microsecond, on the GIL build and the free-threaded one" data-note="p50 latency of diskcache-oxide; the ratio in the table is oxide's time over the defunct diskcache's, so 0.42× means less than half. Lower is better."}
 | Workload | 3.14 | 3.14t (free-threaded) |
 |---|---|---|
 | `get`, small value, hit | **0.76 µs** (0.42×) | **0.75 µs** (0.46×) |
@@ -3063,16 +3064,13 @@ Measured with `bench/gate.py`, which runs the defunct python-diskcache (5.6.3, i
 | `get`, small dict | **1.18 µs** (0.47×) | **1.26 µs** (0.54×) |
 | `get`, random keys over a large database | **2.21 µs** (0.65×) | **2.41 µs** (0.79×) |
 | `set`, small value | **22.6 µs** (0.77×) | **24.0 µs** (0.82×) |
-:::
 
 Threaded throughput, every thread sharing one `Cache`, in operations per second at 1/2/4/8 threads (ratios are oxide's throughput over diskcache's, so higher is better):
 
-::: {.dco-chart data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Throughput that stays flat as threads are added, where the defunct diskcache's falls to a trickle" data-note="Operations per second with every thread sharing one Cache, at 1, 2, 4 and 8 threads. The ratios in the table are oxide over the defunct diskcache at each thread count. Higher is better."}
 | Mix | 3.14 | 3.14t (free-threaded) |
 |---|---|---|
 | 99:1 reads to writes | **750k / 745k / 723k / 723k** (2.0-16.5×) | **701k / 639k / 680k / 729k** (1.7-1.8×) |
 | 1,000:1 reads to writes | **900k / 886k / 876k / 875k** (2.1-18.9×) | **903k / 680k / 1,181k / 1,416k** (1.25-2.2×) |
-:::
 
 Two things stand out:
 
@@ -3285,3 +3283,1273 @@ These are covered together in [FanoutCache: sharded caches](fanoutcache.qmd), an
 
 [diskcache-community](https://github.com/secondwindoss/diskcache-community) is an actively maintained fork of diskcache, and the conformance suite can run against it too. It has fixed some of the same bugs (D-012, D-018, D-019, and the `0700` directories of D-015) and keeps others (D-008, D-016, D-017). The full comparison is at the end of [tests/DIVERGENCES.md](https://github.com/mikeckennedy/diskcache-oxide/blob/main/tests/DIVERGENCES.md).
 
+## Recipes
+
+### Caching expensive calls
+
+The cache-aside pattern, and a decorator that caches any function's results.
+
+The page takes 900 ms, and 850 of them are one query that returns the same ten rows it returned a second ago. Everyone has met this page. Caching is how you stop paying for the same answer twice: before doing something slow (a database query, an API call, rendering a big page), ask the cache. If it knows, you're done in a microsecond or two. If not, do the work and leave the answer for whoever asks next, which with a shared directory means every worker process on the machine, today and after the next restart.
+
+## Cache-aside
+
+```python
+import tempfile
+import time
+
+from diskcache_oxide import Cache
+
+cache = Cache(tempfile.mkdtemp())
+
+def load_popular_episodes() -> list[dict]:
+    time.sleep(0.2)  # stands in for a slow database query
+    return [{'id': 512, 'title': 'Rust for Python developers'}]
+
+def popular_episodes() -> list[dict]:
+    episodes = cache.get('episodes:popular')
+    if episodes is None:
+        episodes = load_popular_episodes()
+        cache.set('episodes:popular', episodes, expire=300)
+    return episodes
+
+start = time.perf_counter()
+popular_episodes()
+print(f'first call:  {(time.perf_counter() - start) * 1000:.1f} ms')
+
+start = time.perf_counter()
+for _ in range(1000):
+    popular_episodes()
+print(f'cached:      {(time.perf_counter() - start) * 1000:.1f} µs per call')  # 1000 calls, so ms total = µs each
+```
+
+Always give cached values an `expire`. It bounds how stale a value can get if an invalidation is ever missed.
+
+## When `None` is a real value
+
+If the function can legitimately return `None`, `cache.get(key)` can't tell "cached as `None`" from "not cached", and you'll recompute every time. Use a sentinel default:
+
+```python
+MISSING = object()
+
+value = cache.get(key, default=MISSING)
+if value is MISSING:
+    value = compute()
+    cache.set(key, value, expire=300)
+```
+
+## A caching decorator
+
+The same pattern wrapped up for reuse. The key is the function's full name plus its arguments, encoded as JSON so that different arguments always give different keys.
+
+```python
+import functools
+import json
+from collections.abc import Callable
+from typing import Any
+
+from diskcache_oxide import CacheLike
+
+MISSING = object()
+
+def cached(cache: CacheLike, expire: float | None = None) -> Callable:
+    """Cache a function's results, keyed by its arguments."""
+
+    def decorator(func: Callable) -> Callable:
+        prefix = f'{func.__module__}.{func.__qualname__}:'
+
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            key = prefix + json.dumps([args, kwargs], sort_keys=True, default=str)
+            value = cache.get(key, default=MISSING)
+            if value is MISSING:
+                value = func(*args, **kwargs)
+                cache.set(key, value, expire=expire)
+            return value
+
+        return wrapper
+
+    return decorator
+
+calls = 0
+
+@cached(cache, expire=600)
+def episode_details(episode_id: int, *, include_transcript: bool = False) -> dict:
+    global calls
+    calls += 1
+    return {'id': episode_id, 'transcript': include_transcript}
+
+episode_details(512)
+episode_details(512)
+episode_details(512, include_transcript=True)
+print(f'{calls} real calls for 3 lookups')
+```
+
+A few things to keep in mind:
+
+- **Arguments become part of the key**, so keep them simple: ids, strings, numbers. `default=str` covers values like dates, but two different objects with the same `str()` would share a key.
+- **Return values must be storable**, which means built-in types (dicts, lists, tuples, sets, datetimes and so on). A dataclass or ORM object raises `TypeError` at `set()`: return a dict instead, or use a cache opened with `pickle=True`. See [Serialization](../user-guide/serialization.qmd).
+- **Long keys are fine.** A key is just an indexed string.
+
+## Thundering herds
+
+When a popular entry expires, every worker that asks for it in the next moment misses at the same time, and all of them recompute it. For most values that's harmless. If the computation is expensive enough that doing it eight times at once hurts, refresh it ahead of expiry from a background job (see [Running a job once across workers](run-once.qmd)), so readers never see it missing.
+
+A `memoize` with built-in stampede protection is planned (see the [roadmap](../user-guide/roadmap.qmd)).
+
+### Serving stale values while refreshing
+
+Give an entry a freshness deadline shorter than its expiry, so readers never wait for a recompute and only one worker does it.
+
+The newsletter goes out at 9:00. At 9:00:01, four hundred readers land on the front page, and the cached copy expired at 8:59:58. Every worker misses at the same instant, every one of them starts rendering the same page, and the database spends its morning answering one question four hundred times. The [caching recipe](caching-expensive-calls.qmd#thundering-herds) calls this a thundering herd. For most values it's harmless. When the value is slow to build (a front page that takes 400 ms, a report that queries a warehouse), there are two ways to make sure readers never see the gap, and only one worker does the work.
+
+## Stale-while-revalidate
+
+Store the value with its own freshness deadline inside, and give the entry a longer hard expiry. A reader that finds the entry fresh returns it. One that finds it stale returns it anyway, and the first of them to win a claim starts a refresh in the background. Readers never wait, and the herd is one worker.
+
+```python
+import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
+
+from diskcache_oxide import Cache
+
+now = [1_000_000.0]                                   # a fake clock; in a real app use time.time()
+cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+refresher = ThreadPoolExecutor(max_workers=2)         # one per process, for background refreshes
+loads: list[float] = []
+
+def load_front_page() -> dict:
+    time.sleep(0.05)                                  # stands in for 400 ms of rendering
+    loads.append(now[0])
+    return {'rendered_at': now[0]}
+
+def store(key: str, value: Any, fresh_for: float, grace: float) -> Any:
+    cache.set(key, {'value': value, 'fresh_until': now[0] + fresh_for}, expire=fresh_for + grace)
+    return value
+
+def refresh(key: str, fresh_for: float, grace: float) -> None:
+    try:
+        store(key, load_front_page(), fresh_for, grace)
+    finally:
+        cache.delete(f'refresh:{key}')
+
+def front_page(fresh_for: float = 60, grace: float = 300) -> dict:
+    key = 'page:front'
+    entry = cache.get(key)
+    if entry is None:                                 # a real miss: nothing to serve, compute inline
+        return store(key, load_front_page(), fresh_for, grace)
+    if now[0] >= entry['fresh_until'] and cache.add(f'refresh:{key}', 1, expire=30):
+        refresher.submit(refresh, key, fresh_for, grace)   # stale, and this worker won the refresh
+    return entry['value']                             # fresh or stale, the reader gets it now
+
+front_page()                                          # the first request renders the page
+now[0] += 61                                          # a minute later it's stale
+
+results = []
+start = threading.Barrier(8)
+
+def request() -> None:
+    start.wait()
+    results.append(front_page()['rendered_at'])
+
+threads = [threading.Thread(target=request) for _ in range(8)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+refresher.shutdown(wait=True)                         # in the example only: let the refresh land
+
+print(f'{len(results)} readers got the stale page from t={results[0]:.0f}, {len(loads)} renders in total')
+print(f"the next reader gets the fresh page from t={front_page()['rendered_at']:.0f}")
+```
+
+The three numbers to choose:
+
+- **`fresh_for`** is how old a value may get before a refresh starts. It plays the role `expire` plays in a plain cache.
+- **`grace`** is how much longer the stale value stays available. If no refresh lands within it (the refresher crashed, the source was down), the entry expires and the next reader computes inline, herd and all. Make it generous: minutes, not seconds.
+- **The claim's `expire`** (30 s here) bounds how long a crashed refresher blocks the next one. Make it longer than a refresh ever takes.
+
+In an asyncio app, start the refresh with `asyncio.create_task(asyncio.to_thread(refresh, ...))` instead of a thread pool; see [Using the cache from asyncio](asyncio.qmd). With `durable=True`, a failed `add()` returns `False`, so nobody refreshes until the cache is healthy again, which is the right outcome.
+
+## Refreshing ahead from a job
+
+When the hot keys are known in advance (the front page, the top ten episodes, the pricing table), it's simpler to never let them go stale: a scheduled job, [claimed by one worker](run-once.qmd), recomputes them every few minutes and stores each with an `expire` of at least twice the interval.
+
+```python
+HOT_PAGES = ['front', 'episodes', 'pricing']
+
+def refresh_hot_pages() -> None:                      # runs every 5 minutes, on one worker
+    if not coordination.add('job:refresh-hot-pages', os.getpid(), expire=4 * 60):
+        return
+    for name in HOT_PAGES:
+        cache.set(f'page:{name}', render_page(name), expire=15 * 60)
+```
+
+Readers do a plain `get()` and never miss; a missed run or two costs nothing because the entries outlive several intervals. The cost is that the job renders pages nobody may be asking for, which is fine for a handful of keys and wrong for a long tail. Stale-while-revalidate handles the tail, since it only refreshes what's being read.
+
+A `memoize` decorator with this built in is planned (see the [roadmap](../user-guide/roadmap.qmd)).
+
+### Caching responses from other services
+
+Cache what an upstream API returns, honor its max-age, revalidate with ETags, and keep serving the last good answer when it's down.
+
+Your dashboard endpoint takes 1.2 seconds, and 1.1 of them are spent waiting for a partner API to return the same JSON it returned to the previous request. An app that calls other services (a payments API, a headless CMS, your own microservices) spends most of its latency waiting on them, and most of those answers don't change between calls. Caching them in a directory every worker shares means one request to the upstream per machine instead of one per worker, and a last known good answer to serve when the upstream is slow, or down, or has started returning the wrong thing with a 500.
+
+## A cached fetch
+
+The entry holds the response body, its `ETag` and a freshness deadline taken from the upstream's `Cache-Control: max-age`, with a default when there isn't one. A fresh entry is returned without a request. A stale one is revalidated with `If-None-Match`, so an unchanged resource costs a `304` with no body. And if the request fails while there's a stale entry, the stale entry is the answer.
+
+```python
+import json
+import re
+import tempfile
+
+import httpx
+
+from diskcache_oxide import Cache
+
+now = [1_000_000.0]                                   # a fake clock; in a real app use time.time()
+cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+
+def max_age(response: httpx.Response) -> float | None:
+    m = re.search(r'max-age=(\d+)', response.headers.get('cache-control', ''))
+    return float(m.group(1)) if m else None
+
+def fetch_json(client: httpx.Client, url: str, *, default_ttl: float = 300, keep: float = 24 * 3600) -> object:
+    key = f'http:GET:{url}'
+    entry = cache.get(key)
+    if entry is not None and now[0] < entry['fresh_until']:
+        return json.loads(entry['body'])              # fresh: no request at all
+
+    headers = {'If-None-Match': entry['etag']} if entry and entry['etag'] else {}
+    try:
+        response = client.get(url, headers=headers)
+        if response.status_code != 304:
+            response.raise_for_status()
+    except httpx.HTTPError:
+        if entry is not None:
+            return json.loads(entry['body'])          # upstream trouble: the last good answer
+        raise
+
+    if response.status_code == 304:                   # unchanged: keep the body, extend its freshness
+        entry['fresh_until'] = now[0] + (max_age(response) or default_ttl)
+    else:
+        entry = {
+            'body': response.content,
+            'etag': response.headers.get('etag'),
+            'fresh_until': now[0] + (max_age(response) or default_ttl),
+        }
+    cache.set(key, entry, expire=keep)
+    return json.loads(entry['body'])
+```
+
+Here it runs against a mock upstream that counts its requests:
+
+```python
+seen: list[str | None] = []
+
+def upstream(request: httpx.Request) -> httpx.Response:
+    seen.append(request.headers.get('If-None-Match'))
+    headers = {'ETag': '"v1"', 'Cache-Control': 'max-age=60'}
+    if request.headers.get('If-None-Match') == '"v1"':
+        return httpx.Response(304, headers=headers)
+    return httpx.Response(200, json={'episodes': [512, 513]}, headers=headers)
+
+client = httpx.Client(transport=httpx.MockTransport(upstream))
+url = 'https://api.example.com/episodes'
+
+fetch_json(client, url)
+fetch_json(client, url)                               # fresh: served from the cache
+now[0] += 61
+fetch_json(client, url)                               # stale: one conditional request, answered 304
+print(f'{len(seen)} upstream requests; If-None-Match headers sent: {seen}')
+```
+
+Why it's shaped this way:
+
+- **Freshness lives in the value, not in `expire`.** The entry's `expire` (`keep`) is how long a stale copy is worth holding on to for revalidation and outages. If freshness were the expiry, a stale entry would vanish just when it's useful.
+- **`304` costs one small write.** The body is kept and only `fresh_until` changes. A `set()` is needed because the deadline is inside the value; `touch()` only moves the entry's expiry.
+- **The key names the request.** Method and URL here. If the response depends on who's asking (an `Authorization` header, a tenant), put that identity in the key too, or one user's data will be served to another.
+
+## Variations
+
+- **Serving the bytes straight through.** When your endpoint relays the upstream's body, store `response.content` and the `content-type`, and return them as they are, without parsing. Bodies of 64 KiB or more are stored in their own file, so a large payload costs no more than a small one.
+- **Negative caching.** A `404` that costs a round trip every time is worth caching for a short while: store `{'status': 404, 'fresh_until': ...}` and return your own not-found from it. Don't cache `5xx` as answers; the stale-on-error path above already covers an upstream outage.
+- **Headers not to keep.** Drop `Set-Cookie` and anything else tied to the one connection before storing a response's headers.
+- **Only one worker should refetch.** When many requests find the same stale entry at once, they all revalidate. `304`s are cheap, so that's usually fine. If the upstream charges per call, wrap the refetch in a claim as the [stale-while-revalidate](stale-while-revalidate.qmd) recipe does.
+
+### Invalidating groups of keys
+
+Clear everything cached for one user or one object, by key prefix or by generation number.
+
+A user changes their display name, and for the next five minutes half the site still uses the old one: the profile page, the sidebar widget, three API responses, each cached on its own schedule and each wrong in its own way. A single change often makes many cache entries stale, and deleting them one by one means knowing every key that was ever derived from that user. There are two good ways to handle this. Both start with a naming convention.
+
+## Name keys hierarchically
+
+Put the thing a key depends on at the front of the key, from the general to the specific:
+
+```
+user:42:profile
+user:42:sidebar
+user:42:api:/v1/me
+episode:512:page
+episode:512:transcript
+```
+
+Everything about user 42 now shares the prefix `user:42:`. Note the trailing colon: without it, `user:4` would also match `user:42`.
+
+## Option 1: delete by prefix
+
+`iterkeys(prefix=...)` is an indexed range scan, so finding a user's keys costs time in proportion to how many there are, not the size of the cache. It fetches keys a page at a time with no lock held in between, so deleting while iterating is safe.
+
+```python
+import tempfile
+
+from diskcache_oxide import Cache
+
+cache = Cache(tempfile.mkdtemp())
+for key in ['user:42:profile', 'user:42:sidebar', 'user:420:profile', 'episode:512:page']:
+    cache.set(key, '...', expire=3600)
+
+def invalidate_prefix(prefix: str) -> int:
+    removed = 0
+    for key in cache.iterkeys(prefix=prefix):
+        removed += cache.delete(key)
+    return removed
+
+print(invalidate_prefix('user:42:'), 'removed')
+print(sorted(cache))
+```
+
+This is simple and frees the space right away. It costs one small write per key, so it's best when a group has tens or hundreds of keys, not hundreds of thousands.
+
+## Option 2: generation numbers
+
+Instead of deleting anything, keep a generation number per group and put it in every key. To invalidate the group, change the generation. Every old key becomes unreachable at once, in a single write, however many keys there were. The old entries are never read again, and they leave the cache when they expire or are evicted.
+
+```python
+import time
+
+def generation(user_id: int) -> int:
+    key = f'gen:user:{user_id}'
+    gen = cache.get(key)
+    if gen is None:
+        cache.add(key, time.time_ns())   # if several workers race, one value wins
+        gen = cache.get(key)
+    return gen
+
+def user_key(user_id: int, name: str) -> str:
+    return f'user:{user_id}:g{generation(user_id)}:{name}'
+
+def invalidate_user(user_id: int) -> None:
+    cache.set(f'gen:user:{user_id}', time.time_ns())
+
+cache.set(user_key(7, 'profile'), {'name': 'Sam'}, expire=3600)
+print(cache.get(user_key(7, 'profile')))
+
+invalidate_user(7)
+print(cache.get(user_key(7, 'profile')))
+```
+
+Generation numbers cost one extra read per lookup (the generation, which is tiny and hot) and make invalidation free. Give the real entries an `expire`, since nothing deletes them.
+
+The generations are timestamps rather than a counter starting at 0 for a reason. A generation key is written rarely, and the cache evicts the least recently *stored* entries first, so under size pressure it can be evicted. A counter would then restart at 0 and bring old entries back to life. A new timestamp is always larger than any generation used before, so a lost generation only costs a few cache misses.
+
+## Which to use
+
+- **Prefix deletes** when groups are small and you want the space back immediately.
+- **Generation numbers** when groups are large, or invalidation is frequent, or many workers might invalidate the same group at the same time.
+
+## While caching is switched off
+
+If you turn caching off with `NullCache`, pass the real cache as `invalidate=`. Prefix deletes still reach the real cache (`iterkeys` and `delete` are both forwarded), so nothing stale is waiting when caching comes back on. See [NullCache](../user-guide/null-cache.qmd).
+
+Tags, which group keys without a naming convention, are planned (see the [roadmap](../user-guide/roadmap.qmd)).
+
+### Storing your own types
+
+UUIDs, enums, timedeltas, Paths, Pydantic models and dataclasses in the cache with register_type(), and no pickle.
+
+The first `TypeError` from `set()` is a small shock. You've been storing dicts for weeks, and today one of them has a `UUID` in it and the cache says no. That refusal is the design: the cache stores the built-in types exactly ([Serialization](../user-guide/serialization.qmd#exact-types) has the table: `str`, numbers, `bytes`, `bool`, `None`, lists, tuples, sets, dicts, `datetime`, `date`, `Decimal`) and refuses anything else rather than pickling it behind your back. For everything else, you tell the codec once how to store the type, and the shock never comes back. This recipe collects the registrations a typical web app needs.
+
+## The standard library's types
+
+`uuid.UUID`, `datetime.timedelta` and `pathlib.Path` aren't built-in types to the codec. Each needs an `encode` that turns an instance into something storable and a `decode` that turns it back:
+
+```python
+import datetime
+import pathlib
+import tempfile
+import uuid
+
+import diskcache_oxide
+from diskcache_oxide import Cache
+
+diskcache_oxide.register_type(uuid.UUID, name='std.uuid', encode=lambda u: u.bytes, decode=lambda b: uuid.UUID(bytes=b))
+diskcache_oxide.register_type(datetime.timedelta, name='std.timedelta', encode=datetime.timedelta.total_seconds, decode=lambda s: datetime.timedelta(seconds=s))
+diskcache_oxide.register_type(type(pathlib.Path()), name='std.path', encode=str, decode=pathlib.Path)
+
+cache = Cache(tempfile.mkdtemp())
+cache.set('upload', {'id': uuid.uuid4(), 'ttl': datetime.timedelta(hours=2), 'file': pathlib.Path('/srv/uploads/a.png')})
+print({k: type(v).__name__ for k, v in cache.get('upload').items()})
+```
+
+The `Path` registration says `type(pathlib.Path())`, not `pathlib.Path`, for a reason: lookup is by exact type, and `pathlib.Path()` builds a `PosixPath` or a `WindowsPath`. Registering the base class would match nothing. The same applies to any factory that returns a subclass.
+
+## Enums
+
+Store the value, and let the enum class turn it back into a member. A `StrEnum` or `IntEnum` is a subclass of `str` or `int`, and a subclass is never stored as its base, so it needs this too:
+
+```python
+import enum
+
+class Plan(enum.StrEnum):
+    FREE = 'free'
+    PRO = 'pro'
+
+diskcache_oxide.register_type(Plan, name='app.Plan', encode=lambda p: p.value, decode=Plan)
+
+cache.set('account:42:plan', Plan.PRO)
+print(repr(cache.get('account:42:plan')))
+```
+
+## Dataclasses
+
+A dataclass needs only a name. Its fields are stored and it's rebuilt with `cls(**fields)`, so defaults and `__post_init__` run. Fields can hold other registered types, nested as deep as you like:
+
+```python
+import dataclasses
+
+@dataclasses.dataclass
+class Invoice:
+    id: uuid.UUID
+    plan: Plan
+    issued: datetime.date
+    paid_within: datetime.timedelta | None = None
+
+diskcache_oxide.register_type(Invoice, name='app.Invoice')
+
+cache.set('invoice:latest', Invoice(uuid.UUID('2b7e1c4a-5d3f-4e8b-9a6c-0f1d2e3a4b5c'), Plan.PRO, datetime.date(2026, 11, 8)))
+print(cache.get('invoice:latest'))
+```
+
+## Pydantic models
+
+Pydantic can produce and consume a plain dict, so a model registers with its own two methods. `mode='json'` makes `model_dump()` emit only JSON-compatible values (UUIDs and dates as strings), which `model_validate()` parses back, so the model's field types need no registrations of their own:
+
+```python
+from pydantic import BaseModel
+
+class User(BaseModel):
+    id: uuid.UUID
+    name: str
+    plan: Plan
+
+diskcache_oxide.register_type(User, name='app.User', encode=lambda u: u.model_dump(mode='json'), decode=User.model_validate)
+```
+
+attrs classes and msgspec structs follow the same pattern with `attrs.asdict()` and `msgspec.to_builtins()`, and the class as the decoder.
+
+## Where the registrations live
+
+Registrations are process-wide and must exist in every process that opens the directory: the web workers, the Celery workers, the management command that warms the cache. A row written with a tag the reading process doesn't know is a `ForeignValueError`, and the row is left for a process that does. Put them in one module and import it early:
+
+```python
+# myapp/cache_types.py: imported from myapp/__init__.py, so every entry point gets it
+import diskcache_oxide
+
+from myapp.models import Invoice, Plan, User
+
+diskcache_oxide.register_type(Plan, name='app.Plan', encode=lambda p: p.value, decode=Plan)
+diskcache_oxide.register_type(Invoice, name='app.Invoice')
+diskcache_oxide.register_type(User, name='app.User', encode=lambda u: u.model_dump(mode='json'), decode=User.model_validate)
+```
+
+## When the shape changes
+
+The name is the contract. Renaming or moving the class changes nothing, because rows carry the name you chose. Changing the fields does: a dataclass row written before a required field was added raises `CorruptValueError` when it's read, and `on_decode_error='miss'` turns that into a miss and deletes the row, so the next writer replaces it. For a change the old rows can't survive, give the type a new name (`app.Invoice.v2`). The old rows become `ForeignValueError`, treated as misses under the same policy, and expire on their own. See [Errors](../user-guide/errors.qmd#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded).
+
+### Running a job once across workers
+
+Use add() to make sure only one worker process runs a scheduled job.
+
+At the top of the hour, eight gunicorn workers wake up at the same instant with the same idea: time for the hourly cleanup. Each one has its own copy of the scheduler, none of them knows the others exist, and the only thing they share is a cache directory. You want the job to run once, and it turns out the directory is enough.
+
+`add()` stores a value only if the key is missing or expired, and it's atomic across every thread and process using the cache directory. When several callers race to add the same key, exactly one gets `True`. That makes the key a claim on the job.
+
+## Claim the run
+
+```python
+import os
+
+from diskcache_oxide import Cache
+
+cache = Cache('/var/cache/my-app')
+
+def hourly_cleanup() -> None:
+    if not cache.add('job:hourly-cleanup', os.getpid(), expire=55 * 60):
+        return  # another worker has it this hour
+    remove_stale_sessions()
+```
+
+The `expire` is the important part. It decides when the job can be claimed again, and it's also what saves you if the worker that claimed the job crashes halfway through: the claim expires and the next run goes ahead. Set it a little shorter than the schedule's interval, so the next run is never blocked by the previous claim.
+
+Storing `os.getpid()` (or a hostname and pid) as the value costs nothing and makes it easy to see who claimed the job: `cache.get('job:hourly-cleanup')`.
+
+## See it work
+
+Here eight threads race for the same claim. Processes behave the same way.
+
+```python
+import tempfile
+import threading
+
+from diskcache_oxide import Cache
+
+cache = Cache(tempfile.mkdtemp())
+winners = []
+start = threading.Barrier(8)
+
+def worker(n: int) -> None:
+    start.wait()
+    if cache.add('job:hourly-cleanup', n, expire=3300):
+        winners.append(n)
+
+threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+
+print(f'{len(winners)} winner: worker {winners[0]}')
+print('claim holds:', cache.get('job:hourly-cleanup'))
+```
+
+## Jobs that should run once, then again as soon as they're done
+
+For work that isn't on a fixed schedule (process the queue, rebuild the search index), use `expire` as a lease: a time limit after which a crashed worker's claim lapses. Delete the key when the work finishes, so the next request can claim it right away.
+
+```python
+def rebuild_search_index() -> None:
+    if not cache.add('job:search-index', os.getpid(), expire=10 * 60):
+        return
+    try:
+        do_rebuild()
+    finally:
+        cache.delete('job:search-index')
+```
+
+Make the lease comfortably longer than the job ever takes. If the job outlives it, a second worker can start a second copy.
+
+## Give claims their own small cache
+
+Two things can make a claim vanish early, and both argue for keeping claims out of your main cache:
+
+- **Switching caching off.** A `NullCache` follows the rule "every entry expires the instant it's written", so its `add()` always returns `True`. With caching off, every worker's claim succeeds and the job runs once per worker. That's harmless for idempotent jobs and wrong for jobs with side effects, like sending email.
+- **Eviction.** When a cache is over its `size_limit`, it evicts the least recently stored entries, and a claim is exactly the kind of small, rarely written entry that goes first. If it's evicted before it expires, a second worker can claim the job.
+
+A separate cache directory just for coordination, which is never swapped for a `NullCache` and holds only a handful of tiny keys, avoids both:
+
+```python
+coordination = Cache('/var/cache/my-app-coordination')
+```
+
+Proper cross-process `Lock` and `BoundedSemaphore` recipes are planned (see the [roadmap](../user-guide/roadmap.qmd)).
+
+### Rate limiting
+
+Fixed-window request limits shared by every worker on the machine, with add() and incr().
+
+Someone has pointed a script at your search endpoint. It's a polite script: it stays under your limit of 100 requests a minute. Per worker. With eight workers and an in-memory counter in each, the limit you meant is 100 and the limit you have is 800. To limit each client for real, every worker process has to see the same count, and Redis is the usual fix. A diskcache-oxide counter is shared by every worker on the machine, and `incr()` is atomic across processes, so concurrent requests never lose a count.
+
+## A fixed-window limiter
+
+Each client gets a counter for the current window, with the window's number in the key. When the window ends, requests move on to a new key and the old one simply expires.
+
+```python
+import tempfile
+
+from diskcache_oxide import Cache
+
+now = [1_000_000.0]  # a fake clock, so this example can move time forward
+cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+
+def allow_request(client: str, limit: int = 5, window: int = 60) -> bool:
+    current = int(now[0] // window)          # in a real app: int(time.time() // window)
+    key = f'rate:{client}:{current}'
+    cache.add(key, 0, expire=window * 2)     # start the window's counter, once
+    return cache.incr(key) <= limit
+
+print([allow_request('203.0.113.9') for _ in range(7)])
+
+now[0] += 60  # the next window
+print(allow_request('203.0.113.9'))
+```
+
+Why it's built this way:
+
+- **`add()` then `incr()`.** `add()` creates the counter with an expiry the first time and does nothing after that. `incr()` keeps a key's existing expiry, so the counter expires on schedule however many times it's incremented. Calling `incr()` alone would create a counter that never expires.
+- **The window number is in the key.** A new window means a new key, so no reset is needed, and there's no race where one request resets the counter while another increments it.
+- **The expiry is two windows long,** so a counter can't expire while its window is still current. Expired counters are cleaned up by `expire()` or eviction like any other entry.
+
+In a real app, use `time.time()` and leave out `clock=`; the fake clock is only here so the example can jump to the next minute.
+
+## Using it in a view
+
+```python
+from fastapi import FastAPI, HTTPException, Request
+
+app = FastAPI()
+
+@app.get('/api/search')
+def search(request: Request, q: str) -> dict:
+    if not allow_request(request.client.host, limit=100, window=60):
+        raise HTTPException(status_code=429, detail='Too many requests')
+    return run_search(q)
+```
+
+## Things to know
+
+- **Fixed windows allow short bursts at the boundary.** A client can make 100 requests at the end of one minute and 100 more at the start of the next. For most APIs that's fine. If it isn't, check both the current and the previous window and weight the previous one by how much of it overlaps the last 60 seconds (a sliding-window estimate).
+- **It's per machine.** Every worker on one machine shares the count, but two machines behind a load balancer each have their own. The planned network server will share one cache across machines.
+- **Fail open on a busy cache.** If you set a short `timeout` on the cache so that requests never wait long, catch `Timeout` and allow the request rather than failing it:
+
+```python
+from diskcache_oxide import Timeout
+
+try:
+    allowed = allow_request(client)
+except Timeout:
+    allowed = True
+```
+
+- **Don't rate limit with a cache that might be a `NullCache`.** Its `incr()` always returns `default + delta`, so every request would be allowed. That's often what you want with caching switched off, but make it a deliberate choice.
+
+A ready-made `throttle` recipe is planned (see the [roadmap](../user-guide/roadmap.qmd)).
+
+### Counting things
+
+View counts, download totals and usage quotas with incr() and decr(), shared by every worker and flushed to the database without losing a count.
+
+A download counter is the simplest feature on the site, and the first one to start lying once there's more than one worker: each process counts what it saw, and the number on the page depends on which worker rendered it. Moving the count to the database fixes the lie and makes every download a write to your busiest table. A cache counter sits in between: `incr()` is atomic across every thread and process on the machine, costs tens of microseconds, and the totals can be moved to the database on a schedule, by one worker, without losing a single count on the way.
+
+## Count from every worker
+
+```python
+import tempfile
+import threading
+
+from diskcache_oxide import Cache
+
+cache = Cache(tempfile.mkdtemp())
+
+def record_view(episode_id: int) -> None:
+    cache.incr(f'views:episode:{episode_id}')
+
+def viewer() -> None:
+    for _ in range(250):
+        record_view(512)
+
+threads = [threading.Thread(target=viewer) for _ in range(8)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+
+print(cache.get('views:episode:512'), 'views, none lost')
+```
+
+`incr()` starts a missing counter at `default` (0) and adds `delta` (1), so there's no setup step. Processes behave exactly like the threads here.
+
+## Flush the counts to the database
+
+Totals belong in the database eventually: for reports, and so they survive a cleared cache. `pop()` reads a counter and removes it in one atomic step, so a view recorded while the flush runs lands in a fresh counter and is picked up next time. Nothing is counted twice or lost.
+
+```python
+database: dict[int, int] = {}   # stands in for UPDATE episodes SET views = views + ? WHERE id = ?
+
+def flush_views() -> None:
+    for key in cache.iterkeys(prefix='views:episode:'):
+        pending = cache.pop(key, 0)
+        if pending:
+            episode_id = int(key.rsplit(':', 1)[1])
+            database[episode_id] = database.get(episode_id, 0) + pending
+
+record_view(513)
+flush_views()
+print('database:', database, '| pending in cache:', cache.get('views:episode:512', 0))
+```
+
+Run the flush from one place, a scheduled job that [one worker claims](run-once.qmd), every minute or so. To show a live total, add the pending count to the stored one: `database[id] + cache.get(key, 0)`.
+
+## Counters that clean themselves up
+
+For per-day or per-month figures, put the period in the key and give each counter an expiry. Create it with `add()` first: `incr()` keeps whatever expiry the key already has, and on a key it has to create, it sets none.
+
+```python
+import datetime
+
+def record_download(file_id: str, day: datetime.date) -> int:
+    key = f'downloads:{file_id}:{day.isoformat()}'
+    cache.add(key, 0, expire=40 * 24 * 3600)   # keep 40 days of history
+    return cache.incr(key)
+
+today = datetime.date(2026, 11, 8)
+record_download('talk-python-491.mp3', today)
+print(record_download('talk-python-491.mp3', today), 'downloads today')
+```
+
+To report a week, read the seven keys. Old days expire on their own, so the cache never fills with history.
+
+## Quotas with `decr()`
+
+A quota is a counter that starts at the allowance and counts down:
+
+```python
+def consume_quota(user_id: int, units: int = 1, allowance: int = 1000) -> bool:
+    key = f'quota:{user_id}:2026-11'                       # the billing period, in a real app from the date
+    cache.add(key, allowance, expire=40 * 24 * 3600)      # the first call this period sets the allowance
+    return cache.decr(key, units) >= 0
+
+print(consume_quota(42, units=999), consume_quota(42), consume_quota(42))
+```
+
+Once the counter is below zero every later call is denied too, until the period's key is replaced. To let an admin grant more, `incr()` the key by the extra amount. `delta` can be a float, for fractional units.
+
+## Several counters at once
+
+Counting a request under several keys (total, per path, per status) is three `incr()` calls, and a reader can see the first land before the third. If that matters, put them in one [transaction](../user-guide/transactions.qmd): the block commits all of them together.
+
+## Things to know
+
+- **A missing counter reads as `default`.** When a missing counter is a bug rather than a zero, pass `default=None` and `incr()` raises `KeyError` instead.
+- **Counters need a real cache.** A `NullCache` has nothing to count in: its `incr()` returns `default + delta` every time, so every view would be the first. Keep counters in a cache that's never switched off, which [`Caches`](../user-guide/caches.qmd) lets you do per name.
+- **`durable=True` drops counts silently.** A failed `incr()` returns `default + delta` so a rate limiter fails open, but for a quota or a view count that's a lost increment with only a log line to show for it. Let these raise, and catch `Timeout` where you call them.
+- **Not an id generator.** Two callers can get the same number back under `durable=True`, and a cleared cache restarts at zero. Ids come from the database.
+- **One machine.** Every worker on a host shares the counts; two hosts behind a load balancer each have their own, so flush each host's counts to the database and sum there.
+
+### Single-use keys
+
+One-time codes, reset links and idempotency keys: pop() hands a value to exactly one caller, and add() accepts a key exactly once.
+
+At 2 a.m. a tired user double-clicks a password reset link, and two requests arrive on two workers a few milliseconds apart. Both find the token. Both accept it. Some things must happen exactly once however many times they're asked for: a reset link is good for one click, a verification code for one entry, a payment request for one charge even when the client retries. Two cache calls are atomic across every worker on the machine, `pop()` and `add()`, and between them they cover all of these.
+
+## One-time tokens with `pop()`
+
+Store the token when you issue it, with the lifetime the link should have. To redeem it, `pop()` it: the value comes back and the entry is gone in one step, so two requests presenting the same token can't both succeed, whichever workers they land on.
+
+```python
+import secrets
+import tempfile
+import threading
+
+from diskcache_oxide import Cache
+
+tokens = Cache(tempfile.mkdtemp())
+
+def issue_reset_token(user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    tokens.set(f'reset:{token}', user_id, expire=15 * 60)
+    return token
+
+def redeem_reset_token(token: str) -> int | None:
+    """The user id the token was issued to, or None if it's unknown, expired or already used."""
+    return tokens.pop(f'reset:{token}')
+
+token = issue_reset_token(42)
+
+# Eight requests present the same link at the same moment.
+results = []
+start = threading.Barrier(8)
+
+def click() -> None:
+    start.wait()
+    results.append(redeem_reset_token(token))
+
+threads = [threading.Thread(target=click) for _ in range(8)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+
+print(f'{results.count(42)} redeemed, {results.count(None)} rejected')
+```
+
+A few details that matter:
+
+- **The token is the key, and it's random.** `secrets.token_urlsafe(32)` can't be guessed, so a key that exists is proof the link was issued. Never build the key from the user id alone.
+- **Unknown, expired and used all look the same.** `pop()` returns `None` for each, which is what the user should see too: one message, with no hint about which it was.
+- **Issuing a new link should cancel the old one.** Keep a pointer from the user to their current token, `reset-for:{user_id}`, and `pop()` it (then delete the token it names) before issuing a new one.
+
+### Short codes need an attempt limit
+
+A six-digit verification code is guessable, so pair it with a counter, created with an expiry the way the [rate limiting](rate-limiting.qmd) recipe does, and burn the code after a few wrong guesses:
+
+```python
+def check_code(user_id: int, entered: str) -> bool:
+    attempts_key = f'verify-attempts:{user_id}'
+    tokens.add(attempts_key, 0, expire=10 * 60)
+    if tokens.incr(attempts_key) > 5:
+        tokens.delete(f'verify-code:{user_id}')   # too many tries: the code is dead
+        return False
+    if tokens.get(f'verify-code:{user_id}') != entered:
+        return False
+    tokens.delete(f'verify-code:{user_id}')       # right, and good for one entry only
+    return True
+```
+
+## Idempotency keys with `add()`
+
+A client that times out on a `POST` retries it, and the second attempt must not charge the card twice. The client sends the same idempotency key with both, and `add()` makes the first one to arrive the only one that does the work:
+
+```python
+def charge(idempotency_key: str, amount_cents: int) -> dict:
+    key = f'idem:{idempotency_key}'
+    if not requests_seen.add(key, {'status': 'in-progress'}, expire=24 * 3600):
+        previous = requests_seen.get(key)
+        if previous is None or previous['status'] == 'in-progress':
+            raise Conflict('this request is still being processed; retry in a moment')
+        return previous['result']                   # the retry gets the first attempt's answer
+
+    try:
+        result = payments.charge(amount_cents)
+    except Exception:
+        requests_seen.delete(key)                   # let a retry try again
+        raise
+    requests_seen.set(key, {'status': 'done', 'result': result}, expire=24 * 3600)
+    return result
+```
+
+The sequence: `add()` claims the key, and exactly one caller gets `True`. A retry that arrives while the first attempt is still running sees `in-progress` and is told to come back; one that arrives after it finished gets the stored result, which should carry everything needed to send the same response again (the status code too). If the work fails, the claim is deleted so that a retry really retries. `previous is None` covers the rare case where the entry expired, or was evicted, between the `add()` and the `get()`.
+
+The stored result has to be something the cache can hold: a dict of built-in types, or a type you've [registered](custom-types.qmd).
+
+## Keep them out of your main cache
+
+Tokens and idempotency keys aren't a copy of something you can recompute, so two things that are fine for cached values are wrong for them:
+
+- **Eviction.** A cache at its `size_limit` evicts the least recently stored entries, and an unused token is a tiny, old entry, exactly what goes first. An evicted reset link is a dead link; an evicted idempotency key is a double charge.
+- **Switching caching off.** A `NullCache` never stores, so `pop()` returns `None` and no token can ever be redeemed, and its `add()` always returns `True`, so every retry charges again.
+
+Give them a directory of their own, with a `size_limit` they'll never reach and no `NullCache` in front of it, as the [job claims](run-once.qmd#give-claims-their-own-small-cache) recipe does. [`Caches`](../user-guide/caches.qmd) can register it under its own name so the rest of the app's caches can still be switched off.
+
+`durable=True` is safe here, if you check return values: a `pop()` whose delete fails returns `None` rather than risk delivering the token twice (the user clicks again), `add()` fails closed, and a `set()` that was dropped returns `False`, so `issue_reset_token` should raise rather than hand out a link that was never stored. See [errors](../user-guide/errors.qmd).
+
+### Server-side sessions
+
+Sessions every worker can read, with a sliding idle timeout from touch(), an absolute lifetime, and log-out-everywhere by key prefix.
+
+Every request arrives with a cookie and a question: who is this? A session is the one piece of per-user state almost every web app keeps server side to answer it: who's logged in, since when, with which roles. Keeping it in a cache directory means every worker sees the same session the instant it's written, a login on one worker is a login on all of them, and there's no database row per request and no Redis to run. The cookie holds only a random id.
+
+## Start, load, end
+
+```python
+import secrets
+import tempfile
+
+from diskcache_oxide import Cache
+
+now = [1_000_000.0]                                   # a fake clock; in a real app use time.time()
+sessions = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+
+IDLE = 30 * 60          # a session ends after 30 minutes without a request
+ABSOLUTE = 12 * 3600    # and 12 hours after login, however active
+
+def start_session(user_id: int, roles: list[str]) -> str:
+    sid = secrets.token_urlsafe(32)
+    sessions.set(f'session:{sid}', {'user_id': user_id, 'roles': roles, 'started': now[0]}, expire=IDLE)
+    sessions.set(f'user-sessions:{user_id}:{sid}', True, expire=ABSOLUTE)
+    return sid
+
+def load_session(sid: str) -> dict | None:
+    data, expires_at = sessions.get(f'session:{sid}', expire_time=True)
+    if data is None or now[0] - data['started'] > ABSOLUTE:
+        return None
+    if expires_at - now[0] < IDLE / 2:                # slide the idle timeout, but not on every request
+        sessions.touch(f'session:{sid}', expire=IDLE)
+    return data
+
+def end_session(sid: str) -> None:
+    data = sessions.pop(f'session:{sid}')
+    if data is not None:
+        sessions.delete(f'user-sessions:{data["user_id"]}:{sid}')
+
+sid = start_session(42, ['member'])
+now[0] += 20 * 60
+print('after 20 min:', load_session(sid) is not None)   # active, and the timeout slides
+now[0] += 20 * 60
+print('after 40 min:', load_session(sid) is not None)   # still active: the last request was 20 min ago
+now[0] += 31 * 60
+print('after 71 min:', load_session(sid) is not None)   # idle too long
+```
+
+- **`touch()` slides the idle timeout** without rewriting the session. It's a small write, so it's done only when less than half the idle time is left, which `get(expire_time=True)` tells you in the same read as the data. A busy user costs one write every 15 minutes instead of one per request.
+- **The absolute lifetime is inside the value.** `expire` can only say when the session dies if it's left alone; the login time says when it dies regardless.
+- **The id is the secret.** `secrets.token_urlsafe(32)` in an `HttpOnly`, `Secure`, `SameSite` cookie, and nothing else in the cookie. The session dict holds ids and roles, not the whole user object, which belongs in the database.
+
+## Log out everywhere
+
+A password change or a stolen laptop should end every session a user has. The second key written at login, `user-sessions:{user_id}:{sid}`, is an index for exactly this: a prefix scan finds them all.
+
+```python
+other = start_session(42, ['member'])
+sid = start_session(42, ['member'])
+
+def end_all_sessions(user_id: int) -> int:
+    ended = 0
+    for key in sessions.iterkeys(prefix=f'user-sessions:{user_id}:'):
+        sid = key.rsplit(':', 1)[1]
+        ended += sessions.delete(f'session:{sid}')
+        sessions.delete(key)
+    return ended
+
+print(end_all_sessions(42), 'sessions ended;', 'still valid:', load_session(other) is not None)
+```
+
+Index entries for sessions that idled out stay until their own `ABSOLUTE` expiry, which is why they have one. To show a user their active sessions, read each `session:` key the index names and skip the ones that are gone.
+
+## Sessions are not cache entries
+
+A lost session is a forced logout, so sessions get a cache of their own, configured unlike the one for page fragments:
+
+- **A `size_limit` it never reaches.** Eviction removes the least recently stored entries, and a long-lived session is exactly that. Sessions are small (a few hundred bytes each), so even 1 GiB, the default, holds millions. Watch `volume()` if you store more per session.
+- **Never a `NullCache`.** A `NullCache` stores nothing, so nobody could log in. If the app's other caches can be switched off through [`Caches`](../user-guide/caches.qmd), register the session cache by name and leave it enabled.
+- **Not `durable=True`.** A dropped write there means a login that silently didn't happen. Let `set()` raise and show the user an error.
+- **Run `expire()` from a scheduled job**, [claimed by one worker](run-once.qmd), so ended sessions free their space. Expired sessions are already invisible to `get()`; this is housekeeping.
+- **One machine.** Every worker on the host shares the sessions. Behind a load balancer, use sticky sessions or wait for the [network server](../user-guide/roadmap.qmd).
+
+### Sharing a cache across web workers
+
+Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI, Flask, Django and Celery.
+
+Deployment is where a cache meets the real world: several worker processes that don't know each other's names, a server that forks and recycles them while they're busy, a cron job that opens the same directory on the side. diskcache-oxide is built for exactly this, so there isn't much to it. This page covers the few choices that matter and leaves out the ones that don't.
+
+## Pick a directory
+
+- **Somewhere persistent and private:** `/var/cache/<app>`, owned by the user the app runs as. diskcache-oxide creates the directory `0700` if it doesn't exist; if you create it yourself, keep it that way. Anyone who can write to a cache directory can change what your app reads from it.
+- **On a local disk.** The cache relies on SQLite's write-ahead log and shared memory, which don't work on network filesystems like NFS. diskcache-oxide checks this when it opens the cache and fails loudly instead of risking corruption.
+- **In Docker,** mount a volume for it if the cache should survive container restarts, and give every worker container on a host the same volume if they should share it.
+- **One directory per purpose.** Separate directories for page fragments, API responses, and coordination keys (job claims, rate limits) keep their size limits and eviction independent.
+
+## Open it once per process
+
+Open the cache once, at startup, and share it across requests and threads. A `Cache` is safe to use from any number of threads.
+
+### FastAPI
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from diskcache_oxide import Cache
+
+cache = Cache('/var/cache/my-app', timeout=1.0)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    cache.checkpoint()
+    cache.close()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+### Flask
+
+```python
+import atexit
+
+from flask import Flask
+
+from diskcache_oxide import Cache
+
+app = Flask(__name__)
+cache = Cache('/var/cache/my-app', timeout=1.0)
+
+@atexit.register
+def close_cache() -> None:
+    cache.checkpoint()
+    cache.close()
+```
+
+### Django
+
+diskcache-oxide isn't a Django cache backend (`DjangoCache` is a [non-goal](../user-guide/roadmap.qmd#non-goals)), so `django.core.cache` keeps whatever it has. Open the shared cache in a module of its own and import it where it's needed; the settings module says where it lives.
+
+```python
+# myapp/caching.py
+from django.conf import settings
+
+from diskcache_oxide import Cache
+
+cache = Cache(settings.SHARED_CACHE_DIR, timeout=1.0)
+```
+
+Register the [types](custom-types.qmd) you store in the same module, so every process that imports the cache gets them too.
+
+### Celery and other background workers
+
+Celery's prefork pool, RQ and `multiprocessing` workers are pre-forking servers like gunicorn: open the cache at import time, and each child gets its own connections on first use. Register your types the same way the web workers do, or a worker that reads a web worker's value gets `ForeignValueError`. Closing at shutdown is optional; Celery's `worker_process_shutdown` signal is the place for it.
+
+```python
+from celery.signals import worker_process_shutdown
+
+@worker_process_shutdown.connect
+def close_cache(**kwargs) -> None:
+    cache.close()
+```
+
+### Pre-forking servers
+
+With gunicorn (including `--preload`), uvicorn `--workers`, or Celery's prefork pool, it doesn't matter whether you open the cache before or after the fork. diskcache-oxide's fork barrier makes sure no worker starts life holding half a database transaction, and each child opens its own fresh connections on first use. See [Concurrency and forks](../user-guide/concurrency-and-forks.qmd).
+
+## Keep the request path fast
+
+Reads never wait for writers, so a `get` stays fast however busy the cache is. Writes are different: only one process can commit to a cache file at a time, and a write waits up to the cache's `timeout` for its turn (60 seconds by default, matching diskcache). In a web request you'd rather skip a cache write than make the user wait, so give the cache a short timeout and treat `Timeout` as "don't cache this time":
+
+```python
+from diskcache_oxide import Timeout
+
+def cache_quietly(key: str, value: object, expire: float) -> None:
+    try:
+        cache.set(key, value, expire=expire)
+    except Timeout:
+        log.warning('cache busy; skipped storing %s', key)
+```
+
+Under normal load a write takes about 25 µs and never comes near the timeout. The timeout matters during bursts, such as a big `clear()` from a maintenance script, and even then `clear()` steps aside between chunks to let waiting writes in.
+
+## Maintenance
+
+Run maintenance from one place, such as a scheduled job (see [Running a job once across workers](run-once.qmd)), not from every worker:
+
+- `cache.expire()` removes expired entries and frees their space. A cache that's mostly read can accumulate expired entries, because the cleanup each `set()` does is small. Once an hour is plenty for most apps.
+- `cache.checkpoint()` empties the write-ahead log after a write burst. It returns `False` instead of waiting long if workers are busy, so it's safe to call any time.
+
+## At shutdown
+
+Calling `checkpoint()` and `close()` at shutdown, as in the examples above, is optional but tidy. `checkpoint()` copies the write-ahead log into the database and truncates it, so a large log left by a burst of writes doesn't sit on disk. `close()` does the same automatically when the log is large, waiting at most a second. See [Storage and WAL](../user-guide/storage-and-wal.qmd).
+
+## Switching caching off
+
+To run with caching off (local development, or chasing a stale-data bug in production), build the cache in one factory function and return a `NullCache` when it's disabled. Nothing else in the app changes. Pass `invalidate=` so deletes still reach the real cache while it's off. See [NullCache](../user-guide/null-cache.qmd).
+
+```python
+from diskcache_oxide import Cache, CacheLike, NullCache
+
+def make_cache(settings) -> CacheLike:
+    real = Cache(settings.cache_dir, timeout=1.0)
+    return real if settings.cache_enabled else NullCache(invalidate=real)
+```
+
+### Using the cache from asyncio
+
+Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends until AsyncCache lands.
+
+An async framework makes one promise to every request it's serving: nothing blocks the loop. A synchronous cache call looks like a small risk to that promise, and whether it is depends entirely on which call. diskcache-oxide's API is synchronous. An `AsyncCache` is on the [roadmap](../user-guide/roadmap.qmd), but the sync cache already works well in an asyncio app, provided you know which calls can block the event loop and for how long. Here are the three rules.
+
+## Reads: call them inline
+
+A cached read costs a few microseconds (the [performance](../user-guide/performance.qmd) page has the measurements), less than the event loop spends scheduling a task. Reads never take the write lock and never wait for writers, so `cache.get()` on the loop is the right call, and `await asyncio.to_thread(cache.get, ...)` would cost more than the read it protects.
+
+The exception is a read of a large value that keeps losing to concurrent overwrites, which can wait up to the cache's `timeout` before raising `Timeout`. That's rare; `durable=True` turns it into a miss.
+
+## Writes: move them off the loop
+
+A write has to take the cache's write lock, and if another process holds it (a `clear()` in a maintenance script, a long transaction, a fork in flight) the write waits up to `timeout`. Under normal load that wait is nothing. In the worst case it's `timeout` seconds during which every request on that loop stops. Two ways to make sure that never happens:
+
+- **Run writes in a worker thread** with `asyncio.to_thread()`. The thread does the waiting; the loop keeps serving. The thread hop costs tens of microseconds, which is fine for a write.
+- **Or keep writes inline with a short `timeout` and `durable=True`.** Then the worst case is a dropped cache write logged once a minute, not a stalled loop.
+
+```python
+import asyncio
+import tempfile
+
+from diskcache_oxide import Cache
+
+cache = Cache(tempfile.mkdtemp(), timeout=1.0)
+
+async def load_user(user_id: int) -> dict:
+    await asyncio.sleep(0.001)                        # stands in for a database query
+    return {'id': user_id}
+
+async def handle_request(request_id: int) -> dict:
+    key = f'user:{request_id % 10}'
+    user = cache.get(key)                             # a read, on the event loop
+    if user is None:
+        user = await load_user(request_id % 10)
+        await asyncio.to_thread(cache.set, key, user, expire=300)   # a write, off the loop
+    return user
+
+results = await asyncio.gather(*(handle_request(i) for i in range(100)))
+print(f'{len(results)} requests served, {len(cache)} users cached')
+```
+
+Some of the 100 requests for one user miss together and each stores the same value; that's harmless, and the [stale-while-revalidate](stale-while-revalidate.qmd) recipe shows how to make only one of them do the work when it isn't.
+
+### Fire and forget
+
+When the response shouldn't wait for the write at all, schedule it as a task. Keep a reference to the task until it finishes, or the loop may drop it half done:
+
+```python
+background: set[asyncio.Task] = set()
+
+def cache_later(key: str, value: object, expire: float) -> None:
+    task = asyncio.create_task(asyncio.to_thread(cache.set, key, value, expire=expire))
+    background.add(task)
+    task.add_done_callback(background.discard)
+```
+
+## Transactions: one thread, no `await` inside
+
+A [transaction](../user-guide/transactions.qmd) belongs to the thread that opened it, and it holds the write lock for the length of the block. Never `await` inside one: the loop would run other requests on that thread while the lock is held, and one of them may try to write. Put the whole block in a function and run that function in a thread:
+
+```python
+def record_request(path: str, status: int) -> None:
+    with cache.transact() as tx:
+        tx.incr('requests:total')
+        tx.incr(f'requests:{path}')
+        tx.incr(f'requests:{path}:{status}')
+
+async def middleware(request, call_next):
+    response = await call_next(request)
+    await asyncio.to_thread(record_request, request.url.path, response.status_code)
+    return response
+```
+
+## In a FastAPI app
+
+Open the cache once, in the lifespan, and use it from any endpoint. Starlette's `run_in_threadpool` does the same job as `asyncio.to_thread()`; under Trio or AnyIO use `anyio.to_thread.run_sync()`.
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from starlette.concurrency import run_in_threadpool
+
+from diskcache_oxide import Cache
+
+cache = Cache('/var/cache/my-app', timeout=1.0)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    cache.close()
+
+app = FastAPI(lifespan=lifespan)
+
+@app.get('/episodes/{episode_id}')
+async def episode(episode_id: int) -> dict:
+    key = f'episode:{episode_id}'
+    if (cached := cache.get(key)) is not None:
+        return cached
+    data = await fetch_episode(episode_id)
+    await run_in_threadpool(cache.set, key, data, expire=600)
+    return data
+```
+
+See [Sharing a cache across web workers](web-workers.qmd) for where the directory goes and what to do at shutdown.
+
+### Testing code that uses a cache
+
+pytest fixtures for a real cache, a NullCache, and a fake clock for testing expiry.
+
+Code that uses a cache has a talent for passing its tests for the wrong reason: the second assertion was green because the first one left the answer behind, and the test that "covers" expiry sleeps for two seconds and hopes. Such code needs tests of two kinds: tests where caching shouldn't get in the way, and tests of the caching behavior itself (is the value cached, does it expire, is it invalidated). diskcache-oxide gives you a tool for each, and neither involves sleeping.
+
+## A real cache per test
+
+A `Cache` in pytest's `tmp_path` is fast and isolated: each test gets its own empty cache, and it's thrown away afterwards.
+
+```python
+import pytest
+
+from diskcache_oxide import Cache
+
+@pytest.fixture
+def cache(tmp_path):
+    with Cache(tmp_path / 'cache') as cache:
+        yield cache
+```
+
+## No caching at all: `NullCache`
+
+For tests that exercise your app rather than its caching, a cached value from an earlier test can hide a bug. Swap in a `NullCache`: every read misses and every write succeeds, so every call goes to the real code path. It has the same methods and signatures as `Cache`, so nothing else changes.
+
+```python
+from diskcache_oxide import NullCache
+
+@pytest.fixture
+def app_cache(monkeypatch):
+    null = NullCache()
+    monkeypatch.setattr('my_app.services.cache', null)
+    return null
+```
+
+## Testing expiry without sleeping
+
+diskcache-oxide reads the clock natively in Rust, so patching `time.time` doesn't affect it on its own. Pass `clock=` instead. A small fake clock lets a test jump forward in time:
+
+```python
+import tempfile
+
+from diskcache_oxide import Cache
+
+class FakeClock:
+    def __init__(self, now: float = 1_000_000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+clock = FakeClock()
+cache = Cache(tempfile.mkdtemp(), clock=clock)
+
+cache.set('session:abc', {'user': 42}, expire=30)
+clock.advance(29)
+print('after 29 s:', cache.get('session:abc'))
+clock.advance(2)
+print('after 31 s:', cache.get('session:abc'))
+```
+
+As a fixture:
+
+```python
+@pytest.fixture
+def clock():
+    return FakeClock()
+
+@pytest.fixture
+def cache(tmp_path, clock):
+    with Cache(tmp_path / 'cache', clock=clock) as cache:
+        yield cache
+
+def test_sessions_expire(cache, clock):
+    cache.set('session:abc', {'user': 42}, expire=30)
+    clock.advance(31)
+    assert cache.get('session:abc') is None
+```
+
+If your tests already patch `time.time` (with `unittest.mock`, freezegun or time-machine) and you want the cache to follow along, pass `clock=lambda: time.time()`. The lambda looks up `time.time` on every call, so it sees the patched version.
+
+## Testing code that runs in several processes
+
+Code that relies on the cache being shared, like a job claim or a rate limit, can be tested for real: start processes with `multiprocessing` and point them at the same `tmp_path` directory. diskcache-oxide is safe with every start method, including fork.
+
+```python
+import multiprocessing
+
+def claim(directory: str) -> bool:
+    with Cache(directory) as cache:
+        return cache.add('job:nightly', 'claimed', expire=60)
+
+def test_only_one_worker_claims_the_job(tmp_path):
+    with multiprocessing.Pool(8) as pool:
+        results = pool.map(claim, [str(tmp_path)] * 8)
+    assert results.count(True) == 1
+```

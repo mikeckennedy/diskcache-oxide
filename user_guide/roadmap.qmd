@@ -1,5 +1,6 @@
 ---
 title: "Vision and roadmap"
+description: "The vision in three stages, what exists today, what's next, and the non-goals."
 ---
 
 ## The vision

@@ -1,5 +1,6 @@
 ---
 title: "Caches: named caches"
+description: "A registry of named caches under one base directory: each opens on first use, a NullCache stands in while one can't open, any can be switched off by name, and an admin page gets counts and sizes."
 ---
 
 Every app with two caches eventually grows a file called something like `cache_service.py`. It maps names to directories, opens each cache once and hands out the same object afterwards, carries on with caching switched off when a directory can't be opened, lets you turn one off for a load test, and feeds counts and sizes to an admin page. It's the same file in every app, written slightly differently each time. `Caches` is that file, so you don't have to write it again.

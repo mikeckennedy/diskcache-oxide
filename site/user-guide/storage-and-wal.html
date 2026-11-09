@@ -7,6 +7,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
+<meta name="description" content="What’s in the cache directory, how memory and disk stay bounded, and the write-ahead log and checkpoint().">
 
 <title>Storage and WAL – diskcache-oxide | diskcache-oxide</title>
 <style>
@@ -447,16 +448,15 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="Nobody restarts a cache. It sits inside a worker process for weeks, and whatever it does to memory and disk, it does slowly and out of sight, until an...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Storage and WAL – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="Nobody restarts a cache. It sits inside a worker process for weeks, and whatever it does to memory and disk, it does slowly and out of sight, until an...">
+  <meta property="og:description" content="What’s in the cache directory, how memory and disk stay bounded, and the write-ahead log and checkpoint().">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Storage and WAL – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="Nobody restarts a cache. It sits inside a worker process for weeks, and whatever it does to memory and disk, it does slowly and out of sight, until an...">
+  <meta name="twitter:description" content="What’s in the cache directory, how memory and disk stay bounded, and the write-ahead log and checkpoint().">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -669,6 +669,11 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1 class="title d-none d-lg-block">Storage and WAL</h1>
 </div>
 
+<div>
+  <div class="description">
+    What’s in the cache directory, how memory and disk stay bounded, and the write-ahead log and checkpoint().
+  </div>
+</div>
 
 
 <div class="quarto-title-meta">

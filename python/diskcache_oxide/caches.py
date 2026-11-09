@@ -197,6 +197,7 @@ class Caches[N: str = str]:
         self._failed: dict[N, tuple[float, NullCache]] = {}
 
     def __repr__(self) -> str:
+        """Shows the base directory and the registered names."""
         return f'Caches({self._base_dir!r}, {list(self._specs)!r})'
 
     # -- registration ----------------------------------------------------------------------------
@@ -262,6 +263,7 @@ class Caches[N: str = str]:
             self._fanout.add(name)
 
     def __contains__(self, name: object) -> bool:
+        """Whether `name` is registered."""
         return name in self._specs
 
     def __iter__(self) -> Iterator[N]:
@@ -269,6 +271,7 @@ class Caches[N: str = str]:
         return iter(self._specs)
 
     def __len__(self) -> int:
+        """How many caches are registered."""
         return len(self._specs)
 
     def directory(self, name: N) -> str:
@@ -526,6 +529,7 @@ class Caches[N: str = str]:
                 log.exception('could not close cache at %s', cache.directory)
 
     def __enter__(self) -> Self:
+        """Return the registry, for `with Caches(...) as caches:`."""
         return self
 
     def __exit__(
@@ -535,4 +539,5 @@ class Caches[N: str = str]:
         tb: TracebackType | None,
         /,
     ) -> None:
+        """Close every opened cache, as `close_all()` does."""
         self.close_all()

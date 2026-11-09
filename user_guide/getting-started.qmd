@@ -1,5 +1,6 @@
 ---
 title: "Getting started"
+description: "Install diskcache-oxide, open a cache, store and read values, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown."
 ---
 
 A `Cache` is a directory. That's the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn't restart. Hold on to that sentence; most of what follows is a consequence of it. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.

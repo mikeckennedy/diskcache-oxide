@@ -398,6 +398,18 @@ TAG_SHAPED = [
 
 
 @pytest.mark.parametrize('serializer', SERIALIZERS)
+@pytest.mark.parametrize('n', [16, 2**16], ids=['map16', 'map32'])
+def test_a_big_tag_shaped_dict_round_trips(serializer: str, n: int) -> None:
+    """Big enough that msgpack writes the $esc body with a map16 or map32 header."""
+    value = {f'${i}': i for i in range(n)}
+    mode, payload = _encode(value, serializer)
+    assert isinstance(payload, bytes)
+    if serializer == 'msgpack':
+        assert payload[:7] == b'\x81\xa4$esc' + (b'\xde' if n < 2**16 else b'\xdf')
+    assert _decode(mode, payload) == value
+
+
+@pytest.mark.parametrize('serializer', SERIALIZERS)
 @pytest.mark.parametrize('value', TAG_SHAPED, ids=repr)
 def test_tag_shaped_user_data_round_trips(serializer: str, value: Any) -> None:
     assert exact_equal(roundtrip(value, serializer), value)
@@ -463,7 +475,14 @@ GARBAGE = [
     b'{"$date":"yesterday"}',
     b'{"$datetime":"2026-01-01T00:00:00[No/Such_Zone]"}',
     b'{"$dict":[[1]]}',
+    b'{"$dict":[1]}',  # a pair that isn't an array
+    b'{"$dict":[[1,2,3]]}',  # a pair with three items
     b'{"$esc":[1]}',
+    b'\x81\xa6$tuple\x01',  # msgpack $tuple whose payload isn't an array
+    b'\x81\xa4$esc\x01',  # msgpack $esc whose payload isn't a map
+    b'\xd4\xff\x00',  # a timestamp extension of 1 byte (only 4, 8 and 12 exist)
+    # timestamp96 a day before 0001-01-01: inside i32 years, outside datetime's range.
+    b'\xc7\x0c\xff' + bytes(4) + (-62135596800 - 86400).to_bytes(8, 'big', signed=True),
     b'\x81\xa6$bytes\xa0',  # JSON-only tag in msgpack
     b'\x81\xa5$date\xa9yesterday',
     b'\x81\xa8$decimal\xa31.x',

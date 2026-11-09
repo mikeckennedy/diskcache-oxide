@@ -1,5 +1,6 @@
 ---
 title: "NullCache"
+description: "Caching switched off without changing call sites: NullCache, the CacheLike protocol, and keeping invalidations flowing while it's off."
 ---
 
 Sooner or later you need to turn caching off. In tests, so each one starts clean. In local development, so you see your change instead of yesterday's. In production, at the worst possible moment, while you chase a bug that might be a stale entry and might not. Without help, that means `if cache is not None:` around every call, or a hand-written fake that drifts a little further from the real API with every release.

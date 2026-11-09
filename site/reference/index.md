@@ -457,16 +457,19 @@ Methods for the Caches class
 
 
 [Caches.__repr__()](Caches.__repr__.md#diskcache_oxide.Caches.__repr__)  
+Shows the base directory and the registered names.
 
 [Caches.register()](Caches.register.md#diskcache_oxide.Caches.register)  
 Register a cache. Nothing opens until its first lookup.
 
 [Caches.__contains__()](Caches.__contains__.md#diskcache_oxide.Caches.__contains__)  
+Whether `name` is registered.
 
 [Caches.__iter__()](Caches.__iter__.md#diskcache_oxide.Caches.__iter__)  
 The registered names, in registration order.
 
 [Caches.__len__()](Caches.__len__.md#diskcache_oxide.Caches.__len__)  
+How many caches are registered.
 
 [Caches.directory()](Caches.directory.md#diskcache_oxide.Caches.directory)  
 Where the named cache lives.
@@ -499,8 +502,10 @@ Remove expired entries from every cache. Returns how many each removed, or None 
 Close every opened cache and forget it; a later lookup opens it again.
 
 [Caches.__enter__()](Caches.__enter__.md#diskcache_oxide.Caches.__enter__)  
+Return the registry, for `with Caches(...) as caches:`.
 
 [Caches.__exit__()](Caches.__exit__.md#diskcache_oxide.Caches.__exit__)  
+Close every opened cache, as `close_all()` does.
 
 
 ## Errors

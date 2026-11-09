@@ -1,5 +1,6 @@
 ---
 title: "Errors and what to do about them"
+description: "Every exception diskcache-oxide raises, what it means, and what to do about it."
 ---
 
 Sooner or later a traceback ends in `diskcache_oxide`, and the question is whether it's your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that `except` clauses you already have keep working: `Timeout` is a `TimeoutError`, `TransactionAborted` is a `RuntimeError`, `UnsafeValueError` is a `TypeError`, `LayoutMismatchError` is a `ValueError`. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you'll get.
