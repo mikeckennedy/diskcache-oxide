@@ -733,13 +733,14 @@ mod tests {
         // oxide code involved), so a write there can lose its file after the create: the data
         // write or the rename then fails with ENOENT or EINVAL. No retry in user space can prevent
         // that, so this test tolerates exactly that shape on macOS, a few times in 2,400 writes
-        // (about 2% of runs see one). Linux serializes the two, and stays strict.
+        // (about 2% of runs see one; an 18-core Mac Studio lost 4 in one run of about 60, on
+        // 2026-11-09). Linux serializes the two, and stays strict.
         let kernel_race = |(_, error): &Failure| {
             cfg!(target_os = "macos") && matches!(error, Error::Io { source, .. } if directory_vanished(source))
         };
         let (tolerated, real): (Vec<Failure>, Vec<Failure>) = failures.into_iter().partition(kernel_race);
         assert!(real.is_empty(), "{real:?}");
-        assert!(tolerated.len() <= 3, "more than a few files lost to the macOS rmdir race: {tolerated:?}");
+        assert!(tolerated.len() <= 8, "more than a few files lost to the macOS rmdir race: {tolerated:?}");
         sweep(root, far(), Duration::ZERO, 0);
         assert_eq!(value_dirs(root), Vec::<String>::new());
     }

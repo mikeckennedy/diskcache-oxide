@@ -231,7 +231,8 @@ impl Store {
                     if crate::ops::volume_in(conn, size, timeout)? < size_limit {
                         return Ok(Changed::removing((false, 0), []));
                     }
-                    let batch = writer.delete_oldest(CHUNK)?;
+                    // Its size isn't needed: the next pass reads `totals` again.
+                    let batch = writer.delete_oldest(CHUNK)?.rows;
                     Ok(Changed::removing((true, count(batch.len())), batch))
                 })
                 .map_err(|error| Interrupted { removed, error })?;

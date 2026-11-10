@@ -1,8 +1,10 @@
 """Size-limit culling and the least-recently-stored eviction policy.
 
-Sizes are relative to `empty_volume`, never absolute (D-006). Values are big enough to spill to
-their own files, so each one adds roughly its own length to `volume()`, but the assertions are
-properties (survivors, order, bounds), never exact byte counts.
+Sizes are relative to `empty_volume`, never absolute (D-006). Every test runs at two value sizes,
+one on each side of oxide's 64 KiB spill threshold: an inline value is counted by the database's
+pages and a spilled one by its file's length, and eviction has to hold for both. (Both sizes spill
+on diskcache, whose threshold is 32 KiB.) Each value adds roughly its own length to `volume()`, but
+the assertions are properties (survivors, order, bounds), never exact byte counts.
 
 The cache room is ROOM bytes above the empty volume. That is just over 1 MiB on purpose: oxide's
 MIN_SIZE_LIMIT is 1 MiB (D-005), so a smaller limit would be refused there instead of exercised.
@@ -10,6 +12,7 @@ MIN_SIZE_LIMIT is 1 MiB (D-005), so a smaller limit would be refused there inste
 The clock is advanced before every `set` so store times are distinct and eviction order is defined.
 """
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -22,7 +25,7 @@ from tests.conformance.conftest import FakeClock
 MIN_SIZE_LIMIT = 1_048_576
 VALUE_SIZE = 60_000
 SLOTS = 20
-ROOM = SLOTS * VALUE_SIZE  # 1.2 MB, above oxide's 1 MiB minimum
+ROOM = SLOTS * VALUE_SIZE  # 1.2 or 1.4 MB, above oxide's 1 MiB minimum
 DEFAULT_CULL_LIMIT = 10
 
 
@@ -30,8 +33,16 @@ def key(i: int) -> str:
     return f'k{i:03d}'
 
 
-def value(i: int, size: int = VALUE_SIZE) -> bytes:
-    return bytes([i % 256]) * size
+@pytest.fixture(autouse=True, params=[60_000, 70_000], ids=['60k', '70k'])
+def _value_size(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runs each test under and over oxide's 65,536-byte spill threshold."""
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, 'VALUE_SIZE', request.param)
+    monkeypatch.setattr(module, 'ROOM', SLOTS * request.param)
+
+
+def value(i: int, size: int | None = None) -> bytes:
+    return bytes([i % 256]) * (VALUE_SIZE if size is None else size)
 
 
 def fill(cache: Any, clock: FakeClock, start: int, stop: int, **kwargs: Any) -> None:
@@ -202,6 +213,69 @@ def test_set_sweeps_expired_entries_without_size_pressure(
     fake_clock.advance(1)
     cache.set('newer', 1)
     assert sorted(cache) == ['new', 'newer']
+
+
+def _clear(cache: Any, clock: FakeClock, count: int) -> None:
+    assert cache.clear() == count
+
+
+def _expire(cache: Any, clock: FakeClock, count: int) -> None:
+    clock.advance(2_000)
+    assert cache.expire() == count
+
+
+def _sweep(cache: Any, clock: FakeClock, count: int) -> None:
+    # No size pressure: each set still removes up to cull_limit expired entries.
+    clock.advance(2_000)
+    for i in range(count):
+        clock.advance(1)
+        cache.set(f'small{i}', i)
+    assert sorted(cache) == sorted(f'small{i}' for i in range(count))
+    for i in range(count):
+        assert cache.delete(f'small{i}')
+
+
+def _delete(cache: Any, clock: FakeClock, count: int) -> None:
+    for i in range(count):
+        assert cache.delete(key(i))
+
+
+def _pop(cache: Any, clock: FakeClock, count: int) -> None:
+    for i in range(count):
+        assert cache.pop(key(i)) == value(i)
+
+
+def _overwrite_small(cache: Any, clock: FakeClock, count: int) -> None:
+    for i in range(count):
+        clock.advance(1)
+        cache.set(key(i), i)
+    assert cache.clear() == count
+
+
+BULK_REMOVALS = {
+    'clear': _clear,
+    'expire': _expire,
+    'sweep': _sweep,
+    'delete': _delete,
+    'pop': _pop,
+    'overwrite-small': _overwrite_small,
+}
+
+
+@pytest.mark.parametrize('removal', BULK_REMOVALS)
+def test_volume_comes_back_when_values_are_removed(
+    make_cache: Callable[..., Any], cache_dir: Path, empty_volume: int, fake_clock: FakeClock, removal: str
+) -> None:
+    # Whatever removes a value has to give its bytes back, or volume() only ever grows and a
+    # size-limited cache ends up evicting on every set.
+    count = 12
+    cache = make_cache(cache_dir)
+    fill(cache, fake_clock, 0, count, expire=1_000)
+    assert cache.volume() >= empty_volume + count * VALUE_SIZE // 2, 'the values are counted'
+    BULK_REMOVALS[removal](cache, fake_clock, count)
+    assert len(cache) == 0
+    # Emptied database pages stay allocated until they are reused, which is all that may be left.
+    assert cache.volume() < empty_volume + count * VALUE_SIZE // 2, f'{removal} gave nothing back'
 
 
 @pytest.mark.diverges(
