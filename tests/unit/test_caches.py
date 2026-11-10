@@ -24,6 +24,7 @@ from diskcache_oxide import (
     FormatMismatchError,
     LayoutMismatchError,
     NullCache,
+    Timeout,
 )
 from diskcache_oxide import caches as caches_module
 from diskcache_oxide._core import _open_fanout_keeping_stored
@@ -248,6 +249,54 @@ def test_a_cache_that_cant_open_is_a_null_cache_and_is_retried(base: Path) -> No
     healed = caches['a']
     assert isinstance(healed, Cache), 'tried again after retry_open_after, and recovered'
     assert caches['a'] is healed
+    caches.close_all()
+
+
+def test_a_busy_open_is_a_null_cache_retried_within_a_second(
+    base: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Workers that start together can find the cache busy. That isn't an outage: it's a warning,
+    # and the next try comes after a second, not after retry_open_after.
+    clock = Clock()
+    caches = Caches(base, retry_open_after=10.0, _monotonic=clock)
+    caches.register('a')
+    attempts: list[Path] = []
+
+    def busy_once(path: Path, **settings: Any) -> Cache:
+        attempts.append(path)
+        if len(attempts) == 1:
+            raise Timeout('timed out after 60 s waiting for a lock or a pending fork')
+        return Cache(path, **settings)
+
+    monkeypatch.setattr(caches_module, 'Cache', busy_once)
+    with caplog.at_level(logging.WARNING, logger='diskcache_oxide'):
+        first = caches['a']
+    assert isinstance(first, NullCache)
+    [record] = [r for r in caplog.records if r.name == 'diskcache_oxide']
+    assert record.levelno == logging.WARNING, 'busy is a warning, not an error'
+    assert 'is busy' in record.getMessage() and 'retrying in 1 s' in record.getMessage()
+
+    clock.now += 0.9
+    assert caches['a'] is first
+    assert len(attempts) == 1, 'no second attempt inside the second'
+    clock.now += 0.2
+    healed = caches['a']
+    assert isinstance(healed, Cache), 'tried again after one second, not ten'
+    assert len(attempts) == 2
+    caches.close_all()
+
+
+def test_close_all_forgets_a_failed_open(base: Path) -> None:
+    clock = Clock()
+    caches = Caches(base, on_open_error=lambda name, exc: None, retry_open_after=10.0, _monotonic=clock)
+    caches.register('a')
+    base.mkdir()
+    (base / 'a').write_text('a file where the directory should be')
+    assert isinstance(caches['a'], NullCache)
+
+    (base / 'a').unlink()
+    caches.close_all()
+    assert isinstance(caches['a'], Cache), 'close_all forgot the failure: no wait for retry_open_after'
     caches.close_all()
 
 

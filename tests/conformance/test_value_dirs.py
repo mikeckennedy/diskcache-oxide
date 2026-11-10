@@ -163,6 +163,21 @@ def test_value_files_live_one_level_deep(make_cache: Callable[..., Any], cache_d
         assert int(relative.parts[0], 16) >= 0
 
 
+def test_a_refused_add_of_a_large_value_leaves_no_file(
+    make_cache: Callable[..., Any], cache_dir: Path, backend: Backend
+) -> None:
+    # The value is written to its file before the row is checked, so a refused add has a file to
+    # take back: left behind, a claim that loses its race (add is how jobs are claimed) leaks one.
+    cache = make_cache(cache_dir)
+    fill(cache, backend)
+    before = backend.spill_files(cache_dir)
+    assert len(before) == KEYS
+    for i in range(KEYS):
+        assert not cache.add(f'k{i}', big(backend, 200 + i))
+    assert backend.spill_files(cache_dir) == before
+    cache.close()
+
+
 @pytest.mark.backend_only('oxide')
 @pytest.mark.covers('D-042')
 def test_a_rolled_back_transaction_leaves_no_value_file(
