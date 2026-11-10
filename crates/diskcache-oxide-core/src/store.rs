@@ -1538,6 +1538,14 @@ impl<'c> WriteTx<'c> {
 
     fn commit(mut self) -> Result<()> {
         self.open = false;
+        #[cfg(test)]
+        let result = if FAIL_NEXT_COMMITS_BUSY.with(|left| left.replace(left.get().saturating_sub(1))) > 0 {
+            // What a busy COMMIT leaves: nothing committed, and the transaction still open.
+            Err(Error::Timeout { seconds: self.timeout.as_secs_f64() })
+        } else {
+            run_cached(self.conn, "COMMIT", self.timeout)
+        };
+        #[cfg(not(test))]
         let result = run_cached(self.conn, "COMMIT", self.timeout);
         if result.is_err() {
             // A failed COMMIT (e.g. busy) leaves the transaction open: end it before the retry.
@@ -1920,6 +1928,10 @@ thread_local! {
     /// Tests only: the next [`run_end`] on this thread fails busy without running, as a `COMMIT` does
     /// when SQLite reports `SQLITE_BUSY` (the only way to get one on demand).
     static FAIL_NEXT_END_BUSY: Cell<bool> = const { Cell::new(false) };
+
+    /// Tests only: this many of the next [`WriteTx::commit`]s on this thread fail busy without running
+    /// the `COMMIT`, so the transaction is really open and the `ROLLBACK` before the retry really runs.
+    pub(crate) static FAIL_NEXT_COMMITS_BUSY: Cell<u32> = const { Cell::new(0) };
 }
 
 /// What `Store::open_store`'s open sequence ends with: a live store it joined, or what a new or

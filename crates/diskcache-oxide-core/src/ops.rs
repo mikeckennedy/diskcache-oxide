@@ -1649,6 +1649,110 @@ mod tests {
         assert_eq!(s.volume(T).unwrap(), volume, "and totals.size with them");
     }
 
+    /// Makes the next `n` commits on this thread fail busy; returns how many were left unconsumed.
+    fn commits_fail_busy(n: u32, write: impl FnOnce()) -> u32 {
+        crate::store::FAIL_NEXT_COMMITS_BUSY.with(|left| left.set(n));
+        write();
+        crate::store::FAIL_NEXT_COMMITS_BUSY.with(|left| left.replace(0))
+    }
+
+    /// `totals` agrees with the rows it counts.
+    fn assert_totals_exact(s: &Store, what: &str) {
+        let (totals, rows): ((i64, i64), (i64, i64)) = s
+            .read(T, |c| {
+                let totals =
+                    c.query_row("SELECT count, size FROM totals WHERE only = 1", [], |r| Ok((r.get(0)?, r.get(1)?)));
+                let rows = c.query_row("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM cache", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                });
+                totals.and_then(|t| rows.map(|r| (t, r))).map_err(|e| Error::from_sqlite(e, T))
+            })
+            .unwrap();
+        assert_eq!(totals, rows, "{what}: totals (count, size) must match the rows");
+    }
+
+    #[test]
+    fn a_write_whose_commit_comes_back_busy_is_retried_from_the_start() {
+        let tmp = TempDir::new("ops-commit-busy");
+        let s = store(tmp.path(), Requested::default());
+        let runs = std::cell::Cell::new(0);
+        let left = commits_fail_busy(1, || {
+            s.write(T, |_, _| {
+                runs.set(runs.get() + 1);
+                Ok(())
+            })
+            .unwrap();
+        });
+        assert_eq!((left, runs.get()), (0, 2), "the busy COMMIT was rolled back and the closure ran again");
+
+        // The full write path: an incr of a missing key, with its prelude, totals and cull.
+        let left = commits_fail_busy(2, || {
+            assert_eq!(s.incr(T, "n", Number::Int(7), Some(Number::Int(0)), NOW).unwrap(), Number::Int(7));
+        });
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "n", NOW).unwrap().0, b"7", "the rolled-back attempts left no trace");
+        assert_totals_exact(&s, "incr of a missing key");
+
+        // The in-place path: moved by exactly one delta.
+        let left = commits_fail_busy(1, || {
+            assert_eq!(s.incr(T, "n", Number::Int(3), None, NOW).unwrap(), Number::Int(10));
+        });
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "n", NOW).unwrap().0, b"10");
+
+        let left = commits_fail_busy(1, || assert!(s.set(T, "k", text("v"), None, NOW).unwrap()));
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "k", NOW).unwrap().0, b"v");
+        assert_totals_exact(&s, "inline set");
+    }
+
+    #[test]
+    fn a_spilled_write_whose_commit_comes_back_busy_keeps_exactly_its_own_file() {
+        // The retry renames the value file again (commit_name's retried arm) and settles it once.
+        let tmp = TempDir::new("ops-commit-busy-spill");
+        let s = store(tmp.path(), Requested::default());
+        let (first, second) = (vec![1u8; 70_000], vec![2u8; 80_000]);
+        let left = commits_fail_busy(1, || {
+            assert!(s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &first }, None, NOW).unwrap());
+        });
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "k", NOW).unwrap().0, first);
+        assert_eq!(value_files(tmp.path()).len(), 1, "one value file, not one per attempt");
+        assert_totals_exact(&s, "spilled set");
+
+        // An overwrite: the old file goes only once the retried write commits.
+        let left = commits_fail_busy(2, || {
+            assert!(s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &second }, None, NOW).unwrap());
+        });
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "k", NOW).unwrap().0, second);
+        assert_eq!(value_files(tmp.path()).len(), 1, "the replaced file is gone and the new one kept");
+        assert_totals_exact(&s, "spilled overwrite");
+
+        // An add takes the same path: settle_with keeps the file only because the retry stored it.
+        let left = commits_fail_busy(1, || {
+            assert!(s.add(T, "a", Value::Bytes { mode: MODE_BYTES, data: &first }, None, NOW).unwrap());
+        });
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "a", NOW).unwrap().0, first);
+        assert_eq!(value_files(tmp.path()).len(), 2);
+        assert_totals_exact(&s, "spilled add");
+    }
+
+    #[test]
+    fn a_write_whose_commit_stays_busy_times_out_and_leaves_nothing() {
+        let tmp = TempDir::new("ops-commit-busy-timeout");
+        let s = store(tmp.path(), Requested::default());
+        let blob = vec![3u8; 70_000];
+        crate::store::FAIL_NEXT_COMMITS_BUSY.with(|left| left.set(u32::MAX));
+        let result = s.set(Duration::from_millis(50), "k", Value::Bytes { mode: MODE_BYTES, data: &blob }, None, NOW);
+        crate::store::FAIL_NEXT_COMMITS_BUSY.with(|left| left.set(0));
+        assert!(matches!(result, Err(Error::Timeout { seconds }) if (seconds - 0.05).abs() < 1e-9), "{result:?}");
+        assert!(get(&s, "k", NOW).is_none());
+        assert!(value_files(tmp.path()).is_empty(), "the pending value file is discarded");
+        assert_totals_exact(&s, "timed-out set");
+    }
+
     /// Every value file under `dir`.
     fn value_files(dir: &Path) -> std::collections::BTreeSet<std::path::PathBuf> {
         let mut found = std::collections::BTreeSet::new();
