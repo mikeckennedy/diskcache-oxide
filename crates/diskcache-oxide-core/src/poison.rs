@@ -58,6 +58,15 @@ pub(crate) fn poison_live_holds() {
     REGISTRY.poison_live_holds();
 }
 
+/// Tests only: makes `id` unwritable, as in a child forked inside a hold on it, until the returned
+/// guard is dropped (a later test's database may reuse the inode).
+#[cfg(test)]
+pub(crate) fn poison_for_test(id: FileId) -> HoldGuard<'static> {
+    let slot = REGISTRY.poisoned.insert(id);
+    REGISTRY.any_poisoned.store(true, Ordering::Release);
+    HoldGuard { slot }
+}
+
 /// A live hold, see [`begin_hold`]. It may be dropped on any thread.
 #[derive(Debug)]
 #[must_use = "the hold is unregistered as soon as the guard is dropped"]

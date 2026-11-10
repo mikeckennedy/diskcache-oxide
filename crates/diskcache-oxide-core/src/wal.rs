@@ -386,6 +386,13 @@ mod tests {
     }
 
     #[test]
+    fn a_wal_exactly_at_its_limit_is_within_it() {
+        // Two fresh states, so each call is a first write and looks.
+        assert_eq!(WalState::new().after_commit(100, || 100), Decision::Nothing);
+        assert_eq!(WalState::new().after_commit(100, || 101), Decision::Checkpoint);
+    }
+
+    #[test]
     fn over_the_limit_checkpoints_and_a_busy_one_backs_off() {
         let state = WalState::new();
         assert_eq!(state.after_commit(100, || 200), Decision::Checkpoint);

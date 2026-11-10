@@ -1649,6 +1649,61 @@ mod tests {
         assert_eq!(s.volume(T).unwrap(), volume, "and totals.size with them");
     }
 
+    #[test]
+    fn the_write_time_sweep_removes_rows_expired_before_now_not_at_now() {
+        // As in diskcache: a row expiring exactly now is a miss, but only a later sweep removes it.
+        let tmp = TempDir::new("ops-sweep-boundary");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "earlier", text("v"), Some(1.0), NOW - 2.0).unwrap(); // expires at NOW - 1
+        s.set(T, "exactly", text("v"), Some(1.0), NOW - 1.0).unwrap(); // expires at NOW
+        s.set(T, "new", text("v"), None, NOW).unwrap();
+        assert_eq!(keys(&s), ["exactly", "new"]);
+        assert!(get(&s, "exactly", NOW).is_none(), "but it reads as a miss");
+        s.set(T, "later", text("v"), None, NOW + 0.5).unwrap();
+        assert_eq!(keys(&s), ["new", "later"]);
+    }
+
+    #[test]
+    fn deleting_a_version_from_inside_a_decode_is_skipped() {
+        // A decode runs inside the read, at gate depth 1: the delete must not try, lock or no lock.
+        let tmp = TempDir::new("ops-delete-in-decode");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "k", text("v"), None, NOW).unwrap();
+        let v = version(&s, "k").unwrap();
+        let inside = s.get_with(T, "k", NOW, |_| false, |_, _| Ok(s.delete_version_nowait(v))).unwrap().unwrap();
+        assert!(matches!(inside.value, VersionDelete::Skipped));
+        assert_eq!(get(&s, "k", NOW).unwrap().0, b"v", "the row is still there");
+        assert!(matches!(delete_nowait(&s, v), VersionDelete::Removed), "and goes from outside");
+    }
+
+    #[test]
+    fn a_reader_that_keeps_losing_to_overwrites_in_an_unwritable_child_misses() {
+        // D-020: in a child forked inside a transaction on this file the locked fallback can't take
+        // the write lock, so after its optimistic reads it reports a miss instead.
+        let tmp = TempDir::new("ops-d016-poisoned");
+        let s = store(tmp.path(), Requested::default());
+        set_big(&s, MODE_BYTES, 0);
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0_u8));
+        let poisoned = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let (counted, poison) = (calls.clone(), poisoned.clone());
+        let optimistic = Hook::install(&BEFORE_OPTIMISTIC_READ, move |s| {
+            counted.set(counted.get() + 1);
+            set_big(s, MODE_BYTES, counted.get());
+            if usize::from(counted.get()) == spill::OPTIMISTIC_ATTEMPTS {
+                *poison.borrow_mut() = Some(s.poison_for_test());
+            }
+        });
+        let fallback = Hook::install(&BEFORE_FALLBACK, |_| panic!("an unwritable child must not take the lock"));
+        let got = get(&s, "k", NOW);
+        drop((optimistic, fallback));
+        assert_eq!(usize::from(calls.get()), spill::OPTIMISTIC_ATTEMPTS, "every optimistic read lost");
+        assert!(got.is_none(), "a miss, not a read under the lock");
+        assert!(matches!(s.check_writable(), Err(Error::Unwritable)));
+        drop(poisoned.borrow_mut().take());
+        let last = u8::try_from(spill::OPTIMISTIC_ATTEMPTS).unwrap();
+        assert_eq!(get(&s, "k", NOW).unwrap().0, vec![last; spill::THRESHOLD], "writable again, it reads");
+    }
+
     /// Makes the next `n` commits on this thread fail busy; returns how many were left unconsumed.
     fn commits_fail_busy(n: u32, write: impl FnOnce()) -> u32 {
         crate::store::FAIL_NEXT_COMMITS_BUSY.with(|left| left.set(n));

@@ -1299,6 +1299,13 @@ impl Store {
         crate::poison::check_writable(self.file_id)
     }
 
+    /// Tests only: makes this store's database unwritable here, as in a child forked inside a
+    /// transaction on it, until the guard is dropped.
+    #[cfg(test)]
+    pub(crate) fn poison_for_test(&self) -> crate::poison::HoldGuard<'static> {
+        crate::poison::poison_for_test(self.file_id)
+    }
+
     /// Runs `write` in a write transaction only if that needs no waiting at all: the write lock is
     /// free, no fork is pending, and SQLite's lock is free too (no busy wait). Returns `None` if it
     /// didn't run, or ran into a lock. For opportunistic cleanup that must never block a read (D-013).
