@@ -789,8 +789,67 @@ def registry_after_fork(directory: Path) -> list[str]:
     return failures
 
 
+def d020_wal(directory: Path) -> list[str]:
+    """Fork inside a held transaction whose writes have already reached the WAL (D-020).
+
+    The parent writes several times its connection's page cache inside the hold, so SQLite has
+    spilled most of the transaction's pages to the WAL before the fork. The child inherits that
+    connection and leaves the transaction; it must only forget the connection, never close it: a
+    close would roll the transaction back through the shared WAL index, under the parent. The
+    parent then reads every value back inside the hold (from the WAL, since they no longer fit in
+    its page cache), again after its commit, and a fresh process reads them once more.
+    """
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    wal = directory / 'diskcache-oxide.sqlite-wal'
+    values = {f'k{i:03d}': bytes([i % 251]) * 40_000 for i in range(200)}  # 8 MB inline: 8 page caches.
+    hold = cache.transact()
+    hold.__enter__()
+    for key, value in values.items():
+        cache.set(key, value)
+    spilled = wal.stat().st_size
+
+    def child() -> None:
+        fails_fast('leaving the inherited transaction', lambda: hold.__exit__(None, None, None))
+        assert cache.get('before') == 'parent', 'a read after leaving the transaction'
+        assert cache.get('k000') is None, "the parent's uncommitted write is visible"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        pid = fork(child)
+    code = wait(pid)
+
+    failures = []
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if spilled < 4 * 2**20:
+        failures.append(f'only {spilled} bytes were in the WAL before the fork, so this proves nothing')
+    wrong = [key for key, value in values.items() if cache.get(key) != value]
+    if wrong:
+        failures.append(f'inside the hold after the fork, {len(wrong)} of {len(values)} values read back wrong')
+    hold.__exit__(None, None, None)
+    wrong = [key for key, value in values.items() if cache.get(key) != value]
+    if wrong:
+        failures.append(f'after the commit, {len(wrong)} of {len(values)} values read back wrong')
+    cache.close()
+    script = (
+        'import sys\n'
+        'from diskcache_oxide import Cache\n'
+        'cache = Cache(sys.argv[1])\n'
+        'bad = [i for i in range(200) if cache.get(f"k{i:03d}") != bytes([i % 251]) * 40_000]\n'
+        'print(len(bad), len(cache))\n'
+    )
+    fresh = subprocess.run([sys.executable, '-c', script, str(directory)], capture_output=True, text=True, timeout=60)
+    if fresh.stdout.split() != ['0', str(len(values) + 1)]:
+        failures.append(
+            f'a fresh process read back (wrong, len) = {fresh.stdout.strip()!r} {fresh.stderr.strip()[-200:]}'
+        )
+    return failures
+
+
 SCENARIOS = {
     'd020': d020,
+    'd020-wal': d020_wal,
     'registry-after-fork': registry_after_fork,
     'transact-fork-from-the-owner': transact_fork_from_the_owner,
     'transact-fork-from-another-thread': transact_fork_from_another_thread,
