@@ -13,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use std::collections::{HashSet, VecDeque};
 
+use diskcache_oxide_core::key::{Key, OwnedKey};
 use diskcache_oxide_core::maintenance::{Cursor, Order};
 use diskcache_oxide_core::open::{Requested, Role};
 use diskcache_oxide_core::ops::{Hit, Number, Pop, Value, Version, VersionDelete};
@@ -218,15 +219,15 @@ impl Cache {
         default: Option<Py<PyAny>>,
         expire_time: bool,
     ) -> PyResult<Py<PyAny>> {
-        self.config.get(py, &self.handle, str_key(key)?, default, expire_time)
+        self.config.get(py, &self.handle, codec::key::encode_key(key)?.key(), default, expire_time)
     }
 
     fn __getitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.config.get_item(py, &self.handle, key, str_key(key)?)
+        self.config.get_item(py, &self.handle, key, codec::key::encode_key(key)?.key())
     }
 
     fn __contains__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        self.config.contains(py, &self.handle, str_key(key)?)
+        self.config.contains(py, &self.handle, codec::key::encode_key(key)?.key())
     }
 
     fn __len__(&self) -> PyResult<usize> {
@@ -272,7 +273,7 @@ impl Cache {
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        self.config.set(py, &self.handle, str_key(key)?, value, expire)
+        self.config.set(py, &self.handle, codec::key::encode_key(key)?.key(), value, expire)
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -287,11 +288,11 @@ impl Cache {
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        self.config.add(py, &self.handle, str_key(key)?, value, expire)
+        self.config.add(py, &self.handle, codec::key::encode_key(key)?.key(), value, expire)
     }
 
     fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        self.config.delete(py, &self.handle, str_key(key)?)
+        self.config.delete(py, &self.handle, codec::key::encode_key(key)?.key())
     }
 
     fn __delitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -300,22 +301,22 @@ impl Cache {
 
     #[pyo3(signature = (key, default = None))]
     fn pop(&self, py: Python<'_>, key: &Bound<'_, PyAny>, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
-        self.config.pop(py, &self.handle, str_key(key)?, default)
+        self.config.pop(py, &self.handle, codec::key::encode_key(key)?.key(), default)
     }
 
     #[pyo3(signature = (key, expire = None))]
     fn touch(&self, py: Python<'_>, key: &Bound<'_, PyAny>, expire: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        self.config.touch(py, &self.handle, str_key(key)?, expire)
+        self.config.touch(py, &self.handle, codec::key::encode_key(key)?.key(), expire)
     }
 
     #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
     fn incr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        self.config.add_number(py, &self.handle, key, str_key(key)?, delta, default, false)
+        self.config.add_number(py, &self.handle, key, codec::key::encode_key(key)?.key(), delta, default, false)
     }
 
     #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
     fn decr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        self.config.add_number(py, &self.handle, key, str_key(key)?, delta, default, true)
+        self.config.add_number(py, &self.handle, key, codec::key::encode_key(key)?.key(), delta, default, true)
     }
 
     // -- maintenance and iteration -------------------------------------------------------------
@@ -633,7 +634,7 @@ impl HandleConfig {
         &self,
         py: Python<'_>,
         handle: &StoreHandle,
-        key: &str,
+        key: Key<'_>,
         default: Option<Py<PyAny>>,
         expire_time: bool,
     ) -> PyResult<Py<PyAny>> {
@@ -656,7 +657,7 @@ impl HandleConfig {
         py: Python<'_>,
         handle: &StoreHandle,
         key: &Bound<'_, PyAny>,
-        name: &str,
+        name: Key<'_>,
     ) -> PyResult<Py<PyAny>> {
         let now = self.now(py)?;
         match self.lookup(py, handle, name, now)? {
@@ -665,7 +666,7 @@ impl HandleConfig {
         }
     }
 
-    fn contains(&self, py: Python<'_>, handle: &StoreHandle, key: &str) -> PyResult<bool> {
+    fn contains(&self, py: Python<'_>, handle: &StoreHandle, key: Key<'_>) -> PyResult<bool> {
         let now = self.now(py)?;
         let found = handle.run(self.timeout, |timeout| handle.store.contains(timeout, key, now));
         Ok(self.attempt(py, &handle.store, Op::Contains, now, found)?.unwrap_or(false))
@@ -675,7 +676,7 @@ impl HandleConfig {
         &self,
         py: Python<'_>,
         handle: &StoreHandle,
-        key: &str,
+        key: Key<'_>,
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
@@ -691,7 +692,7 @@ impl HandleConfig {
         &self,
         py: Python<'_>,
         handle: &StoreHandle,
-        key: &str,
+        key: Key<'_>,
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
@@ -703,13 +704,19 @@ impl HandleConfig {
         Ok(self.attempt(py, &handle.store, Op::Add, now, added)?.unwrap_or(false))
     }
 
-    fn delete(&self, py: Python<'_>, handle: &StoreHandle, key: &str) -> PyResult<bool> {
+    fn delete(&self, py: Python<'_>, handle: &StoreHandle, key: Key<'_>) -> PyResult<bool> {
         let now = self.now(py)?;
         let deleted = handle.run(self.timeout, |timeout| handle.store.delete(timeout, key, now));
         Ok(self.attempt(py, &handle.store, Op::Delete, now, deleted)?.unwrap_or(false))
     }
 
-    fn pop(&self, py: Python<'_>, handle: &StoreHandle, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+    fn pop(
+        &self,
+        py: Python<'_>,
+        handle: &StoreHandle,
+        key: Key<'_>,
+        default: Option<Py<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
         let now = self.now(py)?;
         // In a child that can't write (D-020) a read could report a miss; a pop fails.
         let ready = handle.run(self.timeout, |timeout| handle.store.check_writable().map(|()| timeout));
@@ -724,7 +731,7 @@ impl HandleConfig {
         &self,
         py: Python<'_>,
         handle: &StoreHandle,
-        key: &str,
+        key: Key<'_>,
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         let expire = optional_seconds("expire", expire)?;
@@ -737,7 +744,7 @@ impl HandleConfig {
         &self,
         py: Python<'_>,
         handle: &StoreHandle,
-        key: &str,
+        key: Key<'_>,
         now: f64,
     ) -> PyResult<Option<(Py<PyAny>, Option<f64>)>> {
         let store = &*handle.store;
@@ -759,7 +766,7 @@ impl HandleConfig {
         py: Python<'_>,
         store: &Store,
         timeout: Duration,
-        key: &str,
+        key: Key<'_>,
         now: f64,
     ) -> Result<Option<Decoded>, Error> {
         let codec = &self.codec;
@@ -788,7 +795,7 @@ impl HandleConfig {
         &self,
         py: Python<'_>,
         handle: &StoreHandle,
-        key: &str,
+        key: Key<'_>,
         now: f64,
         timeout: Duration,
     ) -> PyResult<Option<Py<PyAny>>> {
@@ -863,7 +870,7 @@ impl HandleConfig {
         py: Python<'_>,
         store: &Store,
         shard: usize,
-        key: &str,
+        key: Key<'_>,
         now: f64,
         mode: i64,
         e: PyErr,
@@ -900,7 +907,7 @@ impl HandleConfig {
         py: Python<'_>,
         store: &Store,
         shard: usize,
-        key: &str,
+        key: Key<'_>,
         op: Op,
         mode: i64,
         e: PyErr,
@@ -984,27 +991,30 @@ impl HandleConfig {
     /// Logs a decode failure, or hands it to the `on_decode_error` callable. Never raises: a report
     /// that fails is logged. A decode failure inside a report (the callable, or a logging handler,
     /// reading the same bad key) isn't reported again, so a report can never recurse.
-    fn report_decode_error(&self, py: Python<'_>, key: &str, e: PyErr, outcome: &str) {
+    fn report_decode_error(&self, py: Python<'_>, key: Key<'_>, e: PyErr, outcome: &str) {
         let Some(_reporting) = Reporting::enter() else { return };
-        let logged = logger(py).and_then(|log| {
-            let kwargs = pyo3::types::PyDict::new(py);
-            if let DecodePolicy::Report(callback) = &self.on_decode_error {
-                let Err(failed) = callback.bind(py).call1((key, e.into_value(py))) else { return Ok(()) };
-                kwargs.set_item("exc_info", failed.into_value(py))?;
-                let message = ("on_decode_error callback failed for %r in %s", key, &self.directory);
-                log.call_method("error", message, Some(&kwargs)).map(drop)
-            } else {
-                kwargs.set_item("exc_info", e.value(py))?;
-                let message = (
-                    "could not decode the value of %r in %s, so it was a miss (%s): %r",
-                    key,
-                    &self.directory,
-                    outcome,
-                    e.value(py),
-                );
-                log.call_method("warning", message, Some(&kwargs)).map(drop)
-            }
-        });
+        let logged =
+            codec::key::decode_key(py, key).and_then(|key| logger(py).map(|log| (log, key))).and_then(|(log, key)| {
+                let kwargs = pyo3::types::PyDict::new(py);
+                if let DecodePolicy::Report(callback) = &self.on_decode_error {
+                    let Err(failed) = callback.bind(py).call1((key.clone_ref(py), e.into_value(py))) else {
+                        return Ok(());
+                    };
+                    kwargs.set_item("exc_info", failed.into_value(py))?;
+                    let message = ("on_decode_error callback failed for %r in %s", key, &self.directory);
+                    log.call_method("error", message, Some(&kwargs)).map(drop)
+                } else {
+                    kwargs.set_item("exc_info", e.value(py))?;
+                    let message = (
+                        "could not decode the value of %r in %s, so it was a miss (%s): %r",
+                        key,
+                        &self.directory,
+                        outcome,
+                        e.value(py),
+                    );
+                    log.call_method("warning", message, Some(&kwargs)).map(drop)
+                }
+            });
         if let Err(lost) = logged {
             lost.write_unraisable(py, None);
         }
@@ -1018,7 +1028,7 @@ impl HandleConfig {
         py: Python<'_>,
         handle: &StoreHandle,
         key: &Bound<'_, PyAny>,
-        name: &str,
+        name: Key<'_>,
         Delta(mut delta): Delta,
         IncrDefault(default): IncrDefault,
         negate: bool,
@@ -1081,7 +1091,7 @@ pub(crate) struct KeyIterator {
 
 #[derive(Default)]
 struct IterState {
-    buffer: VecDeque<String>,
+    buffer: VecDeque<OwnedKey>,
     cursor: Cursor,
     done: bool,
 }
@@ -1104,7 +1114,7 @@ impl KeyIterator {
         slf
     }
 
-    fn __next__(&self) -> PyResult<Option<String>> {
+    fn __next__(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         // Never wait for the state while attached: its holder may be waiting for a pending fork
         // with the interpreter released, and could then never get it back (the gate's rules).
         // Another thread inside `next()` is an error instead, as for a generator (upstream's
@@ -1115,7 +1125,7 @@ impl KeyIterator {
             Err(TryLockError::WouldBlock) => return Err(PyValueError::new_err("iterator already executing")),
         };
         if let Some(key) = state.buffer.pop_front() {
-            return Ok(Some(key));
+            return codec::key::decode_owned(py, &key).map(Some);
         }
         if state.done {
             return Ok(None);
@@ -1133,7 +1143,7 @@ impl KeyIterator {
         }
         state.cursor = next;
         state.buffer.extend(keys);
-        Ok(state.buffer.pop_front())
+        state.buffer.pop_front().map(|key| codec::key::decode_owned(py, &key)).transpose()
     }
 }
 
@@ -1524,14 +1534,6 @@ fn stored_value<'a>(payload: &'a Payload<'_>, mode: u8) -> PyResult<Value<'a>> {
             Value::Bytes { mode: i64::from(mode), data: payload.as_blob()?.unwrap_or_default() }
         }
     })
-}
-
-/// Keys are `str` only for now (D-004).
-fn str_key<'a>(key: &'a Bound<'_, PyAny>) -> PyResult<&'a str> {
-    match key.cast_exact::<PyString>() {
-        Ok(s) => s.to_str(),
-        Err(_) => Err(PyTypeError::new_err(format!("cache keys must be str, not {}", key.get_type().name()?))),
-    }
 }
 
 /// A number of seconds; `bool` is rejected (D-014).

@@ -23,8 +23,11 @@ pub const DEFAULT_CULL_LIMIT: i64 = 10;
 /// The smallest accepted `size_limit` (D-005).
 pub const MIN_SIZE_LIMIT: i64 = 1 << 20;
 
-/// `key_type` of a `str` key. Other key types are reserved for Phase 6a.
+/// `key_type` of a `str` key, stored as TEXT.
 pub const KEY_TYPE_STR: i64 = 1;
+
+/// `key_type` of every other key, stored as a BLOB in the format `crate::key` defines.
+pub const KEY_TYPE_TYPED: i64 = 2;
 
 /// Creates every table and index plus the single `totals` row. Runs once, inside the creating
 /// connection's `BEGIN IMMEDIATE`, after `user_version` was re-checked under the lock.

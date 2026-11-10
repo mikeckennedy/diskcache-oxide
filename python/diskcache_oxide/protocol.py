@@ -14,6 +14,8 @@ from contextlib import AbstractContextManager
 from types import TracebackType
 from typing import Any, Literal, Protocol, Self, overload, runtime_checkable
 
+from diskcache_oxide._types import Key
+
 
 @runtime_checkable
 class CacheLike(Protocol):
@@ -59,34 +61,38 @@ class CacheLike(Protocol):
         """True if caching is on (`Cache`), False if it's off (`NullCache`)."""
 
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any: ...
+    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False) -> Any: ...
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def get(self, key: str, default: Any = None, *, expire_time: bool = False) -> Any:
+    def get(self, key: Key, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
+    def get(self, key: Key, default: Any = None, *, expire_time: bool = False) -> Any:
         """Return the value for `key`, or `default` if it's missing or expired."""
 
-    def set(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def set(self, key: Key, value: Any, expire: float | None = None) -> bool:
         """Store `value` under `key`, with an optional expiry in seconds."""
 
-    def add(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None) -> bool:
         """Store `value` only if `key` is missing or expired. True if it was stored."""
 
-    def delete(self, key: str) -> bool:
+    def delete(self, key: Key) -> bool:
         """Remove `key`. True if a live entry was removed."""
 
-    def pop(self, key: str, default: Any = None) -> Any:
+    def pop(self, key: Key, default: Any = None) -> Any:
         """Remove `key` and return its value, or `default`."""
 
-    def touch(self, key: str, expire: float | None = None) -> bool:
+    def touch(self, key: Key, expire: float | None = None) -> bool:
         """Change an existing entry's expiry. True if the entry existed."""
 
-    def incr(self, key: str, delta: float = 1, default: float | None = 0) -> int | float:
+    def incr(self, key: Key, delta: float = 1, default: float | None = 0) -> int | float:
         """Add `delta` to the number under `key`, atomically, and return the result."""
 
-    def decr(self, key: str, delta: float = 1, default: float | None = 0) -> int | float:
+    def decr(self, key: Key, delta: float = 1, default: float | None = 0) -> int | float:
         """Subtract `delta` from the number under `key`, atomically, and return the result."""
 
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+    @overload
+    def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]: ...
+    @overload
+    def iterkeys(self, *, prefix: None = None, reverse: bool = False) -> Iterator[Key]: ...
+    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[Key]:
         """Iterate over keys in sorted order, optionally only those starting with `prefix`."""
 
     def expire(self, *, timeout: float | None = None) -> int:
@@ -107,13 +113,13 @@ class CacheLike(Protocol):
     def close(self, *, checkpoint: bool = True) -> None:
         """Close this handle and return its connections."""
 
-    def __getitem__(self, key: str, /) -> Any:
+    def __getitem__(self, key: Key, /) -> Any:
         """`cache[key]`: the value, or `KeyError` if it's missing or expired."""
 
-    def __setitem__(self, key: str, value: Any, /) -> None:
+    def __setitem__(self, key: Key, value: Any, /) -> None:
         """`cache[key] = value`: store a value that never expires."""
 
-    def __delitem__(self, key: str, /) -> None:
+    def __delitem__(self, key: Key, /) -> None:
         """`del cache[key]`: remove the entry, or raise `KeyError`."""
 
     def __contains__(self, key: object, /) -> bool:
@@ -125,7 +131,7 @@ class CacheLike(Protocol):
     def __bool__(self) -> bool:
         """True if caching is on, so `if cache:` reads naturally."""
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> Iterator[Key]:
         """Iterate over every key once. A `Cache` yields them in insertion order."""
 
     def __enter__(self) -> Self:
@@ -177,13 +183,13 @@ class ShardedCacheLike(CacheLike, Protocol):
         ```python
         from diskcache_oxide import ShardedCacheLike
 
-        def bump(cache: ShardedCacheLike, key: str) -> None:
+        def bump(cache: ShardedCacheLike, key: Key) -> None:
             with cache.transact(key=key) as tx:
                 tx.set(key, tx.get(key, 0) + 1)
         ```
     """
 
-    def transact(self, *, key: str, retry: bool = False) -> AbstractContextManager[Self]:
+    def transact(self, *, key: Key, retry: bool = False) -> AbstractContextManager[Self]:
         """A context manager holding a write transaction on `key`'s shard for the block, yielding the cache."""
 
 

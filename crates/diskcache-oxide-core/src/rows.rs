@@ -15,7 +15,7 @@ use std::time::Duration;
 use rusqlite::types::{ToSqlOutput, Value};
 use rusqlite::{Connection, OptionalExtension, ToSql};
 
-use crate::schema::KEY_TYPE_STR;
+use crate::key::Key;
 use crate::{Error, Result};
 
 /// What a row stores in its `value` column.
@@ -51,7 +51,7 @@ pub(crate) const UPDATE_NUMBER_SQL: &str = "UPDATE cache SET mode = ?1, value = 
 /// A row to store under `key`.
 #[derive(Debug, Clone, Copy)]
 pub struct NewRow<'a> {
-    pub key: &'a str,
+    pub key: Key<'a>,
     pub mode: i64,
     pub value: Stored<'a>,
     /// Bytes counted toward `volume()` beyond the database pages: the value file's length for a
@@ -104,10 +104,11 @@ impl<'t> RowWriter<'t> {
     }
 
     /// The stored version of `key`, if any: its `size` and value file.
-    pub fn old_row(&self, key: &str) -> Result<Option<(i64, Option<String>)>> {
+    pub fn old_row<'k>(&self, key: impl Into<Key<'k>>) -> Result<Option<(i64, Option<String>)>> {
+        let key = key.into();
         self.tx
             .prepare_cached("SELECT size, filename FROM cache WHERE key_type = ?1 AND key = ?2")
-            .and_then(|mut stmt| stmt.query_row((KEY_TYPE_STR, key), |r| Ok((r.get(0)?, r.get(1)?))).optional())
+            .and_then(|mut stmt| stmt.query_row((key.key_type(), key), |r| Ok((r.get(0)?, r.get(1)?))).optional())
             .map_err(|e| self.sqlite(e))
     }
 
@@ -132,7 +133,7 @@ impl<'t> RowWriter<'t> {
             )
             .and_then(|mut stmt| {
                 stmt.query_row(
-                    (KEY_TYPE_STR, row.key, row.mode, row.value, filename, row.size, row.store_time, row.expire_time),
+                    (row.key.key_type(), row.key, row.mode, row.value, filename, row.size, row.store_time, row.expire_time),
                     |r| r.get::<_, i64>(0),
                 )
             })
@@ -161,12 +162,13 @@ impl<'t> RowWriter<'t> {
     }
 
     /// Deletes `key`. Returns the removed version, or `None` if the key wasn't stored.
-    pub fn delete_key(&self, key: &str) -> Result<Option<Removed>> {
+    pub fn delete_key<'k>(&self, key: impl Into<Key<'k>>) -> Result<Option<Removed>> {
+        let key = key.into();
         self.raise_seq_floor()?;
         let removed = self
             .tx
             .prepare_cached("DELETE FROM cache WHERE key_type = ?1 AND key = ?2 RETURNING size, filename")
-            .and_then(|mut stmt| stmt.query_row((KEY_TYPE_STR, key), |r| Ok((r.get(0)?, r.get(1)?))).optional())
+            .and_then(|mut stmt| stmt.query_row((key.key_type(), key), |r| Ok((r.get(0)?, r.get(1)?))).optional())
             .map_err(|e| self.sqlite(e))?;
         self.finish_delete(removed)
     }
@@ -209,13 +211,14 @@ impl<'t> RowWriter<'t> {
 
     /// Sets the expiry of an unexpired `key` without counting as a store (`store_seq` is unchanged),
     /// as `touch` does. Returns whether the key was present and unexpired.
-    pub fn set_expire_time(&self, key: &str, now: f64, expire_time: Option<f64>) -> Result<bool> {
+    pub fn set_expire_time<'k>(&self, key: impl Into<Key<'k>>, now: f64, expire_time: Option<f64>) -> Result<bool> {
+        let key = key.into();
         self.tx
             .prepare_cached(
                 "UPDATE cache SET expire_time = ?3
                  WHERE key_type = ?1 AND key = ?2 AND (expire_time IS NULL OR expire_time > ?4)",
             )
-            .and_then(|mut stmt| stmt.execute((KEY_TYPE_STR, key, expire_time, now)))
+            .and_then(|mut stmt| stmt.execute((key.key_type(), key, expire_time, now)))
             .map(|changed| changed > 0)
             .map_err(|e| self.sqlite(e))
     }
@@ -313,6 +316,7 @@ mod tests {
     }
 
     fn row<'a>(key: &'a str, value: &'a [u8]) -> NewRow<'a> {
+        let key = Key::Str(key);
         NewRow {
             key,
             mode: 2,

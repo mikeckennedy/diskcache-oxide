@@ -26,12 +26,13 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - oxide: reads the clock natively. Tests pass `clock=` (e.g. `clock=lambda: time.time()` to follow a monkeypatch).
 - Why: calling into Python for the time on every operation would cost the hot path.
 
-## D-004 String keys only (until Phase 6a)
+## D-004 Keys are `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those
 
 - Kind: test-visible
-- diskcache: accepts any picklable key (int, bytes, float, tuple, ...).
-- oxide: accepts `str` keys only for now; any other key type raises `TypeError`. Keys are stored in a type-tagged column so other types can be added without a migration.
-- Tests: `test_basic.py`
+- diskcache: accepts any picklable key; `str`, `int`, `float` and `bytes` are stored natively and everything else is pickled.
+- oxide: accepts `str`, `bytes`, `int` within 64 bits, `float`, `bool`, `None`, and tuples of those nested up to 32 deep, never pickled. Only the exact types: a subclass (`IntEnum`, `StrEnum`, a `namedtuple`), `bytearray`, `memoryview`, `list`, `frozenset` and an int past 64 bits raise `TypeError`; a NaN raises `ValueError` (diskcache stores a lone NaN key as NULL and never finds it again). Keys are compared by exact type (D-044), with no Unicode normalization. A `str` key is stored as it always was; every other key is a typed key in a byte format of our own (`crates/diskcache-oxide-core/src/key.rs`), which 0.1.2 never reads, so 0.1.2 and 0.2.0 can share a cache during a deploy.
+- Why: pickled keys would put pickle on every lookup and make a key's identity depend on pickle's bytes (D-001). A key's stored bytes are its identity and its FanoutCache shard, so they must follow from the value alone.
+- Tests: `test_keys.py`, `key::tests`
 
 ## D-005 Minimum size_limit
 

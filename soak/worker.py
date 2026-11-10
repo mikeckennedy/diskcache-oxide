@@ -1123,8 +1123,8 @@ class LaneWorker(Worker):
         """A bug isn't an outage: these raise whatever the store is doing, before it's reached."""
         self.count('durable_bug_checks')
         for what, work in (
-            ('a non-str key to set', lambda: self.durable.set(123, 'v')),  # ty: ignore[invalid-argument-type]
-            ('a non-str key to get', lambda: self.durable.get(123)),  # ty: ignore[invalid-argument-type]
+            ('a key of no key type to set', lambda: self.durable.set([123], 'v')),  # ty: ignore[invalid-argument-type]
+            ('a key of no key type to get', lambda: self.durable.get([123])),  # ty: ignore[invalid-argument-type]
         ):
             try:
                 work()
@@ -1481,7 +1481,7 @@ class FanoutWorker(Worker):
             self.problem('fanout iterkeys(reverse=True) is out of order or repeats a key')
         self.count('fanout_merges')
         if rounds % 4 == 0:  # Every key, both ways: the whole root is larger, so less often.
-            merged = list(self.fan.iterkeys())
+            merged = [k for k in self.fan.iterkeys() if isinstance(k, str)]  # The soak stores str keys only.
             if any(a >= b for a, b in zip(merged, merged[1:], strict=False)):
                 self.problem('fanout iterkeys() over every key is out of order or repeats a key')
             walked = list(self.fan)

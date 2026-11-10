@@ -22,6 +22,7 @@ from pathlib import Path
 from diskcache_oxide import Cache, FanoutCache, Timeout, register_type, unregister_type
 
 from tests.conformance.proc_workers import SqlitePeer
+from tests.keys import str_keys
 from tests.proctitle import set_title
 from tests.unit.fork_timeout_scenarios import fds_inside
 
@@ -633,7 +634,7 @@ def fanout_fork_mid_merge(directory: Path) -> list[str]:
     def merger() -> None:
         try:
             while not stop.is_set():
-                merged = list(cache.iterkeys())
+                merged = str_keys(cache.iterkeys())
                 if any(a >= b for a, b in zip(merged, merged[1:], strict=False)):
                     errors.append('a merge during the forks was out of order or repeated a key')
                 if [k for k in merged if k.startswith('k')] != expected:
@@ -648,7 +649,7 @@ def fanout_fork_mid_merge(directory: Path) -> list[str]:
         assert all(a < b for a, b in zip(tail, tail[1:], strict=False)), 'the tail is out of order'
 
     def child(r: int) -> None:
-        check_rest(list(it))
+        check_rest(str_keys(it))
         assert list(cache.iterkeys(prefix='k')) == expected
         mine = sorted(one_key_per_shard(cache, f'child-{r}-').values())
         for key in mine:
@@ -671,7 +672,7 @@ def fanout_fork_mid_merge(directory: Path) -> list[str]:
     if head != expected[:taken]:
         failures.append('the first keys of the merge are wrong')
     try:
-        check_rest(list(it))
+        check_rest(str_keys(it))
     except AssertionError as ex:
         failures.append(f'in the parent: {ex}')
     if codes != [0] * rounds:
@@ -825,7 +826,7 @@ def fanout_fork_mid_clear(directory: Path) -> list[str]:
         failures.append(f'child exit code {code}')
     if removed != [filled]:
         failures.append(f'clear() removed {removed}, expected exactly the {filled} keys it started with')
-    survivors = sorted(cache.iterkeys())
+    survivors = sorted(str_keys(cache.iterkeys()))
     if len(survivors) != shards or not all(k.startswith('child-') for k in survivors):
         failures.append(f"after clear(), expected the child's {shards} keys, found {survivors[:10]}")
     cache.close()

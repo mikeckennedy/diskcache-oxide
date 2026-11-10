@@ -25,10 +25,12 @@
 use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
+use rusqlite::types::ValueRef;
 
 use crate::gate;
+use crate::key::{OwnedKey, TypedKey};
 use crate::rows::{Removed, RowWriter};
-use crate::schema::KEY_TYPE_STR;
+use crate::schema::{KEY_TYPE_STR, KEY_TYPE_TYPED};
 use crate::store::{Changed, LockPriority, Store};
 use crate::{Error, Result};
 
@@ -59,7 +61,7 @@ pub enum Order {
 pub enum Cursor {
     #[default]
     Start,
-    Key(String),
+    Key(OwnedKey),
     Id(i64),
 }
 
@@ -251,7 +253,7 @@ impl Store {
         order: Order,
         prefix: Option<&str>,
         cursor: &Cursor,
-    ) -> Result<(Vec<String>, Cursor)> {
+    ) -> Result<(Vec<OwnedKey>, Cursor)> {
         self.keys_page_of(PAGE, timeout, order, prefix, cursor)
     }
 
@@ -264,11 +266,11 @@ impl Store {
         order: Order,
         prefix: Option<&str>,
         cursor: &Cursor,
-    ) -> Result<(Vec<String>, Cursor)> {
+    ) -> Result<(Vec<OwnedKey>, Cursor)> {
         let size = size.max(1);
         let upper = prefix.and_then(prefix_upper);
-        let lower = prefix.unwrap_or("");
-        self.read(timeout, |conn| page(conn, timeout, order, lower, upper.as_deref(), cursor, size))
+        let range = prefix.map(|lower| (lower, upper.as_deref()));
+        self.read(timeout, |conn| page(conn, timeout, order, range, cursor, size))
     }
 
     /// The next `store_seq` to be handed out: every row stored before now has a smaller one.
@@ -390,46 +392,115 @@ fn page(
     conn: &Connection,
     timeout: Duration,
     order: Order,
-    lower: &str,
-    upper: Option<&str>,
+    prefix: Option<(&str, Option<&str>)>,
     cursor: &Cursor,
     size: i64,
-) -> Result<(Vec<String>, Cursor)> {
+) -> Result<(Vec<OwnedKey>, Cursor)> {
     let sqlite = |e| Error::from_sqlite(e, timeout);
-    match order {
+    // A prefix's bounds: its start, and the first string past every one that starts with it.
+    let (lower, upper) = prefix.unwrap_or(("", None));
+    let keys = match order {
         Order::Inserted => {
             let after = match cursor {
                 Cursor::Id(id) => *id,
                 _ => 0,
             };
-            let rows: Vec<(i64, String)> = conn
-                .prepare_cached("SELECT id, key FROM cache WHERE key_type = ?1 AND id > ?2 ORDER BY id LIMIT ?3")
+            // Every key type this build knows; a later build's key types stay invisible, as typed keys
+            // are to 0.1.2.
+            let rows: Vec<(i64, OwnedKey)> = conn
+                .prepare_cached(
+                    "SELECT id, key_type, key FROM cache WHERE id > ?1 AND key_type IN (?2, ?3) ORDER BY id LIMIT ?4",
+                )
                 .and_then(|mut stmt| {
-                    stmt.query_map((KEY_TYPE_STR, after, size), |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+                    stmt.query_map((after, KEY_TYPE_STR, KEY_TYPE_TYPED, size), |r| {
+                        Ok((r.get(0)?, stored_key(r.get(1)?, r.get_ref(2)?)))
+                    })?
+                    .map(|row| row.map(|(id, key)| key.map(|k| (id, k))))
+                    .collect::<rusqlite::Result<Result<Vec<_>>>>()
                 })
-                .map_err(sqlite)?;
+                .map_err(sqlite)??;
             let next = rows.last().map_or_else(|| cursor.clone(), |(id, _)| Cursor::Id(*id));
-            Ok((rows.into_iter().map(|(_, key)| key).collect(), next))
+            return Ok((rows.into_iter().map(|(_, key)| key).collect(), next));
         }
         Order::Key { reverse } => {
             let after = match cursor {
-                Cursor::Key(key) => Some(key.as_str()),
+                Cursor::Key(key) => Some(key),
+                _ => None,
+            };
+            let str_after = match after {
+                Some(OwnedKey::Str(k)) => Some(k.as_str()),
                 _ => None,
             };
             // Forward, the cursor replaces the lower bound. In reverse, it replaces the upper one: it
             // came from this prefix, so it's under the prefix's end.
-            let (low, high) = match (reverse, after) {
-                (false, after) => (after.unwrap_or(lower), upper),
-                (true, after) => (lower, after.or(upper)),
+            let (low, high) = if reverse { (lower, str_after.or(upper)) } else { (str_after.unwrap_or(lower), upper) };
+            let str_page = |limit: i64| -> Result<Vec<OwnedKey>> {
+                let keys: Vec<String> = conn
+                    .prepare_cached(key_page_sql(reverse, str_after.is_some(), upper.is_some()))
+                    .and_then(|mut stmt| stmt.query_map((KEY_TYPE_STR, low, high, limit), |r| r.get(0))?.collect())
+                    .map_err(sqlite)?;
+                Ok(keys.into_iter().map(OwnedKey::Str).collect())
             };
-            let keys: Vec<String> = conn
-                .prepare_cached(key_page_sql(reverse, after.is_some(), upper.is_some()))
-                .and_then(|mut stmt| stmt.query_map((KEY_TYPE_STR, low, high, size), |r| r.get(0))?.collect())
-                .map_err(sqlite)?;
-            let next = keys.last().map_or_else(|| cursor.clone(), |k| Cursor::Key(k.clone()));
-            Ok((keys, next))
+            if prefix.is_some() {
+                // A prefix: str keys only.
+                str_page(size)?
+            } else {
+                // Every str key, then every typed key (reversed: typed first). The typed phase starts at
+                // its own beginning or end unless the cursor is already inside it.
+                let typed_after = match after {
+                    Some(OwnedKey::Typed(k)) => Some(k.as_bytes()),
+                    _ => None,
+                };
+                let typed_page = |limit: i64| -> Result<Vec<OwnedKey>> {
+                    let (lo, hi): (&[u8], Option<&[u8]>) =
+                        if reverse { (&[], typed_after) } else { (typed_after.unwrap_or(&[]), None) };
+                    let sql = key_page_sql(reverse, typed_after.is_some(), typed_after.is_some() && reverse);
+                    let blobs: Vec<Vec<u8>> = conn
+                        .prepare_cached(sql)
+                        .and_then(|mut stmt| stmt.query_map((KEY_TYPE_TYPED, lo, hi, limit), |r| r.get(0))?.collect())
+                        .map_err(sqlite)?;
+                    blobs.iter().map(|b| TypedKey::parse(b).map(OwnedKey::Typed).map_err(Error::CorruptKey)).collect()
+                };
+                let in_typed = typed_after.is_some();
+                match (reverse, in_typed) {
+                    (false, true) => typed_page(size)?,
+                    (false, false) => {
+                        let mut keys = str_page(size)?;
+                        let left = size - i64::try_from(keys.len()).unwrap_or(size);
+                        if left > 0 {
+                            keys.extend(typed_page(left)?);
+                        }
+                        keys
+                    }
+                    (true, false) if after.is_some() => str_page(size)?,
+                    (true, _) => {
+                        let mut keys = typed_page(size)?;
+                        let left = size - i64::try_from(keys.len()).unwrap_or(size);
+                        if left > 0 {
+                            keys.extend(str_page_from_end(conn, timeout, left)?);
+                        }
+                        keys
+                    }
+                }
+            }
         }
-    }
+    };
+    let next = keys.last().map_or_else(|| cursor.clone(), |k| Cursor::Key(k.clone()));
+    Ok((keys, next))
+}
+
+/// The last `limit` str keys, newest key first: a reverse walk crossing from the typed keys.
+fn str_page_from_end(conn: &Connection, timeout: Duration, limit: i64) -> Result<Vec<OwnedKey>> {
+    let keys: Vec<String> = conn
+        .prepare_cached(key_page_sql(true, false, false))
+        .and_then(|mut stmt| stmt.query_map((KEY_TYPE_STR, "", None::<&str>, limit), |r| r.get(0))?.collect())
+        .map_err(|e| Error::from_sqlite(e, timeout))?;
+    Ok(keys.into_iter().map(OwnedKey::Str).collect())
+}
+
+/// A stored key, by its `key_type`; a damaged one is an error, never skipped.
+fn stored_key(key_type: i64, key: ValueRef<'_>) -> Result<OwnedKey> {
+    OwnedKey::from_row(key_type, key).map_err(Error::CorruptKey)
 }
 
 #[cfg(test)]
@@ -474,7 +545,11 @@ mod tests {
             if keys.is_empty() {
                 return out;
             }
-            out.extend(keys);
+            // These tests store str keys only.
+            out.extend(keys.into_iter().map(|k| match k {
+                OwnedKey::Str(s) => s,
+                typed @ OwnedKey::Typed(_) => panic!("unexpected typed key {typed:?}"),
+            }));
             cursor = next;
         }
     }
@@ -512,6 +587,134 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    fn int_key(n: i64) -> TypedKey {
+        let mut e = crate::key::Encoder::new();
+        e.int(n);
+        e.finish().unwrap()
+    }
+
+    fn tuple_key(name: &str, n: i64) -> TypedKey {
+        let mut e = crate::key::Encoder::new();
+        e.begin_tuple();
+        e.str(name);
+        e.int(n);
+        e.none();
+        e.end_tuple();
+        e.finish().unwrap()
+    }
+
+    /// Every key in `order`, through pages of `size`.
+    fn walk(s: &Store, order: Order, size: i64) -> Vec<OwnedKey> {
+        let mut cursor = Cursor::Start;
+        let mut out = Vec::new();
+        loop {
+            let (keys, next) = s.keys_page_of(size, T, order, None, &cursor).unwrap();
+            if keys.is_empty() {
+                return out;
+            }
+            out.extend(keys);
+            cursor = next;
+        }
+    }
+
+    #[test]
+    fn typed_keys_are_stored_as_blobs_beside_text_keys_and_every_keyed_call_finds_them() {
+        let tmp = TempDir::new("maint-typed-keys");
+        let s = store(tmp.path());
+        let (one, t) = (int_key(1), tuple_key("m.f", 3));
+        put(&s, "1", None);
+        s.set(T, &one, Value::Bytes { mode: MODE_STR, data: b"int" }, None, NOW).unwrap();
+        s.set(T, &t, Value::Bytes { mode: MODE_STR, data: b"tuple" }, None, NOW).unwrap();
+        assert!(
+            s.contains(T, &one, NOW).unwrap() && s.contains(T, &t, NOW).unwrap() && s.contains(T, "1", NOW).unwrap()
+        );
+        let types: Vec<(i64, String)> = s
+            .read(T, |c| {
+                let mut stmt = c.prepare("SELECT key_type, typeof(key) FROM cache ORDER BY id").unwrap();
+                Ok(stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect())
+            })
+            .unwrap();
+        assert_eq!(types, [(1, "text".into()), (2, "blob".into()), (2, "blob".into())]);
+        assert!(s.touch(T, &one, Some(60.0), NOW).unwrap());
+        assert_eq!(
+            s.incr(T, &int_key(7), crate::ops::Number::Int(2), Some(crate::ops::Number::Int(0)), NOW).unwrap(),
+            crate::ops::Number::Int(2)
+        );
+        assert!(s.delete(T, &one, NOW).unwrap());
+        assert!(!s.contains(T, &one, NOW).unwrap() && s.contains(T, "1", NOW).unwrap(), "the str '1' is another key");
+    }
+
+    #[test]
+    fn a_key_walk_covers_str_keys_then_typed_keys_at_every_page_size() {
+        let tmp = TempDir::new("maint-typed-walk");
+        let s = store(tmp.path());
+        let mut expected: Vec<OwnedKey> = Vec::new();
+        for i in [5_i64, -3, 0, i64::MAX, i64::MIN] {
+            s.set(T, &int_key(i), Value::Bytes { mode: MODE_STR, data: b"v" }, None, NOW).unwrap();
+            expected.push(OwnedKey::Typed(int_key(i)));
+            put(&s, &format!("s{i}"), None);
+            expected.push(OwnedKey::Str(format!("s{i}")));
+            s.set(T, &tuple_key("f", i), Value::Bytes { mode: MODE_STR, data: b"v" }, None, NOW).unwrap();
+            expected.push(OwnedKey::Typed(tuple_key("f", i)));
+        }
+        let inserted = expected.clone();
+        expected.sort();
+        assert!(matches!(expected[0], OwnedKey::Str(_)) && matches!(expected.last(), Some(OwnedKey::Typed(_))));
+        for size in [1, 2, 3, 4, 5, 7, 512] {
+            assert_eq!(walk(&s, Order::Key { reverse: false }, size), expected, "forward, pages of {size}");
+            let mut reversed = expected.clone();
+            reversed.reverse();
+            assert_eq!(walk(&s, Order::Key { reverse: true }, size), reversed, "reverse, pages of {size}");
+            assert_eq!(walk(&s, Order::Inserted, size), inserted, "insertion order, pages of {size}");
+        }
+        assert_eq!(
+            all(&s, Order::Key { reverse: false }, Some("")).len(),
+            5,
+            "a prefix, even empty, walks str keys only"
+        );
+    }
+
+    #[test]
+    fn a_typed_key_page_seeks_on_the_index_too() {
+        let tmp = TempDir::new("maint-typed-plan");
+        let s = store(tmp.path());
+        s.read(T, |conn| {
+            for (reverse, after, upper, search) in KEY_PAGE_SHAPES {
+                let plan = format!("EXPLAIN QUERY PLAN {}", key_page_sql(reverse, after, upper));
+                let detail: String = conn
+                    .prepare(&plan)
+                    .and_then(|mut stmt| stmt.query_row((KEY_TYPE_TYPED, &b""[..], &b"\x10"[..], PAGE), |r| r.get(3)))
+                    .unwrap();
+                assert!(detail.contains(&format!("cache_key ({search})")), "{plan}: {detail}");
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_damaged_typed_key_fails_the_walk_and_an_unknown_key_type_is_skipped() {
+        let tmp = TempDir::new("maint-typed-damaged");
+        let s = store(tmp.path());
+        put(&s, "a", None);
+        let raw = |sql: &'static str| {
+            s.write(T, |_, c| c.execute(sql, []).map(drop).map_err(|e| Error::from_sqlite(e, T))).unwrap();
+        };
+        // A later build's key type: invisible, as typed keys are to 0.1.2.
+        raw(
+            "INSERT INTO cache (key_type, key, mode, value, size, store_time, store_seq) VALUES (3, x'01', 1, 'v', 0, 0, 99)",
+        );
+        assert_eq!(walk(&s, Order::Inserted, 512), [OwnedKey::Str("a".into())]);
+        assert_eq!(walk(&s, Order::Key { reverse: false }, 512), [OwnedKey::Str("a".into())]);
+        raw(
+            "INSERT INTO cache (key_type, key, mode, value, size, store_time, store_seq) VALUES (2, x'11', 1, 'v', 0, 0, 100)",
+        );
+        for order in [Order::Inserted, Order::Key { reverse: false }, Order::Key { reverse: true }] {
+            let got = s.keys_page(T, order, None, &Cursor::Start);
+            assert!(matches!(got, Err(Error::CorruptKey(_))), "{order:?}: {got:?}");
+        }
     }
 
     /// The VM steps for one page, which unlike a time can't flake. With `rows` keys in the store, a

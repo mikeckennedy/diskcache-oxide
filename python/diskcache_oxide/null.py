@@ -38,15 +38,37 @@ from types import TracebackType
 from typing import Any, Literal, Self, overload
 
 from diskcache_oxide._core import TypeRegistry
+from diskcache_oxide._types import Key
 from diskcache_oxide.protocol import CacheLike
 
 DEFAULT_SIZE_LIMIT = 2**30
 DEFAULT_CULL_LIMIT = 10
 
 
-def _check_key(key: object) -> None:
-    if type(key) is not str:
-        raise TypeError(f'cache keys must be str, not {type(key).__name__}')
+_KEY_TYPES = 'str, bytes, int, float, bool, None, or a tuple of those'
+_MAX_KEY_DEPTH = 32
+
+
+def _check_key(key: object, depth: int = 0) -> None:
+    """The engine's key rules, so a `NullCache` raises where a real cache would (D-004)."""
+    kind = type(key)
+    if kind is str or kind is bytes or kind is bool or key is None:
+        return
+    if kind is int:
+        if not -(2**63) <= key < 2**63:  # ty: ignore[unsupported-operator]
+            raise TypeError('int keys must fit in 64 bits')
+        return
+    if kind is float:
+        if key != key:
+            raise ValueError("a NaN float can't be a key: it isn't equal to itself")
+        return
+    if kind is tuple:
+        if depth == _MAX_KEY_DEPTH:
+            raise ValueError(f'key tuples nest at most {_MAX_KEY_DEPTH} deep')
+        for item in key:  # ty: ignore[not-iterable]
+            _check_key(item, depth + 1)
+        return
+    raise TypeError(f'cache keys must be {_KEY_TYPES}, not {kind.__name__}')
 
 
 def _check_seconds(name: str, value: object) -> None:
@@ -176,15 +198,15 @@ class NullCache:
     # -- reads: nothing is ever present ---------------------------------------------------------
 
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any: ...
+    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False) -> Any: ...
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def get(self, key: str, default: Any = None, *, expire_time: bool = False) -> Any:
+    def get(self, key: Key, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
+    def get(self, key: Key, default: Any = None, *, expire_time: bool = False) -> Any:
         """Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`."""
         _check_key(key)
         return (default, None) if expire_time else default
 
-    def __getitem__(self, key: str, /) -> Any:
+    def __getitem__(self, key: Key, /) -> Any:
         """Always raises `KeyError`, as every entry has already expired."""
         _check_key(key)
         raise KeyError(key)
@@ -201,7 +223,7 @@ class NullCache:
         """Always False, so `if cache:` means "caching is on"."""
         return False
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> Iterator[Key]:
         """Yields nothing."""
         return iter(())
 
@@ -216,17 +238,17 @@ class NullCache:
 
     # -- writes: succeed, then expire instantly ---------------------------------------------------
 
-    def set(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def set(self, key: Key, value: Any, expire: float | None = None) -> bool:
         """Return True without storing anything: the write succeeds, then expires instantly."""
         _check_key(key)
         _check_seconds('expire', expire)
         return True
 
-    def __setitem__(self, key: str, value: Any, /) -> None:
+    def __setitem__(self, key: Key, value: Any, /) -> None:
         """Store nothing, as `set()` does."""
         self.set(key, value)
 
-    def add(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None) -> bool:
         """Return True without storing anything: the key is always absent, so the add succeeds.
 
         With caching off, every caller's `add()` succeeds, so don't rely on it for job claims or locks.
@@ -236,13 +258,13 @@ class NullCache:
         _check_seconds('expire', expire)
         return True
 
-    def touch(self, key: str, expire: float | None = None) -> bool:
+    def touch(self, key: Key, expire: float | None = None) -> bool:
         """Always False: the key never exists."""
         _check_key(key)
         _check_seconds('expire', expire)
         return False
 
-    def incr(self, key: str, delta: float = 1, default: float | None = 0) -> int | float:
+    def incr(self, key: Key, delta: float = 1, default: float | None = 0) -> int | float:
         """Return `default + delta`, since every count starts again from `default`.
 
         Raises:
@@ -253,25 +275,25 @@ class NullCache:
             raise KeyError(key)
         return default + delta
 
-    def decr(self, key: str, delta: float = 1, default: float | None = 0) -> int | float:
+    def decr(self, key: Key, delta: float = 1, default: float | None = 0) -> int | float:
         """Return `default - delta`. See `incr()`."""
         return self.incr(key, -delta, default)
 
     # -- removals: forwarded with invalidate= -----------------------------------------------------
 
-    def delete(self, key: str) -> bool:
+    def delete(self, key: Key) -> bool:
         """False, or with `invalidate=`, delete the key from that cache and return its result."""
         _check_key(key)
         if self._invalidate is not None:
             return self._invalidate.delete(key)
         return False
 
-    def __delitem__(self, key: str, /) -> None:
+    def __delitem__(self, key: Key, /) -> None:
         """Raise `KeyError`, or with `invalidate=`, delete the key from that cache."""
         if not self.delete(key) and self._invalidate is None:
             raise KeyError(key)
 
-    def pop(self, key: str, default: Any = None) -> Any:
+    def pop(self, key: Key, default: Any = None) -> Any:
         """Return `default`. With `invalidate=`, also delete the key from that cache."""
         _check_key(key)
         if self._invalidate is not None:
@@ -286,7 +308,11 @@ class NullCache:
         # Passed on only when given, so an `invalidate=` cache without the keyword still works.
         return self._invalidate.clear() if timeout is None else self._invalidate.clear(timeout=timeout)
 
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+    @overload
+    def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]: ...
+    @overload
+    def iterkeys(self, *, prefix: None = None, reverse: bool = False) -> Iterator[Key]: ...
+    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[Key]:
         """Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works."""
         if self._invalidate is not None:
             return self._invalidate.iterkeys(prefix=prefix, reverse=reverse)
@@ -294,7 +320,7 @@ class NullCache:
 
     # -- transactions: nothing to hold ------------------------------------------------------------
 
-    def transact(self, retry: bool = False, *, key: str | None = None) -> AbstractContextManager[Self]:
+    def transact(self, retry: bool = False, *, key: Key | None = None) -> AbstractContextManager[Self]:
         """A no-op context manager that yields this `NullCache`.
 
         It never opens a transaction on an `invalidate=` cache: removals forwarded inside the block

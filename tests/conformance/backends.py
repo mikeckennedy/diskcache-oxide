@@ -44,7 +44,7 @@ FEATURE_PHASES: dict[str, str] = {
 }
 assert set(FEATURE_PHASES.values()) <= set(PHASE_ORDER)
 # Features that landed ahead of their phase, by name: bumping OXIDE_PHASE to 6b would turn on all of 6a.
-OXIDE_EARLY_FEATURES = frozenset({'transact', 'fanout'})
+OXIDE_EARLY_FEATURES = frozenset({'transact', 'fanout', 'key_types'})
 assert OXIDE_EARLY_FEATURES <= set(FEATURE_PHASES)
 OXIDE_SUPPORTED_FEATURES: frozenset[str] = (
     frozenset(f for f, phase in FEATURE_PHASES.items() if PHASE_ORDER.index(phase) <= PHASE_ORDER.index(OXIDE_PHASE))

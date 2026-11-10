@@ -13,15 +13,6 @@ import pytest
 from tests.conformance.backends import Backend
 from tests.conformance.proc_workers import SqlitePeer, checkpoint
 
-NON_STR_KEYS = [
-    pytest.param(1, id='int'),
-    pytest.param(1.5, id='float'),
-    pytest.param(b'bytes', id='bytes'),
-    pytest.param((1, 2), id='tuple'),
-    pytest.param(None, id='none'),
-]
-
-
 # ---------------------------------------------------------------------------
 # get / set / delete
 # ---------------------------------------------------------------------------
@@ -233,29 +224,6 @@ def test_cull_limit_persists(make_cache: Callable[..., Any], cache_dir: Path) ->
 
     reopened = make_cache(cache_dir)
     assert reopened.cull_limit == 3
-
-
-# ---------------------------------------------------------------------------
-# Keys (D-004)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.diverges(backend='oxide', ref='D-004', reason='oxide accepts str keys only', raises=TypeError)
-@pytest.mark.parametrize('key', NON_STR_KEYS)
-def test_non_str_keys_round_trip(cache: Any, key: Any) -> None:
-    assert cache.set(key, 'v') is True
-    assert cache.get(key) == 'v'
-    assert key in cache
-
-
-@pytest.mark.backend_only('oxide')
-@pytest.mark.parametrize('key', NON_STR_KEYS)
-def test_non_str_keys_raise_type_error(cache: Any, key: Any) -> None:
-    with pytest.raises(TypeError):
-        cache.set(key, 'v')
-    with pytest.raises(TypeError):
-        cache.get(key)
-    assert len(cache) == 0
 
 
 # ---------------------------------------------------------------------------

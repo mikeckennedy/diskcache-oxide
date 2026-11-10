@@ -2087,7 +2087,7 @@ mod tests {
         store
             .write(T, |w, _| {
                 w.upsert(&NewRow {
-                    key,
+                    key: key.into(),
                     mode: 2,
                     value: Stored::Blob(value),
                     size: i64::try_from(value.len()).unwrap(),
@@ -2965,7 +2965,7 @@ mod tests {
         let write = |key: &str, timeout: Duration| {
             store.write(timeout, |writer, _| {
                 writer.upsert(&NewRow {
-                    key,
+                    key: key.into(),
                     mode: 2,
                     value: Stored::Blob(b"v"),
                     size: 1,
@@ -3022,7 +3022,7 @@ mod tests {
         }
         for i in 0..writes {
             let row = NewRow {
-                key: "nowait",
+                key: "nowait".into(),
                 mode: 2,
                 value: Stored::Blob(b"v"),
                 size: 1,

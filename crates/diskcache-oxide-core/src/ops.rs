@@ -14,10 +14,11 @@ use std::time::{Duration, Instant};
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, OptionalExtension};
 
+use crate::key::Key;
 #[cfg(test)]
 use crate::rows::UPDATE_NUMBER_SQL;
 use crate::rows::{NewRow, Removed, RemovedBatch, RowWriter, Stored};
-use crate::schema::{KEY_TYPE_STR, MODE_INT, MODE_REAL};
+use crate::schema::{MODE_INT, MODE_REAL};
 use crate::spill::{self, PendingFile};
 use crate::store::{Changed, LockPriority, Store};
 use crate::{Error, Result};
@@ -162,14 +163,15 @@ impl Store {
     /// file is read with no connection held (see `spill`). For a value file whose mode `refuse`
     /// rejects, `decode` gets `ValueRef::Null` instead of the file, which is never read: the caller
     /// would only turn it away (a pickle on a `pickle=False` handle, an unknown mode).
-    pub fn get_with<T>(
+    pub fn get_with<'k, T>(
         &self,
         timeout: Duration,
-        key: &str,
+        key: impl Into<Key<'k>>,
         now: f64,
         refuse: impl Fn(i64) -> bool,
         mut decode: impl FnMut(i64, ValueRef<'_>) -> Result<T>,
     ) -> Result<Option<Hit<T>>> {
+        let key = key.into();
         let (mut row, taken) =
             self.read_with_deadline(timeout, |conn| look_up(conn, key, now, timeout, &mut decode))?;
         // One budget for every read and the fallback's write. The first read's deadline if its slow
@@ -316,18 +318,27 @@ impl Store {
     }
 
     /// Whether `key` is live at `now`.
-    pub fn contains(&self, timeout: Duration, key: &str, now: f64) -> Result<bool> {
+    pub fn contains<'k>(&self, timeout: Duration, key: impl Into<Key<'k>>, now: f64) -> Result<bool> {
+        let key = key.into();
         self.read(timeout, |conn| {
             conn.prepare_cached(
                 "SELECT 1 FROM cache WHERE key_type = ?1 AND key = ?2 AND (expire_time IS NULL OR expire_time > ?3)",
             )
-            .and_then(|mut stmt| stmt.exists((KEY_TYPE_STR, key, now)))
+            .and_then(|mut stmt| stmt.exists((key.key_type(), key, now)))
             .map_err(|e| Error::from_sqlite(e, timeout))
         })
     }
 
     /// Stores `value` under `key`, then culls. Always returns `Ok(true)` on success, like diskcache.
-    pub fn set(&self, timeout: Duration, key: &str, value: Value<'_>, expire: Option<f64>, now: f64) -> Result<bool> {
+    pub fn set<'k>(
+        &self,
+        timeout: Duration,
+        key: impl Into<Key<'k>>,
+        value: Value<'_>,
+        expire: Option<f64>,
+        now: f64,
+    ) -> Result<bool> {
+        let key = key.into();
         let pending = self.spill_if_large(value)?;
         let result = self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             let before = prelude(tx, key, now, timeout)?;
@@ -341,7 +352,15 @@ impl Store {
     }
 
     /// Stores `value` only if `key` is missing or expired. Returns whether it stored.
-    pub fn add(&self, timeout: Duration, key: &str, value: Value<'_>, expire: Option<f64>, now: f64) -> Result<bool> {
+    pub fn add<'k>(
+        &self,
+        timeout: Duration,
+        key: impl Into<Key<'k>>,
+        value: Value<'_>,
+        expire: Option<f64>,
+        now: f64,
+    ) -> Result<bool> {
+        let key = key.into();
         let pending = self.spill_if_large(value)?;
         let result = self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             let before = prelude(tx, key, now, timeout)?;
@@ -367,7 +386,8 @@ impl Store {
     }
 
     /// Deletes `key`. Returns whether a live entry was deleted; an expired entry acts missing.
-    pub fn delete(&self, timeout: Duration, key: &str, now: f64) -> Result<bool> {
+    pub fn delete<'k>(&self, timeout: Duration, key: impl Into<Key<'k>>, now: f64) -> Result<bool> {
+        let key = key.into();
         self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             if live_row(tx, key, now, timeout)?.is_none() {
                 return Ok(Changed::removing(false, []));
@@ -390,7 +410,14 @@ impl Store {
     /// The check runs inside the transaction, before the delete, so a value the caller can't decode
     /// is never destroyed on its way to an error. `refuse` runs with the write lock and a connection
     /// held, and perhaps more than once: it must be cheap, and must not run Python or use the cache.
-    pub fn pop(&self, timeout: Duration, key: &str, now: f64, refuse: impl Fn(i64) -> bool) -> Result<Pop> {
+    pub fn pop<'k>(
+        &self,
+        timeout: Duration,
+        key: impl Into<Key<'k>>,
+        now: f64,
+        refuse: impl Fn(i64) -> bool,
+    ) -> Result<Pop> {
+        let key = key.into();
         self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             let found = {
                 let mut stmt = tx
@@ -399,7 +426,7 @@ impl Store {
                          WHERE key_type = ?1 AND key = ?2 AND (expire_time IS NULL OR expire_time > ?3)",
                     )
                     .map_err(|e| Error::from_sqlite(e, timeout))?;
-                let mut rows = stmt.query((KEY_TYPE_STR, key, now)).map_err(|e| Error::from_sqlite(e, timeout))?;
+                let mut rows = stmt.query((key.key_type(), key, now)).map_err(|e| Error::from_sqlite(e, timeout))?;
                 match rows.next().map_err(|e| Error::from_sqlite(e, timeout))? {
                     Some(row) => {
                         let mode: i64 = row.get(0).map_err(|e| Error::from_sqlite(e, timeout))?;
@@ -434,7 +461,8 @@ impl Store {
 
     /// Sets a live entry's expiry (`None` = never) without counting as a store. Returns whether `key`
     /// was live; an expired entry is not revived.
-    pub fn touch(&self, timeout: Duration, key: &str, expire: Option<f64>, now: f64) -> Result<bool> {
+    pub fn touch<'k>(&self, timeout: Duration, key: impl Into<Key<'k>>, expire: Option<f64>, now: f64) -> Result<bool> {
+        let key = key.into();
         self.write(timeout, |writer, _| writer.set_expire_time(key, now, expire_time(now, expire)))
     }
 
@@ -447,14 +475,15 @@ impl Store {
     ///   matching diskcache's in-place `UPDATE`); a miss or expired key takes the full write path.
     /// - Any other stored value fails with [`Error::NotNumeric`]; a 64-bit overflow with
     ///   [`Error::Overflow`]. Both leave the value unchanged.
-    pub fn incr(
+    pub fn incr<'k>(
         &self,
         timeout: Duration,
-        key: &str,
+        key: impl Into<Key<'k>>,
         delta: Number,
         default: Option<Number>,
         now: f64,
     ) -> Result<Number> {
+        let key = key.into();
         self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             // The fast path: a live number is updated in place, with no prelude, totals or cull.
             if let Some(row) = incr_row(tx, key, timeout)?
@@ -481,10 +510,10 @@ impl Store {
 /// The stored row for `key` (live or not) as `incr` needs it, or `None` if there is none.
 const INCR_SQL: &str = "SELECT id, mode, value, expire_time FROM cache WHERE key_type = ?1 AND key = ?2";
 
-fn incr_row(tx: &Connection, key: &str, timeout: Duration) -> Result<Option<IncrRow>> {
+fn incr_row(tx: &Connection, key: Key<'_>, timeout: Duration) -> Result<Option<IncrRow>> {
     tx.prepare_cached(INCR_SQL)
         .and_then(|mut stmt| {
-            stmt.query_row((KEY_TYPE_STR, key), |r| {
+            stmt.query_row((key.key_type(), key), |r| {
                 let (int, real) = match r.get_ref(2)? {
                     ValueRef::Integer(n) => (Some(n), None),
                     ValueRef::Real(x) => (None, Some(x)),
@@ -502,7 +531,7 @@ fn incr_row(tx: &Connection, key: &str, timeout: Duration) -> Result<Option<Incr
 /// version.
 fn put_value(
     writer: &RowWriter<'_>,
-    key: &str,
+    key: Key<'_>,
     value: Value<'_>,
     pending: Option<&PendingFile>,
     now: f64,
@@ -562,14 +591,14 @@ const LOOKUP_SQL: &str = "SELECT mode, value, expire_time, filename, size, id, s
 
 fn look_up<T>(
     conn: &Connection,
-    key: &str,
+    key: Key<'_>,
     now: f64,
     timeout: Duration,
     decode: &mut impl FnMut(i64, ValueRef<'_>) -> Result<T>,
 ) -> Result<Found<T>> {
     let sqlite = |e| Error::from_sqlite(e, timeout);
     let mut stmt = conn.prepare_cached(LOOKUP_SQL).map_err(sqlite)?;
-    let mut rows = stmt.query((KEY_TYPE_STR, key, now)).map_err(sqlite)?;
+    let mut rows = stmt.query((key.key_type(), key, now)).map_err(sqlite)?;
     let Some(row) = rows.next().map_err(sqlite)? else { return Ok(Found::Miss) };
     let mode: i64 = row.get(0).map_err(sqlite)?;
     let expire_time: Option<f64> = row.get(2).map_err(sqlite)?;
@@ -660,10 +689,10 @@ FROM totals AS t
 LEFT JOIN cache AS c ON c.key_type = ?1 AND c.key = ?2
 WHERE t.only = 1";
 
-fn prelude(conn: &Connection, key: &str, now: f64, timeout: Duration) -> Result<Prelude> {
+fn prelude(conn: &Connection, key: Key<'_>, now: f64, timeout: Duration) -> Result<Prelude> {
     conn.prepare_cached(PRELUDE_SQL)
         .and_then(|mut stmt| {
-            stmt.query_row((KEY_TYPE_STR, key, now), |r| {
+            stmt.query_row((key.key_type(), key, now), |r| {
                 let size: i64 = r.get(2)?;
                 let stored = match r.get::<_, Option<i64>>(5)? {
                     Some(_) => Some((r.get::<_, i64>(6)?, r.get::<_, Option<String>>(7)?)),
@@ -771,13 +800,13 @@ struct IncrRow {
     expire_time: Option<f64>,
 }
 
-fn live_row(tx: &Connection, key: &str, now: f64, timeout: Duration) -> Result<Option<LiveRow>> {
+fn live_row(tx: &Connection, key: Key<'_>, now: f64, timeout: Duration) -> Result<Option<LiveRow>> {
     tx.prepare_cached(
         "SELECT mode, value, expire_time FROM cache
          WHERE key_type = ?1 AND key = ?2 AND (expire_time IS NULL OR expire_time > ?3)",
     )
     .and_then(|mut stmt| {
-        stmt.query_row((KEY_TYPE_STR, key, now), |r| {
+        stmt.query_row((key.key_type(), key, now), |r| {
             let mode: i64 = r.get(0)?;
             let (int, real) = match r.get_ref(1)? {
                 ValueRef::Integer(n) => (Some(n), None),

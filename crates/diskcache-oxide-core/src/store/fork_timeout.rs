@@ -45,7 +45,14 @@ fn open_store(dir: &Path) -> Arc<Store> {
 fn put(store: &Store, key: &str) {
     store
         .write(T, |w, _| {
-            w.upsert(&NewRow { key, mode: 2, value: Stored::Blob(b"v"), size: 1, store_time: 1.0, expire_time: None })
+            w.upsert(&NewRow {
+                key: key.into(),
+                mode: 2,
+                value: Stored::Blob(b"v"),
+                size: 1,
+                store_time: 1.0,
+                expire_time: None,
+            })
         })
         .unwrap();
 }

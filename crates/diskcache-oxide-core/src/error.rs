@@ -95,6 +95,10 @@ pub enum Error {
     Unwritable,
 
     /// `incr`/`decr` with `default=None` on a missing or expired key (Python `KeyError`).
+    /// A stored key that isn't one this build can read: a damaged page or file.
+    #[error("a stored key is damaged: {0}")]
+    CorruptKey(#[source] crate::key::KeyError),
+
     #[error("key not found")]
     KeyMissing,
 
@@ -198,7 +202,9 @@ impl Error {
             | Self::WriteLockBusyInTransaction
             | Self::NoTransaction
             | Self::EndInsideOperation
-            | Self::TransactionAborted => false,
+            | Self::TransactionAborted
+            // Damage, not an outage: never answered as a miss.
+            | Self::CorruptKey(_) => false,
         }
     }
 

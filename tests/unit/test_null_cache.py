@@ -109,7 +109,7 @@ def test_constructor_accepts_cache_arguments_and_reports_them() -> None:
 def test_bad_argument_types_raise_like_a_real_cache() -> None:
     cache = NullCache()
     with pytest.raises(TypeError):
-        cache.set(1, 'v')  # ty: ignore[invalid-argument-type]  # D-004
+        cache.set([1], 'v')  # ty: ignore[invalid-argument-type]  # D-004
     with pytest.raises(TypeError):
         cache.set('k', 'v', expire=True)  # D-014
     with pytest.raises(TypeError):
@@ -174,9 +174,9 @@ def test_transact_refuses_a_retry_that_isnt_a_bool(retry: object) -> None:
         NullCache().transact(retry=retry)  # ty: ignore[invalid-argument-type]
 
 
-def test_transact_refuses_a_key_that_isnt_a_str() -> None:
+def test_transact_refuses_a_key_of_no_key_type() -> None:
     with pytest.raises(TypeError):
-        NullCache().transact(key=1)  # ty: ignore[invalid-argument-type]
+        NullCache().transact(key=[1])  # ty: ignore[invalid-argument-type]
 
 
 def test_transact_with_invalidate_opens_no_transaction_on_the_real_cache(tmp_path: Path) -> None:

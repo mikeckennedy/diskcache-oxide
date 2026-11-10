@@ -55,6 +55,7 @@ from diskcache_oxide._core import (
     sqlite_compile_options,
     sqlite_version,
 )
+from diskcache_oxide._types import Key
 from diskcache_oxide.caches import Caches, CacheStats
 from diskcache_oxide.null import NullCache
 from diskcache_oxide.protocol import CacheLike, ShardedCacheLike, TransactionalCacheLike
@@ -106,6 +107,7 @@ __all__ = [
     'FanoutCache',
     'ForeignValueError',
     'FormatMismatchError',
+    'Key',
     'LayoutMismatchError',
     'NullCache',
     'ShardedCacheLike',

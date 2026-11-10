@@ -19,9 +19,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from diskcache_oxide import Cache, Caches, FanoutCache, NullCache, ShardedCacheLike, Timeout, TransactionAborted
+from diskcache_oxide import Cache, Caches, FanoutCache, Key, NullCache, ShardedCacheLike, Timeout, TransactionAborted
 from diskcache_oxide._core import Transaction
 
+from tests.keys import str_keys
 from tests.unit.test_durable import SHORT, peer_holding_the_write_lock
 
 MiB = 1 << 20
@@ -106,10 +107,17 @@ def test_the_key_is_keyword_only_and_required(cache: FanoutCache) -> None:
         cache.transact()  # ty: ignore[missing-argument]
 
 
-@pytest.mark.parametrize('key', [1, b'k', None])
-def test_a_key_that_isnt_a_str_raises(cache: FanoutCache, key: object) -> None:
+@pytest.mark.parametrize('key', [[1], frozenset(), bytearray(b'k')])
+def test_a_key_that_isnt_a_key_type_raises(cache: FanoutCache, key: object) -> None:
     with pytest.raises(TypeError):
         cache.transact(key=key)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize('key', [1, b'k', None, ('t', 2)])
+def test_a_typed_key_names_its_shard_for_a_transaction(cache: FanoutCache, key: Key) -> None:
+    with cache.transact(key=key) as tx:
+        tx.set(key, 'in-tx')
+    assert cache.get(key) == 'in-tx'
 
 
 @pytest.mark.parametrize('retry', [1, 'yes', None])
@@ -270,7 +278,7 @@ def test_an_iterator_made_before_the_block_cant_walk_inside_it(cache: FanoutCach
         for it in (walk, merge):
             with pytest.raises(ValueError, match='^iteration on a FanoutCache covers every shard'):
                 next(it)
-    assert sorted([*walk]) == sorted(keys), 'the refused next() lost the walk'
+    assert sorted(str_keys(walk)) == sorted(keys), 'the refused next() lost the walk'
     assert [min(keys), *merge] == sorted(keys), 'the refused next() lost the merge'
 
 
@@ -280,7 +288,7 @@ def test_other_threads_calls_over_every_shard_are_not_refused(cache: FanoutCache
     with cache.transact(key=a):
         cache.set(a, 1)
         assert _on_thread(lambda: len(cache)) == 1, "another thread saw the block's uncommitted write"
-        assert _on_thread(lambda: sorted(cache)) == [other]
+        assert _on_thread(lambda: sorted(str_keys(cache))) == [other]
         assert _on_thread(lambda: cache.volume()) > 0
     assert len(cache) == 2
 

@@ -10,6 +10,7 @@ mod error;
 pub mod fanout;
 pub mod gate;
 pub mod genlock;
+pub mod key;
 pub mod lockwait;
 pub mod maintenance;
 pub mod open;

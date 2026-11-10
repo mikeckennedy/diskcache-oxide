@@ -676,12 +676,12 @@ def test_bugs_still_raise(directory: Path) -> None:
     cache = Cache(directory, durable=True)
     cache.set('text', 'not a number')
     calls: list[tuple[type[BaseException], Callable[[], Any]]] = [
-        (TypeError, lambda: cache.get(1)),  # ty: ignore[invalid-argument-type]
-        (TypeError, lambda: cache[1]),  # ty: ignore[invalid-argument-type]
-        (TypeError, lambda: 1 in cache),
-        (TypeError, lambda: cache.set(1, 'v')),  # ty: ignore[invalid-argument-type]
-        (TypeError, lambda: cache.delete(1)),  # ty: ignore[invalid-argument-type]
-        (TypeError, lambda: cache.pop(1)),  # ty: ignore[invalid-argument-type]
+        (TypeError, lambda: cache.get([1])),  # ty: ignore[invalid-argument-type]
+        (TypeError, lambda: cache[[1]]),  # ty: ignore[invalid-argument-type]
+        (TypeError, lambda: [1] in cache),
+        (TypeError, lambda: cache.set([1], 'v')),  # ty: ignore[invalid-argument-type]
+        (TypeError, lambda: cache.delete([1])),  # ty: ignore[invalid-argument-type]
+        (TypeError, lambda: cache.pop([1])),  # ty: ignore[invalid-argument-type]
         (TypeError, lambda: cache.set('k', object())),
         (TypeError, lambda: cache.add('k', object())),
         (TypeError, lambda: cache.set('k', 'v', expire=True)),

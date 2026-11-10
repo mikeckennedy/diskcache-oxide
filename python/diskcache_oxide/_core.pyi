@@ -5,6 +5,8 @@ from collections.abc import Callable, Iterator
 from types import TracebackType
 from typing import Any, Literal, Self, final, overload
 
+from diskcache_oxide._types import Key
+
 # PyO3 generates __all__ from everything the module adds, in the order it adds them.
 __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     '__version__',
@@ -255,7 +257,7 @@ class Cache:
     def enabled(self) -> bool:
         """Always True for a real cache; False for a `NullCache`."""
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
+    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
         """Return the value stored for `key`, or `default` if it's missing or expired.
 
         Reads never write, so any number of threads and processes can read at once.
@@ -283,8 +285,8 @@ class Cache:
             ```
         """
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def set(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def get(self, key: Key, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
+    def set(self, key: Key, value: Any, expire: float | None = None) -> bool:
         """Store `value` under `key`, replacing any existing value.
 
         Values of 64 KiB or more (after encoding) are stored in their own file.
@@ -309,7 +311,7 @@ class Cache:
             cache.set('config', {'retries': 3})                   # never expires
             ```
         """
-    def add(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None) -> bool:
         """Store `value` only if `key` is missing or expired.
 
         Atomic across threads and processes: when several callers race to add one key, exactly one
@@ -335,7 +337,7 @@ class Cache:
                 remove_stale_sessions()   # only the worker whose add() returned True gets here
             ```
         """
-    def delete(self, key: str) -> bool:
+    def delete(self, key: Key) -> bool:
         """Remove `key`.
 
         Returns:
@@ -354,7 +356,7 @@ class Cache:
                 cache.delete(key)          # safe while iterating
             ```
         """
-    def pop(self, key: str, default: Any = None) -> Any:
+    def pop(self, key: Key, default: Any = None) -> Any:
         """Remove `key` and return its value, delivering it to exactly one caller.
 
         Reads and decodes the value first, as `get` does, then deletes exactly that stored version,
@@ -387,7 +389,7 @@ class Cache:
             token = cache.pop('reset-token:abc')   # None if it was missing or already used
             ```
         """
-    def touch(self, key: str, expire: float | None = None) -> bool:
+    def touch(self, key: Key, expire: float | None = None) -> bool:
         """Change the expiry of an existing entry without rewriting its value.
 
         Args:
@@ -407,7 +409,7 @@ class Cache:
             ```
         """
     # Defaults are delta=1, default=0; PyO3 reports them as `...` at runtime.
-    def incr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
+    def incr(self, key: Key, delta: float = ..., default: float | None = ...) -> int | float:
         """Add `delta` to the number stored under `key`, atomically, and return the result.
 
         Atomic across threads and processes, so concurrent increments are never lost. The entry
@@ -437,13 +439,14 @@ class Cache:
             allowed = cache.incr('rate:203.0.113.7:1731') <= 100  # then count; incr keeps the expiry
             ```
         """
-    def decr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
+    def decr(self, key: Key, delta: float = ..., default: float | None = ...) -> int | float:
         """Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 
         Returns:
             The new value.
         """
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+    @overload
+    def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]:
         """Iterate over keys in sorted order, optionally only those starting with `prefix`.
 
         A prefix is an indexed range scan, so it costs time in proportion to the matches, not the
@@ -466,6 +469,8 @@ class Cache:
             newest_first = cache.iterkeys(reverse=True)
             ```
         """
+    @overload
+    def iterkeys(self, *, prefix: None = None, reverse: bool = False) -> Iterator[Key]: ...
     def expire(self, *, timeout: float | None = None) -> int:
         """Remove every expired entry, and its value file.
 
@@ -604,13 +609,13 @@ class Cache:
                 tx.set('last_request', now)
             ```
         """
-    def __getitem__(self, key: str, /) -> Any:
+    def __getitem__(self, key: Key, /) -> Any:
         """`cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under
         `durable=True`."""
-    def __setitem__(self, key: str, value: Any, /) -> None:
+    def __setitem__(self, key: Key, value: Any, /) -> None:
         """`cache[key] = value`: store a value that never expires, like `set()`. Under `durable=True` a failed write is
         dropped."""
-    def __delitem__(self, key: str, /) -> None:
+    def __delitem__(self, key: Key, /) -> None:
         """`del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired, or the delete failed
         under `durable=True`."""
     def __contains__(self, key: object, /) -> bool:
@@ -620,7 +625,7 @@ class Cache:
         """The number of entries, including expired entries not yet removed."""
     def __bool__(self) -> bool:
         """Always True, even when empty, so `if cache:` means "caching is on"."""
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> Iterator[Key]:
         """Iterate over keys in insertion order. An overwrite keeps its key's place.
 
         As with `iterkeys()`, `next()` raises `ValueError` while another thread is inside it.
@@ -745,7 +750,7 @@ class FanoutCache:
     @property
     def enabled(self) -> bool:
         """Always True for a real cache; False for a `NullCache`."""
-    def shard_of(self, key: str) -> int:
+    def shard_of(self, key: Key) -> int:
         """The shard `key` lives in, from 0 to `shards - 1`: the same in every process and release.
 
         Examples:
@@ -753,7 +758,7 @@ class FanoutCache:
             cache.shard_of('user:42') == cache.shard_of('user:42:profile')   # usually False: no grouping by prefix
             ```
         """
-    def transact(self, *, key: str, retry: bool = False) -> Transaction[FanoutCache]:
+    def transact(self, *, key: Key, retry: bool = False) -> Transaction[FanoutCache]:
         """A write transaction on the shard `key` lives in, for `with cache.transact(key='total') as tx:`.
 
         It is `Cache.transact()` on that one shard: `tx` is this FanoutCache, calls on this thread
@@ -793,23 +798,23 @@ class FanoutCache:
             ```
         """
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
+    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
         """As `Cache.get`, on the key's shard."""
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def set(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def get(self, key: Key, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
+    def set(self, key: Key, value: Any, expire: float | None = None) -> bool:
         """As `Cache.set`, on the key's shard."""
-    def add(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None) -> bool:
         """As `Cache.add`, on the key's shard: atomic across threads and processes."""
-    def delete(self, key: str) -> bool:
+    def delete(self, key: Key) -> bool:
         """As `Cache.delete`, on the key's shard."""
-    def pop(self, key: str, default: Any = None) -> Any:
+    def pop(self, key: Key, default: Any = None) -> Any:
         """As `Cache.pop`, on the key's shard."""
-    def touch(self, key: str, expire: float | None = None) -> bool:
+    def touch(self, key: Key, expire: float | None = None) -> bool:
         """As `Cache.touch`, on the key's shard."""
-    def incr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
+    def incr(self, key: Key, delta: float = ..., default: float | None = ...) -> int | float:
         """As `Cache.incr`, on the key's shard: atomic across threads and processes."""
-    def decr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
+    def decr(self, key: Key, delta: float = ..., default: float | None = ...) -> int | float:
         """As `Cache.decr`, on the key's shard."""
     def volume(self) -> int:
         """The total disk use in bytes of every shard (databases plus value files).
@@ -885,7 +890,8 @@ class FanoutCache:
             OSError: A real error, such as a full disk, on some shard, raised after every shard was
                 tried. It carries `failed_shards` (see the class docs).
         """
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+    @overload
+    def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]:
         """Iterate over keys in sorted order, optionally only those starting with `prefix`.
 
         The same order `Cache.iterkeys` gives for the same keys (code-point order, like `sorted()`):
@@ -904,7 +910,9 @@ class FanoutCache:
             Timeout: A shard stayed locked, or a fork stayed pending, for longer than `timeout`
                 during one `next()` (which shares that one budget across the shards it reads).
         """
-    def __iter__(self) -> Iterator[str]:
+    @overload
+    def iterkeys(self, *, prefix: None = None, reverse: bool = False) -> Iterator[Key]: ...
+    def __iter__(self) -> Iterator[Key]:
         """Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on.
 
         That isn't the order keys were stored in across the cache. Otherwise as `iterkeys()`.
@@ -923,11 +931,11 @@ class FanoutCache:
         """Test hook: every failure `durable=True` has swallowed on this handle, as `Cache._durable_stats`."""
     def _handle_counts(self) -> list[int]:
         """Test hook: how many open handles each shard's store counts, in shard order."""
-    def __getitem__(self, key: str, /) -> Any:
+    def __getitem__(self, key: Key, /) -> Any:
         """`cache[key]`, as on `Cache`."""
-    def __setitem__(self, key: str, value: Any, /) -> None:
+    def __setitem__(self, key: Key, value: Any, /) -> None:
         """`cache[key] = value`, as on `Cache`."""
-    def __delitem__(self, key: str, /) -> None:
+    def __delitem__(self, key: Key, /) -> None:
         """`del cache[key]`, as on `Cache`."""
     def __contains__(self, key: object, /) -> bool:
         """`key in cache`, as on `Cache`."""

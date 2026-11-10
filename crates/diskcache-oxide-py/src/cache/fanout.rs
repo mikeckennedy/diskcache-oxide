@@ -17,6 +17,7 @@ use std::sync::{Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
 use diskcache_oxide_core::fanout::{self, Manifest, ShardRequest};
+use diskcache_oxide_core::key::{Key, OwnedKey};
 use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, PAGE, Snapshot};
 use diskcache_oxide_core::open::Role;
 use diskcache_oxide_core::ops::Number;
@@ -28,7 +29,7 @@ use pyo3::gc::PyVisit;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-use super::{DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, Transaction, str_key, whole};
+use super::{DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, Transaction, whole};
 use crate::codec::TypeRegistry;
 use crate::to_py_err;
 
@@ -144,7 +145,7 @@ impl FanoutCache {
     /// The shard `key` lives in, `0 <= shard_of(key) < shards`: the same in every process and every
     /// release. Keys with the same shard can share a `transact(key=...)`.
     fn shard_of(&self, key: &Bound<'_, PyAny>) -> PyResult<usize> {
-        Ok(self.route(str_key(key)?).shard)
+        Ok(self.route(crate::codec::key::encode_key(key)?.key()).shard)
     }
 
     /// Test hook: every failure `durable=True` has swallowed on this handle, as `Cache`'s.
@@ -178,17 +179,20 @@ impl FanoutCache {
         default: Option<Py<PyAny>>,
         expire_time: bool,
     ) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
         self.config.get(py, self.routed(name)?, name, default, expire_time)
     }
 
     fn __getitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
         self.config.get_item(py, self.routed(name)?, key, name)
     }
 
     fn __contains__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let name = str_key(key)?;
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
         self.config.contains(py, self.routed(name)?, name)
     }
 
@@ -200,7 +204,8 @@ impl FanoutCache {
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        let name = str_key(key)?;
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
         self.config.set(py, self.routed(name)?, name, value, expire)
     }
 
@@ -216,12 +221,14 @@ impl FanoutCache {
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        let name = str_key(key)?;
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
         self.config.add(py, self.routed(name)?, name, value, expire)
     }
 
     fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let name = str_key(key)?;
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
         self.config.delete(py, self.routed(name)?, name)
     }
 
@@ -231,25 +238,29 @@ impl FanoutCache {
 
     #[pyo3(signature = (key, default = None))]
     fn pop(&self, py: Python<'_>, key: &Bound<'_, PyAny>, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
         self.config.pop(py, self.routed(name)?, name, default)
     }
 
     #[pyo3(signature = (key, expire = None))]
     fn touch(&self, py: Python<'_>, key: &Bound<'_, PyAny>, expire: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        let name = str_key(key)?;
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
         self.config.touch(py, self.routed(name)?, name, expire)
     }
 
     #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
     fn incr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
         self.config.add_number(py, self.routed(name)?, key, name, delta, default, false)
     }
 
     #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
     fn decr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
         self.config.add_number(py, self.routed(name)?, key, name, delta, default, true)
     }
 
@@ -406,7 +417,7 @@ impl FanoutCache {
     /// takes the same spelling.
     #[pyo3(signature = (*, key, retry = false))]
     fn transact(slf: Py<Self>, key: &Bound<'_, PyAny>, retry: bool) -> PyResult<Transaction> {
-        let shard = slf.get().route(str_key(key)?).shard;
+        let shard = slf.get().route(crate::codec::key::encode_key(key)?.key()).shard;
         Ok(Transaction::on_shard(slf, shard, retry))
     }
 }
@@ -466,10 +477,10 @@ impl FanoutCache {
 
     /// The handle of the shard `key` hashes to.
     #[inline]
-    fn route(&self, key: &str) -> &StoreHandle {
+    fn route(&self, key: Key<'_>) -> &StoreHandle {
         // The shard count came from a validated manifest, so it fits a `u32`.
         let count = u32::try_from(self.shards.len()).unwrap_or(u32::MAX);
-        &self.shards[fanout::shard_of_str(key, count)]
+        &self.shards[fanout::shard_of_key(key, count)]
     }
 
     /// The handle of the shard `key` hashes to, for a routed call: refused with `ValueError` if this
@@ -478,7 +489,7 @@ impl FanoutCache {
     /// is open (a `Cache.transact()` on any thread counts), it asks each other shard, which stops at
     /// once for a shard with none and costs a gate entry and a mutex lock for one that has one.
     #[inline]
-    fn routed(&self, key: &str) -> PyResult<&StoreHandle> {
+    fn routed(&self, key: Key<'_>) -> PyResult<&StoreHandle> {
         let handle = self.route(key);
         if Store::any_held_in_process() {
             self.refuse_other_shards(handle.shard)?;
@@ -700,7 +711,7 @@ pub(crate) struct FanoutKeyIterator {
 /// Where a [`FanoutKeyIterator`] is.
 enum Walk {
     /// `__iter__`: shard `shard` in insertion order, then the next shard from its start.
-    Shards { shard: usize, cursor: Cursor, buffer: VecDeque<String> },
+    Shards { shard: usize, cursor: Cursor, buffer: VecDeque<OwnedKey> },
     /// `iterkeys`: a k-way merge. `heads` holds each shard's next key, and `shards[i]` the keys
     /// buffered behind it. A shard in `pending` has nothing buffered: it is read at the start of the
     /// next `next()`, before any key is chosen, so an error there loses nothing and can be retried.
@@ -722,16 +733,17 @@ impl Walk {
 /// One shard's place in an `iterkeys` merge.
 struct MergeShard {
     cursor: Cursor,
-    buffer: VecDeque<String>,
+    buffer: VecDeque<OwnedKey>,
 }
 
 /// A shard's next key in the merge. The heap's greatest is the next key out: the smallest key
-/// ascending, the largest in reverse. Keys are compared as Rust strings, which is byte order on
-/// UTF-8, the order SQLite's `BINARY` collation gives each shard's pages (and code-point order, as
-/// `sorted()` gives). One key lives in one shard, so two heads are never equal.
+/// ascending, the largest in reverse. Keys compare as `OwnedKey`s: `str` keys before typed keys,
+/// each by its bytes, which is the `(key_type, key)` order SQLite gives each shard's pages (for
+/// `str` keys, code-point order, as `sorted()` gives). One key lives in one shard, so two heads are
+/// never equal.
 #[derive(PartialEq, Eq)]
 struct Head {
-    key: String,
+    key: OwnedKey,
     shard: usize,
     reverse: bool,
 }
@@ -762,7 +774,7 @@ impl FanoutKeyIterator {
         order: Order,
         cursor: &Cursor,
         deadline: Instant,
-    ) -> Result<(Vec<String>, Cursor), Error> {
+    ) -> Result<(Vec<OwnedKey>, Cursor), Error> {
         let handle = &self.cache.get().shards[shard];
         let left = deadline.saturating_duration_since(Instant::now());
         let left = handle.ensure_open(left)?;
@@ -784,7 +796,7 @@ impl FanoutKeyIterator {
     /// The next key. The reads one `next()` makes (every shard's first page, on the first call of a
     /// merge) share one deadline of the cache's `timeout`. Refused inside a `transact(key=...)` on
     /// this thread, as creating the iterator is, so one made before the block can't walk inside it.
-    fn __next__(&self) -> PyResult<Option<String>> {
+    fn __next__(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.cache.get().refuse_fan_out("iteration")?;
         // As `Cache`'s iterator: never wait for the state while attached (the gate's rules), and
         // another thread inside `next()` is an error, as for a generator.
@@ -802,7 +814,7 @@ impl FanoutKeyIterator {
         match &mut *walk {
             Walk::Shards { shard, cursor, buffer } => loop {
                 if let Some(key) = buffer.pop_front() {
-                    return Ok(Some(key));
+                    return crate::codec::key::decode_owned(py, &key).map(Some);
                 }
                 if *shard >= self.cache.get().shards.len() {
                     return Ok(None);
@@ -836,7 +848,7 @@ impl FanoutKeyIterator {
                     Some(next) => heads.push(Head { key: next, shard, reverse: *reverse }),
                     None => pending.push(shard),
                 }
-                Ok(Some(key))
+                crate::codec::key::decode_owned(py, &key).map(Some)
             }
         }
     }
