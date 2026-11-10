@@ -189,3 +189,33 @@ def test_any_key_round_trips_through_set_get_and_iteration(tmp_path_factory: pyt
         assert same(back, key) or (back == 0.0 and key == 0.0), (back, key)
         [back] = list(cache.iterkeys())
         assert same(back, key) or (back == 0.0 and key == 0.0), (back, key)
+
+
+def test_a_damaged_stored_key_raises_corrupt_key_error_on_iteration(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    from diskcache_oxide import CorruptKeyError, CorruptValueError
+
+    assert issubclass(CorruptKeyError, CorruptValueError)
+    for name, make in (('one', lambda p: Cache(p)), ('many', lambda p: FanoutCache(p, shards=2))):
+        directory = tmp_path / name
+        with make(directory) as cache:
+            cache.set('s', 1)
+            cache.set(7, 1)
+        # Damage every typed key, from another process (two SQLites in one process break locks).
+        script = (
+            'import sqlite3, sys, pathlib\n'
+            'for db in pathlib.Path(sys.argv[1]).rglob("diskcache-oxide.sqlite"):\n'
+            '    c = sqlite3.connect(db); c.execute("UPDATE cache SET key = x\'11\' WHERE key_type = 2"); c.commit()\n'
+        )
+        subprocess.run([sys.executable, '-c', script, str(directory)], check=True)
+        with make(directory) as cache:
+            for walk in (
+                lambda: list(cache),
+                lambda: list(cache.iterkeys()),
+                lambda: list(cache.iterkeys(reverse=True)),
+            ):
+                with pytest.raises(CorruptKeyError, match='a stored key is damaged'):
+                    walk()
+            assert cache.get('s') == 1, 'the rest of the cache still works'

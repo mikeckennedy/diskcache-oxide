@@ -181,12 +181,32 @@ def pace(interval: float, next_at: float, stop: threading.Event) -> tuple[float,
 # ---------------------------------------------------------------------------
 
 
-def make_value(key: str, rng: random.Random, expire_at: float | None) -> Any:
+def key_tag(key: Any) -> str:
+    """How a value records the key it was stored under: the key itself for a `str`, else its repr."""
+    return key if isinstance(key, str) else repr(key)
+
+
+def soak_key(rng: random.Random, prefix: str, n: int) -> Any:
+    """A key for slot `n`: mostly `str`, otherwise a typed key (plan 24), so every lane meets both."""
+    form = rng.random()
+    if form < 0.70:
+        return f'{prefix}:{n}'
+    if form < 0.80:
+        return n
+    if form < 0.90:
+        return (prefix, n, None)  # memoize's shape
+    if form < 0.95:
+        return f'{prefix}:{n}'.encode()
+    return (prefix, n + 0.5)
+
+
+def make_value(key: Any, rng: random.Random, expire_at: float | None) -> Any:
+    tag = key_tag(key)
     roll = rng.random()
     if roll < 0.90:
         body = 'x' * rng.randrange(10, 400)
         return {
-            'key': key,
+            'key': tag,
             'crc': zlib.crc32(body.encode()),
             'body': body,
             'exp': expire_at,
@@ -194,14 +214,15 @@ def make_value(key: str, rng: random.Random, expire_at: float | None) -> Any:
         }
     size = rng.randrange(1_024, 8_192) if roll < 0.99 else rng.randrange(64 * 1024, 512 * 1024)
     payload = rng.randbytes(size)
-    header = json.dumps({'key': key, 'crc': zlib.crc32(payload), 'exp': expire_at}).encode()
+    header = json.dumps({'key': tag, 'crc': zlib.crc32(payload), 'exp': expire_at}).encode()
     return len(header).to_bytes(4, 'big') + header + payload
 
 
-def check_value(key: str, value: Any, now: float) -> str | None:
+def check_value(key: Any, value: Any, now: float) -> str | None:
     """None if `value` is intact and current, else what's wrong with it."""
+    tag = key_tag(key)
     if isinstance(value, dict):
-        if value.get('key') != key:
+        if value.get('key') != tag:
             return f'value under {key!r} belongs to {value.get("key")!r}'
         if zlib.crc32(str(value.get('body', '')).encode()) != value.get('crc'):
             return f'dict value under {key!r} fails its CRC'
@@ -212,7 +233,7 @@ def check_value(key: str, value: Any, now: float) -> str | None:
             header = json.loads(value[4 : 4 + n])
         except ValueError:
             return f'bytes value under {key!r} has a corrupt header'
-        if header.get('key') != key:
+        if header.get('key') != tag:
             return f'bytes value under {key!r} belongs to {header.get("key")!r}'
         if zlib.crc32(value[4 + n :]) != header.get('crc'):
             return f'bytes value under {key!r} ({len(value)} bytes) fails its CRC'
@@ -331,7 +352,7 @@ class Worker:
                 time.sleep(0.1)
 
     def one_op(self, rng: random.Random, i: int, every: int) -> None:
-        key = f'c:{rng.randrange(CHAOS_KEYS)}'
+        key = soak_key(rng, 'c', rng.randrange(CHAOS_KEYS))
         # Paced runs are slow enough to time every call, so the maximum is the true worst case.
         sample = self.thread_rate > 0 or i % LATENCY_SAMPLE_EVERY == 0
         if i % every == 0 and rng.random() < 0.25:
@@ -1409,7 +1430,7 @@ class FanoutWorker(Worker):
 
     def fan_op(self, rng: random.Random) -> None:
         roll = rng.random()
-        key = f'f:{rng.randrange(FANOUT_KEYS)}'
+        key = soak_key(rng, 'f', rng.randrange(FANOUT_KEYS))
         if roll < 0.70:
             asked_at = time.time()
             value = self.fan.get(key)
@@ -1481,9 +1502,13 @@ class FanoutWorker(Worker):
             self.problem('fanout iterkeys(reverse=True) is out of order or repeats a key')
         self.count('fanout_merges')
         if rounds % 4 == 0:  # Every key, both ways: the whole root is larger, so less often.
-            merged = [k for k in self.fan.iterkeys() if isinstance(k, str)]  # The soak stores str keys only.
-            if any(a >= b for a, b in zip(merged, merged[1:], strict=False)):
+            merged = list(self.fan.iterkeys())
+            # D-046: every str key first, strictly sorted, then the typed keys; nothing twice.
+            texts = [k for k in merged if isinstance(k, str)]
+            if merged[: len(texts)] != texts or any(a >= b for a, b in zip(texts, texts[1:], strict=False)):
                 self.problem('fanout iterkeys() over every key is out of order or repeats a key')
+            if len(set(map(repr, merged))) != len(merged):
+                self.problem('fanout iterkeys() over every key repeats a key')
             walked = list(self.fan)
             if len(walked) != len(set(walked)):
                 self.problem(f'fanout __iter__ repeated {len(walked) - len(set(walked))} keys')

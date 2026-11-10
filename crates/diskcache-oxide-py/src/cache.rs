@@ -282,7 +282,8 @@ impl Cache {
         retry: bool,
     ) -> PyResult<bool> {
         let k = codec::key::encode_key(key)?;
-        retrying(py, retry, || self.config.set(py, &self.handle, k.key(), value, expire))
+        let (encoded, expire) = self.config.encode_value(py, value, expire)?;
+        retrying(py, retry, || self.config.set(py, &self.handle, k.key(), &encoded, expire))
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -299,7 +300,8 @@ impl Cache {
         retry: bool,
     ) -> PyResult<bool> {
         let k = codec::key::encode_key(key)?;
-        retrying(py, retry, || self.config.add(py, &self.handle, k.key(), value, expire))
+        let (encoded, expire) = self.config.encode_value(py, value, expire)?;
+        retrying(py, retry, || self.config.add(py, &self.handle, k.key(), &encoded, expire))
     }
 
     #[pyo3(signature = (key, *, retry = false))]
@@ -619,6 +621,11 @@ thread_local! {
     /// for the call to retry, instead of answering it as a miss. Every call sets it for its own
     /// span, so a call nested inside one (a pickle hook using the cache) has its own setting.
     static RETRYING: Cell<bool> = const { Cell::new(false) };
+
+    /// Set when this thread's current call raises its own store's `Timeout` (in `store_failed`), so
+    /// `retrying` retries only that: a `Timeout` raised by the caller's code (a pickle or registered
+    /// type's hook, a `clock`, a nested cache call inside one) is never taken for this cache's.
+    static OWN_TIMEOUT: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The least a round of a `retry=True` call takes, sleeping out the rest with the interpreter
@@ -630,17 +637,26 @@ const RETRY_ROUND: Duration = Duration::from_millis(1);
 /// or a decode error. Each round gets the call's whole `timeout` and holds nothing between rounds,
 /// so a pending fork is never held up by the wait; signals are checked, so Ctrl-C ends it.
 pub(crate) fn retrying<T>(py: Python<'_>, retry: bool, mut call: impl FnMut() -> PyResult<T>) -> PyResult<T> {
-    struct Restore(bool);
+    struct Restore {
+        retrying: bool,
+        own: bool,
+    }
     impl Drop for Restore {
         fn drop(&mut self) {
-            RETRYING.with(|r| r.set(self.0));
+            RETRYING.with(|r| r.set(self.retrying));
+            OWN_TIMEOUT.with(|o| o.set(self.own));
         }
     }
-    let _restore = Restore(RETRYING.with(|r| r.replace(retry)));
+    let _restore =
+        Restore { retrying: RETRYING.with(|r| r.replace(retry)), own: OWN_TIMEOUT.with(|o| o.replace(false)) };
     loop {
-        let started = Instant::now();
+        // A round's clock is read only when it may be retried.
+        let started = retry.then(Instant::now);
+        OWN_TIMEOUT.with(|o| o.set(false));
         match call() {
-            Err(e) if retry && e.is_instance_of::<crate::Timeout>(py) => pause_before_retry(py, started)?,
+            Err(e) if retry && OWN_TIMEOUT.with(Cell::get) && e.is_instance_of::<crate::Timeout>(py) => {
+                pause_before_retry(py, started.unwrap_or_else(Instant::now))?;
+            }
             other => return other,
         }
     }
@@ -731,6 +747,9 @@ impl HandleConfig {
     #[cold]
     #[inline(never)]
     fn store_failed(&self, py: Python<'_>, store: &Store, op: Op, now: f64, error: Error) -> PyResult<()> {
+        if matches!(error, Error::Timeout { .. }) {
+            OWN_TIMEOUT.with(|o| o.set(true));
+        }
         let Some(failures) = self.failures.as_deref() else { return Err(to_py_err(error)) };
         // Under `retry=True` a `Timeout` is the call's to retry, not an outage to answer (plan 24).
         let retried = matches!(error, Error::Timeout { .. }) && RETRYING.with(Cell::get);
@@ -787,32 +806,43 @@ impl HandleConfig {
         Ok(self.attempt(py, &handle.store, Op::Contains, now, found)?.unwrap_or(false))
     }
 
+    /// `set` and `add`'s value and `expire`, checked and encoded.
+    fn encode_value<'py>(
+        &self,
+        py: Python<'py>,
+        value: &Bound<'py, PyAny>,
+        expire: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(codec::Encoded<'py>, Option<f64>)> {
+        let expire = optional_seconds("expire", expire)?;
+        Ok((self.codec.encode(py, value)?, expire))
+    }
+
+    /// `value` was encoded by [`HandleConfig::encode_value`], once, outside any retry: a retried
+    /// round re-runs only the store's work, not the encoder or a registered type's hooks.
     fn set(
         &self,
         py: Python<'_>,
         handle: &StoreHandle,
         key: Key<'_>,
-        value: &Bound<'_, PyAny>,
-        expire: Option<&Bound<'_, PyAny>>,
+        encoded: &codec::Encoded<'_>,
+        expire: Option<f64>,
     ) -> PyResult<bool> {
-        let expire = optional_seconds("expire", expire)?;
-        let encoded = self.codec.encode(py, value)?;
         let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
         let now = self.now(py)?;
         let stored = handle.run(self.timeout, |timeout| handle.store.set(timeout, key, value, expire, now));
         Ok(self.attempt(py, &handle.store, Op::Set, now, stored)?.unwrap_or(false))
     }
 
+    /// `value` was encoded by [`HandleConfig::encode_value`], once, outside any retry: a retried
+    /// round re-runs only the store's work, not the encoder or a registered type's hooks.
     fn add(
         &self,
         py: Python<'_>,
         handle: &StoreHandle,
         key: Key<'_>,
-        value: &Bound<'_, PyAny>,
-        expire: Option<&Bound<'_, PyAny>>,
+        encoded: &codec::Encoded<'_>,
+        expire: Option<f64>,
     ) -> PyResult<bool> {
-        let expire = optional_seconds("expire", expire)?;
-        let encoded = self.codec.encode(py, value)?;
         let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
         let now = self.now(py)?;
         let added = handle.run(self.timeout, |timeout| handle.store.add(timeout, key, value, expire, now));
@@ -1220,7 +1250,16 @@ impl Cache {
         let mut removed = 0;
         loop {
             let started = Instant::now();
-            let deadline = lockwait::deadline_after(started, timeout);
+            // A `close()` from another thread between rounds: rejoin, as every other call does.
+            let left = match crate::detach(py, || handle.ensure_open(timeout)) {
+                Ok(left) => left,
+                Err(Error::Timeout { .. }) => {
+                    pause_before_retry(py, started)?;
+                    continue;
+                }
+                Err(error) => return Err(to_py_err(error)),
+            };
+            let deadline = lockwait::deadline_after(Instant::now(), left);
             match crate::detach(py, || remove(&handle.store, snapshot, deadline)) {
                 Ok(n) => return Ok(removed + n),
                 Err(Interrupted { removed: n, error: Error::Timeout { .. } }) => {

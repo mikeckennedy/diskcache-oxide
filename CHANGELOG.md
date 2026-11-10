@@ -10,7 +10,8 @@ No cache needs deleting: the on-disk format is unchanged, and 0.1.2 and this rel
 
 - Keys of every native type: `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples of those, nested up to 32 deep, beside `str`. They're never pickled and compare by exact type, so `1`, `1.0` and `True` are three keys. `iterkeys()` lists `str` keys first, then the other types in a fixed order; `iterkeys(prefix=...)` lists `str` keys only. A FanoutCache routes every key type. Type checkers see `diskcache_oxide.Key`.
 - `memoize(name=None, typed=False, expire=None, ignore=())` on `Cache`, `FanoutCache` and `NullCache`, as diskcache's, with the same keys, so `f.__cache_key__(...)` returns the tuple diskcache would. Every argument must be a key type, checked before the function runs; `typed=True` stores type names. `Memoized` and `Memoizer` type the wrapper.
-- `retry=True` (keyword-only) on `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`, `expire`, `cull` and `clear`: a `Timeout` is retried until the call gets through, even on a `durable=True` handle. A retried `expire`, `cull` or `clear` returns everything it removed.
+- `CorruptKeyError`, a `CorruptValueError`, raised by iteration that meets a stored key it can't read (a damaged page or file); it never skips one.
+- `retry=True` (keyword-only) on `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`, `expire`, `cull` and `clear`: this cache's own `Timeout` is retried until the call gets through, even on a `durable=True` handle; one raised by your code (a hook, a `clock`) is not. A retried `expire`, `cull` or `clear` returns everything it removed.
 
 ### Changed
 

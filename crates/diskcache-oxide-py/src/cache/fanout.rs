@@ -29,10 +29,7 @@ use pyo3::gc::PyVisit;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-use super::{
-    DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, Transaction, pause_before_retry, retrying,
-    whole,
-};
+use super::{DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, Transaction, retrying, whole};
 use crate::codec::TypeRegistry;
 use crate::to_py_err;
 
@@ -213,7 +210,8 @@ impl FanoutCache {
     ) -> PyResult<bool> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        retrying(py, retry, || self.config.set(py, self.routed(name)?, name, value, expire))
+        let (encoded, expire) = self.config.encode_value(py, value, expire)?;
+        retrying(py, retry, || self.config.set(py, self.routed(name)?, name, &encoded, expire))
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -231,7 +229,8 @@ impl FanoutCache {
     ) -> PyResult<bool> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        retrying(py, retry, || self.config.add(py, self.routed(name)?, name, value, expire))
+        let (encoded, expire) = self.config.encode_value(py, value, expire)?;
+        retrying(py, retry, || self.config.add(py, self.routed(name)?, name, &encoded, expire))
     }
 
     #[pyo3(signature = (key, *, retry = false))]
@@ -673,7 +672,9 @@ impl FanoutCache {
         // the whole `timeout`, from the snapshots already taken (a shard that couldn't take one takes
         // it now), adding up what every round removed.
         while retry && !failures.is_empty() && failures.iter().all(|(_, e)| matches!(e, Error::Timeout { .. })) {
-            pause_before_retry(py, Instant::now())?;
+            // Ctrl-C between rounds raises with `removed` and `failed_shards`, as between shards.
+            self.check_signals_between(py, call, Some(removed), &failures)?;
+            crate::detach(py, || std::thread::sleep(Duration::from_millis(1)));
             let deadline = lockwait::deadline_after(Instant::now(), timeout);
             for (shard, _) in std::mem::take(&mut failures) {
                 let (n, failed) = remove_on(py, &self.shards[shard], &mut snapshots[shard], deadline, &remove);
@@ -682,10 +683,14 @@ impl FanoutCache {
             }
         }
         if failures.is_empty() {
-            Ok(removed)
-        } else {
-            Err(self.partial_failure(py, call, timeout, Some(removed), failures))
+            return Ok(removed);
         }
+        if retry {
+            // Retrying stopped at an error it doesn't retry: raise that, not a `Timeout` the caller
+            // asked to have retried.
+            failures.sort_by_key(|(_, e)| matches!(e, Error::Timeout { .. }));
+        }
+        Err(self.partial_failure(py, call, timeout, Some(removed), failures))
     }
 
     /// The exception a fanned-out call raises when shards failed: the first failure's own type, so

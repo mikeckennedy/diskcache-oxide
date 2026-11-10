@@ -605,6 +605,12 @@ mod tests {
             (t(vec![t(vec![]), V::None]), "7070001000"),
             (t(vec![t(vec![V::None])]), "7070100000"),
             (t(vec![s("é")]), "7060c3a90000"),
+            (t(vec![V::Bytes(vec![])]), "70500000"),
+            (t(vec![s("a\0")]), "70606100ff0000"),
+            (V::Bytes(vec![0x00, 0xff]), "5000ffff00"),
+            (V::Float(f64::MIN_POSITIVE), "408010000000000000"),
+            (V::Float(-f64::MIN_POSITIVE), "407fefffffffffffff"),
+            (V::Float(f64::MAX), "40ffefffffffffffff"),
         ];
         for (v, want) in cases {
             assert_eq!(hex(&v), want, "{v:?}");
@@ -773,8 +779,60 @@ mod tests {
                 _ => bytes.push(u8::try_from(r.below(256)).unwrap()),
             }
             if let Ok(parsed) = TypedKey::parse(&bytes) {
-                assert_eq!(parsed.as_bytes(), &bytes[..], "a parse must give back the bytes it read");
+                // Independent of `parse`'s own check: through the test's tree and its encoder.
+                assert_eq!(
+                    enc(&dec(&parsed)).unwrap().as_bytes(),
+                    &bytes[..],
+                    "a parse must give back the bytes it read"
+                );
             }
+        }
+    }
+
+    #[test]
+    fn random_bytes_never_panic_and_parse_only_as_canonical_keys() {
+        // Whole byte strings, biased toward the type codes, the terminator and the escape.
+        const BIASED: [u8; 12] = [0x00, 0xff, 0x10, 0x20, 0x21, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x61];
+        let mut r = Rng(7);
+        let mut parsed = 0;
+        for _ in 0..200_000 {
+            let len = usize::try_from(r.below(14)).unwrap();
+            let bytes: Vec<u8> = (0..len)
+                .map(|_| {
+                    if r.below(4) == 0 {
+                        u8::try_from(r.below(256)).unwrap()
+                    } else {
+                        BIASED[usize::try_from(r.below(12)).unwrap()]
+                    }
+                })
+                .collect();
+            if let Ok(key) = TypedKey::parse(&bytes) {
+                parsed += 1;
+                assert_eq!(enc(&dec(&key)).unwrap().as_bytes(), &bytes[..]);
+            }
+        }
+        assert!(parsed > 1_000, "the generator should hit valid keys too: {parsed}");
+    }
+
+    #[test]
+    fn ints_and_floats_of_any_bit_pattern_keep_their_order() {
+        let mut rng = Rng(0xdead_beef);
+        for _ in 0..50_000 {
+            let (lo, hi) = (i64::from_ne_bytes(rng.next().to_ne_bytes()), i64::from_ne_bytes(rng.next().to_ne_bytes()));
+            assert_eq!(enc(&V::Int(lo)).unwrap().cmp(&enc(&V::Int(hi)).unwrap()), lo.cmp(&hi), "{lo} vs {hi}");
+            let (first, second) = (f64::from_bits(rng.next()), f64::from_bits(rng.next()));
+            if first.is_nan() || second.is_nan() {
+                continue;
+            }
+            // -0.0 is stored as 0.0, so compare them as equal.
+            let zeroed = |x: f64| if x == 0.0 { 0.0 } else { x };
+            let want = zeroed(first).total_cmp(&zeroed(second));
+            assert_eq!(
+                enc(&V::Float(first)).unwrap().cmp(&enc(&V::Float(second)).unwrap()),
+                want,
+                "{first} vs {second}"
+            );
+            assert_eq!(dec(&enc(&V::Float(first)).unwrap()), V::Float(zeroed(first)));
         }
     }
 

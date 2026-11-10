@@ -46,20 +46,26 @@ def _checked(what: str, value: object) -> None:
 def args_to_key(
     base: tuple[Key, ...], args: tuple[Any, ...], kwargs: dict[str, Any], typed: bool, ignore: frozenset[int | str]
 ) -> tuple[Key, ...]:
-    """diskcache's `args_to_key`, checking each argument."""
-    kept = [(i, arg) for i, arg in enumerate(args) if i not in ignore]
+    """diskcache's `args_to_key`. The arguments are checked when the key is used (see `_culprit`)."""
+    kept = [arg for i, arg in enumerate(args) if i not in ignore]
     named = sorted((k, v) for k, v in kwargs.items() if k not in ignore)
-    for i, arg in kept:
-        _checked(f'argument {i}', arg)
-    for name, value in named:
-        _checked(f'argument {name!r}', value)
-    key: list[Key] = [*base, *(arg for _, arg in kept), None]
+    key: list[Key] = [*base, *kept, None]
     for name, value in named:
         key.extend((name, value))
     if typed:
-        key.extend(_type_name(arg) for _, arg in kept)
+        key.extend(_type_name(arg) for arg in kept)
         key.extend(_type_name(value) for _, value in named)
     return tuple(key)
+
+
+def _culprit(args: tuple[Any, ...], kwargs: dict[str, Any], ignore: frozenset[int | str]) -> None:
+    """After the cache refused a key: raise naming the argument that can't be part of one, if any."""
+    for i, arg in enumerate(args):
+        if i not in ignore:
+            _checked(f'argument {i}', arg)
+    for name, value in sorted(kwargs.items()):
+        if name not in ignore:
+            _checked(f'argument {name!r}', value)
 
 
 def memoize(
@@ -79,6 +85,8 @@ def memoize(
     _check_seconds('expire', expire)
     if type(typed) is not bool:
         raise TypeError(f'typed must be a bool, not {type(typed).__name__}')
+    if name is not None:
+        _checked('name', name)
     skip = frozenset(ignore)
     stores = expire is None or expire > 0
 
@@ -96,7 +104,12 @@ def memoize(
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             key = __cache_key__(*args, **kwargs)
-            result = cache.get(key, _MISS, retry=retry)
+            try:
+                result = cache.get(key, _MISS, retry=retry)
+            except TypeError, ValueError:
+                # Before the function runs: name the argument if one is to blame, else re-raise.
+                _culprit(args, kwargs, skip)
+                raise
             if result is _MISS:
                 result = func(*args, **kwargs)
                 if stores:

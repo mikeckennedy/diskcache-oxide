@@ -94,11 +94,11 @@ pub enum Error {
     #[error("this database can't be written in a process forked inside a transaction")]
     Unwritable,
 
-    /// `incr`/`decr` with `default=None` on a missing or expired key (Python `KeyError`).
     /// A stored key that isn't one this build can read: a damaged page or file.
     #[error("a stored key is damaged: {0}")]
-    CorruptKey(#[source] crate::key::KeyError),
+    CorruptKey(crate::key::KeyError),
 
+    /// `incr`/`decr` with `default=None` on a missing or expired key (Python `KeyError`).
     #[error("key not found")]
     KeyMissing,
 

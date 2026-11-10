@@ -187,6 +187,60 @@ def fork_while_a_write_waits(directory: Path) -> list[str]:
     return failures
 
 
+def fork_while_a_write_retries(directory: Path) -> list[str]:
+    """Fork while another thread's `set(retry=True)` keeps timing out behind another process's lock.
+
+    Between rounds the retrying thread holds nothing (no gate level, no connection, no write lock),
+    so the fork must not wait for it, and its retry must not be starved by the fork. The child can
+    write once the other process lets go, and the retried write lands in the parent.
+    """
+    hold_for = 1.5
+    cache = Cache(directory, timeout=0.05)
+    cache.set('before', 'parent')
+    failures: list[str] = []
+    with SqlitePeer(directory / 'diskcache-oxide.sqlite') as peer:
+        peer.begin('IMMEDIATE')
+        released = time.monotonic() + hold_for
+        errors: list[BaseException] = []
+
+        def retrier() -> None:
+            try:
+                cache.set('retried', 1, retry=True)
+            except BaseException as ex:
+                errors.append(ex)
+
+        thread = threading.Thread(target=retrier)
+        thread.start()
+        time.sleep(0.3)  # Many rounds in.
+
+        def child() -> None:
+            with Cache(directory, timeout=TIMEOUT) as mine:
+                assert mine.get('before') == 'parent'
+                mine.set('child', 1, retry=True)
+                assert time.monotonic() >= released - 0.1, 'the child wrote while another process held the lock'
+
+        start = time.monotonic()
+        pid = fork(child)
+        latency = time.monotonic() - start
+        time.sleep(max(0.0, released - time.monotonic()))
+        peer.rollback()
+        thread.join(TIMEOUT + 1)
+        code = wait(pid)
+
+    if latency > 0.25:
+        failures.append(f'fork took {latency:.3f}s while a write was retrying')
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if thread.is_alive():
+        failures.append('the retrying write never finished')
+    if errors:
+        failures.append(f'the retrying write failed: {errors[0]!r}')
+    if cache.get('retried') != 1 or cache.get('child') != 1:
+        failures.append(f'missing writes: retried={cache.get("retried")!r} child={cache.get("child")!r}')
+    cache.close()
+    return failures
+
+
 def two_forkers(directory: Path) -> list[str]:
     """Two threads fork at the same time, repeatedly, while a third reads and writes the cache."""
     rounds = 10
@@ -961,6 +1015,7 @@ SCENARIOS = {
     'transact-fork-from-another-thread': transact_fork_from_another_thread,
     'transact-inherited-mid-operation': transact_inherited_mid_operation,
     'fork-while-a-write-waits': fork_while_a_write_waits,
+    'fork-while-a-write-retries': fork_while_a_write_retries,
     'two-forkers': two_forkers,
     'parent-closes-after-fork': parent_closes_after_fork,
     'shared-iterator-while-a-fork-waits': shared_iterator_while_a_fork_waits,

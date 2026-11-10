@@ -12,7 +12,7 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyFloat, PyInt, PyString, PyTuple};
 
-use crate::CorruptValueError;
+use crate::CorruptKeyError;
 
 /// A key from Python, ready for the engine.
 #[derive(Debug)]
@@ -95,7 +95,7 @@ fn element(encoder: &mut Encoder, obj: &Bound<'_, PyAny>, depth: usize) -> PyRes
 ///
 /// # Errors
 ///
-/// `CorruptValueError` if a typed key's bytes were damaged (a `TypedKey` is checked when read, so
+/// `CorruptKeyError` if a typed key's bytes were damaged (a `TypedKey` is checked when read, so
 /// this can't happen for one that came from the engine).
 pub fn decode_key(py: Python<'_>, key: Key<'_>) -> PyResult<Py<PyAny>> {
     let typed = match key {
@@ -104,7 +104,7 @@ pub fn decode_key(py: Python<'_>, key: Key<'_>) -> PyResult<Py<PyAny>> {
     };
     let mut stack: Vec<Vec<Py<PyAny>>> = vec![Vec::new()];
     for token in typed.tokens() {
-        let token = token.map_err(|e| CorruptValueError::new_err(format!("a stored key is damaged: {e}")))?;
+        let token = token.map_err(|e| CorruptKeyError::new_err(format!("a stored key is damaged: {e}")))?;
         let value: Py<PyAny> = match token {
             Token::None => py.None(),
             Token::Bool(b) => PyBool::new(py, b).to_owned().into_any().unbind(),
@@ -128,7 +128,7 @@ pub fn decode_key(py: Python<'_>, key: Key<'_>) -> PyResult<Py<PyAny>> {
     stack
         .pop()
         .and_then(|mut top| top.pop())
-        .ok_or_else(|| CorruptValueError::new_err("a stored key is damaged: no value"))
+        .ok_or_else(|| CorruptKeyError::new_err("a stored key is damaged: no value"))
 }
 
 /// [`decode_key`] for an owned key from an iteration.

@@ -670,7 +670,7 @@ episode:512:transcript</code></pre>
 <section id="option-1-delete-by-prefix" class="level1">
 <h1>Option 1: delete by prefix</h1>
 <p><code>iterkeys(prefix=...)</code> is an indexed range scan, so finding a user’s keys costs time in proportion to how many there are, not the size of the cache. It fetches keys a page at a time with no lock held in between, so deleting while iterating is safe.</p>
-<div id="3c38228d" class="cell" data-execution_count="1">
+<div id="287c2f0e" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -697,7 +697,7 @@ episode:512:transcript</code></pre>
 <section id="option-2-generation-numbers" class="level1">
 <h1>Option 2: generation numbers</h1>
 <p>Instead of deleting anything, keep a generation number per group and put it in every key. To invalidate the group, change the generation. Every old key becomes unreachable at once, in a single write, however many keys there were. The old entries are never read again, and they leave the cache when they expire or are evicted.</p>
-<div id="3f80e540" class="cell" data-execution_count="2">
+<div id="7ce6c4de" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> generation(user_id: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>

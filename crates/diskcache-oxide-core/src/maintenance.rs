@@ -28,7 +28,7 @@ use rusqlite::Connection;
 use rusqlite::types::ValueRef;
 
 use crate::gate;
-use crate::key::{OwnedKey, TypedKey};
+use crate::key::OwnedKey;
 use crate::rows::{Removed, RowWriter};
 use crate::schema::{KEY_TYPE_STR, KEY_TYPE_TYPED};
 use crate::store::{Changed, LockPriority, Store};
@@ -435,11 +435,16 @@ fn page(
             // came from this prefix, so it's under the prefix's end.
             let (low, high) = if reverse { (lower, str_after.or(upper)) } else { (str_after.unwrap_or(lower), upper) };
             let str_page = |limit: i64| -> Result<Vec<OwnedKey>> {
-                let keys: Vec<String> = conn
+                let keys: Vec<Result<OwnedKey>> = conn
                     .prepare_cached(key_page_sql(reverse, str_after.is_some(), upper.is_some()))
-                    .and_then(|mut stmt| stmt.query_map((KEY_TYPE_STR, low, high, limit), |r| r.get(0))?.collect())
+                    .and_then(|mut stmt| {
+                        stmt.query_map((KEY_TYPE_STR, low, high, limit), |r| {
+                            Ok(stored_key(KEY_TYPE_STR, r.get_ref(0)?))
+                        })?
+                        .collect()
+                    })
                     .map_err(sqlite)?;
-                Ok(keys.into_iter().map(OwnedKey::Str).collect())
+                keys.into_iter().collect()
             };
             if prefix.is_some() {
                 // A prefix: str keys only.
@@ -455,11 +460,16 @@ fn page(
                     let (lo, hi): (&[u8], Option<&[u8]>) =
                         if reverse { (&[], typed_after) } else { (typed_after.unwrap_or(&[]), None) };
                     let sql = key_page_sql(reverse, typed_after.is_some(), typed_after.is_some() && reverse);
-                    let blobs: Vec<Vec<u8>> = conn
+                    let keys: Vec<Result<OwnedKey>> = conn
                         .prepare_cached(sql)
-                        .and_then(|mut stmt| stmt.query_map((KEY_TYPE_TYPED, lo, hi, limit), |r| r.get(0))?.collect())
+                        .and_then(|mut stmt| {
+                            stmt.query_map((KEY_TYPE_TYPED, lo, hi, limit), |r| {
+                                Ok(stored_key(KEY_TYPE_TYPED, r.get_ref(0)?))
+                            })?
+                            .collect()
+                        })
                         .map_err(sqlite)?;
-                    blobs.iter().map(|b| TypedKey::parse(b).map(OwnedKey::Typed).map_err(Error::CorruptKey)).collect()
+                    keys.into_iter().collect()
                 };
                 let in_typed = typed_after.is_some();
                 match (reverse, in_typed) {
@@ -491,11 +501,14 @@ fn page(
 
 /// The last `limit` str keys, newest key first: a reverse walk crossing from the typed keys.
 fn str_page_from_end(conn: &Connection, timeout: Duration, limit: i64) -> Result<Vec<OwnedKey>> {
-    let keys: Vec<String> = conn
+    let keys: Vec<Result<OwnedKey>> = conn
         .prepare_cached(key_page_sql(true, false, false))
-        .and_then(|mut stmt| stmt.query_map((KEY_TYPE_STR, "", None::<&str>, limit), |r| r.get(0))?.collect())
+        .and_then(|mut stmt| {
+            stmt.query_map((KEY_TYPE_STR, "", None::<&str>, limit), |r| Ok(stored_key(KEY_TYPE_STR, r.get_ref(0)?)))?
+                .collect()
+        })
         .map_err(|e| Error::from_sqlite(e, timeout))?;
-    Ok(keys.into_iter().map(OwnedKey::Str).collect())
+    keys.into_iter().collect()
 }
 
 /// A stored key, by its `key_type`; a damaged one is an error, never skipped.
@@ -589,13 +602,13 @@ mod tests {
         .unwrap();
     }
 
-    fn int_key(n: i64) -> TypedKey {
+    fn int_key(n: i64) -> crate::key::TypedKey {
         let mut e = crate::key::Encoder::new();
         e.int(n);
         e.finish().unwrap()
     }
 
-    fn tuple_key(name: &str, n: i64) -> TypedKey {
+    fn tuple_key(name: &str, n: i64) -> crate::key::TypedKey {
         let mut e = crate::key::Encoder::new();
         e.begin_tuple();
         e.str(name);

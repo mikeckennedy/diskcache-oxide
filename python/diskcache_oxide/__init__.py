@@ -40,6 +40,7 @@ from typing import Any
 from diskcache_oxide._core import (
     BUNDLED_SQLITE_VERSION,
     Cache,
+    CorruptKeyError,
     CorruptValueError,
     FanoutCache,
     ForeignValueError,
@@ -103,6 +104,7 @@ __all__ = [
     'CacheLike',
     'CacheStats',
     'Caches',
+    'CorruptKeyError',
     'CorruptValueError',
     'FanoutCache',
     'ForeignValueError',

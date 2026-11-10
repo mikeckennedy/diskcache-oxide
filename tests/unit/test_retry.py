@@ -132,3 +132,51 @@ def test_a_null_cache_passes_retry_on_to_its_invalidate_cache(tmp_path: Path) ->
         with locked_for(tmp_path / DB, HOLD):
             assert null.delete('k', retry=True) is True
         assert 'k' not in real
+
+
+class Hooked:
+    """A registered type whose encoder counts its calls and can raise `Timeout` itself."""
+
+    calls = 0
+    raises = 0
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+
+def encode_hooked(value: Hooked) -> int:
+    Hooked.calls += 1
+    if Hooked.raises:
+        Hooked.raises -= 1
+        raise Timeout('raised by the caller code, not the store')
+    return value.n
+
+
+@pytest.fixture
+def hooked() -> Generator[None]:
+    from diskcache_oxide import register_type, unregister_type
+
+    register_type(Hooked, name='tests.retry.Hooked', encode=encode_hooked, decode=Hooked)
+    Hooked.calls, Hooked.raises = 0, 0
+    try:
+        yield
+    finally:
+        unregister_type(Hooked)
+
+
+@pytest.mark.usefixtures('hooked')
+def test_a_timeout_from_the_callers_own_code_is_not_retried(tmp_path: Path) -> None:
+    with Cache(tmp_path) as cache:
+        Hooked.raises = 2
+        with pytest.raises(Timeout, match='caller code'):
+            cache.set('k', Hooked(1), retry=True)
+        assert Hooked.calls == 1, 'retry=True retried a Timeout that was not the store'
+
+
+@pytest.mark.usefixtures('hooked')
+def test_a_retried_write_encodes_its_value_once(tmp_path: Path) -> None:
+    with Cache(tmp_path, timeout=0.05) as cache:
+        cache.set('k', 1)
+        with locked_for(tmp_path / DB, HOLD):
+            assert cache.set('k', Hooked(2), retry=True) is True
+        assert Hooked.calls == 1, 'each round re-ran the encoder'

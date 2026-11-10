@@ -135,3 +135,8 @@ def test_the_wrapper_is_typed_as_the_function(cache: Any) -> None:
     memoized: Memoized[[int, str], str] = f
     assert memoized(2, 'y') == 'yy'
     assert memoized.__cache_key__(2, 'y')[1:] == (2, 'y', None)
+
+
+def test_a_name_that_cant_be_a_key_raises_when_decorating(cache: Any) -> None:
+    with pytest.raises(TypeError, match='memoize: name can not be part of a cache key'):
+        cache.memoize(name=[1])

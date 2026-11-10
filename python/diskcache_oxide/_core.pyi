@@ -18,6 +18,7 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     'UnsafeValueError',
     'CorruptValueError',
     'ForeignValueError',
+    'CorruptKeyError',
     'sqlite_version',
     'sqlite_compile_options',
     '_encode',
@@ -61,6 +62,10 @@ class UnsafeValueError(TypeError):
 
 class CorruptValueError(ValueError):
     """A stored value couldn't be decoded: an unknown mode, or bytes that don't parse."""
+
+class CorruptKeyError(CorruptValueError):
+    """A stored key couldn't be read: its bytes aren't a key this build wrote (a damaged page or file). Raised by
+    iteration, which never skips a key it can't read."""
 
 class ForeignValueError(CorruptValueError):
     """A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote
