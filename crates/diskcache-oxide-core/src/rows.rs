@@ -69,6 +69,17 @@ pub struct Removed {
     pub filename: Option<String>,
 }
 
+/// The rows a bulk delete removed, and the bytes of value files that came off `totals.size` with
+/// them. `must_use` on [`Removed`] doesn't reach through a `Vec`, so the batch carries its own.
+#[derive(Debug, Default, PartialEq, Eq)]
+#[must_use = "its value files are unlinked only if its rows are returned through `Store::write_files`"]
+pub struct RemovedBatch {
+    pub rows: Vec<Removed>,
+    /// What the delete subtracted from `totals.size`. A caller that judges `size_limit` by a
+    /// figure it read before the delete takes this off (see `ops::cull`).
+    pub freed: i64,
+}
+
 /// Writes rows inside one write transaction, keeping `totals` exact.
 #[derive(Debug)]
 pub struct RowWriter<'t> {
@@ -178,7 +189,7 @@ impl<'t> RowWriter<'t> {
     /// Strictly before: a row expiring exactly at `now` already reads as a miss (`expire_time > now`
     /// is false) but isn't swept yet. That's what fits diskcache's pinned behavior: `set(expire=0)`
     /// leaves a row that `len` still counts, even though culling runs after the insert.
-    pub fn delete_expired(&self, now: f64, limit: i64) -> Result<Vec<Removed>> {
+    pub fn delete_expired(&self, now: f64, limit: i64) -> Result<RemovedBatch> {
         self.delete_batch(
             "DELETE FROM cache WHERE id IN (
                  SELECT id FROM cache WHERE expire_time IS NOT NULL AND expire_time < ?1
@@ -189,7 +200,7 @@ impl<'t> RowWriter<'t> {
     }
 
     /// Deletes up to `limit` rows in store order (least recently stored first), the eviction policy.
-    pub fn delete_oldest(&self, limit: i64) -> Result<Vec<Removed>> {
+    pub fn delete_oldest(&self, limit: i64) -> Result<RemovedBatch> {
         self.delete_batch(
             "DELETE FROM cache WHERE id IN (SELECT id FROM cache ORDER BY store_seq LIMIT ?1) RETURNING size, filename",
             [limit],
@@ -229,10 +240,10 @@ impl<'t> RowWriter<'t> {
             .map_err(|e| self.sqlite(e))
     }
 
-    fn delete_batch(&self, sql: &str, params: impl rusqlite::Params) -> Result<Vec<Removed>> {
+    fn delete_batch(&self, sql: &str, params: impl rusqlite::Params) -> Result<RemovedBatch> {
         self.raise_seq_floor()?;
-        let mut size = 0;
-        let removed = self
+        let mut freed = 0;
+        let rows = self
             .tx
             .prepare_cached(sql)
             .and_then(|mut stmt| {
@@ -242,13 +253,13 @@ impl<'t> RowWriter<'t> {
             .map_err(|e| self.sqlite(e))?
             .into_iter()
             .map(|(row_size, filename)| {
-                size += row_size;
+                freed += row_size;
                 Removed { filename }
             })
             .collect::<Vec<_>>();
-        let count = i64::try_from(removed.len()).unwrap_or(i64::MAX);
-        self.adjust_totals(-count, -size)?;
-        Ok(removed)
+        let count = i64::try_from(rows.len()).unwrap_or(i64::MAX);
+        self.adjust_totals(-count, -freed)?;
+        Ok(RemovedBatch { rows, freed })
     }
 
     fn finish_delete(&self, removed: Option<(i64, Option<String>)>) -> Result<Option<Removed>> {

@@ -16,7 +16,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 #[cfg(test)]
 use crate::rows::UPDATE_NUMBER_SQL;
-use crate::rows::{NewRow, Removed, RowWriter, Stored};
+use crate::rows::{NewRow, Removed, RemovedBatch, RowWriter, Stored};
 use crate::schema::{KEY_TYPE_STR, MODE_INT, MODE_REAL};
 use crate::spill::{self, PendingFile};
 use crate::store::{Changed, LockPriority, Store};
@@ -690,7 +690,9 @@ fn prelude(conn: &Connection, key: &str, now: f64, timeout: Duration) -> Result<
 
 /// One shared budget of `cull_limit` rows per call, as in diskcache: expired rows first (earliest
 /// expiry first), then, only if the cache is at or over `size_limit`, the least recently stored.
-/// Uses the numbers the prelude read before this write, plus the write's own size change.
+/// The limit is judged by what `totals.size` holds now, without reading it again: the prelude's
+/// figure from before this write, plus the write's own size change, less the value files the sweep
+/// just removed. Counting those still would evict live rows the sweep had made room for.
 fn cull(
     writer: &RowWriter<'_>,
     tx: &Connection,
@@ -702,10 +704,22 @@ fn cull(
     if before.cull_limit <= 0 {
         return Ok(Vec::new());
     }
-    let mut removed = if before.any_expired { writer.delete_expired(now, before.cull_limit)? } else { Vec::new() };
-    let budget = before.cull_limit - i64::try_from(removed.len()).unwrap_or(i64::MAX);
-    if budget > 0 && over_limit(tx, before.size + size_delta, before.size_limit, timeout)? {
-        removed.extend(writer.delete_oldest(budget)?);
+    let swept =
+        if before.any_expired { writer.delete_expired(now, before.cull_limit)? } else { RemovedBatch::default() };
+    let budget = before.cull_limit - i64::try_from(swept.rows.len()).unwrap_or(i64::MAX);
+    let size = before.size + size_delta - swept.freed;
+    #[cfg(debug_assertions)]
+    {
+        let stored: i64 = tx
+            .prepare_cached("SELECT size FROM totals WHERE only = 1")
+            .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
+            .map_err(|e| Error::from_sqlite(e, timeout))?;
+        debug_assert_eq!(size, stored, "the reckoned size and totals.size disagree");
+    }
+    let mut removed = swept.rows;
+    if budget > 0 && over_limit(tx, size, before.size_limit, timeout)? {
+        // Its freed bytes aren't needed: nothing judges the limit after this.
+        removed.extend(writer.delete_oldest(budget)?.rows);
     }
     Ok(removed)
 }
@@ -1526,6 +1540,89 @@ mod tests {
             keys.iter().map(|k| k[1..].parse::<usize>().unwrap()).eq(first..30),
             "evicted out of store order: {keys:?}"
         );
+    }
+
+    /// Every key, least recently stored first.
+    fn keys(s: &Store) -> Vec<String> {
+        s.read(T, |c| {
+            let mut stmt =
+                c.prepare("SELECT key FROM cache ORDER BY store_seq").map_err(|e| Error::from_sqlite(e, T))?;
+            stmt.query_map([], |r| r.get(0)).and_then(Iterator::collect).map_err(|e| Error::from_sqlite(e, T))
+        })
+        .unwrap()
+    }
+
+    /// Five live spilled values, then nine that expire after a second: a megabyte's worth, so a
+    /// reckoning that still counts the nine once they're swept is over the limit.
+    fn five_live_and_nine_expiring(s: &Store) {
+        let blob = vec![0u8; 70_000];
+        let v = Value::Bytes { mode: MODE_BYTES, data: &blob };
+        for i in 0..5 {
+            s.set(T, &format!("k{i}"), v, None, NOW + f64::from(i)).unwrap();
+        }
+        for i in 0..9 {
+            s.set(T, &format!("e{i}"), v, Some(1.0), NOW + 10.0 + f64::from(i) * 0.001).unwrap();
+        }
+        assert_eq!(len(s), 14, "nothing was culled while filling");
+        let volume = s.volume(T).unwrap();
+        assert!(volume + 70_000 >= 1 << 20, "with the nine still counted the cache is over its limit ({volume})");
+    }
+
+    #[test]
+    fn a_sweep_of_spilled_values_that_makes_room_evicts_nothing() {
+        type Write = fn(&Store, Value<'_>);
+        let blob = vec![0u8; 70_000];
+        let v = Value::Bytes { mode: MODE_BYTES, data: &blob };
+        // Each write that culls: a set, an add, and an incr of a missing key.
+        let writes: [(&str, Write); 3] = [
+            ("set", |s, v| s.set(T, "new", v, None, NOW + 100.0).map(drop).unwrap()),
+            ("add", |s, v| assert!(s.add(T, "new", v, None, NOW + 100.0).unwrap())),
+            ("incr", |s, _| {
+                let one = s.incr(T, "new", Number::Int(1), Some(Number::Int(0)), NOW + 100.0).unwrap();
+                assert_eq!(one, Number::Int(1));
+            }),
+        ];
+        for (name, write) in writes {
+            let tmp = TempDir::new("ops-cull-sweep-room");
+            let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(10) });
+            five_live_and_nine_expiring(&s);
+            write(&s, v);
+            assert_eq!(keys(&s), ["k0", "k1", "k2", "k3", "k4", "new"], "{name}: every live row survives");
+        }
+    }
+
+    #[test]
+    fn a_sweep_of_spilled_values_that_is_not_enough_evicts_with_the_rest_of_the_budget() {
+        let tmp = TempDir::new("ops-cull-sweep-short");
+        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(10) });
+        let blob = vec![0u8; 70_000];
+        let v = Value::Bytes { mode: MODE_BYTES, data: &blob };
+        for i in 0..12 {
+            s.set(T, &format!("k{i:02}"), v, None, NOW + f64::from(i)).unwrap();
+        }
+        for i in 0..2 {
+            s.set(T, &format!("e{i}"), v, Some(1.0), NOW + 20.0 + f64::from(i) * 0.001).unwrap();
+        }
+        assert_eq!(len(&s), 14, "nothing was culled while filling");
+        let big = vec![1u8; 210_000];
+        s.set(T, "big", Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW + 100.0).unwrap();
+        // Two swept, so eight of the budget of ten are left for the least recently stored.
+        assert_eq!(keys(&s), ["k08", "k09", "k10", "k11", "big"]);
+    }
+
+    #[test]
+    fn a_sweep_inside_a_rolled_back_transaction_puts_everything_back() {
+        let tmp = TempDir::new("ops-cull-sweep-held");
+        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(10) });
+        five_live_and_nine_expiring(&s);
+        let (before, files) = (keys(&s), value_files(tmp.path()));
+        let blob = vec![0u8; 70_000];
+        let held = s.begin_hold(T).unwrap();
+        s.set(T, "new", Value::Bytes { mode: MODE_BYTES, data: &blob }, None, NOW + 100.0).unwrap();
+        assert_eq!(keys(&s), ["k0", "k1", "k2", "k3", "k4", "new"]);
+        held.finish(false).unwrap();
+        assert_eq!(keys(&s), before, "the swept rows are back");
+        assert_eq!(value_files(tmp.path()), files, "and so are their files, with the new one gone");
     }
 
     /// Every value file under `dir`.
