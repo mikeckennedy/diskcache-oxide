@@ -381,6 +381,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: it is the order of the stored bytes, so it is an index scan, the same in every process, and FanoutCache's merge gives the same order as `Cache`.
 - Tests: `tests/unit/test_keys.py`, `key::tests`
 
+## D-047 `retry` is keyword-only, and dict syntax never retries
+
+- Kind: test-visible
+- diskcache: `retry` is a positional parameter of every call that takes it (`cache.set(k, v, None, False, None, True)` works), and `cache[k]`, `cache[k] = v` and `del cache[k]` pass `retry=True`, so they wait forever on a busy database.
+- oxide: `retry=False` is keyword-only, a strict `bool`, on `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`, `expire`, `cull` and `clear` (`Cache`, `FanoutCache`, `NullCache` and the protocols). With `retry=True` only a plain `Timeout` is retried, each round with the call's whole `timeout`; a durable handle then retries it rather than answering it as a miss. A retried `expire`, `cull` or `clear` keeps the snapshot it started from and returns everything every round removed (on a FanoutCache, from every shard). Dict syntax raises `Timeout` after `timeout`, as `Cache.get` does (D-034 says the same for FanoutCache).
+- Why: a positional `retry` after `read` and `tag`, which oxide doesn't have, would bind the wrong argument; and an unbounded wait hidden behind `cache[k]` is the hang this library exists to remove. Ask for it with `retry=True`.
+- Tests: `tests/conformance/test_retry.py`, `tests/unit/test_retry.py`
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.

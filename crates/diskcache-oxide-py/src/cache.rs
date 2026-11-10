@@ -11,10 +11,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, TryLockError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use std::cell::Cell;
 use std::collections::{HashSet, VecDeque};
 
 use diskcache_oxide_core::key::{Key, OwnedKey};
-use diskcache_oxide_core::maintenance::{Cursor, Order};
+use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, Snapshot};
 use diskcache_oxide_core::open::{Requested, Role};
 use diskcache_oxide_core::ops::{Hit, Number, Pop, Value, Version, VersionDelete};
 use diskcache_oxide_core::schema::DEFAULT_SIZE_LIMIT;
@@ -211,23 +212,29 @@ impl Cache {
 
     // -- reads --------------------------------------------------------------------------------
 
-    #[pyo3(signature = (key, default = None, *, expire_time = false))]
+    #[pyo3(signature = (key, default = None, *, expire_time = false, retry = false))]
     fn get(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         default: Option<Py<PyAny>>,
         expire_time: bool,
+        retry: bool,
     ) -> PyResult<Py<PyAny>> {
-        self.config.get(py, &self.handle, codec::key::encode_key(key)?.key(), default, expire_time)
+        let k = codec::key::encode_key(key)?;
+        retrying(py, retry, || {
+            self.config.get(py, &self.handle, k.key(), default.as_ref().map(|d| d.clone_ref(py)), expire_time)
+        })
     }
 
     fn __getitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.config.get_item(py, &self.handle, key, codec::key::encode_key(key)?.key())
+        let k = codec::key::encode_key(key)?;
+        retrying(py, false, || self.config.get_item(py, &self.handle, key, k.key()))
     }
 
     fn __contains__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        self.config.contains(py, &self.handle, codec::key::encode_key(key)?.key())
+        let k = codec::key::encode_key(key)?;
+        retrying(py, false, || self.config.contains(py, &self.handle, k.key()))
     }
 
     fn __len__(&self) -> PyResult<usize> {
@@ -265,86 +272,133 @@ impl Cache {
 
     // -- writes -------------------------------------------------------------------------------
 
-    #[pyo3(signature = (key, value, expire = None))]
+    #[pyo3(signature = (key, value, expire = None, *, retry = false))]
     fn set(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
+        retry: bool,
     ) -> PyResult<bool> {
-        self.config.set(py, &self.handle, codec::key::encode_key(key)?.key(), value, expire)
+        let k = codec::key::encode_key(key)?;
+        retrying(py, retry, || self.config.set(py, &self.handle, k.key(), value, expire))
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.set(py, key, value, None).map(|_| ())
+        self.set(py, key, value, None, false).map(|_| ())
     }
 
-    #[pyo3(signature = (key, value, expire = None))]
+    #[pyo3(signature = (key, value, expire = None, *, retry = false))]
     fn add(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
+        retry: bool,
     ) -> PyResult<bool> {
-        self.config.add(py, &self.handle, codec::key::encode_key(key)?.key(), value, expire)
+        let k = codec::key::encode_key(key)?;
+        retrying(py, retry, || self.config.add(py, &self.handle, k.key(), value, expire))
     }
 
-    fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        self.config.delete(py, &self.handle, codec::key::encode_key(key)?.key())
+    #[pyo3(signature = (key, *, retry = false))]
+    fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>, retry: bool) -> PyResult<bool> {
+        let k = codec::key::encode_key(key)?;
+        retrying(py, retry, || self.config.delete(py, &self.handle, k.key()))
     }
 
     fn __delitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<()> {
-        if self.delete(py, key)? { Ok(()) } else { Err(PyKeyError::new_err(key.clone().unbind())) }
+        if self.delete(py, key, false)? { Ok(()) } else { Err(PyKeyError::new_err(key.clone().unbind())) }
     }
 
-    #[pyo3(signature = (key, default = None))]
-    fn pop(&self, py: Python<'_>, key: &Bound<'_, PyAny>, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
-        self.config.pop(py, &self.handle, codec::key::encode_key(key)?.key(), default)
+    #[pyo3(signature = (key, default = None, *, retry = false))]
+    fn pop(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        default: Option<Py<PyAny>>,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let k = codec::key::encode_key(key)?;
+        retrying(py, retry, || self.config.pop(py, &self.handle, k.key(), default.as_ref().map(|d| d.clone_ref(py))))
     }
 
-    #[pyo3(signature = (key, expire = None))]
-    fn touch(&self, py: Python<'_>, key: &Bound<'_, PyAny>, expire: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        self.config.touch(py, &self.handle, codec::key::encode_key(key)?.key(), expire)
+    #[pyo3(signature = (key, expire = None, *, retry = false))]
+    fn touch(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        expire: Option<&Bound<'_, PyAny>>,
+        retry: bool,
+    ) -> PyResult<bool> {
+        let k = codec::key::encode_key(key)?;
+        retrying(py, retry, || self.config.touch(py, &self.handle, k.key(), expire))
     }
 
-    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
-    fn incr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        self.config.add_number(py, &self.handle, key, codec::key::encode_key(key)?.key(), delta, default, false)
+    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0))), *, retry = false))]
+    fn incr(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        delta: Delta,
+        default: IncrDefault,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let k = codec::key::encode_key(key)?;
+        retrying(py, retry, || self.config.add_number(py, &self.handle, key, k.key(), delta, default, false))
     }
 
-    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
-    fn decr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        self.config.add_number(py, &self.handle, key, codec::key::encode_key(key)?.key(), delta, default, true)
+    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0))), *, retry = false))]
+    fn decr(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        delta: Delta,
+        default: IncrDefault,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let k = codec::key::encode_key(key)?;
+        retrying(py, retry, || self.config.add_number(py, &self.handle, key, k.key(), delta, default, true))
     }
 
     // -- maintenance and iteration -------------------------------------------------------------
 
     /// Removes every expired entry. Returns how many it removed. `timeout` overrides the cache's
     /// for this call: how long each chunk may wait for the write lock.
-    #[pyo3(signature = (*, timeout = None))]
-    fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+    #[pyo3(signature = (*, timeout = None, retry = false))]
+    fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>, retry: bool) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
         let now = self.config.now(py)?;
+        if retry {
+            return self
+                .remove_retrying(py, timeout, |store, snapshot, deadline| store.expire_until(snapshot, now, deadline));
+        }
         crate::detach(py, || self.handle.run(timeout, |timeout| self.handle.store.expire(timeout, now)))
             .map_err(to_py_err)
     }
 
     /// Removes every entry stored before the call. Returns how many it removed. `timeout` as for
     /// `expire`.
-    #[pyo3(signature = (*, timeout = None))]
-    fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+    #[pyo3(signature = (*, timeout = None, retry = false))]
+    fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>, retry: bool) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
+        if retry {
+            return self.remove_retrying(py, timeout, Store::clear_until);
+        }
         crate::detach(py, || self.handle.run(timeout, |timeout| self.handle.store.clear(timeout))).map_err(to_py_err)
     }
 
     /// Removes expired entries, then evicts until the cache is under `size_limit`. Returns how many
     /// it removed. `timeout` as for `expire`.
-    #[pyo3(signature = (*, timeout = None))]
-    fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+    #[pyo3(signature = (*, timeout = None, retry = false))]
+    fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>, retry: bool) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
         let now = self.config.now(py)?;
+        if retry {
+            return self
+                .remove_retrying(py, timeout, |store, snapshot, deadline| store.cull_until(snapshot, now, deadline));
+        }
         crate::detach(py, || self.handle.run(timeout, |timeout| self.handle.store.cull(timeout, now)))
             .map_err(to_py_err)
     }
@@ -543,6 +597,48 @@ impl StoreHandle {
     }
 }
 
+thread_local! {
+    /// True while a `retry=True` call runs on this thread: a durable handle then raises a `Timeout`
+    /// for the call to retry, instead of answering it as a miss. Every call sets it for its own
+    /// span, so a call nested inside one (a pickle hook using the cache) has its own setting.
+    static RETRYING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The least a round of a `retry=True` call takes, sleeping out the rest with the interpreter
+/// released: a `timeout=0` call would otherwise spin.
+const RETRY_ROUND: Duration = Duration::from_millis(1);
+
+/// Runs `call`, and with `retry` again after every `Timeout` until it doesn't time out (diskcache's
+/// `retry=True`). Nothing else is retried: not `TransactionBusy`, a poisoned child's `RuntimeError`
+/// or a decode error. Each round gets the call's whole `timeout` and holds nothing between rounds,
+/// so a pending fork is never held up by the wait; signals are checked, so Ctrl-C ends it.
+pub(crate) fn retrying<T>(py: Python<'_>, retry: bool, mut call: impl FnMut() -> PyResult<T>) -> PyResult<T> {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            RETRYING.with(|r| r.set(self.0));
+        }
+    }
+    let _restore = Restore(RETRYING.with(|r| r.replace(retry)));
+    loop {
+        let started = Instant::now();
+        match call() {
+            Err(e) if retry && e.is_instance_of::<crate::Timeout>(py) => pause_before_retry(py, started)?,
+            other => return other,
+        }
+    }
+}
+
+/// Between two rounds of a retried call: signals first, then the rest of [`RETRY_ROUND`], detached.
+pub(crate) fn pause_before_retry(py: Python<'_>, started: Instant) -> PyResult<()> {
+    py.check_signals()?;
+    let rest = RETRY_ROUND.saturating_sub(started.elapsed());
+    if !rest.is_zero() {
+        crate::detach(py, || std::thread::sleep(rest));
+    }
+    Ok(())
+}
+
 impl HandleConfig {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -619,7 +715,9 @@ impl HandleConfig {
     #[inline(never)]
     fn store_failed(&self, py: Python<'_>, store: &Store, op: Op, now: f64, error: Error) -> PyResult<()> {
         let Some(failures) = self.failures.as_deref() else { return Err(to_py_err(error)) };
-        if !error.is_operational() || store.held_by_this_thread() {
+        // Under `retry=True` a `Timeout` is the call's to retry, not an outage to answer (plan 24).
+        let retried = matches!(error, Error::Timeout { .. }) && RETRYING.with(Cell::get);
+        if !error.is_operational() || store.held_by_this_thread() || retried {
             return Err(to_py_err(error));
         }
         failures.record(py, op, now, &error, &self.directory)
@@ -1080,6 +1178,44 @@ impl Drop for Cache {
     }
 }
 
+impl Cache {
+    /// `expire`, `clear` or `cull` with `retry=True`: one snapshot, so the call removes only what was
+    /// stored before it started, then rounds of `remove` from it, each with the whole `timeout`,
+    /// until one finishes. Returns what every round removed.
+    fn remove_retrying(
+        &self,
+        py: Python<'_>,
+        timeout: Duration,
+        remove: impl Fn(&Store, Snapshot, Instant) -> Result<u64, Interrupted> + Sync,
+    ) -> PyResult<u64> {
+        let handle = &self.handle;
+        let snapshot = loop {
+            let started = Instant::now();
+            let taken = crate::detach(py, || {
+                handle.run(timeout, |left| handle.store.snapshot_until(lockwait::deadline_after(Instant::now(), left)))
+            });
+            match taken {
+                Ok(snapshot) => break snapshot,
+                Err(Error::Timeout { .. }) => pause_before_retry(py, started)?,
+                Err(error) => return Err(to_py_err(error)),
+            }
+        };
+        let mut removed = 0;
+        loop {
+            let started = Instant::now();
+            let deadline = lockwait::deadline_after(started, timeout);
+            match crate::detach(py, || remove(&handle.store, snapshot, deadline)) {
+                Ok(n) => return Ok(removed + n),
+                Err(Interrupted { removed: n, error: Error::Timeout { .. } }) => {
+                    removed += n;
+                    pause_before_retry(py, started)?;
+                }
+                Err(Interrupted { error, .. }) => return Err(to_py_err(error)),
+            }
+        }
+    }
+}
+
 /// A lazy iterator over a cache's keys, one page per fetch.
 #[pyclass(frozen, module = "diskcache_oxide")]
 pub(crate) struct KeyIterator {
@@ -1267,10 +1403,11 @@ impl Transaction {
             return Ok(TxState::PassThrough);
         }
         loop {
+            let started = Instant::now();
             let began = crate::detach(py, || handle.run(timeout, |timeout| handle.store.begin_hold(timeout)));
             match began {
                 Ok(held) => return Ok(TxState::Held(held)),
-                Err(Error::Timeout { .. }) if self.retry => py.check_signals()?,
+                Err(Error::Timeout { .. }) if self.retry => pause_before_retry(py, started)?,
                 Err(error) => return Err(to_py_err(error)),
             }
         }
@@ -1577,6 +1714,7 @@ fn whole(name: &str, value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<i64>> 
 }
 
 /// The `delta` argument of `incr`/`decr`.
+#[derive(Clone, Copy)]
 pub(crate) struct Delta(Number);
 
 impl<'a, 'py> FromPyObject<'a, 'py> for Delta {
@@ -1590,6 +1728,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for Delta {
 /// The `default` argument of `incr`/`decr`. A separate type so an explicit `None` (raise
 /// `KeyError` on a missing key) is told apart from the argument being left out (start from 0):
 /// PyO3 turns both into `None` for an `Option` parameter.
+#[derive(Clone, Copy)]
 pub(crate) struct IncrDefault(Option<Number>);
 
 impl<'a, 'py> FromPyObject<'a, 'py> for IncrDefault {

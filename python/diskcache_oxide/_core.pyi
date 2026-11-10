@@ -257,7 +257,7 @@ class Cache:
     def enabled(self) -> bool:
         """Always True for a real cache; False for a `NullCache`."""
     @overload
-    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
+    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False) -> Any:
         """Return the value stored for `key`, or `default` if it's missing or expired.
 
         Reads never write, so any number of threads and processes can read at once.
@@ -285,8 +285,10 @@ class Cache:
             ```
         """
     @overload
-    def get(self, key: Key, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def set(self, key: Key, value: Any, expire: float | None = None) -> bool:
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None]: ...
+    def set(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
         """Store `value` under `key`, replacing any existing value.
 
         Values of 64 KiB or more (after encoding) are stored in their own file.
@@ -311,7 +313,7 @@ class Cache:
             cache.set('config', {'retries': 3})                   # never expires
             ```
         """
-    def add(self, key: Key, value: Any, expire: float | None = None) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
         """Store `value` only if `key` is missing or expired.
 
         Atomic across threads and processes: when several callers race to add one key, exactly one
@@ -337,7 +339,7 @@ class Cache:
                 remove_stale_sessions()   # only the worker whose add() returned True gets here
             ```
         """
-    def delete(self, key: Key) -> bool:
+    def delete(self, key: Key, *, retry: bool = False) -> bool:
         """Remove `key`.
 
         Returns:
@@ -356,7 +358,7 @@ class Cache:
                 cache.delete(key)          # safe while iterating
             ```
         """
-    def pop(self, key: Key, default: Any = None) -> Any:
+    def pop(self, key: Key, default: Any = None, *, retry: bool = False) -> Any:
         """Remove `key` and return its value, delivering it to exactly one caller.
 
         Reads and decodes the value first, as `get` does, then deletes exactly that stored version,
@@ -389,7 +391,7 @@ class Cache:
             token = cache.pop('reset-token:abc')   # None if it was missing or already used
             ```
         """
-    def touch(self, key: Key, expire: float | None = None) -> bool:
+    def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
         """Change the expiry of an existing entry without rewriting its value.
 
         Args:
@@ -409,7 +411,7 @@ class Cache:
             ```
         """
     # Defaults are delta=1, default=0; PyO3 reports them as `...` at runtime.
-    def incr(self, key: Key, delta: float = ..., default: float | None = ...) -> int | float:
+    def incr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
         """Add `delta` to the number stored under `key`, atomically, and return the result.
 
         Atomic across threads and processes, so concurrent increments are never lost. The entry
@@ -439,7 +441,7 @@ class Cache:
             allowed = cache.incr('rate:203.0.113.7:1731') <= 100  # then count; incr keeps the expiry
             ```
         """
-    def decr(self, key: Key, delta: float = ..., default: float | None = ...) -> int | float:
+    def decr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
         """Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 
         Returns:
@@ -471,7 +473,7 @@ class Cache:
         """
     @overload
     def iterkeys(self, *, prefix: None = None, reverse: bool = False) -> Iterator[Key]: ...
-    def expire(self, *, timeout: float | None = None) -> int:
+    def expire(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove every expired entry, and its value file.
 
         Works in chunks and lets other writers in between them.
@@ -489,7 +491,7 @@ class Cache:
             removed = cache.expire(timeout=10.0)   # from a scheduled job, with its own timeout
             ```
         """
-    def clear(self, *, timeout: float | None = None) -> int:
+    def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove every entry that existed when the call started.
 
         Works in chunks and lets other writers in between them. Writes that land while it runs,
@@ -511,7 +513,7 @@ class Cache:
             cache.clear(timeout=10.0)   # safe while other processes keep writing
             ```
         """
-    def cull(self, *, timeout: float | None = None) -> int:
+    def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove expired entries, then evict the least recently stored until under `size_limit`.
 
         Args:
@@ -798,30 +800,32 @@ class FanoutCache:
             ```
         """
     @overload
-    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
+    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False) -> Any:
         """As `Cache.get`, on the key's shard."""
     @overload
-    def get(self, key: Key, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def set(self, key: Key, value: Any, expire: float | None = None) -> bool:
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None]: ...
+    def set(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
         """As `Cache.set`, on the key's shard."""
-    def add(self, key: Key, value: Any, expire: float | None = None) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
         """As `Cache.add`, on the key's shard: atomic across threads and processes."""
-    def delete(self, key: Key) -> bool:
+    def delete(self, key: Key, *, retry: bool = False) -> bool:
         """As `Cache.delete`, on the key's shard."""
-    def pop(self, key: Key, default: Any = None) -> Any:
+    def pop(self, key: Key, default: Any = None, *, retry: bool = False) -> Any:
         """As `Cache.pop`, on the key's shard."""
-    def touch(self, key: Key, expire: float | None = None) -> bool:
+    def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
         """As `Cache.touch`, on the key's shard."""
-    def incr(self, key: Key, delta: float = ..., default: float | None = ...) -> int | float:
+    def incr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
         """As `Cache.incr`, on the key's shard: atomic across threads and processes."""
-    def decr(self, key: Key, delta: float = ..., default: float | None = ...) -> int | float:
+    def decr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
         """As `Cache.decr`, on the key's shard."""
     def volume(self) -> int:
         """The total disk use in bytes of every shard (databases plus value files).
 
         Raises on any shard's failure, under `durable=True` too.
         """
-    def expire(self, *, timeout: float | None = None) -> int:
+    def expire(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove every expired entry from every shard, and its value file, as `Cache.expire` does.
 
         Args:
@@ -847,7 +851,7 @@ class FanoutCache:
                 exc.failed_shards, exc.removed   # which shards were skipped, and how many entries went anyway
             ```
         """
-    def clear(self, *, timeout: float | None = None) -> int:
+    def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove every entry that existed when the call started, from every shard.
 
         Every shard's starting point is taken before anything is removed, so writes that land while
@@ -862,7 +866,7 @@ class FanoutCache:
         Raises:
             Timeout: As for `expire`, with `removed` and `failed_shards`.
         """
-    def cull(self, *, timeout: float | None = None) -> int:
+    def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove expired entries, then evict the least recently stored from each shard until it's
         under its share of `size_limit`.
 

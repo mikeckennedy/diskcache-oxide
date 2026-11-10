@@ -71,6 +71,11 @@ def _check_key(key: object, depth: int = 0) -> None:
     raise TypeError(f'cache keys must be {_KEY_TYPES}, not {kind.__name__}')
 
 
+def _check_retry(value: object) -> None:
+    if type(value) is not bool:
+        raise TypeError(f'retry must be a bool, not {type(value).__name__}')
+
+
 def _check_seconds(name: str, value: object) -> None:
     if value is None:
         return
@@ -198,11 +203,16 @@ class NullCache:
     # -- reads: nothing is ever present ---------------------------------------------------------
 
     @overload
-    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False) -> Any: ...
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False
+    ) -> Any: ...
     @overload
-    def get(self, key: Key, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def get(self, key: Key, default: Any = None, *, expire_time: bool = False) -> Any:
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None]: ...
+    def get(self, key: Key, default: Any = None, *, expire_time: bool = False, retry: bool = False) -> Any:
         """Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`."""
+        _check_retry(retry)
         _check_key(key)
         return (default, None) if expire_time else default
 
@@ -238,8 +248,9 @@ class NullCache:
 
     # -- writes: succeed, then expire instantly ---------------------------------------------------
 
-    def set(self, key: Key, value: Any, expire: float | None = None) -> bool:
+    def set(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
         """Return True without storing anything: the write succeeds, then expires instantly."""
+        _check_retry(retry)
         _check_key(key)
         _check_seconds('expire', expire)
         return True
@@ -248,44 +259,49 @@ class NullCache:
         """Store nothing, as `set()` does."""
         self.set(key, value)
 
-    def add(self, key: Key, value: Any, expire: float | None = None) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
         """Return True without storing anything: the key is always absent, so the add succeeds.
 
         With caching off, every caller's `add()` succeeds, so don't rely on it for job claims or locks.
         A `Cache(durable=True)` does the opposite when a write fails: its `add()` returns False.
         """
+        _check_retry(retry)
         _check_key(key)
         _check_seconds('expire', expire)
         return True
 
-    def touch(self, key: Key, expire: float | None = None) -> bool:
+    def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
         """Always False: the key never exists."""
+        _check_retry(retry)
         _check_key(key)
         _check_seconds('expire', expire)
         return False
 
-    def incr(self, key: Key, delta: float = 1, default: float | None = 0) -> int | float:
+    def incr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
         """Return `default + delta`, since every count starts again from `default`.
 
         Raises:
             KeyError: `default` is None.
         """
+        _check_retry(retry)
         _check_key(key)
         if default is None:
             raise KeyError(key)
         return default + delta
 
-    def decr(self, key: Key, delta: float = 1, default: float | None = 0) -> int | float:
+    def decr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
         """Return `default - delta`. See `incr()`."""
-        return self.incr(key, -delta, default)
+        _check_retry(retry)
+        return self.incr(key, -delta, default, retry=retry)
 
     # -- removals: forwarded with invalidate= -----------------------------------------------------
 
-    def delete(self, key: Key) -> bool:
+    def delete(self, key: Key, *, retry: bool = False) -> bool:
         """False, or with `invalidate=`, delete the key from that cache and return its result."""
+        _check_retry(retry)
         _check_key(key)
         if self._invalidate is not None:
-            return self._invalidate.delete(key)
+            return self._invalidate.delete(key, retry=retry) if retry else self._invalidate.delete(key)
         return False
 
     def __delitem__(self, key: Key, /) -> None:
@@ -293,20 +309,27 @@ class NullCache:
         if not self.delete(key) and self._invalidate is None:
             raise KeyError(key)
 
-    def pop(self, key: Key, default: Any = None) -> Any:
+    def pop(self, key: Key, default: Any = None, *, retry: bool = False) -> Any:
         """Return `default`. With `invalidate=`, also delete the key from that cache."""
+        _check_retry(retry)
         _check_key(key)
         if self._invalidate is not None:
-            self._invalidate.delete(key)
+            self._invalidate.delete(key, retry=retry) if retry else self._invalidate.delete(key)
         return default
 
-    def clear(self, *, timeout: float | None = None) -> int:
+    def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count."""
+        _check_retry(retry)
         _check_timeout(timeout)
         if self._invalidate is None:
             return 0
-        # Passed on only when given, so an `invalidate=` cache without the keyword still works.
-        return self._invalidate.clear() if timeout is None else self._invalidate.clear(timeout=timeout)
+        # Passed on only when given, so an `invalidate=` cache without the keywords still works.
+        options: dict[str, Any] = {}
+        if timeout is not None:
+            options['timeout'] = timeout
+        if retry:
+            options['retry'] = True
+        return self._invalidate.clear(**options)
 
     @overload
     def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]: ...
@@ -342,13 +365,15 @@ class NullCache:
 
     # -- maintenance and lifecycle -------------------------------------------------------------
 
-    def expire(self, *, timeout: float | None = None) -> int:
+    def expire(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Always 0."""
+        _check_retry(retry)
         _check_timeout(timeout)
         return 0
 
-    def cull(self, *, timeout: float | None = None) -> int:
+    def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Always 0."""
+        _check_retry(retry)
         _check_timeout(timeout)
         return 0
 

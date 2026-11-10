@@ -61,31 +61,35 @@ class CacheLike(Protocol):
         """True if caching is on (`Cache`), False if it's off (`NullCache`)."""
 
     @overload
-    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False) -> Any: ...
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False
+    ) -> Any: ...
     @overload
-    def get(self, key: Key, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def get(self, key: Key, default: Any = None, *, expire_time: bool = False) -> Any:
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None]: ...
+    def get(self, key: Key, default: Any = None, *, expire_time: bool = False, retry: bool = False) -> Any:
         """Return the value for `key`, or `default` if it's missing or expired."""
 
-    def set(self, key: Key, value: Any, expire: float | None = None) -> bool:
+    def set(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
         """Store `value` under `key`, with an optional expiry in seconds."""
 
-    def add(self, key: Key, value: Any, expire: float | None = None) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
         """Store `value` only if `key` is missing or expired. True if it was stored."""
 
-    def delete(self, key: Key) -> bool:
+    def delete(self, key: Key, *, retry: bool = False) -> bool:
         """Remove `key`. True if a live entry was removed."""
 
-    def pop(self, key: Key, default: Any = None) -> Any:
+    def pop(self, key: Key, default: Any = None, *, retry: bool = False) -> Any:
         """Remove `key` and return its value, or `default`."""
 
-    def touch(self, key: Key, expire: float | None = None) -> bool:
+    def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
         """Change an existing entry's expiry. True if the entry existed."""
 
-    def incr(self, key: Key, delta: float = 1, default: float | None = 0) -> int | float:
+    def incr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
         """Add `delta` to the number under `key`, atomically, and return the result."""
 
-    def decr(self, key: Key, delta: float = 1, default: float | None = 0) -> int | float:
+    def decr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
         """Subtract `delta` from the number under `key`, atomically, and return the result."""
 
     @overload
@@ -95,13 +99,13 @@ class CacheLike(Protocol):
     def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[Key]:
         """Iterate over keys in sorted order, optionally only those starting with `prefix`."""
 
-    def expire(self, *, timeout: float | None = None) -> int:
+    def expire(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove every expired entry. Returns how many were removed."""
 
-    def clear(self, *, timeout: float | None = None) -> int:
+    def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove every entry that existed when the call started. Returns how many."""
 
-    def cull(self, *, timeout: float | None = None) -> int:
+    def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove expired entries, then evict until under `size_limit`. Returns how many."""
 
     def volume(self) -> int:

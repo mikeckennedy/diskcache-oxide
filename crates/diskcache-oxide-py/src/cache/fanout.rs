@@ -29,7 +29,10 @@ use pyo3::gc::PyVisit;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-use super::{DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, Transaction, whole};
+use super::{
+    DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, Transaction, pause_before_retry, retrying,
+    whole,
+};
 use crate::codec::TypeRegistry;
 use crate::to_py_err;
 
@@ -171,97 +174,129 @@ impl FanoutCache {
 
     // -- routed to one shard -------------------------------------------------------------------
 
-    #[pyo3(signature = (key, default = None, *, expire_time = false))]
+    #[pyo3(signature = (key, default = None, *, expire_time = false, retry = false))]
     fn get(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         default: Option<Py<PyAny>>,
         expire_time: bool,
+        retry: bool,
     ) -> PyResult<Py<PyAny>> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        self.config.get(py, self.routed(name)?, name, default, expire_time)
+        retrying(py, retry, || {
+            self.config.get(py, self.routed(name)?, name, default.as_ref().map(|d| d.clone_ref(py)), expire_time)
+        })
     }
 
     fn __getitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        self.config.get_item(py, self.routed(name)?, key, name)
+        retrying(py, false, || self.config.get_item(py, self.routed(name)?, key, name))
     }
 
     fn __contains__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        self.config.contains(py, self.routed(name)?, name)
+        retrying(py, false, || self.config.contains(py, self.routed(name)?, name))
     }
 
-    #[pyo3(signature = (key, value, expire = None))]
+    #[pyo3(signature = (key, value, expire = None, *, retry = false))]
     fn set(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
+        retry: bool,
     ) -> PyResult<bool> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        self.config.set(py, self.routed(name)?, name, value, expire)
+        retrying(py, retry, || self.config.set(py, self.routed(name)?, name, value, expire))
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.set(py, key, value, None).map(|_| ())
+        self.set(py, key, value, None, false).map(|_| ())
     }
 
-    #[pyo3(signature = (key, value, expire = None))]
+    #[pyo3(signature = (key, value, expire = None, *, retry = false))]
     fn add(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
+        retry: bool,
     ) -> PyResult<bool> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        self.config.add(py, self.routed(name)?, name, value, expire)
+        retrying(py, retry, || self.config.add(py, self.routed(name)?, name, value, expire))
     }
 
-    fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
+    #[pyo3(signature = (key, *, retry = false))]
+    fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>, retry: bool) -> PyResult<bool> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        self.config.delete(py, self.routed(name)?, name)
+        retrying(py, retry, || self.config.delete(py, self.routed(name)?, name))
     }
 
     fn __delitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<()> {
-        if self.delete(py, key)? { Ok(()) } else { Err(PyKeyError::new_err(key.clone().unbind())) }
+        if self.delete(py, key, false)? { Ok(()) } else { Err(PyKeyError::new_err(key.clone().unbind())) }
     }
 
-    #[pyo3(signature = (key, default = None))]
-    fn pop(&self, py: Python<'_>, key: &Bound<'_, PyAny>, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (key, default = None, *, retry = false))]
+    fn pop(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        default: Option<Py<PyAny>>,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        self.config.pop(py, self.routed(name)?, name, default)
+        retrying(py, retry, || self.config.pop(py, self.routed(name)?, name, default.as_ref().map(|d| d.clone_ref(py))))
     }
 
-    #[pyo3(signature = (key, expire = None))]
-    fn touch(&self, py: Python<'_>, key: &Bound<'_, PyAny>, expire: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
+    #[pyo3(signature = (key, expire = None, *, retry = false))]
+    fn touch(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        expire: Option<&Bound<'_, PyAny>>,
+        retry: bool,
+    ) -> PyResult<bool> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        self.config.touch(py, self.routed(name)?, name, expire)
+        retrying(py, retry, || self.config.touch(py, self.routed(name)?, name, expire))
     }
 
-    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
-    fn incr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0))), *, retry = false))]
+    fn incr(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        delta: Delta,
+        default: IncrDefault,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        self.config.add_number(py, self.routed(name)?, key, name, delta, default, false)
+        retrying(py, retry, || self.config.add_number(py, self.routed(name)?, key, name, delta, default, false))
     }
 
-    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
-    fn decr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0))), *, retry = false))]
+    fn decr(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        delta: Delta,
+        default: IncrDefault,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        self.config.add_number(py, self.routed(name)?, key, name, delta, default, true)
+        retrying(py, retry, || self.config.add_number(py, self.routed(name)?, key, name, delta, default, true))
     }
 
     // -- over every shard, under one deadline ---------------------------------------------------
@@ -286,33 +321,33 @@ impl FanoutCache {
 
     /// Removes every expired entry from every shard. Returns how many it removed. `timeout`
     /// overrides the cache's for this call: one budget for the whole call (see `remove_everywhere`).
-    #[pyo3(signature = (*, timeout = None))]
-    fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+    #[pyo3(signature = (*, timeout = None, retry = false))]
+    fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>, retry: bool) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
         self.refuse_fan_out("expire()")?;
         let now = self.config.now(py)?;
-        self.remove_everywhere(py, "expire", timeout, |store, snapshot, deadline| {
+        self.remove_everywhere(py, "expire", timeout, retry, |store, snapshot, deadline| {
             store.expire_until(snapshot, now, deadline)
         })
     }
 
     /// Removes every entry stored before the call. Returns how many it removed. `timeout` as for
     /// `expire`.
-    #[pyo3(signature = (*, timeout = None))]
-    fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+    #[pyo3(signature = (*, timeout = None, retry = false))]
+    fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>, retry: bool) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
         self.refuse_fan_out("clear()")?;
-        self.remove_everywhere(py, "clear", timeout, Store::clear_until)
+        self.remove_everywhere(py, "clear", timeout, retry, Store::clear_until)
     }
 
     /// Removes expired entries, then evicts each shard until it's under its share of `size_limit`.
     /// Returns how many it removed. `timeout` as for `expire`.
-    #[pyo3(signature = (*, timeout = None))]
-    fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+    #[pyo3(signature = (*, timeout = None, retry = false))]
+    fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>, retry: bool) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
         self.refuse_fan_out("cull()")?;
         let now = self.config.now(py)?;
-        self.remove_everywhere(py, "cull", timeout, |store, snapshot, deadline| {
+        self.remove_everywhere(py, "cull", timeout, retry, |store, snapshot, deadline| {
             store.cull_until(snapshot, now, deadline)
         })
     }
@@ -587,10 +622,11 @@ impl FanoutCache {
         py: Python<'_>,
         call: &str,
         timeout: Duration,
+        retry: bool,
         remove: impl Fn(&Store, Snapshot, Instant) -> Result<u64, Interrupted> + Sync,
     ) -> PyResult<u64> {
         let deadline = lockwait::deadline_after(Instant::now(), timeout);
-        let snapshots: Vec<Result<Snapshot, Error>> = crate::detach(py, || {
+        let taken: Vec<Result<Snapshot, Error>> = crate::detach(py, || {
             let left = || deadline.saturating_duration_since(Instant::now());
             self.shards
                 .iter()
@@ -599,20 +635,34 @@ impl FanoutCache {
         });
         let mut removed = 0;
         let mut failures = Vec::new();
-        for (i, (handle, snapshot)) in self.shards.iter().zip(snapshots).enumerate() {
+        let mut snapshots: Vec<Option<Snapshot>> = Vec::with_capacity(taken.len());
+        for (i, (handle, snapshot)) in self.shards.iter().zip(taken).enumerate() {
             if i > 0 {
                 self.check_signals_between(py, call, Some(removed), &failures)?;
             }
-            let outcome = match snapshot {
-                Ok(snapshot) => crate::detach(py, || remove(&handle.store, snapshot, deadline)),
-                Err(error) => Err(Interrupted { removed: 0, error }),
-            };
-            match outcome {
-                Ok(n) => removed += n,
-                Err(Interrupted { removed: n, error }) => {
-                    removed += n;
+            let mut snapshot = match snapshot {
+                Ok(snapshot) => Some(snapshot),
+                Err(error) => {
                     failures.push((handle.shard, error));
+                    snapshots.push(None);
+                    continue;
                 }
+            };
+            let (n, failed) = remove_on(py, handle, &mut snapshot, deadline, &remove);
+            snapshots.push(snapshot);
+            removed += n;
+            failures.extend(failed.map(|error| (handle.shard, error)));
+        }
+        // `retry=True`: while every failure is a timeout, run the failed shards again, each round with
+        // the whole `timeout`, from the snapshots already taken (a shard that couldn't take one takes
+        // it now), adding up what every round removed.
+        while retry && !failures.is_empty() && failures.iter().all(|(_, e)| matches!(e, Error::Timeout { .. })) {
+            pause_before_retry(py, Instant::now())?;
+            let deadline = lockwait::deadline_after(Instant::now(), timeout);
+            for (shard, _) in std::mem::take(&mut failures) {
+                let (n, failed) = remove_on(py, &self.shards[shard], &mut snapshots[shard], deadline, &remove);
+                removed += n;
+                failures.extend(failed.map(|error| (shard, error)));
             }
         }
         if failures.is_empty() {
@@ -686,6 +736,34 @@ impl FanoutCache {
             Ok(()) => raised,
             Err(error) => error,
         }
+    }
+}
+
+/// One shard's part of `FanoutCache::remove_everywhere`: what it removed, and its error, if any.
+/// Takes the shard's snapshot first if it has none yet.
+fn remove_on(
+    py: Python<'_>,
+    handle: &StoreHandle,
+    snapshot: &mut Option<Snapshot>,
+    deadline: Instant,
+    remove: &(impl Fn(&Store, Snapshot, Instant) -> Result<u64, Interrupted> + Sync),
+) -> (u64, Option<Error>) {
+    let taken = if let Some(taken) = *snapshot {
+        taken
+    } else {
+        let fresh = crate::detach(py, || {
+            handle
+                .ensure_open(deadline.saturating_duration_since(Instant::now()))
+                .and_then(|_| handle.store.snapshot_until(deadline))
+        });
+        match fresh {
+            Ok(fresh) => *snapshot.insert(fresh),
+            Err(error) => return (0, Some(error)),
+        }
+    };
+    match crate::detach(py, || remove(&handle.store, taken, deadline)) {
+        Ok(n) => (n, None),
+        Err(Interrupted { removed, error }) => (removed, Some(error)),
     }
 }
 
