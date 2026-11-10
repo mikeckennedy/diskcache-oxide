@@ -11,5 +11,7 @@ CacheLike.decr(
     key,
     delta=1,
     default=0,
+    *,
+    retry=False,
 )
 ```

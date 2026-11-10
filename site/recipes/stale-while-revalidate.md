@@ -97,4 +97,4 @@ def refresh_hot_pages() -> None:                      # runs every 5 minutes, on
 
 Readers do a plain [get()](../reference/Cache.get.md#diskcache_oxide.Cache.get) and never miss; a missed run or two costs nothing because the entries outlive several intervals. The cost is that the job renders pages nobody may be asking for, which is fine for a handful of keys and wrong for a long tail. Stale-while-revalidate handles the tail, since it only refreshes what's being read.
 
-A `memoize` decorator with this built in is planned (see the [roadmap](../user-guide/roadmap.md)).
+A [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) decorator with this built in is planned (see the [roadmap](../user-guide/roadmap.md)).

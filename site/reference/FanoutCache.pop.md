@@ -10,5 +10,7 @@ Usage
 FanoutCache.pop(
     key,
     default=None,
+    *,
+    retry=False,
 )
 ```

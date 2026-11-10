@@ -10,5 +10,6 @@ Usage
 NullCache.expire(
     *,
     timeout=None,
+    retry=False,
 )
 ```

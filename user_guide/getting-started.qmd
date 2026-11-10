@@ -49,7 +49,7 @@ missing = cache.get('user:99', default={})  # {}
 value, expires_at = cache.get('user:42', expire_time=True)
 ```
 
-- Keys are `str`. Other key types raise `TypeError` for now (they're planned).
+- Keys are `str`, `bytes`, `int`, `float`, `bool`, `None`, or tuples of those, such as `('user', 42)`. They're compared by exact type, so `1`, `1.0` and `True` are three keys. Anything else (a `list`, a `dict`, an object) raises `TypeError`; build a tuple or a string instead.
 - Values can be `str`, `bytes`, `int`, `float`, `bool`, `None`, `Decimal`, and lists, tuples, dicts, sets, frozensets, datetimes and dates made of those. They come back as the types you stored. See [Serialization](serialization.qmd).
 - `expire` is in seconds. Leave it out for an entry that never expires. `touch(key, expire=...)` changes the expiry of an existing entry.
 

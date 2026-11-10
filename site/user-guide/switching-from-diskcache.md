@@ -37,10 +37,13 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | Clock | Reads `time.time()` | Reads the clock in Rust; pass `clock=` to control it |
 | [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) | Anything (tiny values silently empty the cache) | At least 1 MiB |
 | `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
-| `disk=`, `eviction_policy=` | Supported | Not supported (eviction policies are coming) |
+| `disk=`, `eviction_policy=` | Supported | Not supported; `eviction_policy='none'` is planned, LRU and LFU aren't |
 | [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) | `tx` is `None` | `tx` is the cache; see [`transact()`](#transact) below |
 | [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) | Supported | Supported, with differences; see [`FanoutCache`](#fanoutcache) below |
-| Tags, `memoize` | Supported | Coming in later phases |
+| Keys | Anything picklable | `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those; see [Keys](#keys) below |
+| [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) | Supported | Supported, with the same keys; see [Keys](#keys) below |
+| `retry=` | Positional; `cache[k]` retries forever | Keyword-only; `cache[k]` raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) |
+| Tags | Supported | Planned |
 
 
 # Values: no pickle unless you ask
@@ -63,9 +66,15 @@ objects = Cache('/var/cache/my-app-objects', pickle=True)
 A cache opened without `pickle=True` never unpickles. If it finds a pickled value written by a `pickle=True` peer, it raises [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) and leaves the value alone. More in [Serialization](serialization.md).
 
 
-# String keys
+# Keys
 
-Only `str` keys are accepted today; anything else raises `TypeError`. Keys are already stored with a type tag, so other key types can be added later without changing the file format (see the [roadmap](roadmap.md)). In the meantime, build string keys yourself (`f'user:{user_id}'`).
+Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples of those, nested. diskcache takes anything picklable and pickles what it doesn't store natively; diskcache-oxide never pickles a key, so a `list`, a `dict`, an object, a subclass such as an `IntEnum`, or an int past 64 bits raises `TypeError`. Keys are compared by exact type: `1`, `1.0` and `True` are three keys, where diskcache makes `1` and `1.0` one.
+
+[iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) lists every `str` key first, in sorted order, then the other types (`None`, bools, ints, floats, bytes, tuples), each sorted; `iterkeys(prefix=...)` lists only `str` keys. diskcache sorts numbers, then text, then bytes.
+
+[memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) works as diskcache's, and `f.__cache_key__(...)` returns the same tuple, with two differences: every argument must be a key type (leave one out with `ignore=`), and `typed=True` stores each argument type's name rather than the class.
+
+`retry=True` is accepted wherever diskcache takes it, as a keyword, and retries only [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout). Dictionary syntax never retries: `cache[k]` raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) after [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout), where diskcache's waits forever.
 
 
 # [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact)
@@ -94,7 +103,7 @@ Only `str` keys are accepted today; anything else raises `TypeError`. Keys are a
 - **[size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) is a total**, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0's share (D-036).
 - **`max_connections` is a total** across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least [shards](../reference/FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) (D-037).
 - **[transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) takes a key** and covers one shard: `with cache.transact(key=k):` where diskcache's `with cache.transact():` locks every shard. Calls for keys on other shards inside the block raise `ValueError`, reads included. A ported bare [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) raises `TypeError` (D-040).
-- **Not there yet:** `cache()`, `deque()` and `index()`, [stats()](../reference/Caches.stats.md#diskcache_oxide.Caches.stats), `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, `retry=`, `read=` and `tag=` arguments, settings as attributes, and pickling (D-039).
+- **Not there yet:** `cache()`, `deque()` and `index()`, [stats()](../reference/Caches.stats.md#diskcache_oxide.Caches.stats), `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, `read=` and `tag=` arguments, settings as attributes, and pickling (D-039). [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) and `retry=` are there, as on [Cache](../reference/Cache.md#diskcache_oxide.Cache).
 
 
 # Truthiness

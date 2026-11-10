@@ -49,7 +49,7 @@ And here is what it does under load. Every thread shares one cache, the x axis a
 diskcache-oxide is being built in three stages. The first is the one you can use today.
 
 1. **A better diskcache.** The `Cache` you already know, rebuilt in Rust: about half the read latency, many times the threaded throughput, safe across `fork()`, safe on free-threaded Python, and no pickle by default. *This is the core that exists now.*
-2. **The complete local caching toolkit.** A native `AsyncCache` for FastAPI, Litestar and friends, `memoize`, tags, more eviction policies, `Deque` and `Index`, and the coordination recipes (locks, semaphores, throttles, stampede protection) that make a shared cache useful as more than a cache. Two pieces of this stage arrived early: [`FanoutCache`](user-guide/fanoutcache.qmd) sharding for apps with many writing processes, and [`transact()`](user-guide/transactions.qmd).
+2. **The complete local caching toolkit.** `memoize` and keys of every native type, tags, the coordination recipes (locks, semaphores, throttles, stampede protection) that make a shared cache useful as more than a cache, a Django cache backend, and a native `AsyncCache` for FastAPI, Litestar and friends. Two pieces of this stage arrived early: [`FanoutCache`](user-guide/fanoutcache.qmd) sharding for apps with many writing processes, and [`transact()`](user-guide/transactions.qmd).
 3. **A cache server.** The same Rust engine served over the network: a Redis-style central cache for a fleet of machines, with SQLite underneath instead of RAM. As the only owner of its files, the server can use SQLite's exclusive locking mode, which already measures about 40% faster reads than the shared-directory library.
 
 See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
@@ -72,7 +72,7 @@ See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
 ::: {.callout-note}
 **0.1.2, the first release.** The core `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. Before it shipped, the code ran three gauntlets. A conformance suite runs the same tests against real diskcache 5.6.3, so every difference is a decision written down in [Divergences](user-guide/divergences.qmd), never an accident. A sanitizer pass put the whole codebase, bundled SQLite included, under Miri, ThreadSanitizer (with a free-threaded CPython built under it too), AddressSanitizer and LeakSanitizer. And a 24-hour soak threw processes, threads, forks, `SIGKILL` and `clear()` under load at one directory for a day, then checked it for corruption, lost writes and leaks. It's on its way into production at [Talk Python](https://talkpython.fm).
 
-Not here yet: `memoize`, tags, `AsyncCache`, `Deque` and `Index`, keys other than `str`, custom `disk=` classes, eviction policies other than least-recently-stored, and the coordination recipes. See [Vision and roadmap](user-guide/roadmap.qmd).
+Keys can be `str`, `bytes`, `int`, `float`, `bool`, `None` or tuples of those, and `memoize` and `retry=` work as in diskcache. Not here yet: tags, `eviction_policy='none'`, the coordination recipes, `AsyncCache`, and `Deque` and `Index`. Custom `disk=` classes and least-recently-used eviction aren't coming. See [Vision and roadmap](user-guide/roadmap.qmd).
 :::
 
 ## Install

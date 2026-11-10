@@ -7,7 +7,11 @@ Remove `key`.
 Usage
 
 ``` python
-Cache.delete(key)
+Cache.delete(
+    key,
+    *,
+    retry=False,
+)
 ```
 
 

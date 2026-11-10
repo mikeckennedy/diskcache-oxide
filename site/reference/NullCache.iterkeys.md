@@ -7,9 +7,7 @@ Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete sti
 Usage
 
 ``` python
-NullCache.iterkeys(
-    *,
-    prefix=None,
-    reverse=False,
-)
+NullCache.iterkeys(self, prefix: str, reverse: bool = False) -> Iterator[str]
+ 
+NullCache.iterkeys(self, prefix: None = None, reverse: bool = False) -> Iterator[Key]
 ```

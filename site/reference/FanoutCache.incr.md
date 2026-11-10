@@ -11,5 +11,7 @@ FanoutCache.incr(
     key,
     delta=...,
     default=...,
+    *,
+    retry=False,
 )
 ```

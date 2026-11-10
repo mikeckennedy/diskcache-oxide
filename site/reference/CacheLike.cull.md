@@ -10,5 +10,6 @@ Usage
 CacheLike.cull(
     *,
     timeout=None,
+    retry=False,
 )
 ```

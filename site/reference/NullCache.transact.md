@@ -24,7 +24,7 @@ It never opens a transaction on an `invalidate=` cache: removals forwarded insid
 `retry: bool = ``False`  
 Accepted for [Cache.transact()](Cache.transact.md#diskcache_oxide.Cache.transact)'s signature; it must be a `bool`.
 
-`key: str | None = None`  
+`key: Key | None = None`  
 Accepted so a switched-off sharded cache's `transact(key=...)` works too; it must be a `str` or None.
 
 

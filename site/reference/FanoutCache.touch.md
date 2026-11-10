@@ -10,5 +10,7 @@ Usage
 FanoutCache.touch(
     key,
     expire=None,
+    *,
+    retry=False,
 )
 ```

@@ -622,6 +622,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#done-concurrency-review-and-soak-phase-2.5" id="toc-done-concurrency-review-and-soak-phase-2.5" class="nav-link" data-scroll-target="#done-concurrency-review-and-soak-phase-2.5">Done: concurrency review and soak (Phase 2.5)</a></li>
   <li><a href="#done-release-phase-3" id="toc-done-release-phase-3" class="nav-link" data-scroll-target="#done-release-phase-3">Done: release (Phase 3)</a></li>
   <li><a href="#next" id="toc-next" class="nav-link" data-scroll-target="#next">Next</a></li>
+  <li><a href="#decided-against-and-why" id="toc-decided-against-and-why" class="nav-link" data-scroll-target="#decided-against-and-why">Decided against, and why</a></li>
   </ul></li>
   <li><a href="#further-out" id="toc-further-out" class="nav-link" data-scroll-target="#further-out">Further out</a></li>
   <li><a href="#non-goals" id="toc-non-goals" class="nav-link" data-scroll-target="#non-goals">Non-goals</a></li>
@@ -728,6 +729,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="next" class="level2">
 <h2 class="anchored" data-anchor-id="next">Next</h2>
+<p>In this order (Michael, 2026-11-10):</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
@@ -737,43 +739,43 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </thead>
 <tbody>
 <tr class="odd">
+<td><strong>6. Parity with diskcache</strong></td>
+<td>In four releases. First, keys of every native type (<code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code> and tuples, beside <code>str</code>), <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, and <code>retry=</code>, with no cache to delete. Then the small gaps (<code>reversed()</code>, <code>pop(expire_time=)</code>, pickling a cache, per-process <a href="../reference/Caches.stats.html#diskcache_oxide.Caches.stats" class="gdls-link gdls-code">stats()</a>, <code>check()</code>) and the coordination recipes: <code>Lock</code>, <code>RLock</code>, <code>BoundedSemaphore</code>, <code>throttle</code>, <code>barrier</code>, <code>Averager</code> and a stampede-proof <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>. Then tags with <code>evict(tag)</code> and <code>eviction_policy='none'</code>, together in one on-disk format change. Then the queue calls <code>push</code>, <code>pull</code> and <code>peek</code>.</td>
+</tr>
+<tr class="even">
+<td><strong>Django cache backend</strong></td>
+<td>A diskcache-oxide backend for Django’s cache framework, tested against Django’s own cache test suite, as its own phase right after Phase 6.</td>
+</tr>
+<tr class="odd">
 <td><strong>4. Free-threaded performance</strong></td>
 <td>Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that’s the first target.</td>
 </tr>
 <tr class="even">
 <td><strong>5. <code>AsyncCache</code></strong></td>
-<td>An async API for asyncio frameworks that can’t slow down the sync one, including <code>transact_async()</code>.</td>
+<td>An async API for asyncio frameworks that can’t slow down the sync one, including <code>transact_async()</code>. Tried as a spike first, and kept only if it earns its place.</td>
 </tr>
 <tr class="odd">
-<td><strong>6a. Cache options</strong></td>
-<td>More eviction policies (LRU, LFU, none), tags and <code>evict(tag)</code>, statistics, <code>memoize</code>, <code>peek</code>/<code>pull</code>/<code>push</code>, <code>check()</code>, <code>retry=</code>, and non-<code>str</code> keys.</td>
-</tr>
-<tr class="even">
-<td><strong>6b. <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a></strong></td>
-<td>Multi-operation transactions. Done early: see <a href="../user-guide/transactions.html">Transactions</a>.</td>
-</tr>
-<tr class="odd">
-<td><strong>6c. <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a></strong></td>
-<td>Done: see <a href="../user-guide/fanoutcache.html">FanoutCache</a>.</td>
-</tr>
-<tr class="even">
-<td><strong>6d. <code>Deque</code> and <code>Index</code></strong></td>
-<td>diskcache’s persistent collections.</td>
-</tr>
-<tr class="odd">
-<td><strong>6e. Recipes</strong></td>
-<td><code>Lock</code>, <code>RLock</code>, <code>BoundedSemaphore</code>, <code>throttle</code>, <code>barrier</code>, and stampede-proof <code>memoize</code>.</td>
-</tr>
-<tr class="even">
 <td><strong>7. Network server</strong></td>
 <td>Stage 3, above.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><strong>Windows</strong></td>
-<td>Supported as a development platform once macOS and Linux are solid.</td>
+<td>Supported as a development platform, after Phase 6, as a plan of its own.</td>
 </tr>
 </tbody>
 </table>
+<p>Already done from the old Phase 6 list: <a href="../user-guide/transactions.html"><code>transact()</code></a> and <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a>.</p>
+</section>
+<section id="decided-against-and-why" class="level2">
+<h2 class="anchored" data-anchor-id="decided-against-and-why">Decided against, and why</h2>
+<ul>
+<li><strong>Least-recently-used and least-frequently-used eviction.</strong> diskcache implements them by writing to the database on every <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>. Reads that never write are what let many processes read at once without queueing, so these stay out unless a design keeps reads write-free. Least-recently-stored stays the default, and <code>eviction_policy='none'</code> is coming.</li>
+<li><strong><code>Deque</code> and <code>Index</code></strong>, for now. They come back if someone asks: an <code>Index</code> is only as general as the key types, and both default to a temporary directory, which diskcache-oxide doesn’t do.</li>
+<li><strong><code>disk=</code> and <code>Disk</code> subclasses.</strong> A Python class on every read and write would undo the Rust engine; <code>serializer=</code> and <code>register_type()</code> cover what people used them for.</li>
+<li><strong>Pickled keys.</strong> Keys are never pickled, so listing keys never runs pickle and a key’s identity doesn’t depend on pickle’s bytes.</li>
+<li><strong><code>read=True</code> and <code>read()</code></strong> (streaming a file in and out). Folded into the large-file cache idea below.</li>
+<li><strong>Persisted statistics.</strong> <a href="../reference/Caches.stats.html#diskcache_oxide.Caches.stats" class="gdls-link gdls-code">stats()</a> will count per process, in memory: diskcache’s persisted counters make every <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> a write.</li>
+</ul>
 </section>
 </section>
 <section id="further-out" class="level1">
@@ -781,6 +783,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>Ideas being considered, not yet committed to:</p>
 <ul>
 <li><strong>Expiry that’s exact everywhere.</strong> Lookups already treat an expired entry as gone at the moment it expires. The plan is to make <code>len()</code> and iteration do the same, and move the physical cleanup to a small background sweeper written in Rust, coordinated across processes so eight workers don’t all sweep at once.</li>
+<li><strong>A large-file cache</strong>, handing out an open file rather than a path, which is where diskcache’s <code>read=True</code> would fit.</li>
 <li><strong>Encryption at rest</strong>, if a real need appears: SQLCipher for the database, authenticated encryption for spill files.</li>
 </ul>
 </section>
@@ -789,7 +792,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <ul>
 <li>Reading existing diskcache directories. diskcache-oxide uses its own on-disk format, so caches start cold when you switch.</li>
 <li>A module named <code>diskcache</code> (it would collide with the real package).</li>
-<li><code>DjangoCache</code>.</li>
+<li>diskcache’s own <code>DjangoCache</code> class. A Django backend of diskcache-oxide’s own is planned, above.</li>
 <li>Python older than 3.14.</li>
 </ul>
 

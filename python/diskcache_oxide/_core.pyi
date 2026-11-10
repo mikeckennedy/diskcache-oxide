@@ -266,6 +266,8 @@ class Cache:
             key: The key to look up.
             default: Returned when the key is missing or expired.
             expire_time: Also return the entry's expiry time.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             The value, or `default`. With `expire_time=True`, a `(value, expire_time)` tuple, where
@@ -298,6 +300,8 @@ class Cache:
             value: The value: `str`, `bytes`, numbers, `Decimal`, `bool`, `None`, and lists, tuples, dicts,
                 sets, frozensets, datetimes and dates of those, or anything picklable with `pickle=True`.
             expire: Seconds until the entry expires, or None for never.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             True. With `durable=True`, False if the write failed and was dropped: whatever was
@@ -323,6 +327,8 @@ class Cache:
             key: The key.
             value: The value, as for `set()`.
             expire: Seconds until the entry expires, or None for never.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             True if the value was stored, False if the key already held a live value. With
@@ -370,6 +376,8 @@ class Cache:
         Args:
             key: The key.
             default: Returned when the key is missing or expired, or its value file is missing.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             The removed value, or `default`. With `durable=True`, a `pop` whose delete fails returns
@@ -397,6 +405,8 @@ class Cache:
         Args:
             key: The key.
             expire: Seconds from now until the entry expires, or None to make it never expire.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             True if the entry existed and was updated, False if it was missing or expired, or with
@@ -422,6 +432,8 @@ class Cache:
             delta: The amount to add (default 1).
             default: The starting value for a missing or expired key (default 0). Pass None to
                 raise `KeyError` instead.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             The new value. With `durable=True`, `default + delta` if the call failed, whatever was
@@ -520,6 +532,8 @@ class Cache:
             timeout: Seconds each chunk may wait for the write lock (another thread's or another
                 process's), for this call only (default: the cache's `timeout`). It bounds each
                 wait, not the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.
@@ -542,6 +556,8 @@ class Cache:
             timeout: Seconds each chunk may wait for the write lock (another thread's or another
                 process's), for this call only (default: the cache's `timeout`). It bounds each
                 wait, not the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.
@@ -558,6 +574,8 @@ class Cache:
             timeout: Seconds each chunk may wait for the write lock (another thread's or another
                 process's), for this call only (default: the cache's `timeout`). It bounds each
                 wait, not the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.
@@ -637,6 +655,8 @@ class Cache:
         Args:
             retry: Keep trying to begin while it times out, instead of raising `Timeout`. Never
                 retries `TransactionBusy`. Each attempt waits up to `timeout`.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Raises:
             TypeError: `retry` isn't a `bool`.
@@ -826,6 +846,8 @@ class FanoutCache:
         Args:
             key: Keyword-only. Any key on the shard to hold; it needn't exist.
             retry: As for `Cache.transact()`.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Raises:
             TypeError: `key` isn't a `str`, or `retry` isn't a `bool`.
@@ -872,6 +894,8 @@ class FanoutCache:
                 the cache's `timeout`). It bounds waiting, not work: a chunk already running finishes,
                 and once it's spent, each remaining chunk still gets one try with no wait, so shards no
                 one else is writing are all done even at a short timeout.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.
@@ -897,6 +921,8 @@ class FanoutCache:
 
         Args:
             timeout: As for `expire`: one budget for the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.
@@ -910,6 +936,8 @@ class FanoutCache:
 
         Args:
             timeout: As for `expire`: one budget for the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.

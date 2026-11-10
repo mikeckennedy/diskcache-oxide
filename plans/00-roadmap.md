@@ -16,7 +16,7 @@ A clean-room, pure-Rust reimplementation of [python-diskcache](https://grantjenk
 
 - Reading existing diskcache directories. We use our own on-disk format; caches start cold on cutover.
 - A `diskcache`-named shim module (it would clash with the real package).
-- DjangoCache.
+- diskcache's `DjangoCache` class. An oxide Django backend of its own is planned (step 2a of the order below).
 - Python versions older than 3.14.
 
 ## Key decisions so far
@@ -54,7 +54,8 @@ A clean-room, pure-Rust reimplementation of [python-diskcache](https://grantjenk
 **Order from here (Michael, 2026-11-09).** The phases below keep their numbers, but the order of what's left is:
 
 1. **0.1.2** ([plan 23](23-over-eviction-and-deferred-tests.md)): the over-eviction fix and the tests held behind 0.1.1's freeze, then PGO wheels on the Studio and htz, and Talk Python moves from 0.1.1 to 0.1.2.
-2. **Phase 6, all of it, before Phase 4**, starting with `memoize` and non-`str` keys: they are what a diskcache user meets first, and each group that lands is something new to release to PyPI.
+2. **Phase 6, all of it, before Phase 4**, starting with `memoize` and non-`str` keys: they are what a diskcache user meets first, and each group that lands is something new to release to PyPI. Its decisions (Michael, 2026-11-10) and its four releases are in [plan 24](24-phase-6-parity.md).
+2a. **A Django cache backend**, an oxide backend of its own, as its own phase right after Phase 6 (Michael, 2026-11-10: "it's going to be a big job"). diskcache's `DjangoCache` class stays out.
 3. **Phase 4** (free-threaded performance). Its measurements run on the mini if it's free, otherwise on the Studio.
 4. **Phase 5** (`AsyncCache`), as speculative spikes: it ships only if it earns its keep, and if it doesn't, the reasons are written down (in its plan and in the user guide's roadmap page), so the question isn't reopened without new evidence.
 
@@ -195,7 +196,7 @@ Start with a Python wrapper that runs calls in an executor; it can't touch the s
 
 Each item gets conformance tests against diskcache first. Candidate groups, each roughly a phase:
 
-- **6a. Cache options:** eviction policies (LRU/LFU/none), tags and `evict(tag)`, `statistics`/`stats`, `memoize` (+ `__cache_key__`), `peek`/`pull`/`push`, `read=True`, `check()` (including orphan cleanup), `retry=`, `expire_time=`, and non-`str` keys.
+- **6a. Cache options:** tags and `evict(tag)`, `eviction_policy='none'`, `statistics`/`stats` (per process), `memoize` (+ `__cache_key__`), `peek`/`pull`/`push`, `check()` (including orphan cleanup), `retry=`, `expire_time=`, and non-`str` keys. LRU and LFU are out (every `get` would write), and `read=True` folds into the large-file cache idea ([plan 24](24-phase-6-parity.md), decisions 6 and 14).
 - **6b. `transact`:** nested transactions with Python callbacks while a connection is held. Flagged as hard. Inside one cache's transaction, starting one on another cache never waits for that cache's write lock: it fails at once with `WriteLockBusyInTransaction` (Python `Timeout`), since waiting could deadlock with a thread holding the other order, or with a pending fork (Phase 2.5 carry-over 6). `retry=True` must never retry that error, and it needs a divergence entry when `transact()` goes public. `transact()`'s docs must also say that `os.fork()` on any thread waits, with no timeout, for every transaction open in the process. That's by design (the alternative is a child inheriting a connection mid-statement), but a transaction that never ends, or whose thread waits on the forking thread, hangs the fork. Consider a `RuntimeWarning` once a fork has waited more than a few seconds (review 07).
 - **6c. FanoutCache.** The answer for anything beyond the single-directory upper bound measured in the Phase 2.5 soak: about 180k cache operations a second with about 1,000 writes a second (half of what a Mac mini can do flat out). Include a fanout benchmark: sharding spreads writers over several write locks, which is where oxide's design should shine (Michael expects a big win). Use the standard 99:1 mix at 1-8 threads and several processes, against diskcache's FanoutCache. Candidate for pulling into Phase 4 as the threaded default (Michael, 2026-10-28), if the Phase 4 scaling experiment shows per-file sharding helps. Either way it's being built, so it's worth trying. Decisions (confirmed by Michael, 2026-10-28):
   - **Shard count is a persisted setting of the directory:** fixed by whoever creates it (default 8), read by every later opener. It's never derived from the thread count: every process must route a key to the same shard, or `add()` and `incr()` lose their cross-process atomicity. Changing it means a new directory.
@@ -203,7 +204,7 @@ Each item gets conformance tests against diskcache first. Candidate groups, each
   - **`Cache` stays single-file.** FanoutCache is the recommended choice for threaded apps, with its known trade-offs documented: `transact()` within one shard, per-shard culling, and `len`/`clear` fanned out.
   - **Ordering (Michael):** `__iter__` yields every key, shard by shard, with no insertion-order guarantee. That will need its own divergence entry when FanoutCache lands. Sorted `iterkeys(prefix=, reverse=)` stays a cheap k-way merge of the shards' already-sorted keyset pages. `in`/`get` go straight to the key's shard, so they never need to look anywhere else.
   - **One connection budget for the whole FanoutCache**, not `max_connections` per shard, so the memory bound (D-023) still holds.
-- **6d. Deque and Index.**
+- **6d. Deque and Index.** Deferred until someone asks ([plan 24](24-phase-6-parity.md), decision 9).
 - **6e. Recipes:** Lock, RLock, BoundedSemaphore, throttle, barrier, memoize_stampede.
 
 ### Phase 7 (very speculative): A cache server, as a separate product

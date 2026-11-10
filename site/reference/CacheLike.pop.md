@@ -10,5 +10,7 @@ Usage
 CacheLike.pop(
     key,
     default=None,
+    *,
+    retry=False,
 )
 ```

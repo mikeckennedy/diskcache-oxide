@@ -9,7 +9,7 @@ Usage
 ``` python
 FanoutCache.iterkeys(
     *,
-    prefix=None,
+    prefix,
     reverse=False,
 )
 ```
@@ -21,7 +21,7 @@ The same order [Cache.iterkeys](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys
 ## Parameters
 
 
-`prefix: str | None = None`  
+`prefix: str`  
 Only yield keys that start with this string.
 
 `reverse: bool = ``False`  

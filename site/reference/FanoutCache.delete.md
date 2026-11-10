@@ -7,5 +7,9 @@ As [Cache.delete](Cache.delete.md#diskcache_oxide.Cache.delete), on the key's sh
 Usage
 
 ``` python
-FanoutCache.delete(key)
+FanoutCache.delete(
+    key,
+    *,
+    retry=False,
+)
 ```

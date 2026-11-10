@@ -11,5 +11,7 @@ FanoutCache.decr(
     key,
     delta=...,
     default=...,
+    *,
+    retry=False,
 )
 ```

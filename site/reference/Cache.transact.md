@@ -24,6 +24,9 @@ A block that exits with no exception but didn't commit (another thread ended it,
 `retry: bool = ``False`  
 Keep trying to begin while it times out, instead of raising [Timeout](Timeout.md#diskcache_oxide.Timeout). Never retries [TransactionBusy](TransactionBusy.md#diskcache_oxide.TransactionBusy). Each attempt waits up to [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
 
+`retry: bool = ``False`  
+On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call gets through, each round with the whole [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), a `durable=True` handle included. Only [Timeout](Timeout.md#diskcache_oxide.Timeout) is retried.
+
 
 ## Raises
 

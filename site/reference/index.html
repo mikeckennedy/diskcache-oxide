@@ -606,8 +606,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../reference/Cache.iterkeys.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.iterkeys()</span></span></a>
+  <a href="../reference/Cache.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.memoize()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -710,6 +710,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/Cache.get.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.get()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.iterkeys.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.iterkeys()</span></span></a>
   </div>
 </li>
       </ul>
@@ -856,8 +862,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../reference/FanoutCache.iterkeys.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.iterkeys()</span></span></a>
+  <a href="../reference/FanoutCache.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.memoize()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -924,6 +930,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/FanoutCache.get.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.get()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.iterkeys.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.iterkeys()</span></span></a>
   </div>
 </li>
       </ul>
@@ -1112,6 +1124,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.memoize()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/NullCache.iterkeys.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.iterkeys()</span></span></a>
   </div>
@@ -1236,6 +1254,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/CacheLike.decr.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.decr()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.memoize()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1657,9 +1681,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Subtract <code>delta</code> from the number stored under <code>key</code>, atomically. See <code>incr()</code>.</p>
 </dd>
-<dt><a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="doc-function doc-label doc-label-method">Cache.iterkeys()</a></dt>
+<dt><a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="doc-function doc-label doc-label-method">Cache.memoize()</a></dt>
 <dd>
-<p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
+<p>Return a decorator that caches the function’s results in this cache, as diskcache’s <code>memoize</code>.</p>
 </dd>
 <dt><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="doc-function doc-label doc-label-method">Cache.expire()</a></dt>
 <dd>
@@ -1728,6 +1752,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="doc-function doc-label doc-label-method">Cache.get()</a></dt>
 <dd>
 <p>Return the value stored for <code>key</code>, or <code>default</code> if it’s missing or expired.</p>
+</dd>
+<dt><a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="doc-function doc-label doc-label-method">Cache.iterkeys()</a></dt>
+<dd>
+<p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
 </dd>
 </dl>
 </section>
@@ -1829,9 +1857,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Checkpoint every shard’s write-ahead log and truncate it to zero, as <code>Cache.checkpoint</code> does.</p>
 </dd>
-<dt><a href="../reference/FanoutCache.iterkeys.html#diskcache_oxide.FanoutCache.iterkeys" class="doc-function doc-label doc-label-method">FanoutCache.iterkeys()</a></dt>
+<dt><a href="../reference/FanoutCache.memoize.html#diskcache_oxide.FanoutCache.memoize" class="doc-function doc-label doc-label-method">FanoutCache.memoize()</a></dt>
 <dd>
-<p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
+<p>Return a decorator that caches the function’s results in this cache, as diskcache’s <code>memoize</code>.</p>
 </dd>
 <dt><a href="../reference/FanoutCache.__iter__.html#diskcache_oxide.FanoutCache.__iter__" class="doc-function doc-label doc-label-method">FanoutCache.__iter__()</a></dt>
 <dd>
@@ -1876,6 +1904,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/FanoutCache.get.html#diskcache_oxide.FanoutCache.get" class="doc-function doc-label doc-label-method">FanoutCache.get()</a></dt>
 <dd>
 <p>As <code>Cache.get</code>, on the key’s shard.</p>
+</dd>
+<dt><a href="../reference/FanoutCache.iterkeys.html#diskcache_oxide.FanoutCache.iterkeys" class="doc-function doc-label doc-label-method">FanoutCache.iterkeys()</a></dt>
+<dd>
+<p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
 </dd>
 </dl>
 </section>
@@ -2005,6 +2037,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>0, or with <code>invalidate=</code>, clear that cache (passing <code>timeout</code> on) and return its count.</p>
 </dd>
+<dt><a href="../reference/NullCache.memoize.html#diskcache_oxide.NullCache.memoize" class="doc-function doc-label doc-label-method">NullCache.memoize()</a></dt>
+<dd>
+<p>As <code>Cache.memoize</code>, but every call runs the function, as every entry has already expired. The</p>
+</dd>
 <dt><a href="../reference/NullCache.iterkeys.html#diskcache_oxide.NullCache.iterkeys" class="doc-function doc-label doc-label-method">NullCache.iterkeys()</a></dt>
 <dd>
 <p>Yield nothing, or with <code>invalidate=</code>, that cache’s keys, so list-then-delete still works.</p>
@@ -2092,6 +2128,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/CacheLike.decr.html#diskcache_oxide.CacheLike.decr" class="doc-function doc-label doc-label-method">CacheLike.decr()</a></dt>
 <dd>
 <p>Subtract <code>delta</code> from the number under <code>key</code>, atomically, and return the result.</p>
+</dd>
+<dt><a href="../reference/CacheLike.memoize.html#diskcache_oxide.CacheLike.memoize" class="doc-function doc-label doc-label-method">CacheLike.memoize()</a></dt>
+<dd>
+<p>A decorator caching a function’s results in this cache (diskcache’s <code>memoize</code>).</p>
 </dd>
 <dt><a href="../reference/CacheLike.iterkeys.html#diskcache_oxide.CacheLike.iterkeys" class="doc-function doc-label doc-label-method">CacheLike.iterkeys()</a></dt>
 <dd>

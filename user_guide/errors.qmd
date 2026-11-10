@@ -36,11 +36,11 @@ A registered type that still raises here is one whose `encode` function raised, 
 ## `TypeError` for keys and booleans
 
 ```text
-TypeError: cache keys must be str, not int
+TypeError: cache keys must be str, bytes, int, float, bool, None, or a tuple of those, not list
 TypeError: expire must be a number of seconds or None, not bool
 ```
 
-Keys are `str` only for now; build them yourself (`f'user:{user_id}'`). Other key types are planned and won't need a format change. A `bool` where a number of seconds belongs (`expire=True`, `timeout=True`) is almost always an argument in the wrong position, so it's refused rather than treated as `1`, which is what diskcache does.
+Keys are `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, or tuples of those. Only the exact types: a subclass such as an `IntEnum` or a `namedtuple`, a `list` or an int past 64 bits raises `TypeError`, and a NaN key raises `ValueError`, since it isn't equal to itself. Pass a tuple where you'd use a list. A memoized function's arguments follow the same rules, and the error names the argument. A `bool` where a number of seconds belongs (`expire=True`, `timeout=True`) is almost always an argument in the wrong position, so it's refused rather than treated as `1`, which is what diskcache does.
 
 ## `Timeout`: a lock or a fork outlasted `timeout`
 

@@ -12,6 +12,7 @@ Cache.get(
     default=None,
     *,
     expire_time=False,
+    retry=False,
 )
 ```
 
@@ -22,7 +23,7 @@ Reads never write, so any number of threads and processes can read at once.
 ## Parameters
 
 
-`key: str`  
+`key: Key`  
 The key to look up.
 
 `default: Any = None`  
@@ -30,6 +31,9 @@ Returned when the key is missing or expired.
 
 `expire_time: bool = ``False`  
 Also return the entry's expiry time.
+
+`retry: bool = ``False`  
+On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call gets through, each round with the whole [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), a `durable=True` handle included. Only [Timeout](Timeout.md#diskcache_oxide.Timeout) is retried.
 
 
 ## Returns

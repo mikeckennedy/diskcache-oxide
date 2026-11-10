@@ -7,7 +7,7 @@ Return `default`, as every entry has already expired. With `expire_time=True`, `
 Usage
 
 ``` python
-NullCache.get(self, key: str, default: Any = None, expire_time: Literal[False] = False) -> Any
+NullCache.get(self, key: Key, default: Any = None, expire_time: Literal[False] = False, retry: bool = False) -> Any
  
-NullCache.get(self, key: str, default: Any = None, expire_time: Literal[True]) -> tuple[Any, float | None]
+NullCache.get(self, key: Key, default: Any = None, expire_time: Literal[True], retry: bool = False) -> tuple[Any, float | None]
 ```

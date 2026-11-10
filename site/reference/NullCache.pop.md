@@ -10,5 +10,7 @@ Usage
 NullCache.pop(
     key,
     default=None,
+    *,
+    retry=False,
 )
 ```

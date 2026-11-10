@@ -34,6 +34,6 @@ The first release: diskcache's [Cache](reference/Cache.html#diskcache_oxide.Cach
 
 ### Not yet
 
-`memoize`, tags, `AsyncCache`, `Deque` and `Index`, keys other than `str`, `disk=`, other eviction policies, the coordination recipes (locks, semaphores, throttles), and Windows. See the [roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html).
+[memoize](reference/Cache.memoize.html#diskcache_oxide.Cache.memoize), tags, `AsyncCache`, `Deque` and `Index`, keys other than `str`, `disk=`, other eviction policies, the coordination recipes (locks, semaphores, throttles), and Windows. See the [roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html).
 
 Development before this release, including the `0.1.0.dev` builds (`0.1.0.dev1` was yanked from PyPI), is in the git history. A `0.1.0` and a `0.1.1` were built and verified but never published: new tests found two bugs just before the first upload and a third (a size-limited cache evicting entries it had room for) just before the second, each fixed first, so `0.1.2` is the first release on PyPI. `0.1.1` ran in production at Talk Python in the meantime. The `0.0.1` on PyPI is a name placeholder with no code.

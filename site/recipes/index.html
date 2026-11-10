@@ -618,7 +618,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you’d reach for one, then shows the pattern, then says where it stops working. The examples with output under them execute against diskcache-oxide every time these docs are built, so they’re known to work, not merely believed to.</p>
 <section id="caching" class="level1">
 <h1>Caching</h1>
-<p><strong><a href="../recipes/caching-expensive-calls.html">Caching expensive calls</a>.</strong> The cache-aside pattern, and a small decorator that turns any function into a cached one, with keys built safely from its arguments.</p>
+<p><strong><a href="../recipes/caching-expensive-calls.html">Caching expensive calls</a>.</strong> The cache-aside pattern, and <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, which turns a function into a cached one keyed on its arguments.</p>
 <p><strong><a href="../recipes/stale-while-revalidate.html">Serving stale values while refreshing</a>.</strong> Keep a slow page or report available while one worker rebuilds it in the background, or refresh the hot keys ahead of time from a job, so readers never wait and the thundering herd is one worker.</p>
 <p><strong><a href="../recipes/caching-http-responses.html">Caching responses from other services</a>.</strong> Cache an upstream API’s answers, honor its <code>max-age</code>, revalidate with ETags, and keep serving the last good answer when it’s down.</p>
 <p><strong><a href="../recipes/invalidating-groups.html">Invalidating groups of keys</a>.</strong> Clear everything cached for one user, one product or one page at once: delete by key prefix, or bump a generation number so stale entries are never read again.</p>
@@ -643,7 +643,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="coming-later" class="level1">
 <h1>Coming later</h1>
-<p>More recipes will arrive with the features they need: <code>memoize</code> with stampede protection, tags, cross-process locks and throttles, and <code>AsyncCache</code> for asyncio apps. <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> and <a href="../user-guide/transactions.html"><code>transact()</code></a> are here already and have their own guide pages. See the <a href="../user-guide/roadmap.html">roadmap</a>.</p>
+<p>More recipes will arrive with the features they need: a stampede-proof <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, tags, cross-process locks and throttles, and <code>AsyncCache</code> for asyncio apps. <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> and <a href="../user-guide/transactions.html"><code>transact()</code></a> are here already and have their own guide pages. See the <a href="../user-guide/roadmap.html">roadmap</a>.</p>
 
 
 </section>

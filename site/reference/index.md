@@ -56,8 +56,8 @@ Add `delta` to the number stored under `key`, atomically, and return the result.
 [Cache.decr()](Cache.decr.md#diskcache_oxide.Cache.decr)  
 Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 
-[Cache.iterkeys()](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)  
-Iterate over keys in sorted order, optionally only those starting with `prefix`.
+[Cache.memoize()](Cache.memoize.md#diskcache_oxide.Cache.memoize)  
+Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
 
 [Cache.expire()](Cache.expire.md#diskcache_oxide.Cache.expire)  
 Remove every expired entry, and its value file.
@@ -109,6 +109,9 @@ Close the cache, as `close()` does.
 
 [Cache.get()](Cache.get.md#diskcache_oxide.Cache.get)  
 Return the value stored for `key`, or `default` if it's missing or expired.
+
+[Cache.iterkeys()](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)  
+Iterate over keys in sorted order, optionally only those starting with `prefix`.
 
 
 ## FanoutCache
@@ -187,8 +190,8 @@ Remove expired entries, then evict the least recently stored from each shard unt
 [FanoutCache.checkpoint()](FanoutCache.checkpoint.md#diskcache_oxide.FanoutCache.checkpoint)  
 Checkpoint every shard's write-ahead log and truncate it to zero, as `Cache.checkpoint` does.
 
-[FanoutCache.iterkeys()](FanoutCache.iterkeys.md#diskcache_oxide.FanoutCache.iterkeys)  
-Iterate over keys in sorted order, optionally only those starting with `prefix`.
+[FanoutCache.memoize()](FanoutCache.memoize.md#diskcache_oxide.FanoutCache.memoize)  
+Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
 
 [FanoutCache.__iter__()](FanoutCache.__iter__.md#diskcache_oxide.FanoutCache.__iter__)  
 Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on.
@@ -222,6 +225,9 @@ Close the cache, as `close()` does.
 
 [FanoutCache.get()](FanoutCache.get.md#diskcache_oxide.FanoutCache.get)  
 As `Cache.get`, on the key's shard.
+
+[FanoutCache.iterkeys()](FanoutCache.iterkeys.md#diskcache_oxide.FanoutCache.iterkeys)  
+Iterate over keys in sorted order, optionally only those starting with `prefix`.
 
 
 ## NullCache
@@ -321,6 +327,9 @@ Return `default`. With `invalidate=`, also delete the key from that cache.
 [NullCache.clear()](NullCache.clear.md#diskcache_oxide.NullCache.clear)  
 0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count.
 
+[NullCache.memoize()](NullCache.memoize.md#diskcache_oxide.NullCache.memoize)  
+As `Cache.memoize`, but every call runs the function, as every entry has already expired. The
+
 [NullCache.iterkeys()](NullCache.iterkeys.md#diskcache_oxide.NullCache.iterkeys)  
 Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works.
 
@@ -387,6 +396,9 @@ Add `delta` to the number under `key`, atomically, and return the result.
 
 [CacheLike.decr()](CacheLike.decr.md#diskcache_oxide.CacheLike.decr)  
 Subtract `delta` from the number under `key`, atomically, and return the result.
+
+[CacheLike.memoize()](CacheLike.memoize.md#diskcache_oxide.CacheLike.memoize)  
+A decorator caching a function's results in this cache (diskcache's `memoize`).
 
 [CacheLike.iterkeys()](CacheLike.iterkeys.md#diskcache_oxide.CacheLike.iterkeys)  
 Iterate over keys in sorted order, optionally only those starting with `prefix`.

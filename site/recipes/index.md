@@ -5,7 +5,7 @@ A shared cache does more jobs in a real app than caching. It elects a worker, co
 
 # Caching
 
-**[Caching expensive calls](caching-expensive-calls.md).** The cache-aside pattern, and a small decorator that turns any function into a cached one, with keys built safely from its arguments.
+**[Caching expensive calls](caching-expensive-calls.md).** The cache-aside pattern, and [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), which turns a function into a cached one keyed on its arguments.
 
 **[Serving stale values while refreshing](stale-while-revalidate.md).** Keep a slow page or report available while one worker rebuilds it in the background, or refresh the hot keys ahead of time from a job, so readers never wait and the thundering herd is one worker.
 
@@ -43,4 +43,4 @@ A shared cache does more jobs in a real app than caching. It elects a worker, co
 
 # Coming later
 
-More recipes will arrive with the features they need: `memoize` with stampede protection, tags, cross-process locks and throttles, and `AsyncCache` for asyncio apps. [`FanoutCache`](../user-guide/fanoutcache.md) and [`transact()`](../user-guide/transactions.md) are here already and have their own guide pages. See the [roadmap](../user-guide/roadmap.md).
+More recipes will arrive with the features they need: a stampede-proof [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), tags, cross-process locks and throttles, and `AsyncCache` for asyncio apps. [`FanoutCache`](../user-guide/fanoutcache.md) and [`transact()`](../user-guide/transactions.md) are here already and have their own guide pages. See the [roadmap](../user-guide/roadmap.md).

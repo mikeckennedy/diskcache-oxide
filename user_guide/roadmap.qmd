@@ -57,28 +57,39 @@ The concurrency core is where serious bugs hide, so it got its own phase before 
 
 ### Next
 
+In this order (Michael, 2026-11-10):
+
 | Phase | What it delivers |
 |---|---|
+| **6. Parity with diskcache** | In four releases. First, keys of every native type (`bytes`, `int`, `float`, `bool`, `None` and tuples, beside `str`), `memoize`, and `retry=`, with no cache to delete. Then the small gaps (`reversed()`, `pop(expire_time=)`, pickling a cache, per-process `stats()`, `check()`) and the coordination recipes: `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, `Averager` and a stampede-proof `memoize`. Then tags with `evict(tag)` and `eviction_policy='none'`, together in one on-disk format change. Then the queue calls `push`, `pull` and `peek`. |
+| **Django cache backend** | A diskcache-oxide backend for Django's cache framework, tested against Django's own cache test suite, as its own phase right after Phase 6. |
 | **4. Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
-| **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. |
-| **6a. Cache options** | More eviction policies (LRU, LFU, none), tags and `evict(tag)`, statistics, `memoize`, `peek`/`pull`/`push`, `check()`, `retry=`, and non-`str` keys. |
-| **6b. `transact()`** | Multi-operation transactions. Done early: see [Transactions](transactions.qmd). |
-| **6c. `FanoutCache`** | Done: see [FanoutCache](fanoutcache.qmd). |
-| **6d. `Deque` and `Index`** | diskcache's persistent collections. |
-| **6e. Recipes** | `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, and stampede-proof `memoize`. |
+| **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. Tried as a spike first, and kept only if it earns its place. |
 | **7. Network server** | Stage 3, above. |
-| **Windows** | Supported as a development platform once macOS and Linux are solid. |
+| **Windows** | Supported as a development platform, after Phase 6, as a plan of its own. |
+
+Already done from the old Phase 6 list: [`transact()`](transactions.qmd) and [`FanoutCache`](fanoutcache.qmd).
+
+### Decided against, and why
+
+- **Least-recently-used and least-frequently-used eviction.** diskcache implements them by writing to the database on every `get`. Reads that never write are what let many processes read at once without queueing, so these stay out unless a design keeps reads write-free. Least-recently-stored stays the default, and `eviction_policy='none'` is coming.
+- **`Deque` and `Index`**, for now. They come back if someone asks: an `Index` is only as general as the key types, and both default to a temporary directory, which diskcache-oxide doesn't do.
+- **`disk=` and `Disk` subclasses.** A Python class on every read and write would undo the Rust engine; `serializer=` and `register_type()` cover what people used them for.
+- **Pickled keys.** Keys are never pickled, so listing keys never runs pickle and a key's identity doesn't depend on pickle's bytes.
+- **`read=True` and `read()`** (streaming a file in and out). Folded into the large-file cache idea below.
+- **Persisted statistics.** `stats()` will count per process, in memory: diskcache's persisted counters make every `get` a write.
 
 ## Further out
 
 Ideas being considered, not yet committed to:
 
 - **Expiry that's exact everywhere.** Lookups already treat an expired entry as gone at the moment it expires. The plan is to make `len()` and iteration do the same, and move the physical cleanup to a small background sweeper written in Rust, coordinated across processes so eight workers don't all sweep at once.
+- **A large-file cache**, handing out an open file rather than a path, which is where diskcache's `read=True` would fit.
 - **Encryption at rest**, if a real need appears: SQLCipher for the database, authenticated encryption for spill files.
 
 ## Non-goals
 
 - Reading existing diskcache directories. diskcache-oxide uses its own on-disk format, so caches start cold when you switch.
 - A module named `diskcache` (it would collide with the real package).
-- `DjangoCache`.
+- diskcache's own `DjangoCache` class. A Django backend of diskcache-oxide's own is planned, above.
 - Python older than 3.14.

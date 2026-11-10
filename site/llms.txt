@@ -36,7 +36,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Cache.touch](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.touch.html): Change the expiry of an existing entry without rewriting its value
 - [Cache.incr](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.incr.html): Add `delta` to the number stored under `key`, atomically, and return the result
 - [Cache.decr](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.decr.html): Subtract `delta` from the number stored under `key`, atomically. See `incr()`
-- [Cache.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.iterkeys.html): Iterate over keys in sorted order, optionally only those starting with `prefix`
+- [Cache.memoize](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.memoize.html): Return a decorator that caches the function's results in this cache, as diskcache's `memoize`
 - [Cache.expire](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.expire.html): Remove every expired entry, and its value file
 - [Cache.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.clear.html): Remove every entry that existed when the call started
 - [Cache.cull](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.cull.html): Remove expired entries, then evict the least recently stored until under `size_limit`
@@ -54,6 +54,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Cache.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__enter__.html): Return the cache, for `with Cache(...) as cache:`
 - [Cache.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__exit__.html): Close the cache, as `close()` does
 - [Cache.get](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.get.html): Return the value stored for `key`, or `default` if it's missing or expired
+- [Cache.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.iterkeys.html): Iterate over keys in sorted order, optionally only those starting with `prefix`
 
 #### FanoutCache
 > A cache sharded over several SQLite databases, so writers in many processes stop queueing on one write lock.
@@ -83,7 +84,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [FanoutCache.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.clear.html): Remove every entry that existed when the call started, from every shard
 - [FanoutCache.cull](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.cull.html): Remove expired entries, then evict the least recently stored from each shard until it's
 - [FanoutCache.checkpoint](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.checkpoint.html): Checkpoint every shard's write-ahead log and truncate it to zero, as `Cache.checkpoint` does
-- [FanoutCache.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.iterkeys.html): Iterate over keys in sorted order, optionally only those starting with `prefix`
+- [FanoutCache.memoize](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.memoize.html): Return a decorator that caches the function's results in this cache, as diskcache's `memoize`
 - [FanoutCache.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__iter__.html): Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on
 - [FanoutCache.close](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.close.html): Close this handle on every shard, as `Cache.close()` does for one
 - [FanoutCache.__getitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__getitem__.html): `cache[key]`, as on `Cache`
@@ -95,6 +96,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [FanoutCache.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__enter__.html): Return the cache, for `with FanoutCache(...) as cache:`
 - [FanoutCache.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__exit__.html): Close the cache, as `close()` does
 - [FanoutCache.get](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.get.html): As `Cache.get`, on the key's shard
+- [FanoutCache.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.iterkeys.html): Iterate over keys in sorted order, optionally only those starting with `prefix`
 
 #### NullCache
 > Switched-off cache behaving as if every entry expires instantly.
@@ -131,6 +133,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [NullCache.__delitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__delitem__.html): Raise `KeyError`, or with `invalidate=`, delete the key from that cache
 - [NullCache.pop](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.pop.html): Return `default`. With `invalidate=`, also delete the key from that cache
 - [NullCache.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.clear.html): 0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count
+- [NullCache.memoize](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.memoize.html): As `Cache.memoize`, but every call runs the function, as every entry has already expired. The
 - [NullCache.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.iterkeys.html): Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works
 - [NullCache.transact](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.transact.html): A no-op context manager that yields this `NullCache`
 - [NullCache.expire](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.expire.html): Always 0
@@ -155,6 +158,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [CacheLike.touch](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.touch.html): Change an existing entry's expiry. True if the entry existed
 - [CacheLike.incr](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.incr.html): Add `delta` to the number under `key`, atomically, and return the result
 - [CacheLike.decr](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.decr.html): Subtract `delta` from the number under `key`, atomically, and return the result
+- [CacheLike.memoize](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.memoize.html): A decorator caching a function's results in this cache (diskcache's `memoize`)
 - [CacheLike.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.iterkeys.html): Iterate over keys in sorted order, optionally only those starting with `prefix`
 - [CacheLike.expire](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.expire.html): Remove every expired entry. Returns how many were removed
 - [CacheLike.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.clear.html): Remove every entry that existed when the call started. Returns how many
@@ -245,7 +249,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 ### Recipes
 
 - [Using the cache from asyncio](https://mkennedy.codes/docs/diskcache-oxide/recipes/asyncio.html): Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends until AsyncCache lands
-- [Caching expensive calls](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-expensive-calls.html): The cache-aside pattern, and a decorator that caches any function's results
+- [Caching expensive calls](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-expensive-calls.html): The cache-aside pattern, and memoize, a decorator that caches a function's results
 - [Caching responses from other services](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-http-responses.html): Cache what an upstream API returns, honor its max-age, revalidate with ETags, and keep serving the last good answer when it's down
 - [Counting things](https://mkennedy.codes/docs/diskcache-oxide/recipes/counters.html): View counts, download totals and usage quotas with incr() and decr(), shared by every worker and flushed to the database without losing a count
 - [Storing your own types](https://mkennedy.codes/docs/diskcache-oxide/recipes/custom-types.html): UUIDs, enums, timedeltas, Paths, Pydantic models and dataclasses in the cache with register_type(), and no pickle

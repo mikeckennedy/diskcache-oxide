@@ -11,6 +11,8 @@ Cache.decr(
     key,
     delta=...,
     default=...,
+    *,
+    retry=False,
 )
 ```
 

@@ -12,5 +12,6 @@ FanoutCache.get(
     default=None,
     *,
     expire_time=False,
+    retry=False,
 )
 ```

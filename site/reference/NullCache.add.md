@@ -11,6 +11,8 @@ NullCache.add(
     key,
     value,
     expire=None,
+    *,
+    retry=False,
 )
 ```
 

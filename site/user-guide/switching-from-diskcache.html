@@ -651,7 +651,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   </ul></li>
   <li><a href="#what-you-might-notice" id="toc-what-you-might-notice" class="nav-link" data-scroll-target="#what-you-might-notice">What you might notice</a></li>
   <li><a href="#values-no-pickle-unless-you-ask" id="toc-values-no-pickle-unless-you-ask" class="nav-link" data-scroll-target="#values-no-pickle-unless-you-ask">Values: no pickle unless you ask</a></li>
-  <li><a href="#string-keys" id="toc-string-keys" class="nav-link" data-scroll-target="#string-keys">String keys</a></li>
+  <li><a href="#keys" id="toc-keys" class="nav-link" data-scroll-target="#keys">Keys</a></li>
   <li><a href="#transact" id="toc-transact" class="nav-link" data-scroll-target="#transact"><code>transact()</code></a></li>
   <li><a href="#fanoutcache" id="toc-fanoutcache" class="nav-link" data-scroll-target="#fanoutcache"><code>FanoutCache</code></a></li>
   <li><a href="#truthiness" id="toc-truthiness" class="nav-link" data-scroll-target="#truthiness">Truthiness</a></li>
@@ -761,7 +761,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <tr class="even">
 <td><code>disk=</code>, <code>eviction_policy=</code></td>
 <td>Supported</td>
-<td>Not supported (eviction policies are coming)</td>
+<td>Not supported; <code>eviction_policy='none'</code> is planned, LRU and LFU aren’t</td>
 </tr>
 <tr class="odd">
 <td><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a></td>
@@ -774,9 +774,24 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>Supported, with differences; see <a href="#fanoutcache"><code>FanoutCache</code></a> below</td>
 </tr>
 <tr class="odd">
-<td>Tags, <code>memoize</code></td>
+<td>Keys</td>
+<td>Anything picklable</td>
+<td><code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code> and tuples of those; see <a href="#keys">Keys</a> below</td>
+</tr>
+<tr class="even">
+<td><a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a></td>
 <td>Supported</td>
-<td>Coming in later phases</td>
+<td>Supported, with the same keys; see <a href="#keys">Keys</a> below</td>
+</tr>
+<tr class="odd">
+<td><code>retry=</code></td>
+<td>Positional; <code>cache[k]</code> retries forever</td>
+<td>Keyword-only; <code>cache[k]</code> raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
+</tr>
+<tr class="even">
+<td>Tags</td>
+<td>Supported</td>
+<td>Planned</td>
 </tr>
 </tbody>
 </table>
@@ -791,9 +806,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>objects <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-objects'</span>, pickle<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
 <p>A cache opened without <code>pickle=True</code> never unpickles. If it finds a pickled value written by a <code>pickle=True</code> peer, it raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> and leaves the value alone. More in <a href="../user-guide/serialization.html">Serialization</a>.</p>
 </section>
-<section id="string-keys" class="level1">
-<h1>String keys</h1>
-<p>Only <code>str</code> keys are accepted today; anything else raises <code>TypeError</code>. Keys are already stored with a type tag, so other key types can be added later without changing the file format (see the <a href="../user-guide/roadmap.html">roadmap</a>). In the meantime, build string keys yourself (<code>f'user:{user_id}'</code>).</p>
+<section id="keys" class="level1">
+<h1>Keys</h1>
+<p>Keys can be <code>str</code>, <code>bytes</code>, <code>int</code> (64-bit), <code>float</code>, <code>bool</code>, <code>None</code>, and tuples of those, nested. diskcache takes anything picklable and pickles what it doesn’t store natively; diskcache-oxide never pickles a key, so a <code>list</code>, a <code>dict</code>, an object, a subclass such as an <code>IntEnum</code>, or an int past 64 bits raises <code>TypeError</code>. Keys are compared by exact type: <code>1</code>, <code>1.0</code> and <code>True</code> are three keys, where diskcache makes <code>1</code> and <code>1.0</code> one.</p>
+<p><a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> lists every <code>str</code> key first, in sorted order, then the other types (<code>None</code>, bools, ints, floats, bytes, tuples), each sorted; <code>iterkeys(prefix=...)</code> lists only <code>str</code> keys. diskcache sorts numbers, then text, then bytes.</p>
+<p><a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> works as diskcache’s, and <code>f.__cache_key__(...)</code> returns the same tuple, with two differences: every argument must be a key type (leave one out with <code>ignore=</code>), and <code>typed=True</code> stores each argument type’s name rather than the class.</p>
+<p><code>retry=True</code> is accepted wherever diskcache takes it, as a keyword, and retries only <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>. Dictionary syntax never retries: <code>cache[k]</code> raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> after <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, where diskcache’s waits forever.</p>
 </section>
 <section id="transact" class="level1">
 <h1><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a></h1>
@@ -821,7 +839,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> is a total</strong>, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0’s share (D-036).</li>
 <li><strong><code>max_connections</code> is a total</strong> across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> (D-037).</li>
 <li><strong><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> takes a key</strong> and covers one shard: <code>with cache.transact(key=k):</code> where diskcache’s <code>with cache.transact():</code> locks every shard. Calls for keys on other shards inside the block raise <code>ValueError</code>, reads included. A ported bare <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> raises <code>TypeError</code> (D-040).</li>
-<li><strong>Not there yet:</strong> <code>cache()</code>, <code>deque()</code> and <code>index()</code>, <a href="../reference/Caches.stats.html#diskcache_oxide.Caches.stats" class="gdls-link gdls-code">stats()</a>, <code>evict()</code> and tags, <code>check()</code>, <code>reset()</code>, <code>read()</code>, <code>reversed()</code>, <code>retry=</code>, <code>read=</code> and <code>tag=</code> arguments, settings as attributes, and pickling (D-039).</li>
+<li><strong>Not there yet:</strong> <code>cache()</code>, <code>deque()</code> and <code>index()</code>, <a href="../reference/Caches.stats.html#diskcache_oxide.Caches.stats" class="gdls-link gdls-code">stats()</a>, <code>evict()</code> and tags, <code>check()</code>, <code>reset()</code>, <code>read()</code>, <code>reversed()</code>, <code>read=</code> and <code>tag=</code> arguments, settings as attributes, and pickling (D-039). <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> and <code>retry=</code> are there, as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</li>
 </ul>
 </section>
 <section id="truthiness" class="level1">

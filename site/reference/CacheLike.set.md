@@ -11,5 +11,7 @@ CacheLike.set(
     key,
     value,
     expire=None,
+    *,
+    retry=False,
 )
 ```

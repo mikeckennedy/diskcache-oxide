@@ -31,7 +31,7 @@ if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
 
 **0.1.2, the first release.** `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. Before release they passed the conformance suite run against real diskcache 5.6.3 (apart from the [documented divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)), a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython, AddressSanitizer and LeakSanitizer), and a 24-hour soak that threw processes, threads, forks and `SIGKILL` at one directory. It's on its way into production at [Talk Python](https://talkpython.fm).
 
-Not here yet: `memoize`, tags, `AsyncCache`, `Deque` and `Index`, keys other than `str`, custom `disk=` classes and eviction policies other than least-recently-stored. See [where it's going](#where-its-going).
+Keys can be `str`, `bytes`, `int`, `float`, `bool`, `None` or tuples of those, and `memoize` and `retry=` work as in diskcache. Not here yet: tags, `eviction_policy='none'`, the coordination recipes (locks, throttles), `AsyncCache`, and `Deque` and `Index`. Custom `disk=` classes and least-recently-used eviction aren't coming. See [where it's going](#where-its-going).
 
 ## Install
 
@@ -72,7 +72,7 @@ What you'll notice afterwards:
 
 - **The cache starts cold.** Data lives in `diskcache-oxide.sqlite`, never in diskcache's `cache.db`, and the old database is never opened or converted. The two can share a directory without seeing each other's data.
 - **Values that can't round-trip exactly raise `TypeError` at `set()`**, unless the type is registered with `register_type()` or that cache was opened with `pickle=True`.
-- **Keys are `str` only** for now, `directory` is required, and `size_limit` must be at least 1 MiB.
+- **Keys are never pickled:** `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those, compared by exact type (`1`, `1.0` and `True` are three keys). `directory` is required, and `size_limit` must be at least 1 MiB.
 - **`Timeout` is a `TimeoutError`** and `bool(cache)` is always True.
 
 [Switching from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/switching-from-diskcache.html) has the full comparison table, and [Divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html) explains the reason behind each difference.
@@ -80,7 +80,7 @@ What you'll notice afterwards:
 ## Where it's going
 
 1. **A better diskcache** (now): the `Cache` above, plus `FanoutCache` and `transact()` from the next stage.
-2. **The complete local caching toolkit:** free-threaded scaling, `AsyncCache`, `memoize`, tags, `Deque`/`Index`, and recipes like locks and throttles that are atomic across every process on the machine.
+2. **The complete local caching toolkit:** `memoize` and keys of every native type (done), tags, recipes like locks and throttles that are atomic across every process on the machine, a Django cache backend, free-threaded scaling, and `AsyncCache`.
 3. **A cache server:** the same Rust engine served over the network, a Redis-style central cache with SQLite underneath.
 
 See [Vision and roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html) in the docs.

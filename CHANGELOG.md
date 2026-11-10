@@ -4,6 +4,20 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+No cache needs deleting: the on-disk format is unchanged, and 0.1.2 and this release can share a cache directory during a deploy. 0.1.2 never sees the new key types in its lookups or iteration, though its `len()` counts them, and its `expire()`, `cull()` and `clear()` remove them as usual.
+
+### Added
+
+- Keys of every native type: `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples of those, nested up to 32 deep, beside `str`. They're never pickled and compare by exact type, so `1`, `1.0` and `True` are three keys. `iterkeys()` lists `str` keys first, then the other types in a fixed order; `iterkeys(prefix=...)` lists `str` keys only. A FanoutCache routes every key type. Type checkers see `diskcache_oxide.Key`.
+- `memoize(name=None, typed=False, expire=None, ignore=())` on `Cache`, `FanoutCache` and `NullCache`, as diskcache's, with the same keys, so `f.__cache_key__(...)` returns the tuple diskcache would. Every argument must be a key type, checked before the function runs; `typed=True` stores type names. `Memoized` and `Memoizer` type the wrapper.
+- `retry=True` (keyword-only) on `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`, `expire`, `cull` and `clear`: a `Timeout` is retried until the call gets through, even on a `durable=True` handle. A retried `expire`, `cull` or `clear` returns everything it removed.
+
+### Changed
+
+- Iterating a cache is typed `Iterator[Key]` rather than `Iterator[str]`, since keys can now be other types; `iterkeys(prefix=...)` is still `Iterator[str]`. Type-checked code that treats every iterated key as a `str` needs a narrowing (`isinstance(key, str)`).
+- The `TypeError` for a key of the wrong type now names the types that are accepted.
+- `transact(retry=True)` sleeps between attempts instead of retrying at once, so a `timeout=0` cache doesn't spin.
+
 ## [0.1.2] - 2026-11-09
 
 The first release: diskcache's `Cache` API on a Rust engine and SQLite storage, shared safely by threads, processes and `fork()`, on CPython 3.14 and 3.15 including the free-threaded builds. Wheels for macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64.

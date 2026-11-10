@@ -10,5 +10,6 @@ Usage
 NullCache.cull(
     *,
     timeout=None,
+    retry=False,
 )
 ```

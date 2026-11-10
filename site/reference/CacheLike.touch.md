@@ -10,5 +10,7 @@ Usage
 CacheLike.touch(
     key,
     expire=None,
+    *,
+    retry=False,
 )
 ```

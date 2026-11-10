@@ -10,5 +10,6 @@ Usage
 CacheLike.expire(
     *,
     timeout=None,
+    retry=False,
 )
 ```

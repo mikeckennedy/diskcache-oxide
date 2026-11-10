@@ -36,8 +36,8 @@ print(f'cached:      {(time.perf_counter() - start) * 1000:.1f} µs per call')  
 ```
 
 
-    first call:  205.4 ms
-    cached:      1.1 µs per call
+    first call:  202.2 ms
+    cached:      1.2 µs per call
 
 
 Always give cached values an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire). It bounds how stale a value can get if an invalidation is ever missed.
@@ -57,43 +57,15 @@ if value is MISSING:
 ```
 
 
-# A caching decorator
+# A caching decorator: [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize)
 
-The same pattern wrapped up for reuse. The key is the function's full name plus its arguments, encoded as JSON so that different arguments always give different keys.
+The same pattern wrapped up for reuse. [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) keys each call on the function's full name and its arguments, and caches `None` results too.
 
 
 ``` python
-import functools
-import json
-from collections.abc import Callable
-from typing import Any
-
-from diskcache_oxide import CacheLike
-
-MISSING = object()
-
-def cached(cache: CacheLike, expire: float | None = None) -> Callable:
-    """Cache a function's results, keyed by its arguments."""
-
-    def decorator(func: Callable) -> Callable:
-        prefix = f'{func.__module__}.{func.__qualname__}:'
-
-        @functools.wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            key = prefix + json.dumps([args, kwargs], sort_keys=True, default=str)
-            value = cache.get(key, default=MISSING)
-            if value is MISSING:
-                value = func(*args, **kwargs)
-                cache.set(key, value, expire=expire)
-            return value
-
-        return wrapper
-
-    return decorator
-
 calls = 0
 
-@cached(cache, expire=600)
+@cache.memoize(expire=600)
 def episode_details(episode_id: int, *, include_transcript: bool = False) -> dict:
     global calls
     calls += 1
@@ -103,21 +75,32 @@ episode_details(512)
 episode_details(512)
 episode_details(512, include_transcript=True)
 print(f'{calls} real calls for 3 lookups')
+
+# The key a call uses, to forget one result:
+print(episode_details.__cache_key__(512))
+cache.delete(episode_details.__cache_key__(512))
 ```
 
 
     2 real calls for 3 lookups
+    ('__main__.episode_details', 512, None)
 
+
+    True
+
+
+Call it with parentheses, `@cache.memoize()`, even with no options. It's diskcache's [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), with the same keys, so code written for diskcache keeps working.
 
 A few things to keep in mind:
 
-- **Arguments become part of the key**, so keep them simple: ids, strings, numbers. `default=str` covers values like dates, but two different objects with the same `str()` would share a key.
+- **Arguments become part of the key**, so they must be key types: `str`, `bytes`, `int`, `float`, `bool`, `None`, or tuples of those. Anything else (a list, a date, an object) raises `TypeError` before the function runs. Pass a tuple instead of a list, and leave out arguments that don't change the answer, like a database connection, with `ignore=` (`@cache.memoize(ignore=('db',))`).
+- **Keyword and positional calls are different entries:** `f(1, 2)` and `f(1, b=2)` are cached separately, as in diskcache.
 - **Return values must be storable**, which means built-in types (dicts, lists, tuples, sets, datetimes and so on). A dataclass or ORM object raises `TypeError` at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set): return a dict instead, or use a cache opened with `pickle=True`. See [Serialization](../user-guide/serialization.md).
-- **Long keys are fine.** A key is just an indexed string.
+- **Long keys are fine.** A key is just indexed bytes.
 
 
 # Thundering herds
 
 When a popular entry expires, every worker that asks for it in the next moment misses at the same time, and all of them recompute it. For most values that's harmless. If the computation is expensive enough that doing it eight times at once hurts, refresh it ahead of expiry from a background job (see [Running a job once across workers](run-once.md)), so readers never see it missing.
 
-A `memoize` with built-in stampede protection is planned (see the [roadmap](../user-guide/roadmap.md)).
+A [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) with built-in stampede protection is planned (see the [roadmap](../user-guide/roadmap.md)).

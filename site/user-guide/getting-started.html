@@ -733,7 +733,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>value, expires_at <span class="op">=</span> cache.get(<span class="st">'user:42'</span>, expire_time<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
 <ul>
-<li>Keys are <code>str</code>. Other key types raise <code>TypeError</code> for now (they’re planned).</li>
+<li>Keys are <code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code>, or tuples of those, such as <code>('user', 42)</code>. They’re compared by exact type, so <code>1</code>, <code>1.0</code> and <code>True</code> are three keys. Anything else (a <code>list</code>, a <code>dict</code>, an object) raises <code>TypeError</code>; build a tuple or a string instead.</li>
 <li>Values can be <code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code>, <code>Decimal</code>, and lists, tuples, dicts, sets, frozensets, datetimes and dates made of those. They come back as the types you stored. See <a href="../user-guide/serialization.html">Serialization</a>.</li>
 <li><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> is in seconds. Leave it out for an entry that never expires. <code>touch(key, expire=...)</code> changes the expiry of an existing entry.</li>
 </ul>

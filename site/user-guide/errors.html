@@ -728,9 +728,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="typeerror-for-keys-and-booleans" class="level1">
 <h1><code>TypeError</code> for keys and booleans</h1>
-<pre class="text"><code>TypeError: cache keys must be str, not int
+<pre class="text"><code>TypeError: cache keys must be str, bytes, int, float, bool, None, or a tuple of those, not list
 TypeError: expire must be a number of seconds or None, not bool</code></pre>
-<p>Keys are <code>str</code> only for now; build them yourself (<code>f'user:{user_id}'</code>). Other key types are planned and won’t need a format change. A <code>bool</code> where a number of seconds belongs (<code>expire=True</code>, <code>timeout=True</code>) is almost always an argument in the wrong position, so it’s refused rather than treated as <code>1</code>, which is what diskcache does.</p>
+<p>Keys are <code>str</code>, <code>bytes</code>, <code>int</code> (64-bit), <code>float</code>, <code>bool</code>, <code>None</code>, or tuples of those. Only the exact types: a subclass such as an <code>IntEnum</code> or a <code>namedtuple</code>, a <code>list</code> or an int past 64 bits raises <code>TypeError</code>, and a NaN key raises <code>ValueError</code>, since it isn’t equal to itself. Pass a tuple where you’d use a list. A memoized function’s arguments follow the same rules, and the error names the argument. A <code>bool</code> where a number of seconds belongs (<code>expire=True</code>, <code>timeout=True</code>) is almost always an argument in the wrong position, so it’s refused rather than treated as <code>1</code>, which is what diskcache does.</p>
 </section>
 <section id="timeout-a-lock-or-a-fork-outlasted-timeout" class="level1">
 <h1><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>: a lock or a fork outlasted <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a></h1>

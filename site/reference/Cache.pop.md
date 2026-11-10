@@ -10,6 +10,8 @@ Usage
 Cache.pop(
     key,
     default=None,
+    *,
+    retry=False,
 )
 ```
 
@@ -20,11 +22,14 @@ Reads and decodes the value first, as [get](Cache.get.md#diskcache_oxide.Cache.g
 ## Parameters
 
 
-`key: str`  
+`key: Key`  
 The key.
 
 `default: Any = None`  
 Returned when the key is missing or expired, or its value file is missing.
+
+`retry: bool = ``False`  
+On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call gets through, each round with the whole [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), a `durable=True` handle included. Only [Timeout](Timeout.md#diskcache_oxide.Timeout) is retried.
 
 
 ## Returns

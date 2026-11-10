@@ -12,7 +12,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-001 | Values | Pickles everything | msgpack or JSON with type tags; pickle opt-in; never unpickles unless opted in |
 | D-002 | Database file | `cache.db` | `diskcache-oxide.sqlite` |
 | D-003 | Clock | `time.time()` | Native; `clock=` to control it |
-| D-004 | Keys | Anything picklable | `str` only, for now |
+| D-004 | Keys | Anything picklable | `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those; never pickled |
 | D-005 | Minimum [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) | None; tiny limits silently empty the cache | 1 MiB, else `ValueError` |
 | D-006 | Empty-cache [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) | Its own value | A different value |
 | D-007 | [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) | Subclasses `Exception` | Subclasses `TimeoutError` |
@@ -30,7 +30,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-019 | Opening an existing cache | Writes to the database | Never writes unless settings change |
 | D-020 | Forking inside your own transaction | Child stalls for the timeout | Fails fast with `RuntimeError` |
 | D-021 | [directory](../reference/Cache.directory.md#diskcache_oxide.Cache.directory) | Optional (temp dir) | Required |
-| D-022 | `disk=`, `eviction_policy=` | Supported | Not supported (policies coming) |
+| D-022 | `disk=`, `eviction_policy=` | Supported | No `disk=`; `eviction_policy='none'` is planned, LRU and LFU aren't |
 | D-023 | SQLite memory | 32 MiB cache + 64 MiB mmap per thread | 1 MiB per pooled connection |
 | D-024 | WAL file size | Can grow past 1 GiB and stay there | Trimmed; [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) on demand |
 | D-025 | A key iterator used by two threads at once | `ValueError` from the generator | `ValueError`, from a native iterator with no `send()` or [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) |
@@ -52,6 +52,11 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-041 | Your own types | A `Disk` subclass, or pickle | `register_type()` per type; stored tagged, read by an allowlist; never pickled |
 | D-042 | Large values' folders | Two levels (65,536 folders); a folder goes with its last file | One level (at most 256); empty ones go at the last close and in [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) |
 | D-043 | A large write after the cache's folder was deleted | Re-creates the folders and succeeds | `OSError`; nothing is re-created |
+| D-044 | Key equality | `1` and `1.0` are one key; `True` another | `1`, `1.0` and `True` are three keys |
+| D-045 | `memoize(typed=True)` | Adds each argument's class to the key | Adds each argument type's name |
+| D-046 | [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) across key types | Numbers, then text, then bytes | `str` keys, then the other types in a fixed order |
+| D-047 | `retry=` | Positional; `cache[k]` retries forever | Keyword-only; `cache[k]` raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) |
+| D-048 | A memoized function's arguments | Anything picklable | Key types only, checked before the call |
 
 
 # Safety
@@ -160,16 +165,21 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 
 - **D-002:** the database file is `diskcache-oxide.sqlite`, so the two libraries never misread each other's files.
 - **D-003:** the clock is read natively; pass `clock=` to control it in tests.
-- **D-004:** keys are `str` only for now (other key types are on the [roadmap](roadmap.md)). They're stored with a type tag, so other key types won't need a format change.
+- **D-004:** keys are `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, or tuples of those, nested up to 32 deep. Only those exact types: a subclass (`IntEnum`, `StrEnum`, a `namedtuple`), a `list`, a `frozenset` or an int past 64 bits raises `TypeError`, and a NaN raises `ValueError`. Keys are never pickled. A `str` key is stored as it always was and every other key in a byte format of its own, which 0.1.2 never reads, so 0.1.2 and 0.2.0 can share a cache during a deploy.
 - **D-005:** [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) must be at least 1 MiB. In diskcache, a limit below the empty database's size silently evicts every value, including the one just stored.
 - **D-006:** an empty cache's [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) differs, so a [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) leaves slightly different room.
 - **D-007:** [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) subclasses `TimeoutError`, so `except TimeoutError` catches it too.
 - **D-009:** `bool(Cache)` is always True and `bool(NullCache)` is False, so `if cache:` means "caching is on".
-- **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until the other policies arrive (see the [roadmap](roadmap.md)).
+- **D-022:** there's no `disk=` and there won't be: a Python `Disk` class would put Python code on every read and write; `serializer=` and `register_type()` cover what it was for. Eviction is always least-recently-stored for now. `eviction_policy='none'` is planned (queues need it); least-recently-used and least-frequently-used aren't, because they make every [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) a write (see the [roadmap](roadmap.md)).
 - **D-041:** a type the codec doesn't know is registered per type with `register_type(cls, name=..., encode=..., decode=...)` (a dataclass needs only a name), process-wide or per cache with `types=`. It's stored as a tagged value and read back only where the name is registered, so nothing is imported by name; a registered type is never pickled; a `decode` error about the row is a [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) with yours as `__cause__`. See [Your own types](serialization.md#your-own-types).
 - **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.md#a-cache-that-cant-take-a-request-down).
 - **D-042:** a large value's file sits one folder deep, in at most 256 folders. A delete removes only the file; the last close in a process removes folders left empty and untouched for 30 seconds, and [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) removes the ones it emptied. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)'s shards don't sweep yet. Before this, empty folders were never removed and a long-lived cache could hold 65,536 of them, about 257 MiB on ext4. See [Storage and WAL](storage-and-wal.md).
 - **D-043:** if a cache's folder is deleted while a process has it open, that process's next large write raises `OSError` instead of re-creating the folder. Delete a cache's folder only with every process stopped.
+- **D-044:** keys are compared by exact type: `1`, `1.0` and `True` are three keys, as are `0` and `False`, while `0.0` and `-0.0` are one. diskcache compares through SQLite, so `1` and `1.0` are one key there.
+- **D-045:** `memoize(typed=True)` adds each argument type's name (`'builtins.int'`) to the key, where diskcache adds the class itself, which can't be a key without pickle.
+- **D-046:** [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) gives every `str` key first, in code-point order, then `None`, `False`, `True`, ints, floats, bytes and tuples, each in value order; `prefix=` walks `str` keys only. It's the order of the stored bytes, so it's an index scan and the same across a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)'s shards.
+- **D-047:** `retry=` is keyword-only and a strict `bool`, and retries only [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout). Dict syntax never retries: `cache[k]` raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) after [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout), where diskcache's waits forever.
+- **D-048:** a memoized function's arguments must be key types, checked before the function runs; leave out one that can't be (a connection, a client) with `ignore=`.
 - **D-025:** `iter(cache)` and [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 
