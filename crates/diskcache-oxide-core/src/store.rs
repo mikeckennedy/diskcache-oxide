@@ -2156,6 +2156,66 @@ mod tests {
     }
 
     #[test]
+    fn a_checkpoint_that_cant_take_the_write_lock_in_time_reports_busy() {
+        let tmp = TempDir::new("store-checkpoint-locked");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        put(&store, "k", b"v");
+        let timeout = Duration::from_millis(150);
+        let (locked, wait) = std::sync::mpsc::channel();
+        let (release, wait_release) = std::sync::mpsc::channel::<()>();
+        let writer = {
+            let store = Arc::clone(&store);
+            std::thread::spawn(move || {
+                let token = store.write_lock.lock_until(Instant::now() + T).unwrap();
+                locked.send(()).unwrap();
+                wait_release.recv().unwrap();
+                drop(token);
+            })
+        };
+        wait.recv().unwrap();
+        let started = Instant::now();
+        let result = store.checkpoint(timeout);
+        let elapsed = started.elapsed();
+        release.send(()).unwrap();
+        writer.join().unwrap();
+        assert!(matches!(result, Ok(false)), "{result:?}");
+        assert!(elapsed >= timeout.mul_f64(0.95), "gave up after {elapsed:?}");
+        let stats = store.wal_stats();
+        assert_eq!((stats.attempts, stats.busy, stats.fork_pending), (1, 1, 0), "{stats:?}");
+        assert!(store.checkpoint(T).unwrap(), "and succeeds once the lock is free");
+    }
+
+    #[test]
+    fn a_checkpoint_with_no_free_connection_slot_reports_it() {
+        let tmp = TempDir::new("store-checkpoint-no-slot");
+        let store = Store::open(&OpenOptions { max_connections: 1, ..options(tmp.path()) }).unwrap();
+        put(&store, "k", b"v");
+        let (reading, wait) = std::sync::mpsc::channel();
+        let (release, wait_release) = std::sync::mpsc::channel::<()>();
+        let reader = {
+            let store = Arc::clone(&store);
+            std::thread::spawn(move || {
+                // The cache's only connection slot, held for as long as the read runs.
+                store
+                    .read(T, |_| {
+                        reading.send(()).unwrap();
+                        wait_release.recv().unwrap();
+                        Ok(())
+                    })
+                    .unwrap();
+            })
+        };
+        wait.recv().unwrap();
+        let result = store.checkpoint(Duration::from_millis(100));
+        release.send(()).unwrap();
+        reader.join().unwrap();
+        assert!(matches!(result, Ok(false)), "{result:?}");
+        let stats = store.wal_stats();
+        assert_eq!((stats.attempts, stats.no_slot, stats.busy), (1, 1, 0), "{stats:?}");
+        assert!(store.checkpoint(T).unwrap(), "and succeeds once the slot is free");
+    }
+
+    #[test]
     fn handles_on_one_directory_share_a_store() {
         let tmp = TempDir::new("store-share");
         let a = Store::open(&options(tmp.path())).unwrap();
