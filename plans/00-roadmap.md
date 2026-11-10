@@ -51,6 +51,13 @@ A clean-room, pure-Rust reimplementation of [python-diskcache](https://grantjenk
 
 ## Phases
 
+**Order from here (Michael, 2026-11-09).** The phases below keep their numbers, but the order of what's left is:
+
+1. **0.1.2** ([plan 23](23-over-eviction-and-deferred-tests.md)): the over-eviction fix and the tests held behind 0.1.1's freeze, then PGO wheels on the Studio and htz, and Talk Python moves from 0.1.1 to 0.1.2.
+2. **Phase 6, all of it, before Phase 4**, starting with `memoize` and non-`str` keys: they are what a diskcache user meets first, and each group that lands is something new to release to PyPI.
+3. **Phase 4** (free-threaded performance). Its measurements run on the mini if it's free, otherwise on the Studio.
+4. **Phase 5** (`AsyncCache`), as speculative spikes: it ships only if it earns its keep, and if it doesn't, the reasons are written down (in its plan and in the user guide's roadmap page), so the question isn't reopened without new evidence.
+
 ### Phase 0: Behavior spec and conformance harness
 
 A black-box pytest suite that runs against real `diskcache==5.6.3` through a backend fixture, and later against diskcache-oxide. Coverage:
@@ -151,6 +158,8 @@ A separate phase, because the concurrency core is where serious bugs would hide,
 
 ### Phase 3: Talk Python adoption
 
+**Status (2026-11-09):** done. Talk Python runs on 0.1.1 in production (eight plain `Cache`s through a `Caches` registry, the PGO wheel) and moves to 0.1.2 when its wheels are built.
+
 Swap diskcache-oxide in behind the existing `DurableCache`/`cache_service` factory. The library now carries both pieces (plan 08): `DurableCache`'s self-healing `get` becomes `Cache(..., on_decode_error=report)`, and `cache_service`'s generic parts become a `Caches` registry (lazy opens, a `NullCache` with a 10 s retry when opening fails, `disable`/`enable`, `stats()`, `clear(name, timeout=)`, `expire_all()`, `close_all()`). Purposes, the settings file, Sentry and logbook stay in the app, and `expire_all()` moves from the hourly lazy call inside `create_cache` to a scheduled job. Gzipped bytes and datetimes go through tags (or msgpack for the page caches). The two dataclass values (homepage snapshot, `list[FeaturedCourse]`) become plain dicts as part of the port: msgpack only, no pickle anywhere in the app (Michael, 2026-10-30). Switch the clock-patching tests to `clock=` and retire the hand-written `typings/diskcache` stubs. Replace the app's `NullCache`/`PerfTestNullCache` with the library's `NullCache` (`invalidate=` for the perf-test case), and drop `DurableCache`'s `__bool__` workaround. Talk Python's construction-time logging and Sentry report stay in the app's factory. Review the call sites whose behavior changes under the instant-expiry rule. The important one is `add`: with the cache off it now returns True, so scheduled-job claims succeed and jobs keep running, where today they would silently stop. With the cache off, every worker's claim succeeds, so a job runs once per worker. That's fine for idempotent jobs but wrong for jobs with side effects, such as sending email. Claims should probably move to a cache that can't be nulled, or to the Phase 6e Lock recipe. Cutover is a single swap: all caches are cleared at deploy, so no diskcache data is ever read or migrated. Because we use `diskcache-oxide.sqlite`, an old `cache.db` is never opened; the cutover deletes the old diskcache files (`cache.db*` and spill files) to reclaim the disk space. Watch production latency against the old numbers.
 
 ### Phase 4: Free-threaded performance
@@ -176,9 +185,13 @@ Findings that seed Phase 4 (2026-10-28, 04-design.md section 7):
 
 ### Phase 5: `AsyncCache`
 
+**Speculative (Michael, 2026-11-09):** done as time-boxed spikes after Phase 4. It's added only if the spikes show it earns its keep; otherwise the plan records why not.
+
 Start with a Python wrapper that runs calls in an executor; it can't touch the sync path by construction. It includes `async with cache.transact_async() as tx:` (Michael, 2026-11-05, plan 12 step 3): a transaction belongs to a thread, and every coroutine on a loop shares one, so the async form must wait for the write lock without blocking the event loop and must keep other coroutines' operations out of the transaction. Move it to a Rust-side pool only if benchmarks justify the change. The docs will say plainly that async `get` of small values is slower than the sync call, and that async mainly helps with large values.
 
 ### Phase 6+: Parity, adoption-driven (several phases)
+
+**Next after 0.1.2, ahead of Phase 4 (Michael, 2026-11-09).** `memoize` and non-`str` keys go first (both in 6a). 6b's `transact()` and 6c's FanoutCache have shipped; what's left of 6b is whatever nested-transaction parity 6a's work turns up.
 
 Each item gets conformance tests against diskcache first. Candidate groups, each roughly a phase:
 
