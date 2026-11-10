@@ -1573,14 +1573,10 @@ mod tests {
         type Write = fn(&Store, Value<'_>);
         let blob = vec![0u8; 70_000];
         let v = Value::Bytes { mode: MODE_BYTES, data: &blob };
-        // Each write that culls: a set, an add, and an incr of a missing key.
-        let writes: [(&str, Write); 3] = [
+        // The writes that cull and add a value's bytes: a set and an add. (An incr adds none: below.)
+        let writes: [(&str, Write); 2] = [
             ("set", |s, v| s.set(T, "new", v, None, NOW + 100.0).map(drop).unwrap()),
             ("add", |s, v| assert!(s.add(T, "new", v, None, NOW + 100.0).unwrap())),
-            ("incr", |s, _| {
-                let one = s.incr(T, "new", Number::Int(1), Some(Number::Int(0)), NOW + 100.0).unwrap();
-                assert_eq!(one, Number::Int(1));
-            }),
         ];
         for (name, write) in writes {
             let tmp = TempDir::new("ops-cull-sweep-room");
@@ -1591,6 +1587,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_incr_whose_sweep_makes_room_evicts_nothing() {
+        // An incr of a missing key culls too, but adds no bytes, so the cache has to be over its
+        // limit before the write: filled with culling off, then joined again with it on (joining a
+        // live store updates its limits).
+        let tmp = TempDir::new("ops-cull-sweep-incr");
+        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(0) });
+        let (live, expiring) = (vec![0u8; 70_000], vec![0u8; 80_000]);
+        for i in 0..5 {
+            s.set(T, &format!("k{i}"), Value::Bytes { mode: MODE_BYTES, data: &live }, None, NOW + f64::from(i))
+                .unwrap();
+        }
+        // Nine, not ten: ten would use the whole budget and leave none to over-evict with.
+        for i in 0..9 {
+            let at = NOW + 10.0 + f64::from(i) * 0.001;
+            s.set(T, &format!("e{i}"), Value::Bytes { mode: MODE_BYTES, data: &expiring }, Some(1.0), at).unwrap();
+        }
+        assert_eq!(len(&s), 14);
+        assert!(s.volume(T).unwrap() >= 1 << 20, "over the limit before the incr");
+        let s = store(tmp.path(), Requested { size_limit: None, cull_limit: Some(10) });
+        let one = s.incr(T, "new", Number::Int(1), Some(Number::Int(0)), NOW + 100.0).unwrap();
+        assert_eq!(one, Number::Int(1));
+        assert_eq!(keys(&s), ["k0", "k1", "k2", "k3", "k4", "new"], "every live row survives");
+    }
+
+    /// Guards the other direction: this passes on the code before the fix, and fails if the swept
+    /// bytes are taken off twice (nothing evicted) or the sweep's rows aren't charged to the budget.
     #[test]
     fn a_sweep_of_spilled_values_that_is_not_enough_evicts_with_the_rest_of_the_budget() {
         let tmp = TempDir::new("ops-cull-sweep-short");
@@ -1615,7 +1638,7 @@ mod tests {
         let tmp = TempDir::new("ops-cull-sweep-held");
         let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(10) });
         five_live_and_nine_expiring(&s);
-        let (before, files) = (keys(&s), value_files(tmp.path()));
+        let (before, files, volume) = (keys(&s), value_files(tmp.path()), s.volume(T).unwrap());
         let blob = vec![0u8; 70_000];
         let held = s.begin_hold(T).unwrap();
         s.set(T, "new", Value::Bytes { mode: MODE_BYTES, data: &blob }, None, NOW + 100.0).unwrap();
@@ -1623,6 +1646,7 @@ mod tests {
         held.finish(false).unwrap();
         assert_eq!(keys(&s), before, "the swept rows are back");
         assert_eq!(value_files(tmp.path()), files, "and so are their files, with the new one gone");
+        assert_eq!(s.volume(T).unwrap(), volume, "and totals.size with them");
     }
 
     /// Every value file under `dir`.

@@ -6,7 +6,7 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ### Fixed
 
-- A size-limited cache that was at its limit could evict live entries it had room for. When a `set`, `add` or `incr` removed expired values over 64 KiB, it still counted their files when it checked the limit, so it went on to evict up to `cull_limit` entries in all. Nothing wrong was ever returned; the evicted entries were recomputed on their next miss.
+- A size-limited cache at or near its limit could evict live entries it had room for. When a `set`, an `add` or an `incr` of a missing key removed expired values of 64 KiB or more, it still counted their files when it checked the limit, so it went on to evict up to `cull_limit` entries in all. Nothing wrong was ever returned; the evicted entries were simply misses on their next read.
 
 ## [0.1.1] - 2026-11-09
 

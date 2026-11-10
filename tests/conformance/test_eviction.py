@@ -13,7 +13,7 @@ The clock is advanced before every `set` so store times are distinct and evictio
 """
 
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,7 @@ from tests.conformance.conftest import FakeClock
 MIN_SIZE_LIMIT = 1_048_576
 VALUE_SIZE = 60_000
 SLOTS = 20
-ROOM = SLOTS * VALUE_SIZE  # 1.2 MB, above oxide's 1 MiB minimum
+ROOM = SLOTS * VALUE_SIZE  # 1.2 or 1.4 MB, above oxide's 1 MiB minimum
 DEFAULT_CULL_LIMIT = 10
 
 
@@ -34,12 +34,11 @@ def key(i: int) -> str:
 
 
 @pytest.fixture(autouse=True, params=[60_000, 70_000], ids=['60k', '70k'])
-def _value_size(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def _value_size(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Runs each test under and over oxide's 65,536-byte spill threshold."""
     module = sys.modules[__name__]
     monkeypatch.setattr(module, 'VALUE_SIZE', request.param)
     monkeypatch.setattr(module, 'ROOM', SLOTS * request.param)
-    yield
 
 
 def value(i: int, size: int | None = None) -> bytes:
