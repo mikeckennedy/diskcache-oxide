@@ -435,7 +435,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="./diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="./index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.1</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.2</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -483,7 +483,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#v0.1.1" id="toc-v0.1.1" class="nav-link active" data-scroll-target="#v0.1.1">v0.1.1</a></li>
+  <li><a href="#v0.1.2" id="toc-v0.1.2" class="nav-link active" data-scroll-target="#v0.1.2">v0.1.2</a></li>
   </ul>
 </nav>
     </div>
@@ -510,9 +510,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 
 <p>This changelog is the repository's <a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md">CHANGELOG.md</a>, rendered at build time.</p>
-<section id="v0.1.1" class="level1 changelog-version">
-<h1 class="changelog-version">v0.1.1</h1>
-<p><em>2026-11-09</em> · <a href="https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.1.1">GitHub</a></p>
+<section id="v0.1.2" class="level1 changelog-version">
+<h1 class="changelog-version">v0.1.2</h1>
+<p><em>2026-11-09</em> · <a href="https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.1.2">GitHub</a></p>
 <p>The first release: diskcache’s <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> API on a Rust engine and SQLite storage, shared safely by threads, processes and <code>fork()</code>, on CPython 3.14 and 3.15 including the free-threaded builds. Wheels for macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64.</p>
 <section id="added" class="level3">
 <h3 class="anchored" data-anchor-id="added">Added</h3>
@@ -541,7 +541,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="not-yet" class="level3">
 <h3 class="anchored" data-anchor-id="not-yet">Not yet</h3>
 <p><code>memoize</code>, tags, <code>AsyncCache</code>, <code>Deque</code> and <code>Index</code>, keys other than <code>str</code>, <code>disk=</code>, other eviction policies, the coordination recipes (locks, semaphores, throttles), and Windows. See the <a href="https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html">roadmap</a>.</p>
-<p>Development before this release, including the <code>0.1.0.dev</code> builds (<code>0.1.0.dev1</code> was yanked from PyPI), is in the git history. A <code>0.1.0</code> was built and verified but never published: two bugs found by new tests just before the upload were fixed first, so <code>0.1.1</code> is the first release on PyPI. The <code>0.0.1</code> on PyPI is a name placeholder with no code.</p>
+<p>Development before this release, including the <code>0.1.0.dev</code> builds (<code>0.1.0.dev1</code> was yanked from PyPI), is in the git history. A <code>0.1.0</code> and a <code>0.1.1</code> were built and verified but never published: new tests found two bugs just before the first upload and a third (a size-limited cache evicting entries it had room for) just before the second, each fixed first, so <code>0.1.2</code> is the first release on PyPI. <code>0.1.1</code> ran in production at Talk Python in the meantime. The <code>0.0.1</code> on PyPI is a name placeholder with no code.</p>
 
 
 </section>

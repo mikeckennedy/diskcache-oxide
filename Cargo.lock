@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "diskcache-oxide-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "rusqlite",
@@ -95,7 +95,7 @@ dependencies = [
 
 [[package]]
 name = "diskcache-oxide-py"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arc-swap",
  "base64",

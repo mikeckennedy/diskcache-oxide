@@ -472,7 +472,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.1</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.2</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -671,7 +671,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>Run writes in a worker thread</strong> with <code>asyncio.to_thread()</code>. The thread does the waiting; the loop keeps serving. The thread hop costs tens of microseconds, which is fine for a write.</li>
 <li><strong>Or keep writes inline with a short <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> and <code>durable=True</code>.</strong> Then the worst case is a dropped cache write logged once a minute, not a stalled loop.</li>
 </ul>
-<div id="d604a8f6" class="cell" data-execution_count="1">
+<div id="dc54d356" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> asyncio</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>

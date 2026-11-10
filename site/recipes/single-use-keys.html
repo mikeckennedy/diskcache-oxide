@@ -472,7 +472,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.1</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.2</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -661,7 +661,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="one-time-tokens-with-pop" class="level1">
 <h1>One-time tokens with <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a></h1>
 <p>Store the token when you issue it, with the lifetime the link should have. To redeem it, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> it: the value comes back and the entry is gone in one step, so two requests presenting the same token can’t both succeed, whichever workers they land on.</p>
-<div id="3f303c25" class="cell" data-execution_count="1">
+<div id="302d47ee" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> secrets</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
