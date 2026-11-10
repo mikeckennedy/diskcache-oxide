@@ -280,7 +280,10 @@ def test_retry_never_retries_the_cross_cache_refusal(tmp_path: Path) -> None:
 # -- forks (D-020) -------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize('scenario', ['transact-fork-from-the-owner', 'transact-fork-from-another-thread'])
+@pytest.mark.parametrize(
+    'scenario',
+    ['transact-fork-from-the-owner', 'transact-fork-from-another-thread', 'transact-inherited-mid-operation'],
+)
 def test_fork_scenario(scenario: str, tmp_path: Path) -> None:
     proc = subprocess.run(
         [sys.executable, '-m', 'tests.unit.fork_scenarios', scenario, str(tmp_path / 'c')],
