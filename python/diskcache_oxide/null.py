@@ -32,13 +32,13 @@ expire/timeout, non-`str` keys), so code that works with a `NullCache` also work
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, nullcontext
 from types import TracebackType
 from typing import Any, Literal, Self, overload
 
 from diskcache_oxide._core import TypeRegistry
-from diskcache_oxide._types import Key
+from diskcache_oxide._types import Key, Memoizer
 from diskcache_oxide.protocol import CacheLike
 
 DEFAULT_SIZE_LIMIT = 2**30
@@ -330,6 +330,19 @@ class NullCache:
         if retry:
             options['retry'] = True
         return self._invalidate.clear(**options)
+
+    def memoize(
+        self,
+        name: str | None = None,
+        typed: bool = False,
+        expire: float | None = None,
+        ignore: Iterable[int | str] = (),
+    ) -> Memoizer:
+        """As `Cache.memoize`, but every call runs the function, as every entry has already expired. The
+        arguments are still checked as keys, so a call that would fail on a real cache fails here."""
+        from diskcache_oxide._memoize import memoize
+
+        return memoize(self, name, typed, expire, ignore)
 
     @overload
     def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]: ...

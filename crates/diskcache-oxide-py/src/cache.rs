@@ -362,6 +362,23 @@ impl Cache {
         retrying(py, retry, || self.config.add_number(py, &self.handle, key, k.key(), delta, default, true))
     }
 
+    /// A decorator that caches a function's results in this cache (diskcache's `memoize`). The logic
+    /// is pure Python (`diskcache_oxide._memoize`); a compiled class can't gain a method from Python.
+    #[pyo3(
+        signature = (name = None, typed = false, expire = None, ignore = None),
+        text_signature = "($self, name=None, typed=False, expire=None, ignore=())"
+    )]
+    fn memoize(
+        slf: &Bound<'_, Self>,
+        name: Option<&Bound<'_, PyAny>>,
+        typed: bool,
+        expire: Option<&Bound<'_, PyAny>>,
+        ignore: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let durable = slf.get().config.failures.is_some();
+        memoize_on(slf.as_any(), name, typed, expire, ignore, durable)
+    }
+
     // -- maintenance and iteration -------------------------------------------------------------
 
     /// Removes every expired entry. Returns how many it removed. `timeout` overrides the cache's
@@ -1214,6 +1231,26 @@ impl Cache {
             }
         }
     }
+}
+
+/// `Cache.memoize` and `FanoutCache.memoize`: `diskcache_oxide._memoize.memoize(cache, ...)`. Reads
+/// and writes pass `retry=True`, as diskcache's do, except on a durable handle: there `retry` would
+/// make an outage wait instead of running the function, which is what `durable=True` is for.
+pub(crate) fn memoize_on(
+    cache: &Bound<'_, PyAny>,
+    name: Option<&Bound<'_, PyAny>>,
+    typed: bool,
+    expire: Option<&Bound<'_, PyAny>>,
+    ignore: Option<&Bound<'_, PyAny>>,
+    durable: bool,
+) -> PyResult<Py<PyAny>> {
+    let py = cache.py();
+    let ignore = match ignore {
+        Some(ignore) => ignore.clone(),
+        None => PyTuple::empty(py).into_any(),
+    };
+    let memoize = py.import("diskcache_oxide._memoize")?.getattr("memoize")?;
+    memoize.call1((cache, name, typed, expire, ignore, !durable)).map(Bound::unbind)
 }
 
 /// A lazy iterator over a cache's keys, one page per fetch.

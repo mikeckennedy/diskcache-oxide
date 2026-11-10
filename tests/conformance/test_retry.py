@@ -77,3 +77,9 @@ def test_a_retried_write_waits_out_another_processes_lock(
 )
 def test_every_call_takes_retry(prepared: Any, call: Callable[[Any], Any]) -> None:
     call(prepared)
+
+
+@pytest.mark.diverges(backend='oxide', ref='D-047', reason='retry is keyword-only', raises=TypeError)
+def test_retry_can_be_passed_by_position(prepared: Any) -> None:
+    # diskcache: set(key, value, expire, read, tag, retry).
+    assert prepared.set('k', 'v', None, False, None, True) is True

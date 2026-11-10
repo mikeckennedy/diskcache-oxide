@@ -9,12 +9,12 @@ need more than `retry` (a sharded cache's `transact(key=...)`) can still be a `C
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager
 from types import TracebackType
 from typing import Any, Literal, Protocol, Self, overload, runtime_checkable
 
-from diskcache_oxide._types import Key
+from diskcache_oxide._types import Key, Memoizer
 
 
 @runtime_checkable
@@ -91,6 +91,15 @@ class CacheLike(Protocol):
 
     def decr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
         """Subtract `delta` from the number under `key`, atomically, and return the result."""
+
+    def memoize(
+        self,
+        name: str | None = None,
+        typed: bool = False,
+        expire: float | None = None,
+        ignore: Iterable[int | str] = (),
+    ) -> Memoizer:
+        """A decorator caching a function's results in this cache (diskcache's `memoize`)."""
 
     @overload
     def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]: ...

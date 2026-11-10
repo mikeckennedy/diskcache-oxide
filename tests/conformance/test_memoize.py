@@ -159,3 +159,13 @@ def test_a_fanout_cache_memoizes_too(backend: Any, cache_dir: Any) -> None:
         assert calls == [(1, 2, 0)]
     finally:
         cache.close()
+
+
+@pytest.mark.diverges(backend='oxide', ref='D-048', reason='arguments must be key types', raises=TypeError)
+def test_any_picklable_argument_is_part_of_the_key(cache: Any) -> None:
+    @cache.memoize()
+    def total(values: list[int]) -> int:
+        return sum(values)
+
+    assert total([1, 2]) == 3
+    assert total([1, 2]) == 3

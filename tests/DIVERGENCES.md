@@ -389,6 +389,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: a positional `retry` after `read` and `tag`, which oxide doesn't have, would bind the wrong argument; and an unbounded wait hidden behind `cache[k]` is the hang this library exists to remove. Ask for it with `retry=True`.
 - Tests: `tests/conformance/test_retry.py`, `tests/unit/test_retry.py`
 
+## D-048 A memoized function's arguments must be key types
+
+- Kind: test-visible
+- diskcache: a memoized call's key holds its arguments, pickled, so any picklable argument works: lists, dicts, sets, objects. A NaN argument pickles too, and hits.
+- oxide: every argument not in `ignore` must be a key type (D-004), checked before the function runs: otherwise the call raises `TypeError`, or `ValueError` for a NaN or a tuple nested too deep, naming the argument (`memoize: argument 0 can not be part of a cache key: ...`). `-0.0` and `0.0` are one argument, as for `functools.lru_cache`, so a sign-sensitive function gets `f(0.0)`'s result for `f(-0.0)`. `async def` functions are refused when decorated. On a durable handle the reads and writes don't pass `retry=True`, so an outage runs the function and drops the store.
+- Why: keys are never pickled (D-004, D-001). Pass a list as a tuple, or leave an argument that can't be a key out with `ignore=` (a connection, a client) and let the others identify the call.
+- Tests: `tests/unit/test_memoize.py`
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.

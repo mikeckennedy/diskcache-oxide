@@ -124,3 +124,11 @@ def test_a_bool_is_not_the_int_it_equals(cache: Any) -> None:
 def test_other_hashable_keys_round_trip(cache: Any, key: Any) -> None:
     assert cache.set(key, 'v') is True
     assert cache.get(key) == 'v'
+
+
+@pytest.mark.diverges(backend='oxide', ref='D-046', reason='str keys first, then by type', raises=AssertionError)
+def test_iterkeys_orders_numbers_then_text_then_bytes(cache: Any) -> None:
+    for key in ['b', 10, b'x', 1.5, 'a', 2]:
+        cache.set(key, 1)
+    # SQLite's order over the stored keys: ints and floats together, then text, then BLOBs.
+    assert list(cache.iterkeys()) == [1.5, 2, 10, 'a', 'b', b'x']

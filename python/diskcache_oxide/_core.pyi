@@ -1,11 +1,11 @@
 """Type stubs for the compiled `diskcache_oxide._core` extension (hand-written, checked by tests/unit/test_stubs.py)."""
 
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from types import TracebackType
 from typing import Any, Literal, Self, final, overload
 
-from diskcache_oxide._types import Key
+from diskcache_oxide._types import Key, Memoizer
 
 # PyO3 generates __all__ from everything the module adds, in the order it adds them.
 __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
@@ -446,6 +446,44 @@ class Cache:
 
         Returns:
             The new value.
+        """
+    def memoize(
+        self,
+        name: str | None = None,
+        typed: bool = False,
+        expire: float | None = None,
+        ignore: Iterable[int | str] = (),
+    ) -> Memoizer:
+        """Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
+
+        A call's key is `(name,) + args + (None,)` and then each keyword argument's name and value,
+        sorted by name, where `name` defaults to the function's module and qualified name: the same
+        tuple diskcache builds, which `wrapper.__cache_key__(*args, **kwargs)` returns. Arguments
+        aren't bound to the signature, so `f(1, 2)` and `f(1, b=2)` are two entries. A miss runs the
+        function and stores its result (`None` included; an exception stores nothing); reads and
+        writes pass `retry=True`. Call it: `@cache.memoize()`, not `@cache.memoize`.
+
+        Args:
+            name: The key's first element, in place of the function's qualified name.
+            typed: Also key on each argument's type, as `'module.qualname'` (D-045), so `f(1)` and
+                `f(1.0)` are two entries.
+            expire: Seconds until a stored result expires; `None` never. Zero or negative never
+                stores, as in diskcache.
+            ignore: Positions and keyword names left out of the key.
+
+        Raises:
+            TypeError: `name` is callable (the decorator was used without parentheses), the function
+                is `async def`, or, at a call, an argument isn't a key type (D-048).
+            ValueError: at a call, an argument is a NaN or a tuple nested too deep (D-048).
+
+        Examples:
+            ```python
+            @cache.memoize(expire=300)
+            def episode(number: int) -> dict:
+                return load_episode(number)
+
+            cache.delete(episode.__cache_key__(42))  # forget one call
+            ```
         """
     @overload
     def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]:
@@ -893,6 +931,44 @@ class FanoutCache:
         Raises:
             OSError: A real error, such as a full disk, on some shard, raised after every shard was
                 tried. It carries `failed_shards` (see the class docs).
+        """
+    def memoize(
+        self,
+        name: str | None = None,
+        typed: bool = False,
+        expire: float | None = None,
+        ignore: Iterable[int | str] = (),
+    ) -> Memoizer:
+        """Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
+
+        A call's key is `(name,) + args + (None,)` and then each keyword argument's name and value,
+        sorted by name, where `name` defaults to the function's module and qualified name: the same
+        tuple diskcache builds, which `wrapper.__cache_key__(*args, **kwargs)` returns. Arguments
+        aren't bound to the signature, so `f(1, 2)` and `f(1, b=2)` are two entries. A miss runs the
+        function and stores its result (`None` included; an exception stores nothing); reads and
+        writes pass `retry=True`. Call it: `@cache.memoize()`, not `@cache.memoize`.
+
+        Args:
+            name: The key's first element, in place of the function's qualified name.
+            typed: Also key on each argument's type, as `'module.qualname'` (D-045), so `f(1)` and
+                `f(1.0)` are two entries.
+            expire: Seconds until a stored result expires; `None` never. Zero or negative never
+                stores, as in diskcache.
+            ignore: Positions and keyword names left out of the key.
+
+        Raises:
+            TypeError: `name` is callable (the decorator was used without parentheses), the function
+                is `async def`, or, at a call, an argument isn't a key type (D-048).
+            ValueError: at a call, an argument is a NaN or a tuple nested too deep (D-048).
+
+        Examples:
+            ```python
+            @cache.memoize(expire=300)
+            def episode(number: int) -> dict:
+                return load_episode(number)
+
+            cache.delete(episode.__cache_key__(42))  # forget one call
+            ```
         """
     @overload
     def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]:

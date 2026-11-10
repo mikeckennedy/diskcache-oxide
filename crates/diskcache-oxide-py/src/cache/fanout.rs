@@ -299,6 +299,22 @@ impl FanoutCache {
         retrying(py, retry, || self.config.add_number(py, self.routed(name)?, key, name, delta, default, true))
     }
 
+    /// As `Cache.memoize`: a decorator caching a function's results in this cache.
+    #[pyo3(
+        signature = (name = None, typed = false, expire = None, ignore = None),
+        text_signature = "($self, name=None, typed=False, expire=None, ignore=())"
+    )]
+    fn memoize(
+        slf: &Bound<'_, Self>,
+        name: Option<&Bound<'_, PyAny>>,
+        typed: bool,
+        expire: Option<&Bound<'_, PyAny>>,
+        ignore: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let durable = slf.get().config.failures.is_some();
+        super::memoize_on(slf.as_any(), name, typed, expire, ignore, durable)
+    }
+
     // -- over every shard, under one deadline ---------------------------------------------------
 
     fn __len__(&self, py: Python<'_>) -> PyResult<usize> {
