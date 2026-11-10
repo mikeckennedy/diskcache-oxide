@@ -2103,6 +2103,58 @@ mod tests {
             .unwrap()
     }
 
+    /// Runs `write` while a helper thread holds the store's write lock for 90% of `timeout` and a
+    /// connection of its own holds SQLite's lock throughout, and returns its result and how long it
+    /// took. A write that restarted its budget after the write lock would take about 1.9 timeouts.
+    fn behind_both_locks<R>(timeout: Duration, write: impl FnOnce(&Arc<Store>) -> R) -> (R, Duration) {
+        let tmp = TempDir::new("store-one-deadline");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let sqlite = crate::open::connect(tmp.path(), T).unwrap();
+        sqlite.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let (locked, wait) = std::sync::mpsc::channel();
+        let holder = {
+            let store = Arc::clone(&store);
+            std::thread::spawn(move || {
+                // No gate level here: the timed write must be able to enter.
+                let token = store.write_lock.lock_until(Instant::now() + T).unwrap();
+                locked.send(Instant::now()).unwrap();
+                std::thread::sleep(timeout.mul_f64(0.9));
+                drop(token);
+            })
+        };
+        let started = wait.recv().unwrap();
+        let result = write(&store);
+        let elapsed = started.elapsed();
+        holder.join().unwrap();
+        sqlite.execute_batch("ROLLBACK").unwrap();
+        (result, elapsed)
+    }
+
+    fn assert_one_budget(what: &str, result: Result<()>, elapsed: Duration, timeout: Duration) {
+        match result {
+            Err(Error::Timeout { seconds }) => {
+                assert!((seconds - timeout.as_secs_f64()).abs() < 1e-9, "{what}: {seconds}");
+            }
+            other => panic!("{what}: expected a timeout, got {other:?}"),
+        }
+        assert!(elapsed >= timeout.mul_f64(0.95), "{what}: gave up after {elapsed:?}, before its budget");
+        assert!(elapsed < timeout.mul_f64(1.45), "{what}: took {elapsed:?}, so the SQLite wait got a fresh budget");
+    }
+
+    #[test]
+    fn a_write_has_one_deadline_across_the_write_lock_and_sqlites_lock() {
+        let timeout = Duration::from_millis(400);
+        let (result, elapsed) = behind_both_locks(timeout, |s| s.write(timeout, |_, _| Ok(())));
+        assert_one_budget("write", result, elapsed, timeout);
+    }
+
+    #[test]
+    fn begin_hold_has_one_deadline_across_the_write_lock_and_sqlites_lock() {
+        let timeout = Duration::from_millis(400);
+        let (result, elapsed) = behind_both_locks(timeout, |s| s.begin_hold(timeout).map(drop));
+        assert_one_budget("begin_hold", result, elapsed, timeout);
+    }
+
     #[test]
     fn handles_on_one_directory_share_a_store() {
         let tmp = TempDir::new("store-share");
