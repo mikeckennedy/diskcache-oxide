@@ -4,7 +4,8 @@ Hypothesis drives `set`, `add`, `get`, `pop`, `delete`, `touch`, `incr`, `expire
 committed and aborted transactions, a clock that jumps across expiry boundaries, and closing and
 reopening the cache, over a few keys so the calls collide.
 Values straddle the 64 KiB spill threshold, so inline and file-backed values replace one another.
-After every step each key reads back as the model says. Runs on `Cache` and on a `FanoutCache`.
+After every step each key reads back as the model says. Keys are `str` and typed (an int and a tuple), so
+the two kinds share every rule. Runs on `Cache` and on a `FanoutCache`.
 """
 
 from __future__ import annotations
@@ -20,7 +21,18 @@ from diskcache_oxide import Cache, FanoutCache
 from hypothesis import settings
 from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
 
-KEYS = st.sampled_from(['a', 'b', 'c', 'd'])
+# Two str keys and two typed keys (D-004), so every rule meets both kinds and they collide.
+KEY_LIST: list[Any] = ['a', 'b', 7, (7, None)]
+KEYS = st.sampled_from(KEY_LIST)
+
+
+def key_order(key: Any) -> tuple[int, Any]:
+    """The engine's order for KEY_LIST (D-046): str keys, then ints, then tuples."""
+    if isinstance(key, str):
+        return (0, key)
+    return (1, 0) if isinstance(key, int) else (2, 0)
+
+
 SPILL = 64 * 1024
 # Raw bytes are stored as they are, so these lengths sit on both sides of the spill threshold.
 BYTES = st.builds(
@@ -55,14 +67,14 @@ class CacheModel(RuleBasedStateMachine):
     def make(self, directory: Path) -> Any:
         return Cache(directory, clock=lambda: self.now)
 
-    def transaction(self, key: str) -> Any:
+    def transaction(self, key: Any) -> Any:
         return self.cache.transact()
 
     def __init__(self) -> None:
         super().__init__()
         self.root = Path(tempfile.mkdtemp(prefix='dco-model-'))
         self.now = 1_000_000.0
-        self.model: dict[str, tuple[Any, float | None]] = {}
+        self.model: dict[Any, tuple[Any, float | None]] = {}
         self.cache = self.make(self.root / 'c')
 
     def teardown(self) -> None:
@@ -71,7 +83,7 @@ class CacheModel(RuleBasedStateMachine):
 
     # -- the model's view ---------------------------------------------------------------------
 
-    def live(self, key: str) -> Any:
+    def live(self, key: Any) -> Any:
         value, expire_time = self.model.get(key, (MISSING, None))
         if value is MISSING or (expire_time is not None and expire_time <= self.now):
             return MISSING
@@ -83,19 +95,19 @@ class CacheModel(RuleBasedStateMachine):
     # -- rules --------------------------------------------------------------------------------
 
     @rule(key=KEYS, value=VALUES, expire=EXPIRES)
-    def set(self, key: str, value: Any, expire: float | None) -> None:
+    def set(self, key: Any, value: Any, expire: float | None) -> None:
         assert self.cache.set(key, value, expire=expire) is True
         self.model[key] = (value, self.expire_time(expire))
 
     @rule(key=KEYS, value=VALUES, expire=EXPIRES)
-    def add(self, key: str, value: Any, expire: float | None) -> None:
+    def add(self, key: Any, value: Any, expire: float | None) -> None:
         added = self.live(key) is MISSING
         assert self.cache.add(key, value, expire=expire) is added
         if added:
             self.model[key] = (value, self.expire_time(expire))
 
     @rule(key=KEYS)
-    def pop(self, key: str) -> None:
+    def pop(self, key: Any) -> None:
         expected = self.live(key)
         got = self.cache.pop(key, MISSING)
         if expected is MISSING:
@@ -105,21 +117,21 @@ class CacheModel(RuleBasedStateMachine):
             del self.model[key]  # An expired row isn't removed: it's a miss that stays for expire().
 
     @rule(key=KEYS)
-    def delete(self, key: str) -> None:
+    def delete(self, key: Any) -> None:
         present = self.live(key) is not MISSING
         assert self.cache.delete(key) is present
         if present:
             del self.model[key]
 
     @rule(key=KEYS, expire=EXPIRES)
-    def touch(self, key: str, expire: float | None) -> None:
+    def touch(self, key: Any, expire: float | None) -> None:
         present = self.live(key) is not MISSING
         assert self.cache.touch(key, expire=expire) is present
         if present:
             self.model[key] = (self.model[key][0], self.expire_time(expire))
 
     @rule(key=KEYS, delta=st.integers(-1000, 1000))
-    def incr(self, key: str, delta: int) -> None:
+    def incr(self, key: Any, delta: int) -> None:
         current = self.live(key)
         if current is MISSING:
             got = self.cache.incr(key, delta)
@@ -160,17 +172,22 @@ class CacheModel(RuleBasedStateMachine):
         self.model = {}
         assert len(self.cache) == 0
 
-    @rule(prefix=st.sampled_from(['', 'a', 'b', 'z']), reverse=st.booleans())
-    def iterkeys(self, prefix: str, reverse: bool) -> None:
-        keys = list(self.cache.iterkeys(prefix=prefix or None, reverse=reverse))
-        assert keys == sorted(keys, reverse=reverse), keys
-        # Expired rows not yet removed are included, so: every live key, and only keys the model holds.
-        live = {k for k in self.model if k.startswith(prefix) and self.live(k) is not MISSING}
-        held = {k for k in self.model if k.startswith(prefix)}
+    @rule(prefix=st.sampled_from([None, '', 'a', 'b', 'z']), reverse=st.booleans())
+    def iterkeys(self, prefix: str | None, reverse: bool) -> None:
+        keys: list[Any] = list(self.cache.iterkeys(prefix=prefix, reverse=reverse))
+        assert keys == sorted(keys, key=key_order, reverse=reverse), keys
+        # A prefix walks str keys only. Expired rows not yet removed are included, so: every live
+        # key, and only keys the model holds.
+
+        def matches(k: Any) -> bool:
+            return prefix is None or (isinstance(k, str) and k.startswith(prefix))
+
+        live = {k for k in self.model if matches(k) and self.live(k) is not MISSING}
+        held = {k for k in self.model if matches(k)}
         assert live <= set(keys) <= held, (keys, live, held)
 
     @rule(key=KEYS, value=VALUES, delta=st.integers(-5, 5), abort=st.booleans())
-    def transact(self, key: str, value: Any, delta: int, abort: bool) -> None:
+    def transact(self, key: Any, value: Any, delta: int, abort: bool) -> None:
         # One key, so a FanoutCache's one-shard transaction covers every call inside it.
         class Abort(Exception):
             pass
@@ -199,7 +216,7 @@ class CacheModel(RuleBasedStateMachine):
 
     @invariant()
     def every_key_reads_as_the_model_says(self) -> None:
-        for key in ('a', 'b', 'c', 'd'):
+        for key in KEY_LIST:
             expected = self.live(key)
             got = self.cache.get(key, MISSING)
             if expected is MISSING:
@@ -216,7 +233,7 @@ class FanoutCacheModel(CacheModel):
     def make(self, directory: Path) -> Any:
         return FanoutCache(directory, shards=4, clock=lambda: self.now)
 
-    def transaction(self, key: str) -> Any:
+    def transaction(self, key: Any) -> Any:
         return self.cache.transact(key=key)
 
 

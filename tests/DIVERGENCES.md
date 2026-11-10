@@ -373,6 +373,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: a class can't be stored as a key without pickle, and keys are never pickled (D-004, D-001).
 - Tests: `test_memoize.py`
 
+## D-046 `iterkeys()` orders keys of different types by type first
+
+- Kind: test-visible
+- diskcache: `iterkeys()` follows SQLite's order over the stored keys: numbers (ints and floats together), then text, then BLOBs (bytes, and pickled keys in pickle-byte order).
+- oxide: every `str` key first, in code-point order, then `None`, `False`, `True`, ints, floats, bytes and tuples, each type in value order; tuples compare element by element in the same order, and a tuple comes before any longer tuple it begins. `reverse=True` is exactly the reverse. `prefix=` walks `str` keys only. `iter(cache)` is insertion order for every key type, as before.
+- Why: it is the order of the stored bytes, so it is an index scan, the same in every process, and FanoutCache's merge gives the same order as `Cache`.
+- Tests: `tests/unit/test_keys.py`, `key::tests`
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.
