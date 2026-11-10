@@ -25,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
     'scenario',
     [
         'd020',
+        'd020-wal',
         'fork-while-a-write-waits',
         'two-forkers',
         'parent-closes-after-fork',

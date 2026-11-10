@@ -1299,6 +1299,13 @@ impl Store {
         crate::poison::check_writable(self.file_id)
     }
 
+    /// Tests only: makes this store's database unwritable here, as in a child forked inside a
+    /// transaction on it, until the guard is dropped.
+    #[cfg(test)]
+    pub(crate) fn poison_for_test(&self) -> crate::poison::HoldGuard<'static> {
+        crate::poison::poison_for_test(self.file_id)
+    }
+
     /// Runs `write` in a write transaction only if that needs no waiting at all: the write lock is
     /// free, no fork is pending, and SQLite's lock is free too (no busy wait). Returns `None` if it
     /// didn't run, or ran into a lock. For opportunistic cleanup that must never block a read (D-013).
@@ -1538,6 +1545,14 @@ impl<'c> WriteTx<'c> {
 
     fn commit(mut self) -> Result<()> {
         self.open = false;
+        #[cfg(test)]
+        let result = if FAIL_NEXT_COMMITS_BUSY.with(|left| left.replace(left.get().saturating_sub(1))) > 0 {
+            // What a busy COMMIT leaves: nothing committed, and the transaction still open.
+            Err(Error::Timeout { seconds: self.timeout.as_secs_f64() })
+        } else {
+            run_cached(self.conn, "COMMIT", self.timeout)
+        };
+        #[cfg(not(test))]
         let result = run_cached(self.conn, "COMMIT", self.timeout);
         if result.is_err() {
             // A failed COMMIT (e.g. busy) leaves the transaction open: end it before the retry.
@@ -1920,6 +1935,10 @@ thread_local! {
     /// Tests only: the next [`run_end`] on this thread fails busy without running, as a `COMMIT` does
     /// when SQLite reports `SQLITE_BUSY` (the only way to get one on demand).
     static FAIL_NEXT_END_BUSY: Cell<bool> = const { Cell::new(false) };
+
+    /// Tests only: this many of the next [`WriteTx::commit`]s on this thread fail busy without running
+    /// the `COMMIT`, so the transaction is really open and the `ROLLBACK` before the retry really runs.
+    pub(crate) static FAIL_NEXT_COMMITS_BUSY: Cell<u32> = const { Cell::new(0) };
 }
 
 /// What `Store::open_store`'s open sequence ends with: a live store it joined, or what a new or
@@ -2089,6 +2108,124 @@ mod tests {
                 c.query_row("SELECT count FROM totals", [], |r| r.get(0)).map_err(|e| Error::from_sqlite(e, T))
             })
             .unwrap()
+    }
+
+    /// Runs `write` while a helper thread holds the store's write lock for 90% of `timeout` and a
+    /// connection of its own holds SQLite's lock throughout, and returns its result and how long it
+    /// took. A write that restarted its budget after the write lock would take about 1.9 timeouts.
+    fn behind_both_locks<R>(timeout: Duration, write: impl FnOnce(&Arc<Store>) -> R) -> (R, Duration) {
+        let tmp = TempDir::new("store-one-deadline");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let sqlite = crate::open::connect(tmp.path(), T).unwrap();
+        sqlite.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let (locked, wait) = std::sync::mpsc::channel();
+        let holder = {
+            let store = Arc::clone(&store);
+            std::thread::spawn(move || {
+                // No gate level here: the timed write must be able to enter.
+                let token = store.write_lock.lock_until(Instant::now() + T).unwrap();
+                locked.send(()).unwrap();
+                std::thread::sleep(timeout.mul_f64(0.9));
+                drop(token);
+            })
+        };
+        wait.recv().unwrap();
+        // Timed from the call, so however late this thread wakes, a correct build reads about 1.0.
+        let started = Instant::now();
+        let result = write(&store);
+        let elapsed = started.elapsed();
+        holder.join().unwrap();
+        sqlite.execute_batch("ROLLBACK").unwrap();
+        (result, elapsed)
+    }
+
+    fn assert_one_budget(what: &str, result: Result<()>, elapsed: Duration, timeout: Duration) {
+        match result {
+            Err(Error::Timeout { seconds }) => {
+                assert!((seconds - timeout.as_secs_f64()).abs() < 1e-9, "{what}: {seconds}");
+            }
+            other => panic!("{what}: expected a timeout, got {other:?}"),
+        }
+        assert!(elapsed >= timeout.mul_f64(0.95), "{what}: gave up after {elapsed:?}, before its budget");
+        assert!(elapsed < timeout.mul_f64(1.45), "{what}: took {elapsed:?}, so the SQLite wait got a fresh budget");
+    }
+
+    #[test]
+    fn a_write_has_one_deadline_across_the_write_lock_and_sqlites_lock() {
+        let timeout = Duration::from_millis(400);
+        let (result, elapsed) = behind_both_locks(timeout, |s| s.write(timeout, |_, _| Ok(())));
+        assert_one_budget("write", result, elapsed, timeout);
+    }
+
+    #[test]
+    fn begin_hold_has_one_deadline_across_the_write_lock_and_sqlites_lock() {
+        let timeout = Duration::from_millis(400);
+        let (result, elapsed) = behind_both_locks(timeout, |s| s.begin_hold(timeout).map(drop));
+        assert_one_budget("begin_hold", result, elapsed, timeout);
+    }
+
+    #[test]
+    fn a_checkpoint_that_cant_take_the_write_lock_in_time_reports_busy() {
+        // Busy or ForkPending is decided by the global gate's `pending`: no other test's fork now.
+        let _forks = crate::testutil::one_global_fork_at_a_time();
+        let tmp = TempDir::new("store-checkpoint-locked");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        put(&store, "k", b"v");
+        let timeout = Duration::from_millis(150);
+        let (locked, wait) = std::sync::mpsc::channel();
+        let (release, wait_release) = std::sync::mpsc::channel::<()>();
+        let writer = {
+            let store = Arc::clone(&store);
+            std::thread::spawn(move || {
+                let token = store.write_lock.lock_until(Instant::now() + T).unwrap();
+                locked.send(()).unwrap();
+                wait_release.recv().unwrap();
+                drop(token);
+            })
+        };
+        wait.recv().unwrap();
+        let started = Instant::now();
+        let result = store.checkpoint(timeout);
+        let elapsed = started.elapsed();
+        release.send(()).unwrap();
+        writer.join().unwrap();
+        assert!(matches!(result, Ok(false)), "{result:?}");
+        assert!(elapsed >= timeout.mul_f64(0.95), "gave up after {elapsed:?}");
+        let stats = store.wal_stats();
+        assert_eq!((stats.attempts, stats.busy, stats.fork_pending), (1, 1, 0), "{stats:?}");
+        assert!(store.checkpoint(T).unwrap(), "and succeeds once the lock is free");
+    }
+
+    #[test]
+    fn a_checkpoint_with_no_free_connection_slot_reports_it() {
+        // Its reader holds a gate level for a while: keep other tests' forks from waiting on it.
+        let _forks = crate::testutil::one_global_fork_at_a_time();
+        let tmp = TempDir::new("store-checkpoint-no-slot");
+        let store = Store::open(&OpenOptions { max_connections: 1, ..options(tmp.path()) }).unwrap();
+        put(&store, "k", b"v");
+        let (reading, wait) = std::sync::mpsc::channel();
+        let (release, wait_release) = std::sync::mpsc::channel::<()>();
+        let reader = {
+            let store = Arc::clone(&store);
+            std::thread::spawn(move || {
+                // The cache's only connection slot, held for as long as the read runs.
+                store
+                    .read(T, |_| {
+                        reading.send(()).unwrap();
+                        wait_release.recv().unwrap();
+                        Ok(())
+                    })
+                    .unwrap();
+            })
+        };
+        wait.recv().unwrap();
+        let result = store.checkpoint(Duration::from_millis(100));
+        release.send(()).unwrap();
+        reader.join().unwrap();
+        assert!(matches!(result, Ok(false)), "{result:?}");
+        let stats = store.wal_stats();
+        assert_eq!((stats.attempts, stats.no_slot, stats.busy), (1, 1, 0), "{stats:?}");
+        assert!(store.checkpoint(T).unwrap(), "and succeeds once the slot is free");
     }
 
     #[test]

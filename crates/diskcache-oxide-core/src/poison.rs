@@ -20,7 +20,8 @@
 //!   level the fork waits for, so a child never sees a half-written entry;
 //! - a hold is removed with one atomic store, from any thread;
 //! - the poisoned set is only added to in the child's after-fork hook, while the forking thread is
-//!   the only one, and is only ever added to.
+//!   the only one, and is only ever added to (tests aside: `poison_for_test`'s entry goes when its
+//!   guard drops).
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -56,6 +57,15 @@ pub fn check_writable(id: FileId) -> Result<()> {
 /// it only while the calling thread is the only one in the process.
 pub(crate) fn poison_live_holds() {
     REGISTRY.poison_live_holds();
+}
+
+/// Tests only: makes `id` unwritable, as in a child forked inside a hold on it, until the returned
+/// guard is dropped (a later test's database may reuse the inode).
+#[cfg(test)]
+pub(crate) fn poison_for_test(id: FileId) -> HoldGuard<'static> {
+    let slot = REGISTRY.poisoned.insert(id);
+    REGISTRY.any_poisoned.store(true, Ordering::Release);
+    HoldGuard { slot }
 }
 
 /// A live hold, see [`begin_hold`]. It may be dropped on any thread.

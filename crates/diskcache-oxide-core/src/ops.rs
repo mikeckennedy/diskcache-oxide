@@ -1649,6 +1649,166 @@ mod tests {
         assert_eq!(s.volume(T).unwrap(), volume, "and totals.size with them");
     }
 
+    #[test]
+    fn the_write_time_sweep_removes_rows_expired_before_now_not_at_now() {
+        // As in diskcache: a row expiring exactly now is a miss, but only a later sweep removes it.
+        let tmp = TempDir::new("ops-sweep-boundary");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "earlier", text("v"), Some(1.0), NOW - 2.0).unwrap(); // expires at NOW - 1
+        s.set(T, "exactly", text("v"), Some(1.0), NOW - 1.0).unwrap(); // expires at NOW
+        s.set(T, "new", text("v"), None, NOW).unwrap();
+        assert_eq!(keys(&s), ["exactly", "new"]);
+        assert!(get(&s, "exactly", NOW).is_none(), "but it reads as a miss");
+        s.set(T, "later", text("v"), None, NOW + 0.5).unwrap();
+        assert_eq!(keys(&s), ["new", "later"]);
+    }
+
+    #[test]
+    fn deleting_a_version_from_inside_a_decode_is_skipped() {
+        // A decode runs inside the read, at gate depth 1: the delete must not try, lock or no lock.
+        let tmp = TempDir::new("ops-delete-in-decode");
+        let s = store(tmp.path(), Requested::default());
+        s.set(T, "k", text("v"), None, NOW).unwrap();
+        let v = version(&s, "k").unwrap();
+        let inside = s.get_with(T, "k", NOW, |_| false, |_, _| Ok(s.delete_version_nowait(v))).unwrap().unwrap();
+        assert!(matches!(inside.value, VersionDelete::Skipped));
+        assert_eq!(get(&s, "k", NOW).unwrap().0, b"v", "the row is still there");
+        assert!(matches!(delete_nowait(&s, v), VersionDelete::Removed), "and goes from outside");
+    }
+
+    #[test]
+    fn a_reader_that_keeps_losing_to_overwrites_in_an_unwritable_child_misses() {
+        // D-020: in a child forked inside a transaction on this file the locked fallback can't take
+        // the write lock, so after its optimistic reads it reports a miss instead.
+        let tmp = TempDir::new("ops-d016-poisoned");
+        let s = store(tmp.path(), Requested::default());
+        set_big(&s, MODE_BYTES, 0);
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0_u8));
+        let poisoned = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let (counted, poison) = (calls.clone(), poisoned.clone());
+        let optimistic = Hook::install(&BEFORE_OPTIMISTIC_READ, move |s| {
+            counted.set(counted.get() + 1);
+            set_big(s, MODE_BYTES, counted.get());
+            if usize::from(counted.get()) == spill::OPTIMISTIC_ATTEMPTS {
+                *poison.borrow_mut() = Some(s.poison_for_test());
+            }
+        });
+        let fallback = Hook::install(&BEFORE_FALLBACK, |_| panic!("an unwritable child must not take the lock"));
+        let got = get(&s, "k", NOW);
+        drop((optimistic, fallback));
+        assert_eq!(usize::from(calls.get()), spill::OPTIMISTIC_ATTEMPTS, "every optimistic read lost");
+        assert!(got.is_none(), "a miss, not a read under the lock");
+        assert!(matches!(s.check_writable(), Err(Error::Unwritable)));
+        drop(poisoned.borrow_mut().take());
+        let last = u8::try_from(spill::OPTIMISTIC_ATTEMPTS).unwrap();
+        assert_eq!(get(&s, "k", NOW).unwrap().0, vec![last; spill::THRESHOLD], "writable again, it reads");
+    }
+
+    /// Makes the next `n` commits on this thread fail busy; returns how many were left unconsumed.
+    fn commits_fail_busy(n: u32, write: impl FnOnce()) -> u32 {
+        crate::store::FAIL_NEXT_COMMITS_BUSY.with(|left| left.set(n));
+        write();
+        crate::store::FAIL_NEXT_COMMITS_BUSY.with(|left| left.replace(0))
+    }
+
+    /// `totals` agrees with the rows it counts.
+    fn assert_totals_exact(s: &Store, what: &str) {
+        let (totals, rows): ((i64, i64), (i64, i64)) = s
+            .read(T, |c| {
+                let totals =
+                    c.query_row("SELECT count, size FROM totals WHERE only = 1", [], |r| Ok((r.get(0)?, r.get(1)?)));
+                let rows = c.query_row("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM cache", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                });
+                totals.and_then(|t| rows.map(|r| (t, r))).map_err(|e| Error::from_sqlite(e, T))
+            })
+            .unwrap();
+        assert_eq!(totals, rows, "{what}: totals (count, size) must match the rows");
+    }
+
+    #[test]
+    fn a_write_whose_commit_comes_back_busy_is_retried_from_the_start() {
+        let tmp = TempDir::new("ops-commit-busy");
+        let s = store(tmp.path(), Requested::default());
+        let runs = std::cell::Cell::new(0);
+        let left = commits_fail_busy(1, || {
+            s.write(T, |_, _| {
+                runs.set(runs.get() + 1);
+                Ok(())
+            })
+            .unwrap();
+        });
+        assert_eq!((left, runs.get()), (0, 2), "the busy COMMIT was rolled back and the closure ran again");
+
+        // The full write path: an incr of a missing key, with its prelude, totals and cull.
+        let left = commits_fail_busy(2, || {
+            assert_eq!(s.incr(T, "n", Number::Int(7), Some(Number::Int(0)), NOW).unwrap(), Number::Int(7));
+        });
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "n", NOW).unwrap().0, b"7", "the rolled-back attempts left no trace");
+        assert_totals_exact(&s, "incr of a missing key");
+
+        // The in-place path: moved by exactly one delta.
+        let left = commits_fail_busy(1, || {
+            assert_eq!(s.incr(T, "n", Number::Int(3), None, NOW).unwrap(), Number::Int(10));
+        });
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "n", NOW).unwrap().0, b"10");
+        assert_totals_exact(&s, "in-place incr");
+
+        let left = commits_fail_busy(1, || assert!(s.set(T, "k", text("v"), None, NOW).unwrap()));
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "k", NOW).unwrap().0, b"v");
+        assert_totals_exact(&s, "inline set");
+    }
+
+    #[test]
+    fn a_spilled_write_whose_commit_comes_back_busy_keeps_exactly_its_own_file() {
+        // The retry renames the value file again (commit_name's retried arm) and settles it once.
+        let tmp = TempDir::new("ops-commit-busy-spill");
+        let s = store(tmp.path(), Requested::default());
+        let (first, second) = (vec![1u8; 70_000], vec![2u8; 80_000]);
+        let left = commits_fail_busy(1, || {
+            assert!(s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &first }, None, NOW).unwrap());
+        });
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "k", NOW).unwrap().0, first);
+        assert_eq!(value_files(tmp.path()).len(), 1, "one value file, not one per attempt");
+        assert_totals_exact(&s, "spilled set");
+
+        // An overwrite, busy twice: it ends with the new file alone, the replaced one removed.
+        let left = commits_fail_busy(2, || {
+            assert!(s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &second }, None, NOW).unwrap());
+        });
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "k", NOW).unwrap().0, second);
+        assert_eq!(value_files(tmp.path()).len(), 1, "the replaced file is gone and the new one kept");
+        assert_totals_exact(&s, "spilled overwrite");
+
+        // An add takes the same path: settle_with keeps the file only because the retry stored it.
+        let left = commits_fail_busy(1, || {
+            assert!(s.add(T, "a", Value::Bytes { mode: MODE_BYTES, data: &first }, None, NOW).unwrap());
+        });
+        assert_eq!(left, 0);
+        assert_eq!(get(&s, "a", NOW).unwrap().0, first);
+        assert_eq!(value_files(tmp.path()).len(), 2);
+        assert_totals_exact(&s, "spilled add");
+    }
+
+    #[test]
+    fn a_write_whose_commit_stays_busy_times_out_and_leaves_nothing() {
+        let tmp = TempDir::new("ops-commit-busy-timeout");
+        let s = store(tmp.path(), Requested::default());
+        let blob = vec![3u8; 70_000];
+        crate::store::FAIL_NEXT_COMMITS_BUSY.with(|left| left.set(u32::MAX));
+        let result = s.set(Duration::from_millis(50), "k", Value::Bytes { mode: MODE_BYTES, data: &blob }, None, NOW);
+        crate::store::FAIL_NEXT_COMMITS_BUSY.with(|left| left.set(0));
+        assert!(matches!(result, Err(Error::Timeout { seconds }) if (seconds - 0.05).abs() < 1e-9), "{result:?}");
+        assert!(get(&s, "k", NOW).is_none());
+        assert!(value_files(tmp.path()).is_empty(), "the pending value file is discarded");
+        assert_totals_exact(&s, "timed-out set");
+    }
+
     /// Every value file under `dir`.
     fn value_files(dir: &Path) -> std::collections::BTreeSet<std::path::PathBuf> {
         let mut found = std::collections::BTreeSet::new();

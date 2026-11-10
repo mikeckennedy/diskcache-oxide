@@ -19,7 +19,7 @@ import warnings
 from collections.abc import Callable
 from pathlib import Path
 
-from diskcache_oxide import Cache, FanoutCache
+from diskcache_oxide import Cache, FanoutCache, Timeout, register_type, unregister_type
 
 from tests.conformance.proc_workers import SqlitePeer
 from tests.proctitle import set_title
@@ -371,6 +371,111 @@ def transact_fork_from_the_owner(directory: Path) -> list[str]:
         failures.append("the parent's transaction did not commit")
     if cache.get('child') is not None:
         failures.append('the poisoned child wrote to the database')
+    cache.close()
+    return failures
+
+
+class ForkOnDecode:
+    """A registered type whose decoder runs `ForkOnDecode.hook` (inside the read that decodes it)."""
+
+    hook: Callable[[], None] | None = None
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+
+def fork_on_decode(n: int) -> ForkOnDecode:
+    hook, ForkOnDecode.hook = ForkOnDecode.hook, None
+    if hook is not None:
+        hook()
+    return ForkOnDecode(n)
+
+
+def transact_inherited_mid_operation(directory: Path) -> list[str]:
+    """Fork while another thread's held transaction has its connection lent to one of its reads.
+
+    Thread B holds `cache.transact()` and reads a value whose decoder forks. The main thread's fork
+    is already pending, waiting on B's level (a probe that times out on a short-timeout handle shows
+    it), so B's before-fork hook parks behind it and the main thread forks first, with the held
+    connection lent to B's read. In that child the transaction is inherited from a thread the child
+    doesn't have: leaving it raises RuntimeError at once, and the database is unwritable (D-020).
+    In the parent, B's own fork then goes ahead, and its transaction commits.
+    """
+    register_type(ForkOnDecode, name='tests.ForkOnDecode', encode=lambda v: v.n, decode=fork_on_decode)
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    cache.set('forker', ForkOnDecode(1))
+    txn = cache.transact()
+    inside = threading.Event()
+    claimed = threading.Event()
+    b_codes: list[int | None] = []
+    errors: list[BaseException] = []
+
+    def b_forks() -> None:
+        inside.set()
+        if not claimed.wait(TIMEOUT):
+            raise AssertionError("the main thread's fork never became pending")
+        b_codes.append(wait(fork(lambda: None)))  # Parks until the main thread has forked.
+
+    def owner() -> None:
+        try:
+            with txn as tx:
+                tx.set('in-tx', 1)
+                ForkOnDecode.hook = b_forks
+                got = tx.get('forker')
+                assert isinstance(got, ForkOnDecode) and got.n == 1, got
+                tx.set('after-fork', 2)
+        except BaseException as ex:
+            errors.append(ex)
+
+    # Opened now: an open behind the pending fork would itself time out.
+    short = Cache(directory, timeout=0.05)
+
+    def probe() -> None:
+        # No level of its own between calls: once a read times out, a fork is pending.
+        end = time.monotonic() + TIMEOUT
+        while time.monotonic() < end:
+            try:
+                short.get('before')
+            except Timeout:
+                claimed.set()
+                return
+            time.sleep(0.005)
+
+    def child() -> None:
+        fails_fast('leaving a transaction inherited mid-operation', lambda: txn.__exit__(None, None, None))
+        assert cache.get('before') == 'parent'
+        assert cache.get('in-tx') is None, "the parent's uncommitted write is visible"
+        fails_fast('write through the inherited Cache', lambda: cache.set('child', 1))
+        fails_fast('write through a fresh Cache', lambda: Cache(directory, timeout=TIMEOUT).set('child', 1))
+
+    thread = threading.Thread(target=owner, daemon=True)
+    thread.start()
+    if not inside.wait(TIMEOUT):
+        return ['the owner never reached the decoder']
+    prober = threading.Thread(target=probe, daemon=True)
+    prober.start()
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        code = wait(fork(child))
+    thread.join(TIMEOUT * 2)
+    prober.join(TIMEOUT)
+
+    failures = [f'owner failed: {ex!r}' for ex in errors]
+    if thread.is_alive():
+        failures.append('the owner thread hung')
+    if not claimed.is_set():
+        failures.append('the probe never saw the fork pending')
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if b_codes != [0]:
+        failures.append(f"the owner's child exit codes {b_codes}")
+    if (cache.get('in-tx'), cache.get('after-fork')) != (1, 2):
+        failures.append("the owner's transaction did not commit")
+    if cache.get('child') is not None:
+        failures.append('the poisoned child wrote to the database')
+    unregister_type(ForkOnDecode)
+    short.close()
     cache.close()
     return failures
 
@@ -789,11 +894,71 @@ def registry_after_fork(directory: Path) -> list[str]:
     return failures
 
 
+def d020_wal(directory: Path) -> list[str]:
+    """Fork inside a held transaction whose writes have already reached the WAL (D-020).
+
+    The parent writes several times its connection's page cache inside the hold, so SQLite has
+    spilled most of the transaction's pages to the WAL before the fork. The child inherits that
+    connection and leaves the transaction; it must only forget the connection, never close it: a
+    close would roll the transaction back through the shared WAL index, under the parent. The
+    parent then reads every value back inside the hold (from the WAL, since they no longer fit in
+    its page cache), again after its commit, and a fresh process reads them once more.
+    """
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    wal = directory / 'diskcache-oxide.sqlite-wal'
+    values = {f'k{i:03d}': bytes([i % 251]) * 40_000 for i in range(200)}  # 8 MB inline: 8 page caches.
+    hold = cache.transact()
+    hold.__enter__()
+    for key, value in values.items():
+        cache.set(key, value)
+    spilled = wal.stat().st_size
+
+    def child() -> None:
+        fails_fast('leaving the inherited transaction', lambda: hold.__exit__(None, None, None))
+        assert cache.get('before') == 'parent', 'a read after leaving the transaction'
+        assert cache.get('k000') is None, "the parent's uncommitted write is visible"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        pid = fork(child)
+    code = wait(pid)
+
+    failures = []
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if spilled < 4 * 2**20:
+        failures.append(f'only {spilled} bytes were in the WAL before the fork, so this proves nothing')
+    wrong = [key for key, value in values.items() if cache.get(key) != value]
+    if wrong:
+        failures.append(f'inside the hold after the fork, {len(wrong)} of {len(values)} values read back wrong')
+    hold.__exit__(None, None, None)
+    wrong = [key for key, value in values.items() if cache.get(key) != value]
+    if wrong:
+        failures.append(f'after the commit, {len(wrong)} of {len(values)} values read back wrong')
+    cache.close()
+    script = (
+        'import sys\n'
+        'from diskcache_oxide import Cache\n'
+        'cache = Cache(sys.argv[1])\n'
+        'bad = [i for i in range(200) if cache.get(f"k{i:03d}") != bytes([i % 251]) * 40_000]\n'
+        'print(len(bad), len(cache))\n'
+    )
+    fresh = subprocess.run([sys.executable, '-c', script, str(directory)], capture_output=True, text=True, timeout=60)
+    if fresh.stdout.split() != ['0', str(len(values) + 1)]:
+        failures.append(
+            f'a fresh process read back (wrong, len) = {fresh.stdout.strip()!r} {fresh.stderr.strip()[-200:]}'
+        )
+    return failures
+
+
 SCENARIOS = {
     'd020': d020,
+    'd020-wal': d020_wal,
     'registry-after-fork': registry_after_fork,
     'transact-fork-from-the-owner': transact_fork_from_the_owner,
     'transact-fork-from-another-thread': transact_fork_from_another_thread,
+    'transact-inherited-mid-operation': transact_inherited_mid_operation,
     'fork-while-a-write-waits': fork_while_a_write_waits,
     'two-forkers': two_forkers,
     'parent-closes-after-fork': parent_closes_after_fork,
