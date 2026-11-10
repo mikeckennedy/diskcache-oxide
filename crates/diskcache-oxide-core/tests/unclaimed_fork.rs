@@ -11,12 +11,12 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use diskcache_oxide_core::gate;
 use diskcache_oxide_core::open::{Requested, Role};
 use diskcache_oxide_core::schema::DEFAULT_SIZE_LIMIT;
 use diskcache_oxide_core::store::{
     DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, OpenOptions, Store,
 };
+use diskcache_oxide_core::{Error, gate};
 
 /// A fresh directory under the system temp dir, removed on drop.
 struct Scratch(PathBuf);
@@ -36,6 +36,7 @@ const PANICKED: i32 = 12;
 #[cfg_attr(miri, ignore = "forks")]
 fn a_child_forked_under_another_threads_claim_can_use_the_cache() {
     let dir = Scratch(std::env::temp_dir().join(format!("dco-unclaimed-fork-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&dir.0); // A crashed earlier run with this pid.
     let store = Store::open(&OpenOptions {
         directory: dir.0.clone(),
         timeout: Duration::from_secs(5),
@@ -63,7 +64,10 @@ fn a_child_forked_under_another_threads_claim_can_use_the_cache() {
 
     // While B's claim is pending, this thread can't enter the gate in the parent.
     let short = Duration::from_millis(200);
-    assert!(store.len(short).is_err(), "the pending claim must keep the parent's callers out");
+    assert!(
+        matches!(store.len(short), Err(Error::Timeout { .. })),
+        "the pending claim must keep the parent's callers out"
+    );
 
     // SAFETY: the child calls only the library's after-fork hook and two store operations (whose
     // locks this thread doesn't hold, and B holds none: its claim is atomics), then `_exit`s

@@ -1754,6 +1754,7 @@ mod tests {
         });
         assert_eq!(left, 0);
         assert_eq!(get(&s, "n", NOW).unwrap().0, b"10");
+        assert_totals_exact(&s, "in-place incr");
 
         let left = commits_fail_busy(1, || assert!(s.set(T, "k", text("v"), None, NOW).unwrap()));
         assert_eq!(left, 0);
@@ -1775,7 +1776,7 @@ mod tests {
         assert_eq!(value_files(tmp.path()).len(), 1, "one value file, not one per attempt");
         assert_totals_exact(&s, "spilled set");
 
-        // An overwrite: the old file goes only once the retried write commits.
+        // An overwrite, busy twice: it ends with the new file alone, the replaced one removed.
         let left = commits_fail_busy(2, || {
             assert!(s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: &second }, None, NOW).unwrap());
         });

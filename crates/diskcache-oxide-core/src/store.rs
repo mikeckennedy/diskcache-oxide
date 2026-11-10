@@ -2124,12 +2124,14 @@ mod tests {
             std::thread::spawn(move || {
                 // No gate level here: the timed write must be able to enter.
                 let token = store.write_lock.lock_until(Instant::now() + T).unwrap();
-                locked.send(Instant::now()).unwrap();
+                locked.send(()).unwrap();
                 std::thread::sleep(timeout.mul_f64(0.9));
                 drop(token);
             })
         };
-        let started = wait.recv().unwrap();
+        wait.recv().unwrap();
+        // Timed from the call, so however late this thread wakes, a correct build reads about 1.0.
+        let started = Instant::now();
         let result = write(&store);
         let elapsed = started.elapsed();
         holder.join().unwrap();
@@ -2164,6 +2166,8 @@ mod tests {
 
     #[test]
     fn a_checkpoint_that_cant_take_the_write_lock_in_time_reports_busy() {
+        // Busy or ForkPending is decided by the global gate's `pending`: no other test's fork now.
+        let _forks = crate::testutil::one_global_fork_at_a_time();
         let tmp = TempDir::new("store-checkpoint-locked");
         let store = Store::open(&options(tmp.path())).unwrap();
         put(&store, "k", b"v");
@@ -2194,6 +2198,8 @@ mod tests {
 
     #[test]
     fn a_checkpoint_with_no_free_connection_slot_reports_it() {
+        // Its reader holds a gate level for a while: keep other tests' forks from waiting on it.
+        let _forks = crate::testutil::one_global_fork_at_a_time();
         let tmp = TempDir::new("store-checkpoint-no-slot");
         let store = Store::open(&OpenOptions { max_connections: 1, ..options(tmp.path()) }).unwrap();
         put(&store, "k", b"v");

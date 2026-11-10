@@ -462,6 +462,8 @@ def transact_inherited_mid_operation(directory: Path) -> list[str]:
     prober.join(TIMEOUT)
 
     failures = [f'owner failed: {ex!r}' for ex in errors]
+    if thread.is_alive():
+        failures.append('the owner thread hung')
     if not claimed.is_set():
         failures.append('the probe never saw the fork pending')
     if code != 0:

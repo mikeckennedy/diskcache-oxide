@@ -1421,6 +1421,37 @@ mod tests {
         assert_eq!(gate.holders(), 0);
     }
 
+    /// `HeldShare::enter`'s `Inherited` arm (unreachable from the store, whose one caller only
+    /// abandons its own shares): it waits, unbounded, behind the child's own fork, then enters as a
+    /// plain counted level.
+    #[test]
+    fn an_inherited_share_enters_as_a_plain_level_once_the_childs_fork_ends() {
+        let gate = test_gate!(G);
+        let (share_tx, share_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let held = gate.try_enter_shared().unwrap().into_held();
+            gate.park();
+            share_tx.send(held).unwrap();
+        })
+        .join()
+        .unwrap();
+        let inherited = share_rx.recv().unwrap();
+        gate.begin_fork().end_child();
+        let fork = gate.begin_fork();
+        let (tx, rx) = mpsc::channel();
+        let ender = thread::spawn(move || {
+            let guard = inherited.enter();
+            tx.send(gate.holders()).unwrap();
+            drop(guard);
+            inherited
+        });
+        assert!(rx.recv_timeout(SETTLE).is_err(), "it entered beside the child's own fork");
+        fork.end_parent();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).expect("it never entered after the fork"), 1);
+        drop(ender.join().unwrap());
+        assert_eq!((gate.holders(), gate.parked()), (0, 0));
+    }
+
     #[test]
     fn a_drain_runs_only_with_a_level_and_clears_the_flag_only_then() {
         let gate = test_gate!(G);

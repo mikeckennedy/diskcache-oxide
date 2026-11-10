@@ -20,7 +20,8 @@
 //!   level the fork waits for, so a child never sees a half-written entry;
 //! - a hold is removed with one atomic store, from any thread;
 //! - the poisoned set is only added to in the child's after-fork hook, while the forking thread is
-//!   the only one, and is only ever added to.
+//!   the only one, and is only ever added to (tests aside: `poison_for_test`'s entry goes when its
+//!   guard drops).
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
