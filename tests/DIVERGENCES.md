@@ -356,6 +356,22 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: re-creating the tree under a deleted cache leaves orphan value files in a directory nothing will read (plan 15's note). Deleting a cache's directory while a process has it open isn't supported; delete it with every process stopped.
 - Tests: `spill::tests::a_write_into_a_deleted_cache_directory_fails_at_once_and_creates_nothing`
 
+## D-044 Keys are compared by exact type
+
+- Kind: test-visible
+- diskcache: keys are compared by SQLite, so `1` and `1.0` are one key (the second write replaces the first), while `True`, pickled, is another.
+- oxide: `1`, `1.0` and `True` are three keys, as are `0` and `False`. `0.0` and `-0.0` are one key. Inside a tuple the same rule holds element by element.
+- Why: a key's stored bytes are its identity and its FanoutCache shard, so they must follow from the value and its type alone, in every process and release. The value codec never coerces types either (Michael, 2026-11-10).
+- Tests: `test_keys.py`
+
+## D-045 `memoize(typed=True)` keys hold type names, not classes
+
+- Kind: test-visible
+- diskcache: `typed=True` appends each argument's class to the key tuple, and pickles the key.
+- oxide: it appends each argument type's `'module.qualname'` string (`'builtins.int'`) where diskcache appends the class. An int and a float argument still make two entries.
+- Why: a class can't be stored as a key without pickle, and keys are never pickled (D-004, D-001).
+- Tests: `test_memoize.py`
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.

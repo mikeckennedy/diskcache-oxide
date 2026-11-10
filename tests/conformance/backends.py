@@ -32,6 +32,8 @@ FEATURE_PHASES: dict[str, str] = {
     'tags': '6a',
     'statistics': '6a',
     'memoize': '6a',
+    'key_types': '6a',
+    'retry': '6a',
     'peek_pull_push': '6a',
     'read': '6a',
     'check': '6a',
