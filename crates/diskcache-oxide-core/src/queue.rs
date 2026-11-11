@@ -14,7 +14,7 @@
 //! one no other key starts with.
 //!
 //! The reads never write (D-055): the head is the first live row, and expired ones are left to
-//! `expire()` and the write path's sweep. They go through [`Store::read_at`], so the version, the
+//! `expire()` and the write path's sweep. They go through `Store::read_at`, so the version, the
 //! tag and the key come from one statement on every path, and a row whose value file is truly gone
 //! is passed over rather than found again: they never spin.
 
