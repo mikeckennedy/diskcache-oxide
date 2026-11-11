@@ -567,6 +567,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/coordination.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Coordination: locks, semaphores and throttles</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Concurrency and forks</span></a>
   </div>
@@ -922,7 +928,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <tr class="odd">
 <td>D-039</td>
 <td><a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> constructor and features</td>
-<td><code>FanoutCache(path, 4)</code>; sub-collections, tags, <a href="../reference/Caches.stats.html#diskcache_oxide.Caches.stats" class="gdls-link gdls-code">stats()</a>, <code>check()</code> and more</td>
+<td><code>FanoutCache(path, 4)</code>; sub-collections, tags, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> and more</td>
 <td><a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> is keyword-only; those features aren’t there yet</td>
 </tr>
 <tr class="even">
@@ -978,6 +984,24 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>A memoized function’s arguments</td>
 <td>Anything picklable</td>
 <td>Key types only, checked before the call</td>
+</tr>
+<tr class="odd">
+<td>D-049</td>
+<td><a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a></td>
+<td>Persisted and shared; <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> writes while on</td>
+<td>Per process, in memory; <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> never writes</td>
+</tr>
+<tr class="even">
+<td>D-050</td>
+<td><a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a></td>
+<td>Warns on every empty folder and stray file; fixes a wrong size</td>
+<td>Skips empty folders and files under an hour old; removes a wrong-size entry</td>
+</tr>
+<tr class="odd">
+<td>D-051</td>
+<td>The coordination recipes</td>
+<td>Work on any cache; <code>throttle</code> breaks after its bucket expires</td>
+<td>Refuse <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and durable caches; <code>throttle</code> fixed; <code>RLock</code> owner has a nonce</td>
 </tr>
 </tbody>
 </table>
@@ -1086,6 +1110,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>D-046:</strong> <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> gives every <code>str</code> key first, in code-point order, then <code>None</code>, <code>False</code>, <code>True</code>, ints, floats, bytes and tuples, each in value order; <code>prefix=</code> walks <code>str</code> keys only. It’s the order of the stored bytes, so it’s an index scan and the same across a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s shards.</li>
 <li><strong>D-047:</strong> <code>retry=</code> is keyword-only and a strict <code>bool</code>, and retries only <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>. Dict syntax never retries: <code>cache[k]</code> raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> after <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, where diskcache’s waits forever.</li>
 <li><strong>D-048:</strong> a memoized function’s arguments must be key types, checked before the function runs; leave out one that can’t be (a connection, a client) with <code>ignore=</code>.</li>
+<li><strong>D-049:</strong> <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> counts hits and misses per process, in memory, so a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> never writes. Every handle on a directory in one process shares the counts; other processes’ aren’t included, and a restart or a forked child starts at zero.</li>
+<li><strong>D-050:</strong> <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> doesn’t report empty value folders (normal on an open cache) and leaves files under an hour old alone, since a writer may own them. A value file of the wrong size was cut short by a crash, so <code>fix=True</code> removes its entry rather than correct the size and serve the short bytes.</li>
+<li><strong>D-051:</strong> the coordination recipes refuse a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> or <code>durable=True</code> cache, refuse to wait inside their own cache’s transaction, give <code>RLock</code> a per-process owner nonce, and fix <code>throttle</code>’s two bugs (upstream bugs 13 and 14). See <a href="../user-guide/coordination.html">Coordination</a>.</li>
 <li><strong>D-025:</strong> <code>iter(cache)</code> and <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> return a native iterator, not a generator. Two threads calling <code>next()</code> on the same one at once get <code>ValueError</code> at once, as with a shared generator.</li>
 </ul>
 <section id="fanoutcache-d-032-to-d-040" class="level2">

@@ -43,6 +43,9 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | Keys | Anything picklable | `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those; see [Keys](#keys) below |
 | [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) | Supported | Supported, with the same keys; see [Keys](#keys) below |
 | `retry=` | Positional; `cache[k]` retries forever | Keyword-only; `cache[k]` raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) |
+| [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) | Persisted, shared by every process | Per process, in memory (D-049) |
+| [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check) | Supported | Supported, with differences (D-050) |
+| Locks, semaphores, `throttle`, `barrier`, `Averager`, `memoize_stampede` | Supported | Supported, with differences; see [Coordination](coordination.md) |
 | Tags | Supported | Planned |
 
 
@@ -103,7 +106,7 @@ Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples 
 - **[size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) is a total**, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0's share (D-036).
 - **`max_connections` is a total** across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least [shards](../reference/FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) (D-037).
 - **[transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) takes a key** and covers one shard: `with cache.transact(key=k):` where diskcache's `with cache.transact():` locks every shard. Calls for keys on other shards inside the block raise `ValueError`, reads included. A ported bare [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) raises `TypeError` (D-040).
-- **Not there yet:** `cache()`, `deque()` and `index()`, [stats()](../reference/Caches.stats.md#diskcache_oxide.Caches.stats), `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, `read=` and `tag=` arguments, settings as attributes, and pickling (D-039). [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) and `retry=` are there, as on [Cache](../reference/Cache.md#diskcache_oxide.Cache).
+- **Not there yet:** `cache()`, `deque()` and `index()`, `evict()` and tags, `read()`, `read=` and `tag=` arguments, and settings beyond [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) and [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) as attributes (D-039). [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), `retry=`, [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats), [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check), [reset()](../reference/Cache.reset.md#diskcache_oxide.Cache.reset), `reversed()` and pickling are there, as on [Cache](../reference/Cache.md#diskcache_oxide.Cache).
 
 
 # Truthiness

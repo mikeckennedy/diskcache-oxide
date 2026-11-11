@@ -40,4 +40,4 @@ A shared cache does more jobs in a real app than caching. It elects a worker, co
 
 ## Coming later
 
-More recipes will arrive with the features they need: a stampede-proof `memoize`, tags, cross-process locks and throttles, and `AsyncCache` for asyncio apps. [`FanoutCache`](../user-guide/fanoutcache.qmd) and [`transact()`](../user-guide/transactions.qmd) are here already and have their own guide pages. See the [roadmap](../user-guide/roadmap.qmd).
+More recipes will arrive with the features they need: tags and `AsyncCache` for asyncio apps. Locks, semaphores, throttles and a stampede-proof `memoize` are in [Coordination](../user-guide/coordination.qmd). [`FanoutCache`](../user-guide/fanoutcache.qmd) and [`transact()`](../user-guide/transactions.qmd) are here already and have their own guide pages. See the [roadmap](../user-guide/roadmap.qmd).

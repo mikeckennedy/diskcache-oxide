@@ -44,9 +44,6 @@ Store `value` only if `key` is missing or expired.
 [Cache.delete()](Cache.delete.md#diskcache_oxide.Cache.delete)  
 Remove `key`.
 
-[Cache.pop()](Cache.pop.md#diskcache_oxide.Cache.pop)  
-Remove `key` and return its value, delivering it to exactly one caller.
-
 [Cache.touch()](Cache.touch.md#diskcache_oxide.Cache.touch)  
 Change the expiry of an existing entry without rewriting its value.
 
@@ -58,6 +55,21 @@ Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 
 [Cache.memoize()](Cache.memoize.md#diskcache_oxide.Cache.memoize)  
 Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
+
+[Cache.check()](Cache.check.md#diskcache_oxide.Cache.check)  
+Check the database and the value files against each other, as diskcache's `check()`.
+
+[Cache.stats()](Cache.stats.md#diskcache_oxide.Cache.stats)  
+`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
+
+[Cache.durable](Cache.durable.md#diskcache_oxide.Cache.durable)  
+True for a `durable=True` handle.
+
+[Cache.reset()](Cache.reset.md#diskcache_oxide.Cache.reset)  
+Read `size_limit` or `cull_limit` as stored now, or persist a new value and return it.
+
+[Cache.__reversed__()](Cache.__reversed__.md#diskcache_oxide.Cache.__reversed__)  
+Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first).
 
 [Cache.expire()](Cache.expire.md#diskcache_oxide.Cache.expire)  
 Remove every expired entry, and its value file.
@@ -109,6 +121,9 @@ Close the cache, as `close()` does.
 
 [Cache.get()](Cache.get.md#diskcache_oxide.Cache.get)  
 Return the value stored for `key`, or `default` if it's missing or expired.
+
+[Cache.pop()](Cache.pop.md#diskcache_oxide.Cache.pop)  
+Remove `key` and return its value, delivering it to exactly one caller.
 
 [Cache.iterkeys()](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)  
 Iterate over keys in sorted order, optionally only those starting with `prefix`.
@@ -163,9 +178,6 @@ As `Cache.add`, on the key's shard: atomic across threads and processes.
 [FanoutCache.delete()](FanoutCache.delete.md#diskcache_oxide.FanoutCache.delete)  
 As `Cache.delete`, on the key's shard.
 
-[FanoutCache.pop()](FanoutCache.pop.md#diskcache_oxide.FanoutCache.pop)  
-As `Cache.pop`, on the key's shard.
-
 [FanoutCache.touch()](FanoutCache.touch.md#diskcache_oxide.FanoutCache.touch)  
 As `Cache.touch`, on the key's shard.
 
@@ -192,6 +204,21 @@ Checkpoint every shard's write-ahead log and truncate it to zero, as `Cache.chec
 
 [FanoutCache.memoize()](FanoutCache.memoize.md#diskcache_oxide.FanoutCache.memoize)  
 Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
+
+[FanoutCache.check()](FanoutCache.check.md#diskcache_oxide.FanoutCache.check)  
+Check the database and the value files against each other, as diskcache's `check()`.
+
+[FanoutCache.stats()](FanoutCache.stats.md#diskcache_oxide.FanoutCache.stats)  
+`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
+
+[FanoutCache.durable](FanoutCache.durable.md#diskcache_oxide.FanoutCache.durable)  
+True for a `durable=True` handle.
+
+[FanoutCache.reset()](FanoutCache.reset.md#diskcache_oxide.FanoutCache.reset)  
+Read `size_limit` or `cull_limit` as stored now, or persist a new value and return it.
+
+[FanoutCache.__reversed__()](FanoutCache.__reversed__.md#diskcache_oxide.FanoutCache.__reversed__)  
+Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first).
 
 [FanoutCache.__iter__()](FanoutCache.__iter__.md#diskcache_oxide.FanoutCache.__iter__)  
 Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on.
@@ -225,6 +252,9 @@ Close the cache, as `close()` does.
 
 [FanoutCache.get()](FanoutCache.get.md#diskcache_oxide.FanoutCache.get)  
 As `Cache.get`, on the key's shard.
+
+[FanoutCache.pop()](FanoutCache.pop.md#diskcache_oxide.FanoutCache.pop)  
+As `Cache.pop`, on the key's shard.
 
 [FanoutCache.iterkeys()](FanoutCache.iterkeys.md#diskcache_oxide.FanoutCache.iterkeys)  
 Iterate over keys in sorted order, optionally only those starting with `prefix`.
@@ -273,6 +303,18 @@ The cull limit passed to the constructor (default 10). Unused.
 [NullCache.enabled](NullCache.enabled.md#diskcache_oxide.NullCache.enabled)  
 Always False: caching is off.
 
+[NullCache.durable](NullCache.durable.md#diskcache_oxide.NullCache.durable)  
+Always False: a `NullCache` has no outages to answer.
+
+[NullCache.check()](NullCache.check.md#diskcache_oxide.NullCache.check)  
+Always `[]`: there is nothing to check.
+
+[NullCache.stats()](NullCache.stats.md#diskcache_oxide.NullCache.stats)  
+Always `(0, 0)`: nothing is looked up.
+
+[NullCache.reset()](NullCache.reset.md#diskcache_oxide.NullCache.reset)  
+Read `size_limit` or `cull_limit`, or set it (checked as `Cache` checks it) and return it.
+
 [NullCache.get()](NullCache.get.md#diskcache_oxide.NullCache.get)  
 Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`.
 
@@ -289,6 +331,9 @@ Always 0.
 Always False, so `if cache:` means "caching is on".
 
 [NullCache.__iter__()](NullCache.__iter__.md#diskcache_oxide.NullCache.__iter__)  
+Yields nothing.
+
+[NullCache.__reversed__()](NullCache.__reversed__.md#diskcache_oxide.NullCache.__reversed__)  
 Yields nothing.
 
 [NullCache.volume()](NullCache.volume.md#diskcache_oxide.NullCache.volume)  
@@ -322,7 +367,7 @@ False, or with `invalidate=`, delete the key from that cache and return its resu
 Raise `KeyError`, or with `invalidate=`, delete the key from that cache.
 
 [NullCache.pop()](NullCache.pop.md#diskcache_oxide.NullCache.pop)  
-Return `default`. With `invalidate=`, also delete the key from that cache.
+Return `default` (`(default, None)` with `expire_time=True`). With `invalidate=`, also delete
 
 [NullCache.clear()](NullCache.clear.md#diskcache_oxide.NullCache.clear)  
 0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count.
@@ -396,6 +441,21 @@ Add `delta` to the number under `key`, atomically, and return the result.
 
 [CacheLike.decr()](CacheLike.decr.md#diskcache_oxide.CacheLike.decr)  
 Subtract `delta` from the number under `key`, atomically, and return the result.
+
+[CacheLike.durable](CacheLike.durable.md#diskcache_oxide.CacheLike.durable)  
+True for a `durable=True` handle (always False on a `NullCache`).
+
+[CacheLike.check()](CacheLike.check.md#diskcache_oxide.CacheLike.check)  
+Check the database and value files against each other; `[]` on a `NullCache`.
+
+[CacheLike.stats()](CacheLike.stats.md#diskcache_oxide.CacheLike.stats)  
+`(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`.
+
+[CacheLike.reset()](CacheLike.reset.md#diskcache_oxide.CacheLike.reset)  
+Read or set `size_limit` or `cull_limit`.
+
+[CacheLike.__reversed__()](CacheLike.__reversed__.md#diskcache_oxide.CacheLike.__reversed__)  
+Keys in insertion order backwards, newest first.
 
 [CacheLike.memoize()](CacheLike.memoize.md#diskcache_oxide.CacheLike.memoize)  
 A decorator caching a function's results in this cache (diskcache's `memoize`).

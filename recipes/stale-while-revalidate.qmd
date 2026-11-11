@@ -92,7 +92,7 @@ def refresh_hot_pages() -> None:                      # runs every 5 minutes, on
 
 Readers do a plain `get()` and never miss; a missed run or two costs nothing because the entries outlive several intervals. The cost is that the job renders pages nobody may be asking for, which is fine for a handful of keys and wrong for a long tail. Stale-while-revalidate handles the tail, since it only refreshes what's being read.
 
-A `memoize` decorator with this built in is planned (see the [roadmap](../user-guide/roadmap.qmd)).
+`memoize_stampede` is a decorator with this built in: it recomputes a result early, in the background, before it expires. See [Coordination](../user-guide/coordination.qmd#memoize_stampede).
 
 ```{python}
 #| echo: false

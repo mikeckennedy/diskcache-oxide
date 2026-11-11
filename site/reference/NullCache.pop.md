@@ -1,16 +1,16 @@
 ## NullCache.pop()
 
 
-Return `default`. With `invalidate=`, also delete the key from that cache.
+Return `default` (`(default, None)` with `expire_time=True`). With `invalidate=`, also delete
 
 
 Usage
 
 ``` python
-NullCache.pop(
-    key,
-    default=None,
-    *,
-    retry=False,
-)
+NullCache.pop(self, key: Key, default: Any = None, expire_time: Literal[False] = False, retry: bool = False) -> Any
+ 
+NullCache.pop(self, key: Key, default: Any = None, expire_time: Literal[True], retry: bool = False) -> tuple[Any, float | None]
 ```
+
+
+the key from that cache.

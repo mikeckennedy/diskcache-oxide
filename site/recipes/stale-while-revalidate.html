@@ -657,7 +657,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="stale-while-revalidate" class="level1">
 <h1>Stale-while-revalidate</h1>
 <p>Store the value with its own freshness deadline inside, and give the entry a longer hard expiry. A reader that finds the entry fresh returns it. One that finds it stale returns it anyway, and the first of them to win a claim starts a refresh in the background. Readers never wait, and the herd is one worker.</p>
-<div id="bb65d5b8" class="cell" data-execution_count="1">
+<div id="ff18b0d3" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
@@ -738,7 +738,7 @@ the next reader gets the fresh page from t=1000061</code></pre>
 <span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> name <span class="kw">in</span> HOT_PAGES:</span>
 <span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>        cache.<span class="bu">set</span>(<span class="ss">f'page:</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">'</span>, render_page(name), expire<span class="op">=</span><span class="dv">15</span> <span class="op">*</span> <span class="dv">60</span>)</span></code></pre></div>
 <p>Readers do a plain <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get()</a> and never miss; a missed run or two costs nothing because the entries outlive several intervals. The cost is that the job renders pages nobody may be asking for, which is fine for a handful of keys and wrong for a long tail. Stale-while-revalidate handles the tail, since it only refreshes what’s being read.</p>
-<p>A <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> decorator with this built in is planned (see the <a href="../user-guide/roadmap.html">roadmap</a>).</p>
+<p><code>memoize_stampede</code> is a decorator with this built in: it recomputes a result early, in the background, before it expires. See <a href="../user-guide/coordination.html#memoize_stampede">Coordination</a>.</p>
 
 
 </section>

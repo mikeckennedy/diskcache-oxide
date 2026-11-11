@@ -568,6 +568,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/coordination.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Coordination: locks, semaphores and throttles</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Concurrency and forks</span></a>
   </div>
@@ -740,7 +746,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <tbody>
 <tr class="odd">
 <td><strong>6. Parity with diskcache</strong></td>
-<td>In four releases. First, keys of every native type (<code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code> and tuples, beside <code>str</code>), <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, and <code>retry=</code>, with no cache to delete. Then the small gaps (<code>reversed()</code>, <code>pop(expire_time=)</code>, pickling a cache, per-process <a href="../reference/Caches.stats.html#diskcache_oxide.Caches.stats" class="gdls-link gdls-code">stats()</a>, <code>check()</code>) and the coordination recipes: <code>Lock</code>, <code>RLock</code>, <code>BoundedSemaphore</code>, <code>throttle</code>, <code>barrier</code>, <code>Averager</code> and a stampede-proof <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>. Then tags with <code>evict(tag)</code> and <code>eviction_policy='none'</code>, together in one on-disk format change. Then the queue calls <code>push</code>, <code>pull</code> and <code>peek</code>.</td>
+<td>In four releases. First, keys of every native type (<code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code> and tuples, beside <code>str</code>), <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, and <code>retry=</code>, with no cache to delete. Then the small gaps (<code>reversed()</code>, <code>pop(expire_time=)</code>, pickling a cache, per-process <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a>) and the coordination recipes: <code>Lock</code>, <code>RLock</code>, <code>BoundedSemaphore</code>, <code>throttle</code>, <code>barrier</code>, <code>Averager</code> and a stampede-proof <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>. Then tags with <code>evict(tag)</code> and <code>eviction_policy='none'</code>, together in one on-disk format change. Then the queue calls <code>push</code>, <code>pull</code> and <code>peek</code>.</td>
 </tr>
 <tr class="even">
 <td><strong>Django cache backend</strong></td>
@@ -774,7 +780,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong><code>disk=</code> and <code>Disk</code> subclasses.</strong> A Python class on every read and write would undo the Rust engine; <code>serializer=</code> and <code>register_type()</code> cover what people used them for.</li>
 <li><strong>Pickled keys.</strong> Keys are never pickled, so listing keys never runs pickle and a key’s identity doesn’t depend on pickle’s bytes.</li>
 <li><strong><code>read=True</code> and <code>read()</code></strong> (streaming a file in and out). Folded into the large-file cache idea below.</li>
-<li><strong>Persisted statistics.</strong> <a href="../reference/Caches.stats.html#diskcache_oxide.Caches.stats" class="gdls-link gdls-code">stats()</a> will count per process, in memory: diskcache’s persisted counters make every <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> a write.</li>
+<li><strong>Persisted statistics.</strong> <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> will count per process, in memory: diskcache’s persisted counters make every <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> a write.</li>
 </ul>
 </section>
 </section>

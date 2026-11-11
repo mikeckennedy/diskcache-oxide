@@ -197,42 +197,6 @@ Examples:
         cache.delete(key)          # safe while iterating
     ```
 
-pop(self, key: 'Key', default: 'Any' = None, *, retry: 'bool' = False) -> 'Any'
-
-Remove `key` and return its value, delivering it to exactly one caller.
-
-Reads and decodes the value first, as `get` does, then deletes exactly that stored version,
-so a value it can't read stays for whoever can. A `pop` that loses that delete to other
-writers 8 times falls back to removing the row first and decoding afterwards. Only then can
-a failed decode cost the value: one from a newer version, or any error from a pickle hook.
-`timeout` covers the whole call.
-
-Args:
-    key: The key.
-    default: Returned when the key is missing or expired, or its value file is missing.
-    retry: On a `Timeout`, try again until the call gets through, each round with the
-        whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
-
-Returns:
-    The removed value, or `default`. With `durable=True`, a `pop` whose delete fails returns
-    `default`, never the value, which could otherwise be delivered twice. The row stays.
-
-Raises:
-    UnsafeValueError: The value was stored with pickle and this cache has `pickle=False`.
-        The row stays.
-    ForeignValueError: `on_decode_error='raise'`, and another version or host might read
-        the value. The row stays.
-    CorruptValueError: `on_decode_error='raise'`, and no build could read the value. The row
-        is deleted first.
-    Timeout: Another process held the write lock for longer than `timeout`, or `timeout` ran
-        out after losing a race to another writer. This `pop` deletes nothing, and whatever
-        the other writer left stays.
-
-Examples:
-    ```python
-    token = cache.pop('reset-token:abc')   # None if it was missing or already used
-    ```
-
 touch(self, key: 'Key', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
 
 Change the expiry of an existing entry without rewriting its value.
@@ -327,6 +291,64 @@ Examples:
 
     cache.delete(episode.__cache_key__(42))  # forget one call
     ```
+
+check(self, fix: 'bool' = False, retry: 'bool' = False) -> 'list[warnings.WarningMessage]'
+
+Check the database and the value files against each other, as diskcache's `check()`.
+
+Reports, as a list of `warnings.WarningMessage` (nothing is issued through `warnings`): lines
+of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size
+(`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache
+directory, that no entry names and that is over an hour old (`unknown file: ...`, an
+`UnknownFileWarning`; a younger one may be a writer's in flight); and stored totals that
+don't match the rows. Empty value folders aren't reported: they're normal on an open cache.
+Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and
+`VACUUM`.
+
+Args:
+    fix: Also repair: remove an entry whose file is missing or the wrong size (it reads as a
+        miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
+        value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
+        whole database through the write-ahead log and needs a temporary copy of it in
+        `SQLITE_TMPDIR` or `/tmp`; forks and writers wait for it.
+    retry: On a `Timeout`, start again until it gets through.
+
+Raises:
+    RuntimeError: Inside this thread's own `transact()` block.
+    Timeout: A step waited longer than `timeout` (and `retry` is False).
+
+stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
+
+`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
+
+Returns the counts as they were, then resets them if `reset`, then turns counting on or off
+with `enable` (off by default). Counted per process and in memory, never in the database, so
+a read never writes: other processes' lookups aren't included, the counts start from zero
+when the process (or a forked child) starts, and every handle on one directory in a process
+shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
+counts as nothing. A `FanoutCache` sums its shards.
+
+durable
+
+True for a `durable=True` handle.
+
+reset(self, key: 'str', value: 'Any' = Ellipsis, update: 'bool' = True) -> 'int'
+
+Read `size_limit` or `cull_limit` as stored now, or persist a new value and return it.
+
+Args:
+    key: `'size_limit'` or `'cull_limit'`.
+    value: The new value, checked as the constructor checks it; leave it out (or pass
+        `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
+    update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
+
+Raises:
+    ValueError: Another key, `update=False`, or a value the constructor would refuse.
+    TypeError: A value that isn't an `int`.
+
+__reversed__(self) -> 'Iterator[Key]'
+
+Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first).
 
 expire(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
 
@@ -546,6 +568,42 @@ Examples:
     value, expires_at = cache.get('user:42', expire_time=True)
     ```
 
+pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'Literal[False]' = False, retry: 'bool' = False) -> 'Any'
+
+Remove `key` and return its value, delivering it to exactly one caller.
+
+Reads and decodes the value first, as `get` does, then deletes exactly that stored version,
+so a value it can't read stays for whoever can. A `pop` that loses that delete to other
+writers 8 times falls back to removing the row first and decoding afterwards. Only then can
+a failed decode cost the value: one from a newer version, or any error from a pickle hook.
+`timeout` covers the whole call.
+
+Args:
+    key: The key.
+    default: Returned when the key is missing or expired, or its value file is missing.
+    retry: On a `Timeout`, try again until the call gets through, each round with the
+        whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
+
+Returns:
+    The removed value, or `default`. With `durable=True`, a `pop` whose delete fails returns
+    `default`, never the value, which could otherwise be delivered twice. The row stays.
+
+Raises:
+    UnsafeValueError: The value was stored with pickle and this cache has `pickle=False`.
+        The row stays.
+    ForeignValueError: `on_decode_error='raise'`, and another version or host might read
+        the value. The row stays.
+    CorruptValueError: `on_decode_error='raise'`, and no build could read the value. The row
+        is deleted first.
+    Timeout: Another process held the write lock for longer than `timeout`, or `timeout` ran
+        out after losing a race to another writer. This `pop` deletes nothing, and whatever
+        the other writer left stays.
+
+Examples:
+    ```python
+    token = cache.pop('reset-token:abc')   # None if it was missing or already used
+    ```
+
 iterkeys(self, *, prefix: 'str', reverse: 'bool' = False) -> 'Iterator[str]'
 
 Iterate over keys in sorted order, optionally only those starting with `prefix`.
@@ -740,10 +798,6 @@ delete(self, key: 'Key', *, retry: 'bool' = False) -> 'bool'
 
 As `Cache.delete`, on the key's shard.
 
-pop(self, key: 'Key', default: 'Any' = None, *, retry: 'bool' = False) -> 'Any'
-
-As `Cache.pop`, on the key's shard.
-
 touch(self, key: 'Key', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
 
 As `Cache.touch`, on the key's shard.
@@ -874,6 +928,64 @@ Examples:
     cache.delete(episode.__cache_key__(42))  # forget one call
     ```
 
+check(self, fix: 'bool' = False, retry: 'bool' = False) -> 'list[warnings.WarningMessage]'
+
+Check the database and the value files against each other, as diskcache's `check()`.
+
+Reports, as a list of `warnings.WarningMessage` (nothing is issued through `warnings`): lines
+of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size
+(`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache
+directory, that no entry names and that is over an hour old (`unknown file: ...`, an
+`UnknownFileWarning`; a younger one may be a writer's in flight); and stored totals that
+don't match the rows. Empty value folders aren't reported: they're normal on an open cache.
+Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and
+`VACUUM`.
+
+Args:
+    fix: Also repair: remove an entry whose file is missing or the wrong size (it reads as a
+        miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
+        value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
+        whole database through the write-ahead log and needs a temporary copy of it in
+        `SQLITE_TMPDIR` or `/tmp`; forks and writers wait for it.
+    retry: On a `Timeout`, start again until it gets through.
+
+Raises:
+    RuntimeError: Inside this thread's own `transact()` block.
+    Timeout: A step waited longer than `timeout` (and `retry` is False).
+
+stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
+
+`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
+
+Returns the counts as they were, then resets them if `reset`, then turns counting on or off
+with `enable` (off by default). Counted per process and in memory, never in the database, so
+a read never writes: other processes' lookups aren't included, the counts start from zero
+when the process (or a forked child) starts, and every handle on one directory in a process
+shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
+counts as nothing. A `FanoutCache` sums its shards.
+
+durable
+
+True for a `durable=True` handle.
+
+reset(self, key: 'str', value: 'Any' = Ellipsis, update: 'bool' = True) -> 'int'
+
+Read `size_limit` or `cull_limit` as stored now, or persist a new value and return it.
+
+Args:
+    key: `'size_limit'` or `'cull_limit'`.
+    value: The new value, checked as the constructor checks it; leave it out (or pass
+        `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
+    update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
+
+Raises:
+    ValueError: Another key, `update=False`, or a value the constructor would refuse.
+    TypeError: A value that isn't an `int`.
+
+__reversed__(self) -> 'Iterator[Key]'
+
+Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first).
+
 __iter__(self) -> 'Iterator[Key]'
 
 Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on.
@@ -928,6 +1040,10 @@ Close the cache, as `close()` does.
 get(self, key: 'Key', default: 'Any' = None, *, expire_time: 'Literal[False]' = False, retry: 'bool' = False) -> 'Any'
 
 As `Cache.get`, on the key's shard.
+
+pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'Literal[False]' = False, retry: 'bool' = False) -> 'Any'
+
+As `Cache.pop`, on the key's shard.
 
 iterkeys(self, *, prefix: 'str', reverse: 'bool' = False) -> 'Iterator[str]'
 
@@ -1073,6 +1189,22 @@ enabled
 
 Always False: caching is off.
 
+durable
+
+Always False: a `NullCache` has no outages to answer.
+
+check(self, fix: 'bool' = False, retry: 'bool' = False) -> 'list[warnings.WarningMessage]'
+
+Always `[]`: there is nothing to check.
+
+stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
+
+Always `(0, 0)`: nothing is looked up.
+
+reset(self, key: 'str', value: 'Any' = ENOVAL, update: 'bool' = True) -> 'int'
+
+Read `size_limit` or `cull_limit`, or set it (checked as `Cache` checks it) and return it.
+
 get(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, retry: 'bool' = False) -> 'Any'
 
 Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`.
@@ -1094,6 +1226,10 @@ __bool__(self) -> 'bool'
 Always False, so `if cache:` means "caching is on".
 
 __iter__(self) -> 'Iterator[Key]'
+
+Yields nothing.
+
+__reversed__(self) -> 'Iterator[Key]'
 
 Yields nothing.
 
@@ -1143,9 +1279,10 @@ __delitem__(self, key: 'Key', /) -> 'None'
 
 Raise `KeyError`, or with `invalidate=`, delete the key from that cache.
 
-pop(self, key: 'Key', default: 'Any' = None, *, retry: 'bool' = False) -> 'Any'
+pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, retry: 'bool' = False) -> 'Any'
 
-Return `default`. With `invalidate=`, also delete the key from that cache.
+Return `default` (`(default, None)` with `expire_time=True`). With `invalidate=`, also delete
+the key from that cache.
 
 clear(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
 
@@ -1237,7 +1374,7 @@ delete(self, key: 'Key', *, retry: 'bool' = False) -> 'bool'
 
 Remove `key`. True if a live entry was removed.
 
-pop(self, key: 'Key', default: 'Any' = None, *, retry: 'bool' = False) -> 'Any'
+pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, retry: 'bool' = False) -> 'Any'
 
 Remove `key` and return its value, or `default`.
 
@@ -1252,6 +1389,26 @@ Add `delta` to the number under `key`, atomically, and return the result.
 decr(self, key: 'Key', delta: 'float' = 1, default: 'float | None' = 0, *, retry: 'bool' = False) -> 'int | float'
 
 Subtract `delta` from the number under `key`, atomically, and return the result.
+
+durable
+
+True for a `durable=True` handle (always False on a `NullCache`).
+
+check(self, fix: 'bool' = False, retry: 'bool' = False) -> 'list[warnings.WarningMessage]'
+
+Check the database and value files against each other; `[]` on a `NullCache`.
+
+stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
+
+`(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`.
+
+reset(self, key: 'str', value: 'Any' = Ellipsis, update: 'bool' = True) -> 'int'
+
+Read or set `size_limit` or `cull_limit`.
+
+__reversed__(self) -> 'Iterator[Key]'
+
+Keys in insertion order backwards, newest first.
 
 memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
 
@@ -2017,6 +2174,9 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | Keys | Anything picklable | `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those; see [Keys](#keys) below |
 | `memoize` | Supported | Supported, with the same keys; see [Keys](#keys) below |
 | `retry=` | Positional; `cache[k]` retries forever | Keyword-only; `cache[k]` raises `Timeout` |
+| `stats()` | Persisted, shared by every process | Per process, in memory (D-049) |
+| `check()` | Supported | Supported, with differences (D-050) |
+| Locks, semaphores, `throttle`, `barrier`, `Averager`, `memoize_stampede` | Supported | Supported, with differences; see [Coordination](coordination.qmd) |
 | Tags | Supported | Planned |
 
 ## Values: no pickle unless you ask
@@ -2073,7 +2233,7 @@ Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples 
 - **`size_limit` is a total**, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0's share (D-036).
 - **`max_connections` is a total** across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least `shards` (D-037).
 - **`transact()` takes a key** and covers one shard: `with cache.transact(key=k):` where diskcache's `with cache.transact():` locks every shard. Calls for keys on other shards inside the block raise `ValueError`, reads included. A ported bare `transact()` raises `TypeError` (D-040).
-- **Not there yet:** `cache()`, `deque()` and `index()`, `stats()`, `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, `read=` and `tag=` arguments, settings as attributes, and pickling (D-039). `memoize` and `retry=` are there, as on `Cache`.
+- **Not there yet:** `cache()`, `deque()` and `index()`, `evict()` and tags, `read()`, `read=` and `tag=` arguments, and settings beyond `size_limit` and `cull_limit` as attributes (D-039). `memoize`, `retry=`, `stats()`, `check()`, `reset()`, `reversed()` and pickling are there, as on `Cache`.
 
 ## Truthiness
 
@@ -2992,6 +3152,82 @@ def count(cache: TransactionalCacheLike, path: str) -> None:
 On a `NullCache`, `transact()` is a no-op that yields the `NullCache`. A [`FanoutCache`](fanoutcache.qmd) is not a `TransactionalCacheLike`: its `transact(*, key)` covers only the shard that `key` lives in, and refuses calls for keys on other shards inside the block. Annotate with `ShardedCacheLike` to accept a `FanoutCache` or a `NullCache`. `CacheLike` itself has no `transact()`, so a cache whose transactions need more than `retry=` (a sharded cache's `transact(key=...)`) can still be a `CacheLike`. A [`Caches`](caches.qmd) lookup is a `TransactionalCacheLike`, so `caches['general'].transact()` type-checks, and a disabled cache's `transact()` is the `NullCache` one.
 
 
+### Coordination: locks, semaphores and throttles
+
+A cache directory is shared by every process on the machine that opens it, and `add()`, `incr()` and `transact()` are atomic across all of them. That makes it a place to coordinate work as well as cache it: one worker at a time on a job, at most a few at once on a slow API, a rate limit every worker respects. diskcache-oxide ships diskcache's coordination recipes for that, under the same names.
+
+```python
+from diskcache_oxide import Cache, Lock, RLock, BoundedSemaphore, Averager, throttle, barrier
+
+locks = Cache('/var/cache/my-app/locks')
+```
+
+## Lock
+
+```python
+lock = Lock(locks, 'report:nightly', expire=600)
+
+with lock:
+    build_the_report()
+```
+
+One holder at a time, in any thread of any process. `acquire()` waits, polling every millisecond, until it gets the lock; `release()` gives it back; `locked()` says whether anyone holds it. It isn't reentrant: the holder taking it again waits for itself. Give it an `expire`, so a holder that crashes without releasing doesn't keep the lock forever.
+
+`RLock` is the reentrant one: the thread holding it may take it again, and must release it as many times. Its owner is the process and thread, with a per-process nonce, so another thread, another process, a forked child, or a container on the same volume that happens to have the same pid can never release or re-enter it. Releasing a lock you don't hold raises `AssertionError`.
+
+## BoundedSemaphore
+
+```python
+api_slots = BoundedSemaphore(locks, 'api:partner', value=4)
+
+with api_slots:
+    call_the_partner_api()
+```
+
+At most `value` holders at once, everywhere. Releasing more times than it was acquired raises `AssertionError`.
+
+## throttle
+
+```python
+@throttle(locks, count=10, seconds=1)
+def send_webhook(event): ...
+```
+
+At most `count` calls every `seconds`, across every process: a token bucket stored under the function's qualified name (or `name=`). A call with no token waits until one is due. Two fixes over diskcache's: a bucket that expired or was cleared counts as full rather than raising `TypeError`, and decorating the function adds the bucket only if it isn't there, so every worker that imports the module doesn't refill it.
+
+## barrier
+
+```python
+@barrier(locks, Lock)
+def migrate(): ...
+```
+
+Runs the function under a lock made by the factory you pass (`Lock`, `RLock`, `BoundedSemaphore`, or your own), keyed by the function's qualified name: one caller at a time.
+
+## Averager
+
+```python
+latency = Averager(locks, 'latency:checkout')
+latency.add(0.080)
+latency.add(0.120)
+latency.get()  # 0.1
+```
+
+A running average whose total and count are updated together in one transaction, so every process adding to it agrees.
+
+## memoize_stampede
+
+`memoize_stampede(cache, expire)` is `memoize` with stampede protection: a result close to expiring is recomputed early, in a background thread, by one caller, while everyone else keeps getting the cached value. It's a cache, not a lock, so it works on a `NullCache` and a `durable=True` cache as `memoize` does. See [Caching expensive calls](../recipes/caching-expensive-calls.qmd).
+
+## Things to know
+
+- **Use a cache of its own for coordination.** Lock and semaphore keys are cache entries: least-recently-stored culling removes the oldest first, and a lock held a long time is old, so a full cache can evict a held lock. `clear()` releases every lock in the cache. A small directory with a generous `size_limit` and nothing else in it avoids both.
+- **Not on a `NullCache` or a `durable=True` cache.** The recipes refuse them with `TypeError`: with caching off every caller would hold the lock at once, and a durable cache could drop the `delete` that releases one, leaving it held forever.
+- **Not while waiting inside your own transaction.** A recipe that would have to wait inside a `transact()` block on its own cache raises `RuntimeError`: waiting there holds the cache's write lock, so no other process could ever release the lock you're waiting for. Inside a transaction on a different cache, a contended recipe raises `TransactionBusy` at once rather than waiting ([D-030](divergences.qmd)).
+- **On a `FanoutCache`** each recipe locks only its key's shard.
+- `tag=` is accepted, so calls written for diskcache line up, but must be `None` until tags arrive.
+
+
 ### Concurrency and forks
 
 A production Python web app is a crowd. Several worker processes, often several threads in each, a pre-forking server that creates and recycles those workers while they're busy, and a cron job or an admin script opening the same cache on the side. More and more, it's also free-threaded Python, where the threads really do run at the same time. diskcache-oxide is designed for all of that at once, and its test suite runs each of these cases on every change, because this is where cache bugs hide: not in `get` and `set`, but in what happens when two of them collide.
@@ -3297,6 +3533,9 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-046 | `iterkeys()` across key types | Numbers, then text, then bytes | `str` keys, then the other types in a fixed order |
 | D-047 | `retry=` | Positional; `cache[k]` retries forever | Keyword-only; `cache[k]` raises `Timeout` |
 | D-048 | A memoized function's arguments | Anything picklable | Key types only, checked before the call |
+| D-049 | `stats()` | Persisted and shared; `get` writes while on | Per process, in memory; `get` never writes |
+| D-050 | `check()` | Warns on every empty folder and stray file; fixes a wrong size | Skips empty folders and files under an hour old; removes a wrong-size entry |
+| D-051 | The coordination recipes | Work on any cache; `throttle` breaks after its bucket expires | Refuse `NullCache` and durable caches; `throttle` fixed; `RLock` owner has a nonce |
 
 ## Safety
 
@@ -3397,6 +3636,9 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-046:** `iterkeys()` gives every `str` key first, in code-point order, then `None`, `False`, `True`, ints, floats, bytes and tuples, each in value order; `prefix=` walks `str` keys only. It's the order of the stored bytes, so it's an index scan and the same across a `FanoutCache`'s shards.
 - **D-047:** `retry=` is keyword-only and a strict `bool`, and retries only `Timeout`. Dict syntax never retries: `cache[k]` raises `Timeout` after `timeout`, where diskcache's waits forever.
 - **D-048:** a memoized function's arguments must be key types, checked before the function runs; leave out one that can't be (a connection, a client) with `ignore=`.
+- **D-049:** `stats()` counts hits and misses per process, in memory, so a `get` never writes. Every handle on a directory in one process shares the counts; other processes' aren't included, and a restart or a forked child starts at zero.
+- **D-050:** `check()` doesn't report empty value folders (normal on an open cache) and leaves files under an hour old alone, since a writer may own them. A value file of the wrong size was cut short by a crash, so `fix=True` removes its entry rather than correct the size and serve the short bytes.
+- **D-051:** the coordination recipes refuse a `NullCache` or `durable=True` cache, refuse to wait inside their own cache's transaction, give `RLock` a per-process owner nonce, and fix `throttle`'s two bugs (upstream bugs 13 and 14). See [Coordination](coordination.qmd).
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)
@@ -3506,7 +3748,7 @@ A few things to keep in mind:
 
 When a popular entry expires, every worker that asks for it in the next moment misses at the same time, and all of them recompute it. For most values that's harmless. If the computation is expensive enough that doing it eight times at once hurts, refresh it ahead of expiry from a background job (see [Running a job once across workers](run-once.qmd)), so readers never see it missing.
 
-A `memoize` with built-in stampede protection is planned (see the [roadmap](../user-guide/roadmap.qmd)).
+`memoize_stampede(cache, expire=...)` is `memoize` with that built in: a result close to expiring is recomputed early, in the background, by one caller, while every caller keeps getting the cached one. See [Coordination](../user-guide/coordination.qmd#memoize_stampede).
 
 ### Serving stale values while refreshing
 
@@ -3601,7 +3843,7 @@ def refresh_hot_pages() -> None:                      # runs every 5 minutes, on
 
 Readers do a plain `get()` and never miss; a missed run or two costs nothing because the entries outlive several intervals. The cost is that the job renders pages nobody may be asking for, which is fine for a handful of keys and wrong for a long tail. Stale-while-revalidate handles the tail, since it only refreshes what's being read.
 
-A `memoize` decorator with this built in is planned (see the [roadmap](../user-guide/roadmap.qmd)).
+`memoize_stampede` is a decorator with this built in: it recomputes a result early, in the background, before it expires. See [Coordination](../user-guide/coordination.qmd#memoize_stampede).
 
 ### Caching responses from other services
 

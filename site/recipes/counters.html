@@ -660,7 +660,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>A download counter is the simplest feature on the site, and the first one to start lying once there’s more than one worker: each process counts what it saw, and the number on the page depends on which worker rendered it. Moving the count to the database fixes the lie and makes every download a write to your busiest table. A cache counter sits in between: <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> is atomic across every thread and process on the machine, costs tens of microseconds, and the totals can be moved to the database on a schedule, by one worker, without losing a single count on the way.</p>
 <section id="count-from-every-worker" class="level1">
 <h1>Count from every worker</h1>
-<div id="9f28ca73" class="cell" data-execution_count="1">
+<div id="3487c7e4" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -691,7 +691,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="flush-the-counts-to-the-database" class="level1">
 <h1>Flush the counts to the database</h1>
 <p>Totals belong in the database eventually: for reports, and so they survive a cleared cache. <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> reads a counter and removes it in one atomic step, so a view recorded while the flush runs lands in a fresh counter and is picked up next time. Nothing is counted twice or lost.</p>
-<div id="acaa5b8e" class="cell" data-execution_count="2">
+<div id="7fb17d73" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>database: <span class="bu">dict</span>[<span class="bu">int</span>, <span class="bu">int</span>] <span class="op">=</span> {}   <span class="co"># stands in for UPDATE episodes SET views = views + ? WHERE id = ?</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> flush_views() <span class="op">-&gt;</span> <span class="va">None</span>:</span>
@@ -713,7 +713,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="counters-that-clean-themselves-up" class="level1">
 <h1>Counters that clean themselves up</h1>
 <p>For per-day or per-month figures, put the period in the key and give each counter an expiry. Create it with <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> first: <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> keeps whatever expiry the key already has, and on a key it has to create, it sets none.</p>
-<div id="4f986bed" class="cell" data-execution_count="3">
+<div id="c385aa3e" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> datetime</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> record_download(file_id: <span class="bu">str</span>, day: datetime.date) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
@@ -733,7 +733,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="quotas-with-decr" class="level1">
 <h1>Quotas with <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr()</a></h1>
 <p>A quota is a counter that starts at the allowance and counts down:</p>
-<div id="4bf69c6b" class="cell" data-execution_count="4">
+<div id="b32b1550" class="cell" data-execution_count="4">
 <div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> consume_quota(user_id: <span class="bu">int</span>, units: <span class="bu">int</span> <span class="op">=</span> <span class="dv">1</span>, allowance: <span class="bu">int</span> <span class="op">=</span> <span class="dv">1000</span>) <span class="op">-&gt;</span> <span class="bu">bool</span>:</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    key <span class="op">=</span> <span class="ss">f'quota:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">:2026-11'</span>                       <span class="co"># the billing period, in a real app from the date</span></span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    cache.add(key, allowance, expire<span class="op">=</span><span class="dv">40</span> <span class="op">*</span> <span class="dv">24</span> <span class="op">*</span> <span class="dv">3600</span>)      <span class="co"># the first call this period sets the allowance</span></span>

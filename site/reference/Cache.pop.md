@@ -11,6 +11,7 @@ Cache.pop(
     key,
     default=None,
     *,
+    expire_time=False,
     retry=False,
 )
 ```
@@ -35,7 +36,7 @@ On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call get
 ## Returns
 
 
-`Any`  
+`Any | tuple[Any, float | None]`  
 The removed value, or `default`. With `durable=True`, a [pop](Cache.pop.md#diskcache_oxide.Cache.pop) whose delete fails returns
 
 `default`, never the value, which could otherwise be delivered twice. The row stays.

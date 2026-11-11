@@ -43,6 +43,9 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | Keys | Anything picklable | `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those; see [Keys](#keys) below |
 | `memoize` | Supported | Supported, with the same keys; see [Keys](#keys) below |
 | `retry=` | Positional; `cache[k]` retries forever | Keyword-only; `cache[k]` raises `Timeout` |
+| `stats()` | Persisted, shared by every process | Per process, in memory (D-049) |
+| `check()` | Supported | Supported, with differences (D-050) |
+| Locks, semaphores, `throttle`, `barrier`, `Averager`, `memoize_stampede` | Supported | Supported, with differences; see [Coordination](coordination.qmd) |
 | Tags | Supported | Planned |
 
 ## Values: no pickle unless you ask
@@ -99,7 +102,7 @@ Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples 
 - **`size_limit` is a total**, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0's share (D-036).
 - **`max_connections` is a total** across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least `shards` (D-037).
 - **`transact()` takes a key** and covers one shard: `with cache.transact(key=k):` where diskcache's `with cache.transact():` locks every shard. Calls for keys on other shards inside the block raise `ValueError`, reads included. A ported bare `transact()` raises `TypeError` (D-040).
-- **Not there yet:** `cache()`, `deque()` and `index()`, `stats()`, `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, `read=` and `tag=` arguments, settings as attributes, and pickling (D-039). `memoize` and `retry=` are there, as on `Cache`.
+- **Not there yet:** `cache()`, `deque()` and `index()`, `evict()` and tags, `read()`, `read=` and `tag=` arguments, and settings beyond `size_limit` and `cull_limit` as attributes (D-039). `memoize`, `retry=`, `stats()`, `check()`, `reset()`, `reversed()` and pickling are there, as on `Cache`.
 
 ## Truthiness
 

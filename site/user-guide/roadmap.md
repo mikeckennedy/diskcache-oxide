@@ -66,7 +66,7 @@ In this order (Michael, 2026-11-10):
 
 | Phase | What it delivers |
 |----|----|
-| **6. Parity with diskcache** | In four releases. First, keys of every native type (`bytes`, `int`, `float`, `bool`, `None` and tuples, beside `str`), [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), and `retry=`, with no cache to delete. Then the small gaps (`reversed()`, `pop(expire_time=)`, pickling a cache, per-process [stats()](../reference/Caches.stats.md#diskcache_oxide.Caches.stats), `check()`) and the coordination recipes: `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, `Averager` and a stampede-proof [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize). Then tags with `evict(tag)` and `eviction_policy='none'`, together in one on-disk format change. Then the queue calls `push`, `pull` and `peek`. |
+| **6. Parity with diskcache** | In four releases. First, keys of every native type (`bytes`, `int`, `float`, `bool`, `None` and tuples, beside `str`), [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), and `retry=`, with no cache to delete. Then the small gaps (`reversed()`, `pop(expire_time=)`, pickling a cache, per-process [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats), [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check)) and the coordination recipes: `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, `Averager` and a stampede-proof [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize). Then tags with `evict(tag)` and `eviction_policy='none'`, together in one on-disk format change. Then the queue calls `push`, `pull` and `peek`. |
 | **Django cache backend** | A diskcache-oxide backend for Django's cache framework, tested against Django's own cache test suite, as its own phase right after Phase 6. |
 | **4. Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
 | **5. `AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. Tried as a spike first, and kept only if it earns its place. |
@@ -83,7 +83,7 @@ Already done from the old Phase 6 list: [`transact()`](transactions.md) and [`Fa
 - **`disk=` and `Disk` subclasses.** A Python class on every read and write would undo the Rust engine; `serializer=` and `register_type()` cover what people used them for.
 - **Pickled keys.** Keys are never pickled, so listing keys never runs pickle and a key's identity doesn't depend on pickle's bytes.
 - **`read=True` and `read()`** (streaming a file in and out). Folded into the large-file cache idea below.
-- **Persisted statistics.** [stats()](../reference/Caches.stats.md#diskcache_oxide.Caches.stats) will count per process, in memory: diskcache's persisted counters make every [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) a write.
+- **Persisted statistics.** [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) will count per process, in memory: diskcache's persisted counters make every [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) a write.
 
 
 # Further out
