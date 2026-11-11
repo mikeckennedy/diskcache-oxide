@@ -113,7 +113,15 @@ impl PendingFile {
     /// temp file keeps non-empty, so a sweep can't take it.
     pub fn commit_name(&self) -> Result<()> {
         match std::fs::rename(&self.tmp, &self.val) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                // A rename keeps the temp file's mtime, so refresh it: `check()` leaves alone a file
+                // no row names until it has been idle for `TMP_MIN_AGE`, and a write in flight for
+                // longer than that (a long timeout, a long transaction) must still count as fresh.
+                if let Ok(file) = File::options().write(true).open(&self.val) {
+                    let _ = file.set_modified(SystemTime::now());
+                }
+                Ok(())
+            }
             Err(e) if e.kind() == ErrorKind::NotFound && self.val.exists() => Ok(()),
             Err(e) => Err(io_error(&self.tmp, e)),
         }

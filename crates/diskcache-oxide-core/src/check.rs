@@ -73,18 +73,26 @@ pub enum Finding {
 
 impl Store {
     /// Checks this store's database and value files against each other; with `fix`, repairs what it
-    /// can and `VACUUM`s. Every wait is bounded by `timeout`. Refused inside this thread's own held
-    /// transaction (its rows aren't final, and `VACUUM` can't run in one).
+    /// can and `VACUUM`s. Every wait is bounded by `timeout`. Findings are added to `found`, merged
+    /// with what's there (a retried check passes the same list, so what an earlier round fixed stays
+    /// reported, once), and kept even when a later step fails. Refused inside this thread's own held
+    /// transaction (its rows aren't final), and with `fix` inside any (its writes would be another
+    /// cache's transaction's to commit, and `VACUUM` can't run in one).
     ///
     /// # Errors
     ///
-    /// [`Error::NestedTransaction`] inside a held transaction; otherwise the reads' and writes'
-    /// errors (a `Timeout` among them).
-    pub fn check(&self, fix: bool, timeout: Duration) -> Result<Vec<Finding>> {
+    /// [`Error::InsideTransaction`] as above; otherwise the reads' and writes' errors (a `Timeout`
+    /// among them).
+    pub fn check(&self, fix: bool, timeout: Duration, found: &mut Vec<Finding>) -> Result<()> {
         if self.held_by_this_thread() {
-            return Err(Error::NestedTransaction);
+            return Err(Error::InsideTransaction("check() can't run inside this thread's transaction on the cache"));
         }
-        let mut found = Vec::new();
+        if fix && crate::gate::GATE.own_depth() > 0 {
+            return Err(Error::InsideTransaction(
+                "check(fix=True) can't run inside a transaction on another cache: its repairs would be that \
+                 transaction's to commit, and VACUUM can't run in one",
+            ));
+        }
         for line in self.read(timeout, |conn| {
             let mut stmt = conn.prepare("PRAGMA integrity_check").map_err(|e| Error::from_sqlite(e, timeout))?;
             stmt.query_map([], |r| r.get::<_, String>(0))
@@ -92,38 +100,40 @@ impl Store {
                 .map_err(|e| Error::from_sqlite(e, timeout))
         })? {
             if line != "ok" {
-                found.push(Finding::Integrity(line));
+                merge(found, Finding::Integrity(line));
             }
         }
-        self.check_rows(fix, timeout, &mut found)?;
-        self.check_files(fix, timeout, &mut found)?;
+        self.check_rows(fix, timeout, found)?;
+        self.check_files(fix, timeout, found)?;
         if fix {
             let deadline = crate::lockwait::deadline_after(Instant::now(), timeout);
             spill::sweep(self.directory(), deadline, spill::SWEEP_MIN_AGE, spill::sweep_start());
         }
-        self.check_totals(fix, timeout, &mut found)?;
+        self.check_totals(fix, timeout, found)?;
         if fix {
             self.vacuum(timeout)?;
         }
-        Ok(found)
+        Ok(())
     }
 
     fn check_rows(&self, fix: bool, timeout: Duration, found: &mut Vec<Finding>) -> Result<()> {
         let sqlite = |e| Error::from_sqlite(e, timeout);
-        let mut after = 0_i64;
+        // Paged on the partial index over spilled rows, by name, so a cache of mostly inline values
+        // reads only its spilled rows (paging by `id` would scan every row to fill a page).
+        let mut after = String::new();
         loop {
             let rows: Vec<(i64, i64, String, i64)> = self.read(timeout, |conn| {
                 conn.prepare_cached(
                     "SELECT id, store_seq, filename, size FROM cache
-                     WHERE filename IS NOT NULL AND id > ?1 ORDER BY id LIMIT ?2",
+                     WHERE filename IS NOT NULL AND filename > ?1 ORDER BY filename LIMIT ?2",
                 )
                 .and_then(|mut stmt| {
-                    stmt.query_map((after, PAGE), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect()
+                    stmt.query_map((&after, PAGE), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect()
                 })
                 .map_err(sqlite)
             })?;
-            let Some(&(last, ..)) = rows.last() else { return Ok(()) };
-            after = last;
+            let Some((_, _, last, _)) = rows.last() else { return Ok(()) };
+            after.clone_from(last);
             for (id, store_seq, name, size) in rows {
                 let version = Version::new(id, store_seq);
                 let problem = match spill::value_path(self.directory(), &name) {
@@ -146,7 +156,7 @@ impl Store {
                     let removed = self.delete_version(timeout, version)?;
                     set_fixed(&mut problem, removed);
                 }
-                found.push(problem);
+                merge(found, problem);
             }
         }
     }
@@ -189,7 +199,7 @@ impl Store {
             if name.starts_with(DB_FILENAME) || !old(&path) {
                 continue;
             }
-            found.push(Finding::UnknownFile { path, fixed: false });
+            merge(found, Finding::UnknownFile { path, fixed: false });
         }
         Ok(())
     }
@@ -221,8 +231,13 @@ impl Store {
             if named.is_some() {
                 continue;
             }
+            // A delete's unlink follows its commit (and a batch's runs detached), so a file no row
+            // names may be one being removed right now: report only one still there afterwards.
+            if std::fs::symlink_metadata(&path).is_err() {
+                continue;
+            }
             let fixed = fix && std::fs::remove_file(&path).is_ok();
-            found.push(Finding::UnknownFile { path, fixed });
+            merge(found, Finding::UnknownFile { path, fixed });
         }
         Ok(())
     }
@@ -255,12 +270,42 @@ impl Store {
             })?;
         }
         if count != rows {
-            found.push(Finding::Count { stored: count, actual: rows, fixed: fix });
+            merge(found, Finding::Count { stored: count, actual: rows, fixed: fix });
         }
         if size != sum {
-            found.push(Finding::Size { stored: size, actual: sum, fixed: fix });
+            merge(found, Finding::Size { stored: size, actual: sum, fixed: fix });
         }
         Ok(())
+    }
+}
+
+/// Adds `new` to `found` unless the same problem is there already (a retried round finding it again),
+/// keeping `fixed` if either says so.
+fn merge(found: &mut Vec<Finding>, new: Finding) {
+    let unfixed = |f: &Finding| {
+        let mut f = f.clone();
+        set_fixed(&mut f, false);
+        f
+    };
+    let key = unfixed(&new);
+    if let Some(old) = found.iter_mut().find(|old| unfixed(old) == key) {
+        if is_fixed(&new) {
+            *old = new;
+        }
+        return;
+    }
+    found.push(new);
+}
+
+fn is_fixed(finding: &Finding) -> bool {
+    match finding {
+        Finding::MissingFile { fixed, .. }
+        | Finding::WrongSize { fixed, .. }
+        | Finding::BadFilename { fixed, .. }
+        | Finding::UnknownFile { fixed, .. }
+        | Finding::Count { fixed, .. }
+        | Finding::Size { fixed, .. } => *fixed,
+        Finding::Integrity(_) => false,
     }
 }
 
@@ -328,6 +373,12 @@ mod tests {
         file.set_modified(SystemTime::now() - by).unwrap();
     }
 
+    fn run(s: &Store, fix: bool) -> Vec<Finding> {
+        let mut found = Vec::new();
+        s.check(fix, T, &mut found).unwrap();
+        found
+    }
+
     fn len(s: &Store) -> i64 {
         s.len(T).unwrap()
     }
@@ -338,8 +389,8 @@ mod tests {
         let s = store(tmp.path());
         s.set(T, "small", Value::Bytes { mode: MODE_BYTES, data: b"v" }, None, NOW).unwrap();
         put_big(&s, "big");
-        assert_eq!(s.check(false, T).unwrap(), []);
-        assert_eq!(s.check(true, T).unwrap(), [], "fix on a healthy cache changes nothing");
+        assert_eq!(run(&s, false), []);
+        assert_eq!(run(&s, true), [], "fix on a healthy cache changes nothing");
         assert_eq!(len(&s), 2);
     }
 
@@ -351,7 +402,7 @@ mod tests {
         let short = put_big(&s, "short");
         std::fs::remove_file(&gone).unwrap();
         std::fs::OpenOptions::new().write(true).open(&short).unwrap().set_len(10).unwrap();
-        let found = s.check(false, T).unwrap();
+        let found = run(&s, false);
         assert!(found.contains(&Finding::MissingFile { path: gone.clone(), fixed: false }), "{found:?}");
         assert!(
             found
@@ -360,10 +411,10 @@ mod tests {
             "{found:?}"
         );
         assert_eq!(len(&s), 2, "reporting changes nothing");
-        let fixed = s.check(true, T).unwrap();
+        let fixed = run(&s, true);
         assert!(fixed.contains(&Finding::MissingFile { path: gone, fixed: true }), "{fixed:?}");
         assert_eq!(len(&s), 0, "both rows went, never 'corrected' to the short file's size");
-        assert_eq!(s.check(false, T).unwrap(), []);
+        assert_eq!(run(&s, false), []);
     }
 
     #[test]
@@ -372,7 +423,7 @@ mod tests {
         let s = store(tmp.path());
         put_big(&s, "k");
         raw(&s, "UPDATE cache SET filename = '../../etc/passwd'");
-        let found = s.check(true, T).unwrap();
+        let found = run(&s, true);
         assert!(found.contains(&Finding::BadFilename { name: "../../etc/passwd".into(), fixed: true }), "{found:?}");
         assert_eq!(len(&s), 0);
     }
@@ -394,14 +445,14 @@ mod tests {
             age(path, spill::TMP_MIN_AGE * 2);
         }
         age(&kept, spill::TMP_MIN_AGE * 2); // Old, but referenced.
-        let found = s.check(false, T).unwrap();
+        let found = run(&s, false);
         let unknown: Vec<&PathBuf> = found
             .iter()
             .filter_map(|f| if let Finding::UnknownFile { path, .. } = f { Some(path) } else { None })
             .collect();
         assert_eq!(unknown.len(), 3, "{found:?}");
         assert!(unknown.contains(&&old) && unknown.contains(&&old_tmp) && unknown.contains(&&root), "{found:?}");
-        s.check(true, T).unwrap();
+        run(&s, true);
         assert!(!old.exists() && !old_tmp.exists(), "old orphans in a value dir are removed");
         assert!(young.exists(), "a young file may be a live writer's");
         assert!(root.exists(), "a file outside the value dirs is reported, never removed");
@@ -414,11 +465,11 @@ mod tests {
         let s = store(tmp.path());
         s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: b"v" }, None, NOW).unwrap();
         raw(&s, "UPDATE totals SET count = 99, size = 1234 WHERE only = 1");
-        let found = s.check(true, T).unwrap();
+        let found = run(&s, true);
         assert!(found.contains(&Finding::Count { stored: 99, actual: 1, fixed: true }), "{found:?}");
         assert!(found.contains(&Finding::Size { stored: 1234, actual: 0, fixed: true }), "{found:?}");
         assert_eq!(len(&s), 1);
-        assert_eq!(s.check(false, T).unwrap(), []);
+        assert_eq!(run(&s, false), []);
     }
 
     #[test]
@@ -426,7 +477,7 @@ mod tests {
         let tmp = TempDir::new("check-held");
         let s = store(tmp.path());
         let held = s.begin_hold(T).unwrap();
-        assert!(matches!(s.check(false, T), Err(Error::NestedTransaction)));
+        assert!(matches!(s.check(false, T, &mut Vec::new()), Err(Error::InsideTransaction(_))));
         held.finish(false).unwrap();
     }
 }

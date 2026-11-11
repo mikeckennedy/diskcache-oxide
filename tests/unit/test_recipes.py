@@ -180,3 +180,26 @@ def test_an_rlock_held_by_the_parent_is_not_the_childs(tmp_path: Path) -> None:
         timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+def test_memoize_stampede_recomputes_early_in_the_background(tmp_path: Path) -> None:
+    calls = []
+    with Cache(tmp_path) as cache:
+
+        @memoize_stampede(cache, expire=60, beta=1e9)  # A huge beta: always recompute early.
+        def slow(x: int) -> int:
+            calls.append(x)
+            time.sleep(0.01)
+            return len(calls)
+
+        assert slow(1) == 1
+        assert slow(1) == 1, 'the cached result, while one caller recomputes'
+        deadline = time.monotonic() + 5
+        while len(calls) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert len(calls) == 2, 'the background recompute ran'
+        for _ in range(100):
+            if cache.get(slow.__cache_key__(1))[0] == 2:
+                break
+            time.sleep(0.01)
+        assert cache.get(slow.__cache_key__(1))[0] == 2

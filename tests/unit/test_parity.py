@@ -157,3 +157,32 @@ def test_the_sentinels_are_singletons_across_pickle() -> None:
     assert pickle.loads(pickle.dumps(UNKNOWN)) is UNKNOWN
     assert not isinstance(ENOVAL, tuple)
     assert repr(ENOVAL) == 'ENOVAL'
+
+
+def test_reset_is_refused_inside_a_transaction(tmp_path: Path) -> None:
+    with Cache(tmp_path, size_limit=2 << 20) as cache:
+        with cache.transact(), pytest.raises(RuntimeError, match='rollback'):
+            cache.reset('size_limit', 1 << 30)
+        assert cache.size_limit == 2 << 20
+        with cache.transact():
+            assert cache.reset('size_limit') == 2 << 20, 'reading is fine'
+
+
+def _read_fanout(cache: Any, queue: Any) -> None:
+    queue.put((cache.get('k'), cache.shards, cache.durable, cache.get('p')))
+    cache.close()
+
+
+def test_a_fanout_cache_with_options_and_types_crosses_a_spawn(tmp_path: Path) -> None:
+    local = TypeRegistry()
+    local.register(Point, name='tests.parity.Point')
+    context = multiprocessing.get_context('spawn')
+    with FanoutCache(tmp_path, shards=3, durable=True, types=local) as cache:
+        cache.set('k', 'v')
+        cache.set('p', Point(4))
+        queue = context.Queue()
+        child = context.Process(target=_read_fanout, args=(cache, queue))
+        child.start()
+        assert queue.get(timeout=30) == ('v', 3, True, Point(4))
+        child.join(30)
+        assert child.exitcode == 0

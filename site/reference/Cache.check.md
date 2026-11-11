@@ -21,7 +21,7 @@ Reports, as a list of `warnings.WarningMessage` (nothing is issued through `warn
 
 
 `fix: bool = ``False`  
-Also repair: remove an entry whose file is missing or the wrong size (it reads as a miss anyway), remove unknown files in value folders (never elsewhere), sweep empty value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the whole database through the write-ahead log and needs a temporary copy of it in `SQLITE_TMPDIR` or `/tmp`; forks and writers wait for it.
+Also repair: remove an entry whose file is missing or the wrong size (it reads as a miss anyway), remove unknown files in value folders (never elsewhere), sweep empty value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the whole database through the write-ahead log and needs a temporary copy of it in `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`; forks and writers wait for it.
 
 `retry: bool = ``False`  
 On a [Timeout](Timeout.md#diskcache_oxide.Timeout), start again until it gets through.

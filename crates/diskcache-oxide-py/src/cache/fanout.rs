@@ -200,13 +200,11 @@ impl FanoutCache {
             }
             loop {
                 let started = Instant::now();
-                let checked =
-                    crate::detach(py, || handle.run(self.config.timeout, |timeout| handle.store.check(fix, timeout)));
+                let checked = crate::detach(py, || {
+                    handle.run(self.config.timeout, |timeout| handle.store.check(fix, timeout, &mut found))
+                });
                 match checked {
-                    Ok(shard) => {
-                        found.extend(shard);
-                        break;
-                    }
+                    Ok(()) => break,
                     Err(Error::Timeout { .. }) if retry => super::pause_before_retry(py, started)?,
                     Err(error) => return Err(to_py_err(error)),
                 }
@@ -217,12 +215,12 @@ impl FanoutCache {
 
     /// As `Cache.stats`, summed over the shards; `enable` and `reset` apply to every shard.
     #[pyo3(signature = (enable = true, reset = false))]
-    fn stats(&self, enable: bool, reset: bool) -> PyResult<(u64, u64)> {
-        self.refuse_fan_out("stats()")?;
-        Ok(self.shards.iter().fold((0, 0), |(hits, misses), handle| {
+    fn stats(&self, enable: bool, reset: bool) -> (u64, u64) {
+        // In memory: it touches no database, so it's fine inside a `transact(key=)`, as on `Cache`.
+        self.shards.iter().fold((0, 0), |(hits, misses), handle| {
             let (h, m) = handle.store.stats().take(enable, reset);
             (hits + h, misses + m)
-        }))
+        })
     }
 
     /// As `Cache.reset`, over every shard under one `timeout`. A `size_limit` is a total, split

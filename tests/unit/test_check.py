@@ -92,3 +92,40 @@ def test_check_can_run_from_many_threads(tmp_path: Path) -> None:
             t.join(60)
         assert not errors, errors
         assert len(cache) == 20
+
+
+def test_check_with_fix_is_refused_inside_another_caches_transaction(tmp_path: Path) -> None:
+    import pytest
+
+    with Cache(tmp_path / 'a') as a, Cache(tmp_path / 'b') as b:
+        b.set('big', b'x' * BIG)
+        next(p for p in (tmp_path / 'b').rglob('*.val')).unlink()
+        with a.transact():
+            assert b.check(), 'a plain check only reads, so it may run'
+            with pytest.raises(RuntimeError, match='another cache'):
+                b.check(fix=True)
+        assert len(b) == 1, 'the refused fix changed nothing'
+
+
+def _hold_a_spilled_write(directory: str, written: Any, release: Any) -> None:
+    with Cache(directory) as cache, cache.transact():
+        cache.set('pending', b'p' * BIG)
+        written.set()
+        release.wait(60)
+
+
+def test_a_transactions_uncommitted_large_value_survives_check_with_fix(tmp_path: Path) -> None:
+    # The value's file is in place before its row is committed: young, so check() leaves it alone.
+    spawn = multiprocessing.get_context('spawn')
+    written, release = spawn.Event(), spawn.Event()
+    holder = spawn.Process(target=_hold_a_spilled_write, args=(str(tmp_path), written, release))
+    with Cache(tmp_path, timeout=1) as cache:
+        cache.set('k', 1)
+        holder.start()
+        assert written.wait(60)
+        for _ in range(20):
+            assert cache.check() == []
+        release.set()
+        holder.join(60)
+        assert holder.exitcode == 0
+        assert cache.get('pending') == b'p' * BIG

@@ -133,6 +133,7 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
         Error::Unwritable
         | Error::ForkPoisoned
         | Error::NestedTransaction
+        | Error::InsideTransaction(_)
         | Error::NoTransaction
         | Error::EndInsideOperation => PyRuntimeError::new_err(message),
         Error::TransactionAborted => TransactionAborted::new_err(message),

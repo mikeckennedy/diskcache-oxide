@@ -36,7 +36,7 @@ print(f'cached:      {(time.perf_counter() - start) * 1000:.1f} µs per call')  
 ```
 
 
-    first call:  203.9 ms
+    first call:  203.5 ms
     cached:      1.1 µs per call
 
 

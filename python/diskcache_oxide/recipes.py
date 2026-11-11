@@ -83,7 +83,9 @@ def _transact(cache: Any, key: Key) -> Any:
 
 
 def _before_waiting(cache: Any, what: str) -> None:
-    """Refuse to wait inside this thread's own transaction on `cache`."""
+    """Refuse to wait inside this thread's own transaction on `cache`. A transaction on another cache
+    isn't refused: the wait holds that cache's write lock, and a fork waits for it, but no one is
+    stopped from releasing."""
     held = getattr(cache, '_in_transaction', None)
     if held is not None and held():
         raise RuntimeError(
@@ -327,7 +329,9 @@ def memoize_stampede(
     caller keeps getting the cached result. Results are stored as `(result, seconds it took)`.
 
     Keys, `typed`, `ignore` and the argument rules are `memoize`'s (D-048). It works on a `NullCache`
-    (every call runs) and a durable handle (an outage runs the function), as `memoize` does.
+    (every call runs) and a durable handle (an outage runs the function), as `memoize` does. The
+    time left is measured with `time.time()`, as diskcache's, so a cache opened with a `clock=` that
+    isn't wall time recomputes on that clock's expiry but judges "close to expiring" by wall time.
     """
     if callable(name):
         raise TypeError('name cannot be callable')

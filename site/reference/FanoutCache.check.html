@@ -1792,7 +1792,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dl>
 <dt><code><span class="doc-parameter-name">fix</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">bool</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="va">False</span></span></code></dt>
 <dd>
-<p>Also repair: remove an entry whose file is missing or the wrong size (it reads as a miss anyway), remove unknown files in value folders (never elsewhere), sweep empty value folders, correct the totals, then <code>VACUUM</code> and checkpoint. <code>VACUUM</code> writes the whole database through the write-ahead log and needs a temporary copy of it in <code>SQLITE_TMPDIR</code> or <code>/tmp</code>; forks and writers wait for it.</p>
+<p>Also repair: remove an entry whose file is missing or the wrong size (it reads as a miss anyway), remove unknown files in value folders (never elsewhere), sweep empty value folders, correct the totals, then <code>VACUUM</code> and checkpoint. <code>VACUUM</code> writes the whole database through the write-ahead log and needs a temporary copy of it in <code>SQLITE_TMPDIR</code>, <code>TMPDIR</code> or <code>/tmp</code>; forks and writers wait for it.</p>
 </dd>
 <dt><code><span class="doc-parameter-name">retry</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">bool</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="va">False</span></span></code></dt>
 <dd>

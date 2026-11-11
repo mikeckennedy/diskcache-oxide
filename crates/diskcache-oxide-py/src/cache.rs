@@ -252,14 +252,19 @@ impl Cache {
     #[pyo3(signature = (fix = false, retry = false))]
     fn check(&self, py: Python<'_>, fix: bool, retry: bool) -> PyResult<Py<pyo3::types::PyList>> {
         let handle = &self.handle;
-        let found = loop {
+        // One list across retry rounds, so what an earlier round fixed stays reported, once.
+        let mut found = Vec::new();
+        loop {
             let started = Instant::now();
-            match crate::detach(py, || handle.run(self.config.timeout, |timeout| handle.store.check(fix, timeout))) {
-                Ok(found) => break found,
+            let round = crate::detach(py, || {
+                handle.run(self.config.timeout, |timeout| handle.store.check(fix, timeout, &mut found))
+            });
+            match round {
+                Ok(()) => break,
                 Err(Error::Timeout { .. }) if retry => pause_before_retry(py, started)?,
                 Err(error) => return Err(to_py_err(error)),
             }
-        };
+        }
         findings_to_warnings(py, found)
     }
 
@@ -760,7 +765,6 @@ pub(crate) fn pause_before_retry(py: Python<'_>, started: Instant) -> PyResult<(
 }
 
 impl HandleConfig {
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     fn new(
         directory: &std::path::Path,

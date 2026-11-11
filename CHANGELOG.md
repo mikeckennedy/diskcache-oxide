@@ -23,6 +23,7 @@ No cache needs deleting: the on-disk format is unchanged, and 0.1.2 and this rel
 
 - Iterating a cache is typed `Iterator[Key]` rather than `Iterator[str]`, since keys can now be other types; `iterkeys(prefix=...)` is still `Iterator[str]`. Type-checked code that treats every iterated key as a `str` needs a narrowing (`isinstance(key, str)`).
 - The `TypeError` for a key of the wrong type now names the types that are accepted.
+- `CacheLike` gained `memoize`, `stats`, `check`, `reset`, `durable` and `__reversed__`, and `pop` its `expire_time=`; a fake typed against it needs them too.
 - `transact(retry=True)` sleeps between attempts instead of retrying at once, so a `timeout=0` cache doesn't spin.
 
 ## [0.1.2] - 2026-11-09

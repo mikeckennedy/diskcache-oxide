@@ -94,6 +94,11 @@ pub enum Error {
     #[error("this database can't be written in a process forked inside a transaction")]
     Unwritable,
 
+    /// A call that can't run inside a held transaction, naming the call and why (Python
+    /// `RuntimeError`).
+    #[error("{0}")]
+    InsideTransaction(&'static str),
+
     /// A stored key that isn't one this build can read: a damaged page or file.
     #[error("a stored key is damaged: {0}")]
     CorruptKey(crate::key::KeyError),
@@ -204,7 +209,8 @@ impl Error {
             | Self::EndInsideOperation
             | Self::TransactionAborted
             // Damage, not an outage: never answered as a miss.
-            | Self::CorruptKey(_) => false,
+            | Self::CorruptKey(_)
+            | Self::InsideTransaction(_) => false,
         }
     }
 
@@ -283,6 +289,7 @@ mod tests {
             Error::Overflow,
             Error::InvalidSetting("x".into()),
             Error::NestedTransaction,
+            Error::InsideTransaction("x"),
             Error::WriteLockBusyInTransaction,
             Error::NoTransaction,
             Error::EndInsideOperation,

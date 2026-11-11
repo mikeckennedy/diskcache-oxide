@@ -11,6 +11,7 @@
 //! after-fork hook does nothing here.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -29,7 +30,8 @@ pub struct Stats {
 }
 
 impl Stats {
-    /// A child forked since the last count starts from zero.
+    /// A child forked since the last count starts from zero. In a child with several threads, one
+    /// thread's first count can be lost to another's reset at that first lookup: harmless.
     fn sync(&self) {
         let now = crate::gate::generation();
         if self.generation.load(Ordering::Relaxed) != now && self.generation.swap(now, Ordering::AcqRel) != now {
@@ -63,12 +65,17 @@ impl Stats {
     }
 }
 
-static BY_FILE: Mutex<Option<HashMap<FileId, Arc<Stats>>>> = Mutex::new(None);
+/// By the database's identity and its directory's canonical path: an inode can be reused for a new
+/// database (Linux reuses them quickly), which must not inherit an old one's counts, so the path must
+/// match too, as the store registry requires before it revives a store.
+type ByFile = HashMap<(FileId, PathBuf), Arc<Stats>>;
+static BY_FILE: Mutex<Option<ByFile>> = Mutex::new(None);
 
-/// The counters of the database `id`, created at zero, off, on first use. Call with the gate held.
-pub(crate) fn for_file(id: FileId) -> Arc<Stats> {
+/// The counters of the database `id` in `canonical`, created at zero, off, on first use. Call with
+/// the gate held.
+pub(crate) fn for_file(id: FileId, canonical: &Path) -> Arc<Stats> {
     let mut map = BY_FILE.lock().unwrap_or_else(PoisonError::into_inner);
-    Arc::clone(map.get_or_insert_with(HashMap::new).entry(id).or_default())
+    Arc::clone(map.get_or_insert_with(HashMap::new).entry((id, canonical.to_path_buf())).or_default())
 }
 
 #[cfg(test)]
@@ -92,11 +99,14 @@ mod tests {
     #[test]
     fn one_file_shares_one_set_of_counters() {
         let id = (u64::MAX, 4242);
-        let a = for_file(id);
+        let here = Path::new("/tmp/dco-stats-a");
+        let a = for_file(id, here);
         a.take(true, false);
-        for_file(id).record(true);
+        for_file(id, here).record(true);
         assert_eq!(a.take(true, true), (1, 0));
-        assert!(!Arc::ptr_eq(&a, &for_file((u64::MAX, 4243))));
+        assert!(!Arc::ptr_eq(&a, &for_file((u64::MAX, 4243), here)));
+        // The same inode reused for a database somewhere else starts afresh.
+        assert!(!Arc::ptr_eq(&a, &for_file(id, Path::new("/tmp/dco-stats-b"))));
     }
 
     #[test]

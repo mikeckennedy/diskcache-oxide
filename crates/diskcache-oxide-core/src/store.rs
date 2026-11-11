@@ -535,11 +535,12 @@ impl Store {
             let replaced = std::io::Error::other("the database file was replaced while it was being opened");
             return Err(Error::Io { path: db_path, source: replaced });
         }
+        let stats = crate::stats::for_file(file_id, &canonical);
         let store = Arc::new(Self {
             directory: options.directory.clone(),
             canonical,
             file_id,
-            stats: crate::stats::for_file(file_id),
+            stats,
             pin: Mutex::new(Some(pin)),
             retired: AtomicBool::new(false),
             pool: Pool::new(&gate, usize::try_from(options.max_connections).unwrap_or(usize::MAX)),
@@ -720,6 +721,14 @@ impl Store {
     /// An invalid value ([`Requested::validate`]), or the write's errors.
     pub fn set_limits(&self, timeout: Duration, requested: Requested) -> Result<Limits> {
         requested.validate()?;
+        // Inside a held transaction the write isn't final: a rollback would leave the cached limits
+        // (which this process culls by) wrong.
+        if self.held_by_this_thread() {
+            return Err(Error::InsideTransaction(
+                "reset() can't change a limit inside this thread's transaction on the cache: a rollback \
+                 would leave this process culling by the wrong limit",
+            ));
+        }
         let limits = self.write(timeout, |_writer, tx| {
             let stored = open::read_limits(tx, timeout)?;
             let wanted = Limits {
@@ -1129,7 +1138,7 @@ impl Store {
     /// its free pages. Holds this process's write lock throughout, so its writers queue (within their
     /// timeouts) rather than meet SQLite's lock; other processes' writers wait on SQLite's. A long
     /// single step: a fork waits for it, it writes the whole database through the WAL, and SQLite
-    /// builds a full temporary copy in `SQLITE_TMPDIR` or `/tmp`. Never inside a held transaction.
+    /// builds a full temporary copy in `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`. Never inside a held transaction.
     ///
     /// # Errors
     ///

@@ -525,7 +525,7 @@ class Cache:
                 miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
                 value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
                 whole database through the write-ahead log and needs a temporary copy of it in
-                `SQLITE_TMPDIR` or `/tmp`; forks and writers wait for it.
+                `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`; forks and writers wait for it.
             retry: On a `Timeout`, start again until it gets through.
 
         Raises:
@@ -1083,7 +1083,7 @@ class FanoutCache:
                 miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
                 value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
                 whole database through the write-ahead log and needs a temporary copy of it in
-                `SQLITE_TMPDIR` or `/tmp`; forks and writers wait for it.
+                `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`; forks and writers wait for it.
             retry: On a `Timeout`, start again until it gets through.
 
         Raises:
