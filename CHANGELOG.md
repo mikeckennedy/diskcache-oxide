@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to diskcache-oxide are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org/). During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its entry; caches made by an older format must be deleted when you upgrade to it.
+All notable changes to diskcache-oxide are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org/). During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its entry; caches made by an older format must be deleted when you upgrade to it. The last number goes up with every release, a minor bump included, so 0.1.2 is followed by 0.2.3.
 
 ## [Unreleased]
 

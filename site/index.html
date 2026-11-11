@@ -486,7 +486,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="./diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="./index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.2</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.3</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -607,7 +607,7 @@ section.level2:first-of-type > h2:first-child,
 <span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> cache.add(<span class="st">'job:refresh-feeds'</span>, os.getpid(), expire<span class="op">=</span><span class="dv">3600</span>):</span>
 <span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    refresh_feeds()</span></code></pre></div>
 <p>And here is what it does under load. Every thread shares one cache, the x axis adds threads, and the two libraries go in opposite directions:</p>
-<div class="dco-chart" data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Pro, Python 3.14 with the GIL, four interleaved rounds, the 0.2.0 code (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers.">
+<div class="dco-chart" data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Pro, Python 3.14 with the GIL, four interleaved rounds, the 0.2.3 code (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers.">
 <table class="caption-top table">
 <thead>
 <tr class="header">

@@ -437,7 +437,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.2</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.3</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -627,7 +627,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#done-the-core-cache" id="toc-done-the-core-cache" class="nav-link" data-scroll-target="#done-the-core-cache">Done: the core <code>Cache</code></a></li>
   <li><a href="#done-concurrency-review-and-soak" id="toc-done-concurrency-review-and-soak" class="nav-link" data-scroll-target="#done-concurrency-review-and-soak">Done: concurrency review and soak</a></li>
   <li><a href="#done-the-first-release" id="toc-done-the-first-release" class="nav-link" data-scroll-target="#done-the-first-release">Done: the first release</a></li>
-  <li><a href="#done-parity-with-diskcache-0.2.0" id="toc-done-parity-with-diskcache-0.2.0" class="nav-link" data-scroll-target="#done-parity-with-diskcache-0.2.0">Done: parity with diskcache (0.2.0)</a></li>
+  <li><a href="#done-parity-with-diskcache-0.2.3" id="toc-done-parity-with-diskcache-0.2.3" class="nav-link" data-scroll-target="#done-parity-with-diskcache-0.2.3">Done: parity with diskcache (0.2.3)</a></li>
   <li><a href="#next" id="toc-next" class="nav-link" data-scroll-target="#next">Next</a></li>
   <li><a href="#decided-against-and-why" id="toc-decided-against-and-why" class="nav-link" data-scroll-target="#decided-against-and-why">Decided against, and why</a></li>
   </ul></li>
@@ -670,7 +670,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>It’s being built in three stages.</p>
 <section id="stage-1-a-better-diskcache-done" class="level2">
 <h2 class="anchored" data-anchor-id="stage-1-a-better-diskcache-done">Stage 1: a better diskcache (done)</h2>
-<p>Keep diskcache’s API, fix what’s wrong underneath it, and make it fast. With 0.2.0, everything from diskcache’s <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> that real apps use is in. Behavior comes first: every phase keeps a conformance suite green against real diskcache 5.6.3 before chasing speed, and every deliberate difference is written down in <a href="../user-guide/divergences.html">Divergences</a>.</p>
+<p>Keep diskcache’s API, fix what’s wrong underneath it, and make it fast. With 0.2.3, everything from diskcache’s <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> that real apps use is in. Behavior comes first: every phase keeps a conformance suite green against real diskcache 5.6.3 before chasing speed, and every deliberate difference is written down in <a href="../user-guide/divergences.html">Divergences</a>.</p>
 </section>
 <section id="stage-2-the-complete-local-caching-toolkit-in-progress" class="level2">
 <h2 class="anchored" data-anchor-id="stage-2-the-complete-local-caching-toolkit-in-progress">Stage 2: the complete local caching toolkit (in progress)</h2>
@@ -733,9 +733,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h2 class="anchored" data-anchor-id="done-the-first-release">Done: the first release</h2>
 <p><code>0.1.2</code> went to PyPI after a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython built under it, AddressSanitizer and LeakSanitizer, with the bundled SQLite built under them) and a fresh 24-hour soak on the released code. It replaced diskcache at <a href="https://talkpython.fm">Talk Python</a>, <a href="https://pythonbytes.fm">Python Bytes</a> and <a href="https://training.talkpython.fm">Talk Python Training</a>, where production latency is watched against the old numbers.</p>
 </section>
-<section id="done-parity-with-diskcache-0.2.0" class="level2">
-<h2 class="anchored" data-anchor-id="done-parity-with-diskcache-0.2.0">Done: parity with diskcache (0.2.0)</h2>
-<p>0.2.0 fills in what 0.1.2 left out of diskcache’s API:</p>
+<section id="done-parity-with-diskcache-0.2.3" class="level2">
+<h2 class="anchored" data-anchor-id="done-parity-with-diskcache-0.2.3">Done: parity with diskcache (0.2.3)</h2>
+<p>0.2.3 fills in what 0.1.2 left out of diskcache’s API:</p>
 <ul>
 <li>Keys of every native type: <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code> and tuples, beside <code>str</code>.</li>
 <li><a href="../recipes/caching-expensive-calls.html#a-caching-decorator-memoize"><code>memoize</code></a> and <code>retry=</code>.</li>

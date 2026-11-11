@@ -2,7 +2,7 @@
 //! other key type) stored as a BLOB under `key_type = 2` (plan 24, release 1).
 //!
 //! A typed key's bytes are its identity and its `FanoutCache` shard, so the format below is frozen
-//! from 0.2.0 on. It is an order-preserving tuple encoding in the style of `FoundationDB`'s: each
+//! from 0.2.3 on. It is an order-preserving tuple encoding in the style of `FoundationDB`'s: each
 //! element is a type code, then its value.
 //!
 //! | Code | Element | Value |
@@ -576,7 +576,7 @@ mod tests {
         V::Str(x.to_owned())
     }
 
-    /// Frozen from 0.2.0: a change here changes stored keys and their shards.
+    /// Frozen from 0.2.3: a change here changes stored keys and their shards.
     #[test]
     fn golden_vectors() {
         let cases: Vec<(V, &str)> = vec![

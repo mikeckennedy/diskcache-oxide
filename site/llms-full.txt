@@ -2377,7 +2377,7 @@ diskcache-oxide stores its data in `diskcache-oxide.sqlite`, not diskcache's `ca
 
 ### Upgrading diskcache-oxide
 
-During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. 0.2.0 is one of them: it adds tags and the eviction policy to the format, so caches made by 0.1.2 have to be deleted when you upgrade. Stop every worker, delete the cache's directory (a `FanoutCache`'s whole root, never one shard), and it's recreated empty on the next open. Until you do, opening an old cache raises `FormatMismatchError`, which a `Caches` registry reports and answers with a `NullCache`. 0.1.2 refuses a 0.2.0 cache the same way, so old and new workers can't share a cache during a rolling deploy. A release that keeps the format needs nothing.
+During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. 0.2.3 is one of them: it adds tags and the eviction policy to the format, so caches made by 0.1.2 have to be deleted when you upgrade. Stop every worker, delete the cache's directory (a `FanoutCache`'s whole root, never one shard), and it's recreated empty on the next open. Until you do, opening an old cache raises `FormatMismatchError`, which a `Caches` registry reports and answers with a `NullCache`. 0.1.2 refuses a 0.2.3 cache the same way, so old and new workers can't share a cache during a rolling deploy. A release that keeps the format needs nothing.
 
 ## What you might notice
 
@@ -2707,7 +2707,7 @@ It's being built in three stages.
 
 ### Stage 1: a better diskcache (done)
 
-Keep diskcache's API, fix what's wrong underneath it, and make it fast. With 0.2.0, everything from diskcache's `Cache` and `FanoutCache` that real apps use is in. Behavior comes first: every phase keeps a conformance suite green against real diskcache 5.6.3 before chasing speed, and every deliberate difference is written down in [Divergences](divergences.qmd).
+Keep diskcache's API, fix what's wrong underneath it, and make it fast. With 0.2.3, everything from diskcache's `Cache` and `FanoutCache` that real apps use is in. Behavior comes first: every phase keeps a conformance suite green against real diskcache 5.6.3 before chasing speed, and every deliberate difference is written down in [Divergences](divergences.qmd).
 
 ### Stage 2: the complete local caching toolkit (in progress)
 
@@ -2746,9 +2746,9 @@ The concurrency core is where serious bugs hide, so it got its own phase before 
 
 `0.1.2` went to PyPI after a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython built under it, AddressSanitizer and LeakSanitizer, with the bundled SQLite built under them) and a fresh 24-hour soak on the released code. It replaced diskcache at [Talk Python](https://talkpython.fm), [Python Bytes](https://pythonbytes.fm) and [Talk Python Training](https://training.talkpython.fm), where production latency is watched against the old numbers.
 
-### Done: parity with diskcache (0.2.0)
+### Done: parity with diskcache (0.2.3)
 
-0.2.0 fills in what 0.1.2 left out of diskcache's API:
+0.2.3 fills in what 0.1.2 left out of diskcache's API:
 
 - Keys of every native type: `bytes`, `int`, `float`, `bool`, `None` and tuples, beside `str`.
 - [`memoize`](../recipes/caching-expensive-calls.qmd#a-caching-decorator-memoize) and `retry=`.

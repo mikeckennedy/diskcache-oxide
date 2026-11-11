@@ -13,7 +13,7 @@ It's being built in three stages.
 
 ### Stage 1: a better diskcache (done)
 
-Keep diskcache's API, fix what's wrong underneath it, and make it fast. With 0.2.0, everything from diskcache's `Cache` and `FanoutCache` that real apps use is in. Behavior comes first: every phase keeps a conformance suite green against real diskcache 5.6.3 before chasing speed, and every deliberate difference is written down in [Divergences](divergences.qmd).
+Keep diskcache's API, fix what's wrong underneath it, and make it fast. With 0.2.3, everything from diskcache's `Cache` and `FanoutCache` that real apps use is in. Behavior comes first: every phase keeps a conformance suite green against real diskcache 5.6.3 before chasing speed, and every deliberate difference is written down in [Divergences](divergences.qmd).
 
 ### Stage 2: the complete local caching toolkit (in progress)
 
@@ -54,9 +54,9 @@ The concurrency core is where serious bugs hide, so it got its own phase before 
 
 `0.1.2` went to PyPI after a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython built under it, AddressSanitizer and LeakSanitizer, with the bundled SQLite built under them) and a fresh 24-hour soak on the released code. It replaced diskcache at [Talk Python](https://talkpython.fm), [Python Bytes](https://pythonbytes.fm) and [Talk Python Training](https://training.talkpython.fm), where production latency is watched against the old numbers.
 
-### Done: parity with diskcache (0.2.0)
+### Done: parity with diskcache (0.2.3)
 
-0.2.0 fills in what 0.1.2 left out of diskcache's API:
+0.2.3 fills in what 0.1.2 left out of diskcache's API:
 
 - Keys of every native type: `bytes`, `int`, `float`, `bool`, `None` and tuples, beside `str`.
 - [`memoize`](../recipes/caching-expensive-calls.qmd#a-caching-decorator-memoize) and `retry=`.

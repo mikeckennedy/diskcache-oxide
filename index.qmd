@@ -37,7 +37,7 @@ if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
 
 And here is what it does under load. Every thread shares one cache, the x axis adds threads, and the two libraries go in opposite directions:
 
-::: {.dco-chart data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Pro, Python 3.14 with the GIL, four interleaved rounds, the 0.2.0 code (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers."}
+::: {.dco-chart data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Pro, Python 3.14 with the GIL, four interleaved rounds, the 0.2.3 code (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers."}
 | Mix | diskcache-oxide | diskcache 5.6.3 |
 |---|---|---|
 | 99 reads to 1 write | 589k / 578k / 580k / 568k | 375k / 177k / 58k / 15k |
