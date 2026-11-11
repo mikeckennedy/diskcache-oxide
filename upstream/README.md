@@ -22,6 +22,7 @@ Status checked on 2026-10-27, against open and closed issues and PRs in both rep
 | 12 | A large value set inside a `transact()` that rolls back leaves its file on disk | `rolled_back_transact_leaks_value_file.py` | not checked | not checked | not affected: a rolled-back transaction's files are removed (pinned in plan 17's tests) |
 | 13 | `throttle(expire=...)` raises `TypeError` once its bucket expires or is cleared | `throttle_crashes_after_its_bucket_expires.py` | not checked | not checked | fixed: a missing bucket is a full one (D-051) |
 | 14 | Every decoration of a throttled function refills the shared bucket | `throttle_decoration_refills_the_bucket.py` | not checked | not checked | fixed: decoration adds the bucket (D-051) |
+| 15 | `cull()` under `eviction_policy='none'` reports 0 after removing expired entries | `cull_under_none_reports_zero.py` | not checked | not checked | fixed: the count is returned (D-053) |
 
 ## 1. A top-level NaN reads back as None
 
@@ -85,3 +86,7 @@ Inside `with cache.transact():`, a `set` of a large value writes its file at onc
 ## 14. Every decoration of a throttled function refills the shared bucket
 
 At decoration `throttle` runs `cache.set(key, (now, count))`, resetting the bucket to full. Every worker process that imports the module decorates the function again, so each one refills the bucket the others share, and a limit of `count` per `seconds` becomes up to `count` per worker start. Found with bug 13. **Impact:** the throttle doesn't limit a multi-process app, which is when it's needed.
+
+## 15. cull() under eviction_policy='none' reports 0 after removing expired entries
+
+`cull()` begins with `count = self.expire(now)`, then, when the policy selects nothing to evict, `return 0` (core.py, `cull`). The expired entries it just removed are gone, but the count says none were. Found by the architect's review of plan 24's release 3 (2026-11-10). **Impact:** a maintenance job that logs or alerts on `cull()`'s count sees nothing happen on a `'none'` cache.

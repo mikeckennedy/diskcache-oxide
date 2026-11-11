@@ -94,3 +94,51 @@ def test_least_recently_stored_evicts_the_oldest(make_cache: Any, cache_dir: Pat
         cache.set(f'k{i}', big)
     assert len(cache) < 30
     assert 'k29' in cache and 'k0' not in cache
+
+
+@pytest.mark.requires('tags')
+def test_evict_none_touches_nothing(cache: Any) -> None:
+    cache.set('untagged', 1)
+    cache.set('tagged', 1, tag='t')
+    assert cache.evict(None) == 0
+    assert len(cache) == 2
+
+
+@pytest.mark.requires('tags')
+def test_an_expired_incr_and_item_assignment_clear_the_tag(cache: Any, fake_clock: Any) -> None:
+    cache.set('n', 1, expire=1, tag='t')
+    fake_clock.advance(10)
+    assert cache.incr('n') == 1
+    assert cache.get('n', tag=True) == (1, None)
+    cache.set('k', 1, tag='t')
+    cache['k'] = 2
+    assert cache.get('k', tag=True) == (2, None)
+
+
+@pytest.mark.requires('tags')
+@pytest.mark.diverges(backend='oxide', ref='D-052', reason='tags compare by exact type', raises=AssertionError)
+def test_evict_matches_tags_numerically(cache: Any) -> None:
+    cache.set('int', 1, tag=1)
+    cache.set('float', 1, tag=1.0)
+    assert cache.evict(1) == 2
+
+
+@pytest.mark.requires('eviction_policy')
+@pytest.mark.diverges(
+    backend='oxide', ref='D-053', reason='cull() counts the expired entries it removed', raises=AssertionError
+)
+def test_cull_under_none_reports_zero_after_removing_expired_entries(
+    make_cache: Any, cache_dir: Path, fake_clock: Any
+) -> None:
+    cache = make_cache(cache_dir, size_limit=2**20, eviction_policy='none')
+    cache.set('gone', 1, expire=1)
+    fake_clock.advance(10)
+    assert cache.cull() == 0
+    assert len(cache) == 0
+
+
+@pytest.mark.requires('eviction_policy')
+def test_the_eviction_policy_persists(make_cache: Any, cache_dir: Path) -> None:
+    make_cache(cache_dir, eviction_policy='none').close()
+    reopened = make_cache(cache_dir)
+    assert reopened.eviction_policy == 'none'

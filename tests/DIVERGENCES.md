@@ -421,6 +421,22 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: a lock that silently doesn't lock, or that one container's pid 7 shares with another's, is worse than an error (Michael's decisions 10, 16, 17 and 18, plan 24).
 - Tests: `tests/conformance/test_recipes.py`, `tests/unit/test_recipes.py`
 
+## D-052 Tags are compared by exact type
+
+- Kind: test-visible
+- diskcache: tags are stored as SQLite values and compared numerically, so `evict(1)` removes entries tagged `1`, `1.0` and `True`, a `True` tag reads back as `1`, a NaN tag is stored as no tag, and a tuple tag raises `ProgrammingError`.
+- oxide: a tag is any key type (D-004), stored and compared as a key is (D-044): `1`, `1.0` and `True` are three tags, a NaN tag raises `ValueError`, and a tuple is a tag. `tag=` is keyword-only, as `retry=` is (D-047). `evict(None)` is 0 and touches nothing, as in diskcache.
+- Why: one rule for keys and tags, with an identity that follows from the value and its type.
+- Tests: `tests/conformance/test_tags.py`
+
+## D-053 `cull()` under `eviction_policy='none'` counts what it removed
+
+- Kind: test-visible
+- diskcache: under `'none'`, `cull()` removes the expired entries and then returns 0 (upstream bug 15).
+- oxide: it returns how many expired entries it removed. Under `'none'` nothing is ever evicted for size, by a write or by `cull()`, and the policy is read inside each write's transaction, so a handle opened before another process switched the cache to `'none'` stops evicting at once.
+- Why: `cull()`'s count is documented as what it removed.
+- Tests: `tests/conformance/test_tags.py`
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.
