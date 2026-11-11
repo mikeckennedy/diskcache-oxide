@@ -51,6 +51,8 @@ assert set(FEATURE_PHASES.values()) <= set(PHASE_ORDER)
 OXIDE_EARLY_FEATURES = frozenset(
     {
         'transact',
+        'tags',
+        'eviction_policy',
         'fanout',
         'key_types',
         'retry',

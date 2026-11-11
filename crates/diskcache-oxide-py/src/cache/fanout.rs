@@ -56,6 +56,7 @@ impl FanoutCache {
         shards = None,
         size_limit = None,
         cull_limit = None,
+        eviction_policy = None,
         serializer = "msgpack",
         pickle = false,
         types = None,
@@ -75,6 +76,7 @@ impl FanoutCache {
         shards: Option<&Bound<'_, PyAny>>,
         size_limit: Option<&Bound<'_, PyAny>>,
         cull_limit: Option<&Bound<'_, PyAny>>,
+        eviction_policy: Option<&str>,
         serializer: &str,
         pickle: bool,
         types: Option<Py<TypeRegistry>>,
@@ -94,6 +96,7 @@ impl FanoutCache {
             false,
             size_limit,
             cull_limit,
+            eviction_policy,
             serializer,
             pickle,
             types,
@@ -137,6 +140,12 @@ impl FanoutCache {
     #[getter]
     fn cull_limit(&self) -> i64 {
         self.shards[0].store.cached_limits().cull_limit
+    }
+
+    /// Shard 0's eviction policy, as `cull_limit` is shard 0's.
+    #[getter]
+    fn eviction_policy(&self) -> &'static str {
+        self.shards[0].store.cached_limits().eviction_policy.name()
     }
 
     /// Always True for a real cache (a `NullCache` is False).
@@ -226,9 +235,10 @@ impl FanoutCache {
 
     /// As `Cache.reset`, over every shard under one `timeout`. A `size_limit` is a total, split
     /// across the shards as the constructor splits it, and read back as the total; a `cull_limit`
-    /// is every shard's. Stops at the first shard that fails, raising its error.
+    /// and an `eviction_policy` are every shard's (and read back as shard 0's). Stops at the first
+    /// shard that fails, raising its error.
     #[pyo3(signature = (key, value = None, update = true))]
-    fn reset(&self, py: Python<'_>, key: &str, value: Option<&Bound<'_, PyAny>>, update: bool) -> PyResult<i64> {
+    fn reset(&self, py: Python<'_>, key: &str, value: Option<&Bound<'_, PyAny>>, update: bool) -> PyResult<Py<PyAny>> {
         self.refuse_fan_out("reset()")?;
         let which = ResetLimit::parse(key, value, update)?;
         let count = u32::try_from(self.shards.len()).unwrap_or(u32::MAX);
@@ -248,10 +258,14 @@ impl FanoutCache {
                 py,
                 |store, left| if read { store.read_limits(left) } else { store.set_limits(left, requested) },
             )?;
-        Ok(match which {
-            ResetLimit::Size(_) => limits.iter().map(|l| l.size_limit).sum(),
-            ResetLimit::Cull(_) => limits.first().map_or(0, |l| l.cull_limit),
-        })
+        if matches!(which, ResetLimit::Size(_)) {
+            return Ok(limits.iter().map(|l| l.size_limit).sum::<i64>().into_pyobject(py)?.into_any().unbind());
+        }
+        // A root always has at least one shard.
+        match limits.first() {
+            Some(&first) => which.of(py, first),
+            None => Ok(py.None()),
+        }
     }
 
     // -- routed to one shard -------------------------------------------------------------------
@@ -454,6 +468,25 @@ impl FanoutCache {
         self.remove_everywhere(py, "clear", timeout, retry, Store::clear_until)
     }
 
+    /// Removes every entry tagged `tag` and stored before the call, on every shard. Returns how many
+    /// it removed. `evict(None)` removes nothing. `timeout` and `retry` as for `clear`.
+    #[pyo3(signature = (tag, *, timeout = None, retry = false))]
+    fn evict(
+        &self,
+        py: Python<'_>,
+        tag: &Bound<'_, PyAny>,
+        timeout: Option<&Bound<'_, PyAny>>,
+        retry: bool,
+    ) -> PyResult<u64> {
+        let timeout = self.config.call_timeout(timeout)?;
+        self.refuse_fan_out("evict()")?;
+        let Some(encoded) = crate::codec::key::encode_tag(Some(tag))? else { return Ok(0) };
+        let tag = encoded.key();
+        self.remove_everywhere(py, "evict", timeout, retry, |store, snapshot, deadline| {
+            store.evict_until(snapshot, tag, deadline)
+        })
+    }
+
     /// Removes expired entries, then evicts each shard until it's under its share of `size_limit`.
     /// Returns how many it removed. `timeout` as for `expire`.
     #[pyo3(signature = (*, timeout = None, retry = false))]
@@ -593,6 +626,7 @@ impl FanoutCache {
         keep_stored: bool,
         size_limit: Option<&Bound<'_, PyAny>>,
         cull_limit: Option<&Bound<'_, PyAny>>,
+        eviction_policy: Option<&str>,
         serializer: &str,
         pickle: bool,
         types: Option<Py<TypeRegistry>>,
@@ -623,6 +657,7 @@ impl FanoutCache {
             timeout,
             size_limit,
             cull_limit,
+            eviction_policy,
             serializer,
             max_connections,
             sqlite_cache_size,
@@ -1093,6 +1128,7 @@ impl FanoutKeyIterator {
     shards,
     size_limit = None,
     cull_limit = None,
+    eviction_policy = None,
     serializer = "msgpack",
     pickle = false,
     types = None,
@@ -1112,6 +1148,7 @@ pub(crate) fn _open_fanout_keeping_stored(
     shards: &Bound<'_, PyAny>,
     size_limit: Option<&Bound<'_, PyAny>>,
     cull_limit: Option<&Bound<'_, PyAny>>,
+    eviction_policy: Option<&str>,
     serializer: &str,
     pickle: bool,
     types: Option<Py<TypeRegistry>>,
@@ -1131,6 +1168,7 @@ pub(crate) fn _open_fanout_keeping_stored(
         true,
         size_limit,
         cull_limit,
+        eviction_policy,
         serializer,
         pickle,
         types,

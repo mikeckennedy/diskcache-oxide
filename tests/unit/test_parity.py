@@ -117,7 +117,10 @@ def test_a_cache_passed_to_a_spawned_process_opens_there(tmp_path: Path) -> None
     ('call', 'error', 'match'),
     [
         (lambda c: c.reset('sqlite_mmap_size', 1), ValueError, 'D-023'),
-        (lambda c: c.reset('eviction_policy', 'none'), ValueError, 'eviction'),
+        (lambda c: c.reset('eviction_policy', 'least-recently-used'), ValueError, 'D-022'),
+        (lambda c: c.reset('eviction_policy', 'least-frequently-used'), ValueError, 'every read a write'),
+        (lambda c: c.reset('eviction_policy', 'bogus'), ValueError, "'least-recently-stored' or 'none'"),
+        (lambda c: c.reset('eviction_policy', 1), TypeError, '(?i)str'),
         (lambda c: c.reset('statistics', True), ValueError, 'stats'),
         (lambda c: c.reset('nonsense'), ValueError, 'size_limit'),
         (lambda c: c.reset('cull_limit', 5, update=False), ValueError, 'update=False'),

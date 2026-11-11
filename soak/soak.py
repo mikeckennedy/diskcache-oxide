@@ -1525,7 +1525,7 @@ def mib(n: Any) -> str:
 
 PROOF_COUNTERS = (
     'pops_chaos', 'pops_held', 'pops_fork', 'pops_pq', 'pq_delivered', 'durable_calls', 'durable_false',
-    'forks_behind', 'stuck_forks', 'stuck_callers_timed_out',
+    'forks_behind', 'stuck_forks', 'stuck_callers_timed_out', 'evicts_chaos',
 )  # fmt: skip
 # The fanout role's counters (soak/worker.py, FanoutWorker), and those that prove it's doing its job.
 FANOUT_COUNTERS = (

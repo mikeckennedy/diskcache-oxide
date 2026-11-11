@@ -58,6 +58,10 @@ class CacheLike(Protocol):
         """The most entries one `set()` evicts when over `size_limit`."""
 
     @property
+    def eviction_policy(self) -> Literal['least-recently-stored', 'none']:
+        """`'least-recently-stored'` or `'none'`."""
+
+    @property
     def enabled(self) -> bool:
         """True if caching is on (`Cache`), False if it's off (`NullCache`)."""
 
@@ -167,8 +171,17 @@ class CacheLike(Protocol):
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """`(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`."""
 
-    def reset(self, key: str, value: Any = ..., update: bool = True) -> int:
-        """Read or set `size_limit` or `cull_limit`."""
+    @overload
+    def reset(self, key: Literal['size_limit', 'cull_limit'], value: Any = ..., update: bool = True) -> int: ...
+    @overload
+    def reset(
+        self,
+        key: Literal['eviction_policy'],
+        value: Any = ...,
+        update: bool = True,
+    ) -> Literal['least-recently-stored', 'none']: ...
+    def reset(self, key: str, value: Any = ..., update: bool = True) -> int | str:
+        """Read or set `size_limit`, `cull_limit` or `eviction_policy`."""
 
     def __reversed__(self) -> Iterator[Key]:
         """Keys in insertion order backwards, newest first."""
@@ -195,6 +208,9 @@ class CacheLike(Protocol):
 
     def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove every entry that existed when the call started. Returns how many."""
+
+    def evict(self, tag: Key, *, timeout: float | None = None, retry: bool = False) -> int:
+        """Remove every entry tagged `tag` that existed when the call started. Returns how many."""
 
     def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove expired entries, then evict until under `size_limit`. Returns how many."""

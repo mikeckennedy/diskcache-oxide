@@ -18,7 +18,7 @@ use crate::key::{Key, OwnedKey};
 #[cfg(test)]
 use crate::rows::UPDATE_NUMBER_SQL;
 use crate::rows::{NewRow, Removed, RemovedBatch, RowWriter, Stored, Tag};
-use crate::schema::{MODE_INT, MODE_REAL};
+use crate::schema::{EvictionPolicy, MODE_INT, MODE_REAL};
 use crate::spill::{self, PendingFile};
 use crate::store::{Changed, LockPriority, Store};
 use crate::{Error, Result};
@@ -786,6 +786,10 @@ fn run_hook(hook: &'static std::thread::LocalKey<TestHook>, store: &Store) {
 struct Prelude {
     cull_limit: i64,
     size_limit: i64,
+    /// Whether this write may evict for size: false under `eviction_policy='none'`. Read here, inside
+    /// the write's transaction, so a `reset('eviction_policy', ...)` made by another process since
+    /// this handle opened is obeyed at once (architect, H2).
+    evicts: bool,
     /// `totals.size`: bytes in value files.
     size: i64,
     any_expired: bool,
@@ -802,7 +806,7 @@ impl Prelude {
 }
 
 const PRELUDE_SQL: &str = "
-SELECT t.cull_limit, t.size_limit, t.size, 0,
+SELECT t.cull_limit, t.size_limit, t.size, t.eviction_policy,
        EXISTS (SELECT 1 FROM cache WHERE expire_time IS NOT NULL AND expire_time < ?3),
        c.id, c.size, c.filename, c.mode, c.value, c.expire_time
 FROM totals AS t
@@ -831,14 +835,23 @@ fn prelude(conn: &Connection, key: Key<'_>, now: f64, timeout: Duration) -> Resu
                         Some(LiveRow { mode: r.get(8)?, int, real, expire_time })
                     }
                 };
-                Ok(Prelude { cull_limit: r.get(0)?, size_limit: r.get(1)?, size, any_expired: r.get(4)?, stored, live })
+                Ok(Prelude {
+                    cull_limit: r.get(0)?,
+                    size_limit: r.get(1)?,
+                    evicts: r.get::<_, i64>(3)? == EvictionPolicy::LeastRecentlyStored.code(),
+                    size,
+                    any_expired: r.get(4)?,
+                    stored,
+                    live,
+                })
             })
         })
         .map_err(|e| Error::from_sqlite(e, timeout))
 }
 
 /// One shared budget of `cull_limit` rows per call, as in diskcache: expired rows first (earliest
-/// expiry first), then, only if the cache is at or over `size_limit`, the least recently stored.
+/// expiry first), then, only if the cache is at or over `size_limit` and its policy evicts, the
+/// least recently stored.
 /// The limit is judged by what `totals.size` holds now, without reading it again: the prelude's
 /// figure from before this write, plus the write's own size change, less the value files the sweep
 /// just removed. Counting those still would evict live rows the sweep had made room for.
@@ -866,7 +879,7 @@ fn cull(
         debug_assert_eq!(size, stored, "the reckoned size and totals.size disagree");
     }
     let mut removed = swept.rows;
-    if budget > 0 && over_limit(tx, size, before.size_limit, timeout)? {
+    if budget > 0 && before.evicts && over_limit(tx, size, before.size_limit, timeout)? {
         // Its freed bytes aren't needed: nothing judges the limit after this.
         removed.extend(writer.delete_oldest(budget)?.rows);
     }
@@ -1862,6 +1875,74 @@ mod tests {
         let one = s.incr(T, "new", Number::Int(1), Some(Number::Int(0)), NOW + 100.0).unwrap();
         assert_eq!(one, Number::Int(1));
         assert_eq!(keys(&s), ["k0", "k1", "k2", "k3", "k4", "new"], "every live row survives");
+    }
+
+    fn set_policy_behind_the_handle(s: &Store, policy: EvictionPolicy) {
+        // As another process's `reset('eviction_policy', ...)` would: this handle's cached copy is stale.
+        s.write(T, |_, c| {
+            c.execute("UPDATE totals SET eviction_policy = ?1", [policy.code()])
+                .map(drop)
+                .map_err(|e| Error::from_sqlite(e, T))
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn under_none_no_write_or_cull_evicts_for_size_but_expired_rows_still_go() {
+        let tmp = TempDir::new("ops-policy-none");
+        let s = store(
+            tmp.path(),
+            Requested { size_limit: Some(1 << 20), cull_limit: Some(10), eviction_policy: Some(EvictionPolicy::None) },
+        );
+        let blob = vec![0u8; 100_000];
+        let v = Value::Bytes { mode: MODE_BYTES, data: &blob };
+        for i in 0..30 {
+            s.set(T, &format!("k{i:02}"), v, None, NOW).unwrap();
+        }
+        s.set(T, "gone", v, Some(1.0), NOW).unwrap();
+        assert_eq!(len(&s), 31, "about 3 MB in a 1 MiB cache, and nothing evicted");
+        assert_eq!(s.cull(T, NOW + 10.0).unwrap(), 1, "cull counts the expired row it removed (D-053)");
+        assert_eq!(len(&s), 30);
+        s.set(T, "later", v, None, NOW + 10.0).unwrap();
+        assert_eq!(len(&s), 31, "a write over the limit still evicts nothing");
+    }
+
+    #[test]
+    fn a_policy_changed_behind_an_open_handle_applies_at_its_next_write_and_cull() {
+        let tmp = TempDir::new("ops-policy-behind");
+        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(10), eviction_policy: None });
+        let blob = vec![0u8; 100_000];
+        let v = Value::Bytes { mode: MODE_BYTES, data: &blob };
+        set_policy_behind_the_handle(&s, EvictionPolicy::None);
+        assert_eq!(s.cached_limits().eviction_policy, EvictionPolicy::LeastRecentlyStored, "the cached copy is stale");
+        for i in 0..30 {
+            s.set(T, &format!("k{i:02}"), v, None, NOW).unwrap();
+        }
+        assert_eq!(len(&s), 30, "every write read 'none' in its own transaction (H2)");
+        assert_eq!(s.cull(T, NOW).unwrap(), 0);
+        set_policy_behind_the_handle(&s, EvictionPolicy::LeastRecentlyStored);
+        assert!(s.cull(T, NOW).unwrap() > 0, "and back: cull evicts again");
+        let after_cull = len(&s);
+        set_policy_behind_the_handle(&s, EvictionPolicy::None);
+        s.set(T, "big", Value::Bytes { mode: MODE_BYTES, data: &vec![1u8; 2 << 20] }, None, NOW).unwrap();
+        assert_eq!(len(&s), after_cull + 1);
+        set_policy_behind_the_handle(&s, EvictionPolicy::LeastRecentlyStored);
+        s.set(T, "next", v, None, NOW).unwrap();
+        assert!(len(&s) < after_cull + 2, "a write evicts again");
+    }
+
+    #[test]
+    fn the_policy_is_kept_by_a_second_open_and_set_when_asked() {
+        let tmp = TempDir::new("ops-policy-reopen");
+        let none = Requested { eviction_policy: Some(EvictionPolicy::None), ..Requested::default() };
+        let _first = store(tmp.path(), none);
+        let s = store(tmp.path(), Requested::default());
+        assert_eq!(s.cached_limits().eviction_policy, EvictionPolicy::None, "None keeps the stored policy");
+        let back = Requested { eviction_policy: Some(EvictionPolicy::LeastRecentlyStored), ..Requested::default() };
+        let limits = s.set_limits(T, back).unwrap();
+        assert_eq!(limits.eviction_policy, EvictionPolicy::LeastRecentlyStored);
+        assert_eq!(s.read_limits(T).unwrap().eviction_policy, EvictionPolicy::LeastRecentlyStored);
+        assert_eq!(s.cached_limits().eviction_policy, EvictionPolicy::LeastRecentlyStored);
     }
 
     /// Guards the other direction: this passes on the code before the fix, and fails if the swept

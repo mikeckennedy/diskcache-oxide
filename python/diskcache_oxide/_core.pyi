@@ -108,6 +108,7 @@ def _open_fanout_keeping_stored(
     shards: int,
     size_limit: int | None = None,
     cull_limit: int | None = None,
+    eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
     serializer: str = 'msgpack',
     pickle: bool = False,
     types: TypeRegistry | None = None,
@@ -158,6 +159,11 @@ class Cache:
             1 MiB). Stored in the cache, so it applies to every process.
         cull_limit: How many least-recently-stored entries a `set()` evicts when the cache is over
             `size_limit` (default 10).
+        eviction_policy: `'least-recently-stored'` (a new cache's default) evicts the oldest stored
+            entries when over `size_limit`; `'none'` never evicts for size, only removing expired
+            entries, so the cache can grow past `size_limit`. Stored in the cache, so it applies to
+            every process, and every write reads it afresh. None keeps the stored one.
+            `'least-recently-used'` and `'least-frequently-used'` raise `ValueError` (D-022).
         serializer: `'msgpack'` (the default) or `'json'`, for values that aren't plain `str` or
             `bytes`.
         pickle: Allow pickle for values the serializer can't represent exactly. Without it, such
@@ -236,6 +242,7 @@ class Cache:
         *,
         size_limit: int | None = None,
         cull_limit: int | None = None,
+        eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
         serializer: str = 'msgpack',
         pickle: bool = False,
         types: TypeRegistry | None = None,
@@ -259,6 +266,10 @@ class Cache:
     @property
     def cull_limit(self) -> int:
         """The most entries a single `set()` evicts when the cache is over `size_limit`."""
+    @property
+    def eviction_policy(self) -> Literal['least-recently-stored', 'none']:
+        """`'least-recently-stored'` or `'none'`, as this handle last saw it stored (at open or its
+        own `reset`). Writes read the stored policy afresh, so another process's change applies at once."""
     @property
     def enabled(self) -> bool:
         """Always True for a real cache; False for a `NullCache`."""
@@ -616,19 +627,31 @@ class Cache:
     @property
     def durable(self) -> bool:
         """True for a `durable=True` handle."""
-    def reset(self, key: str, value: Any = ..., update: bool = True) -> int:
-        """Read `size_limit` or `cull_limit` as stored now, or persist a new value and return it.
+    @overload
+    def reset(self, key: Literal['size_limit', 'cull_limit'], value: Any = ..., update: bool = True) -> int:
+        """Read `size_limit`, `cull_limit` or `eviction_policy` as stored now, or persist a new value and
+        return it.
 
         Args:
-            key: `'size_limit'` or `'cull_limit'`.
+            key: `'size_limit'`, `'cull_limit'` or `'eviction_policy'`.
             value: The new value, checked as the constructor checks it; leave it out (or pass
                 `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
             update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
 
+        Returns:
+            The setting: an `int` for a limit, the policy's name for `eviction_policy`.
+
         Raises:
             ValueError: Another key, `update=False`, or a value the constructor would refuse.
-            TypeError: A value that isn't an `int`.
+            TypeError: A limit that isn't an `int`, or a policy that isn't a `str`.
         """
+    @overload
+    def reset(
+        self,
+        key: Literal['eviction_policy'],
+        value: Any = ...,
+        update: bool = True,
+    ) -> Literal['least-recently-stored', 'none']: ...
     def __reversed__(self) -> Iterator[Key]:
         """Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first)."""
     @overload
@@ -699,6 +722,34 @@ class Cache:
         Examples:
             ```python
             cache.clear(timeout=10.0)   # safe while other processes keep writing
+            ```
+        """
+    def evict(self, tag: Key, *, timeout: float | None = None, retry: bool = False) -> int:
+        """Remove every entry tagged `tag` that existed when the call started.
+
+        Works in chunks as `clear` does, and keeps writes that land while it runs. Tags compare by
+        exact type, as keys do: `evict(1)` leaves entries tagged `1.0` or `True` (D-052). `evict(None)`
+        removes nothing: untagged entries have no tag to evict by.
+
+        Args:
+            tag: The tag.
+            timeout: Seconds each chunk may wait for the write lock (another thread's or another
+                process's), for this call only (default: the cache's `timeout`). It bounds each
+                wait, not the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
+
+        Returns:
+            How many entries were removed.
+
+        Raises:
+            TypeError: `tag` isn't a key type.
+
+        Examples:
+            ```python
+            cache.set('user:42:profile', profile, tag='user:42')
+            cache.set('user:42:orders', orders, tag='user:42')
+            cache.evict('user:42')   # 2
             ```
         """
     def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
@@ -868,6 +919,7 @@ class FanoutCache:
             shards, each of which culls on its own. Each shard needs at least 1 MiB, so the total must
             be at least `shards` MiB. With none given, a new root gets 1 GiB in all.
         cull_limit: As for `Cache`, per shard.
+        eviction_policy: As for `Cache`, on every shard.
         serializer: As for `Cache`.
         pickle: As for `Cache`.
         clock: As for `Cache`.
@@ -912,6 +964,7 @@ class FanoutCache:
         shards: int | None = None,
         size_limit: int | None = None,
         cull_limit: int | None = None,
+        eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
         serializer: str = 'msgpack',
         pickle: bool = False,
         types: TypeRegistry | None = None,
@@ -941,6 +994,9 @@ class FanoutCache:
 
         Shard 0's value: every shard's only while they were all created, and last set, under the same settings.
         """
+    @property
+    def eviction_policy(self) -> Literal['least-recently-stored', 'none']:
+        """Shard 0's eviction policy, as for `cull_limit`."""
     @property
     def enabled(self) -> bool:
         """Always True for a real cache; False for a `NullCache`."""
@@ -1125,6 +1181,23 @@ class FanoutCache:
         Raises:
             Timeout: As for `expire`, with `removed` and `failed_shards`.
         """
+    def evict(self, tag: Key, *, timeout: float | None = None, retry: bool = False) -> int:
+        """Remove every entry tagged `tag` that existed when the call started, from every shard, as
+        `Cache.evict`.
+
+        Args:
+            tag: The tag.
+            timeout: As for `expire`: one budget for the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
+
+        Returns:
+            How many entries were removed.
+
+        Raises:
+            TypeError: `tag` isn't a key type.
+            Timeout: As for `expire`, with `removed` and `failed_shards`.
+        """
     def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove expired entries, then evict the least recently stored from each shard until it's
         under its share of `size_limit`.
@@ -1232,19 +1305,31 @@ class FanoutCache:
     @property
     def durable(self) -> bool:
         """True for a `durable=True` handle."""
-    def reset(self, key: str, value: Any = ..., update: bool = True) -> int:
-        """Read `size_limit` or `cull_limit` as stored now, or persist a new value and return it.
+    @overload
+    def reset(self, key: Literal['size_limit', 'cull_limit'], value: Any = ..., update: bool = True) -> int:
+        """Read `size_limit`, `cull_limit` or `eviction_policy` as stored now, or persist a new value and
+        return it.
 
         Args:
-            key: `'size_limit'` or `'cull_limit'`.
+            key: `'size_limit'`, `'cull_limit'` or `'eviction_policy'`.
             value: The new value, checked as the constructor checks it; leave it out (or pass
                 `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
             update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
 
+        Returns:
+            The setting: an `int` for a limit, the policy's name for `eviction_policy`.
+
         Raises:
             ValueError: Another key, `update=False`, or a value the constructor would refuse.
-            TypeError: A value that isn't an `int`.
+            TypeError: A limit that isn't an `int`, or a policy that isn't a `str`.
         """
+    @overload
+    def reset(
+        self,
+        key: Literal['eviction_policy'],
+        value: Any = ...,
+        update: bool = True,
+    ) -> Literal['least-recently-stored', 'none']: ...
     def __reversed__(self) -> Iterator[Key]:
         """Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first)."""
     @overload

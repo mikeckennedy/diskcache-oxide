@@ -11,7 +11,9 @@ Two caches share the run directory:
 - chaos/: keys shared by every worker, expiring entries, a small size_limit (so culling runs), large
   values that spill to files, and clear()/expire()/cull() from maintenance processes. Anything may
   vanish here; what's checked is that whatever comes back is intact and not expired.
-- ledger/: nothing expires, is cleared or is culled, so every acknowledged write must survive:
+- ledger/: nothing expires or is cleared, and it is under `eviction_policy='none'` far past its
+  1 MiB `size_limit`, so nothing is ever evicted and every acknowledged write must survive (a
+  `maint cull` culls it too, and must remove nothing):
   - `ctr:<worker>` counters, against the count of incr() calls that returned;
   - `own:<worker>:<n>` keys with a single writer, which must read back exactly what was last written;
   - `once:<slot>` add() races, which must have exactly one winner;
@@ -43,7 +45,10 @@ The other roles run lanes that plan 09 needs, on stores of their own:
   database fds stay within the shard budget (D-037).
 
 Every value carries its key and a CRC of its payload, so corruption or a value landing under the
-wrong key is caught on every read.
+wrong key is caught on every read. It carries the tag it was stored with too: chaos/ writes tag most
+entries with one of a few groups (plan 24, release 3), a share of reads and every pop ask for the tag
+and check it is the one stored with that value (never another version's), and now and then a write
+is followed by `evict` of a group.
 
 The worker writes its counters to stats/<worker>.json every few seconds (atomically), and its
 problems to the same file, for the orchestrator to collect. SIGUSR1 asks for a fork test (fork
@@ -164,7 +169,10 @@ def open_chaos(run_dir: Path) -> Cache:
 
 
 def open_ledger(run_dir: Path) -> Cache:
-    return Cache(run_dir / 'ledger', timeout=60.0, size_limit=2**36)
+    # Under 'none' with the smallest size_limit, which it outgrows in minutes (plan 24, release 3):
+    # every write is over the limit, so one that evicted for size would lose an acknowledged write,
+    # and the ledger's checks would say so.
+    return Cache(run_dir / 'ledger', timeout=60.0, size_limit=2**20, eviction_policy='none')
 
 
 def pace(interval: float, next_at: float, stop: threading.Event) -> tuple[float, bool]:
@@ -200,7 +208,18 @@ def soak_key(rng: random.Random, prefix: str, n: int) -> Any:
     return (prefix, n + 0.5)
 
 
-def make_value(key: Any, rng: random.Random, expire_at: float | None) -> Any:
+# The tags chaos/ writes use: a few groups of different types (an int and a float that are equal in
+# Python are different tags), or none.
+SOAK_TAGS: tuple[Any, ...] = ('g:0', 'g:1', 'g:2', 3, 3.0, ('g', 4))
+UNCHECKED = object()
+
+
+def soak_tag(rng: random.Random) -> Any:
+    """A tag for a chaos/ write: none a third of the time, else one of `SOAK_TAGS`."""
+    return None if rng.random() < 0.33 else rng.choice(SOAK_TAGS)
+
+
+def make_value(key: Any, rng: random.Random, expire_at: float | None, stored_tag: Any = None) -> Any:
     tag = key_tag(key)
     roll = rng.random()
     if roll < 0.90:
@@ -211,15 +230,17 @@ def make_value(key: Any, rng: random.Random, expire_at: float | None) -> Any:
             'body': body,
             'exp': expire_at,
             'n': rng.randrange(1 << 40),
+            'tag': repr(stored_tag),
         }
     size = rng.randrange(1_024, 8_192) if roll < 0.99 else rng.randrange(64 * 1024, 512 * 1024)
     payload = rng.randbytes(size)
-    header = json.dumps({'key': tag, 'crc': zlib.crc32(payload), 'exp': expire_at}).encode()
+    header = json.dumps({'key': tag, 'crc': zlib.crc32(payload), 'exp': expire_at, 'tag': repr(stored_tag)}).encode()
     return len(header).to_bytes(4, 'big') + header + payload
 
 
-def check_value(key: Any, value: Any, now: float) -> str | None:
-    """None if `value` is intact and current, else what's wrong with it."""
+def check_value(key: Any, value: Any, now: float, stored_tag: Any = UNCHECKED) -> str | None:
+    """None if `value` is intact and current (and, if `stored_tag` is given, was stored with that
+    tag), else what's wrong with it."""
     tag = key_tag(key)
     if isinstance(value, dict):
         if value.get('key') != tag:
@@ -227,6 +248,7 @@ def check_value(key: Any, value: Any, now: float) -> str | None:
         if zlib.crc32(str(value.get('body', '')).encode()) != value.get('crc'):
             return f'dict value under {key!r} fails its CRC'
         expire_at = value.get('exp')
+        recorded = value.get('tag', 'None')
     elif isinstance(value, bytes):
         n = int.from_bytes(value[:4], 'big')
         try:
@@ -238,8 +260,11 @@ def check_value(key: Any, value: Any, now: float) -> str | None:
         if zlib.crc32(value[4 + n :]) != header.get('crc'):
             return f'bytes value under {key!r} ({len(value)} bytes) fails its CRC'
         expire_at = header.get('exp')
+        recorded = header.get('tag', 'None')
     else:
         return f'unexpected value type under {key!r}: {type(value).__name__}'
+    if stored_tag is not UNCHECKED and recorded != repr(stored_tag):
+        return f'{key!r} read back the tag {stored_tag!r} with a value stored with {recorded}'
     if expire_at is not None and now > expire_at + EXPIRY_SLACK:
         return f'{key!r} returned {now - expire_at:.1f}s after it expired'
     return None
@@ -357,29 +382,37 @@ class Worker:
         sample = self.thread_rate > 0 or i % LATENCY_SAMPLE_EVERY == 0
         if i % every == 0 and rng.random() < 0.25:
             asked_at = time.time()
-            value = self.chaos.pop(key)
+            value, tag = self.chaos.pop(key, tag=True)
             self.count('pops_chaos')
-            if value is not None and (wrong := check_value(key, value, asked_at)) is not None:
+            if value is not None and (wrong := check_value(key, value, asked_at, tag)) is not None:
                 self.problem(f'pop: {wrong}')
             self.ledger_op(rng)
         elif i % every == 0:
             expire = rng.choice((None, None, rng.uniform(1, 60)))
             expire_at = None if expire is None else time.time() + expire
-            value = make_value(key, rng, expire_at)
+            tag = soak_tag(rng)
+            value = make_value(key, rng, expire_at, tag)
             start = time.perf_counter_ns()
-            self.chaos.set(key, value, expire=expire)
+            self.chaos.set(key, value, expire=expire, tag=tag)
             self.record('set', time.perf_counter_ns() - start)  # Writes are rare enough to time every one.
+            if rng.random() < 0.01:
+                self.chaos.evict(rng.choice(SOAK_TAGS))
+                self.count('evicts_chaos')
             self.ledger_op(rng)
         else:
             asked_at = time.time()  # Expired means expired before we asked, not by the time we look.
+            with_tag = rng.random() < 0.1
             start = time.perf_counter_ns()
-            value = self.chaos.get(key)
-            if sample:
+            if with_tag:
+                value, tag = self.chaos.get(key, tag=True)
+            else:
+                value, tag = self.chaos.get(key), UNCHECKED
+            if sample and not with_tag:
                 self.record('get', time.perf_counter_ns() - start)
             if value is None:
                 with self.lock:
                     self.misses += 1
-            elif (wrong := check_value(key, value, asked_at)) is not None:
+            elif (wrong := check_value(key, value, asked_at, tag)) is not None:
                 self.problem(wrong)
         if i % 5_000 == 0 and rng.random() < 0.05:
             self.reopen()
@@ -1741,6 +1774,13 @@ def maint(run_dir: Path, op: str) -> int:
     removed = getattr(cache, op)()
     print(f'{op} {removed} {time.perf_counter() - start:.3f}')
     cache.close()
+    if op == 'cull':
+        # The ledger has nothing expired, and under 'none' a cull evicts nothing for size.
+        with open_ledger(run_dir) as ledger:
+            culled = ledger.cull()
+        if culled:
+            print(f"ledger cull under eviction_policy='none' removed {culled} entries")
+            return 1
     return 0
 
 

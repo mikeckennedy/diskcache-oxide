@@ -73,6 +73,22 @@ def _check_key(key: object, depth: int = 0) -> None:
     raise TypeError(f'cache keys must be {_KEY_TYPES}, not {kind.__name__}')
 
 
+_POLICIES = ('least-recently-stored', 'none')
+
+
+def _check_policy(value: object) -> None:
+    """`eviction_policy=` as a real cache checks it."""
+    if type(value) is not str:
+        raise TypeError(f'eviction_policy must be a str, not {type(value).__name__}')
+    if value in ('least-recently-used', 'least-frequently-used'):
+        raise ValueError(
+            f"eviction_policy={value!r} isn't supported: it makes every read a write, which would serialize "
+            "reads across processes (D-022); use 'least-recently-stored' or 'none'"
+        )
+    if value not in _POLICIES:
+        raise ValueError(f"eviction_policy must be 'least-recently-stored' or 'none', not {value!r}")
+
+
 def _check_tag(tag: object) -> None:
     """A tag is None or a valid key, raising as a real cache's `tag=` does."""
     if tag is None:
@@ -165,7 +181,7 @@ class NullCache:
         ```
     """
 
-    __slots__ = ('_cull_limit', '_directory', '_invalidate', '_size_limit', '_timeout')
+    __slots__ = ('_cull_limit', '_directory', '_eviction_policy', '_invalidate', '_size_limit', '_timeout')
 
     def __init__(
         self,
@@ -174,6 +190,7 @@ class NullCache:
         *,
         size_limit: int | None = None,
         cull_limit: int | None = None,
+        eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
         serializer: Literal['msgpack', 'json'] = 'msgpack',
         pickle: bool = False,
         types: TypeRegistry | None = None,
@@ -193,6 +210,9 @@ class NullCache:
         self._timeout = 60.0 if timeout is None else float(timeout)
         self._size_limit = DEFAULT_SIZE_LIMIT if size_limit is None else size_limit
         self._cull_limit = DEFAULT_CULL_LIMIT if cull_limit is None else cull_limit
+        if eviction_policy is not None:
+            _check_policy(eviction_policy)
+        self._eviction_policy = 'least-recently-stored' if eviction_policy is None else eviction_policy
         self._invalidate = invalidate
 
     def __repr__(self) -> str:
@@ -223,6 +243,11 @@ class NullCache:
         return self._cull_limit
 
     @property
+    def eviction_policy(self) -> Literal['least-recently-stored', 'none']:
+        """The eviction policy passed to the constructor (default 'least-recently-stored'). Unused."""
+        return self._eviction_policy
+
+    @property
     def enabled(self) -> bool:
         """Always False: caching is off."""
         return False
@@ -241,20 +266,31 @@ class NullCache:
         """Always `(0, 0)`: nothing is looked up."""
         return (0, 0)
 
-    def reset(self, key: str, value: Any = ENOVAL, update: bool = True) -> int:
-        """Read `size_limit` or `cull_limit`, or set it (checked as `Cache` checks it) and return it."""
+    @overload
+    def reset(self, key: Literal['size_limit', 'cull_limit'], value: Any = ..., update: bool = True) -> int: ...
+    @overload
+    def reset(
+        self,
+        key: Literal['eviction_policy'],
+        value: Any = ...,
+        update: bool = True,
+    ) -> Literal['least-recently-stored', 'none']: ...
+    def reset(self, key: str, value: Any = ENOVAL, update: bool = True) -> Any:
+        """Read `size_limit`, `cull_limit` or `eviction_policy`, or set it (checked as `Cache` checks it)
+        and return it."""
         if key.startswith('sqlite_'):
             raise ValueError(f"reset({key!r}) isn't supported: SQLite's settings are per process here (D-023)")
-        if key == 'eviction_policy':
-            raise ValueError("reset('eviction_policy') isn't supported yet: eviction is least-recently-stored")
         if key == 'statistics':
             raise ValueError('statistics are turned on and off with stats(enable=...)')
-        if key not in ('size_limit', 'cull_limit'):
-            raise ValueError(f"reset() takes 'size_limit' or 'cull_limit', not {key!r}")
+        if key not in ('size_limit', 'cull_limit', 'eviction_policy'):
+            raise ValueError(f"reset() takes 'size_limit', 'cull_limit' or 'eviction_policy', not {key!r}")
         if not update:
-            raise ValueError(
-                "reset(..., update=False) isn't supported: size_limit and cull_limit have no SQLite pragma to skip"
-            )
+            raise ValueError("reset(..., update=False) isn't supported: these settings have no SQLite pragma to skip")
+        if key == 'eviction_policy':
+            if value is not ENOVAL:
+                _check_policy(value)
+                self._eviction_policy = value
+            return self._eviction_policy
         if value is not ENOVAL:
             if type(value) is not int:
                 raise TypeError(f'{key} must be an int or None, not {type(value).__name__}')
@@ -469,6 +505,21 @@ class NullCache:
         if retry:
             options['retry'] = True
         return self._invalidate.clear(**options)
+
+    def evict(self, tag: Key, *, timeout: float | None = None, retry: bool = False) -> int:
+        """0, or with `invalidate=`, evict `tag` from that cache (passing `timeout` on) and return its
+        count."""
+        _check_retry(retry)
+        _check_timeout(timeout)
+        _check_tag(tag)
+        if self._invalidate is None or tag is None:
+            return 0
+        options: dict[str, Any] = {}
+        if timeout is not None:
+            options['timeout'] = timeout
+        if retry:
+            options['retry'] = True
+        return self._invalidate.evict(tag, **options)
 
     def memoize(
         self,

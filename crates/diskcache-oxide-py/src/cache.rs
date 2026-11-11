@@ -19,7 +19,7 @@ use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, Snapshot};
 use diskcache_oxide_core::open::{Requested, Role};
 use diskcache_oxide_core::ops::{Hit, Number, Pop, Value, Version, VersionDelete};
 use diskcache_oxide_core::rows::Tag;
-use diskcache_oxide_core::schema::DEFAULT_SIZE_LIMIT;
+use diskcache_oxide_core::schema::{DEFAULT_SIZE_LIMIT, EvictionPolicy};
 use diskcache_oxide_core::store::{
     DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, HeldTransaction, OpenOptions, Store,
 };
@@ -89,6 +89,7 @@ impl Cache {
         *,
         size_limit = None,
         cull_limit = None,
+        eviction_policy = None,
         serializer = "msgpack",
         pickle = false,
         types = None,
@@ -107,6 +108,7 @@ impl Cache {
         timeout: Option<&Bound<'_, PyAny>>,
         size_limit: Option<&Bound<'_, PyAny>>,
         cull_limit: Option<&Bound<'_, PyAny>>,
+        eviction_policy: Option<&str>,
         serializer: &str,
         pickle: bool,
         types: Option<Py<TypeRegistry>>,
@@ -137,6 +139,7 @@ impl Cache {
             timeout,
             size_limit,
             cull_limit,
+            eviction_policy,
             serializer,
             max_connections,
             sqlite_cache_size,
@@ -172,6 +175,13 @@ impl Cache {
     #[getter]
     fn cull_limit(&self) -> i64 {
         self.handle.store.cached_limits().cull_limit
+    }
+
+    /// 'least-recently-stored' or 'none', as this handle last saw it stored. Every write reads the
+    /// stored one afresh, so another process's `reset('eviction_policy', ...)` takes effect at once.
+    #[getter]
+    fn eviction_policy(&self) -> &'static str {
+        self.handle.store.cached_limits().eviction_policy.name()
     }
 
     /// Always True for a real cache (a `NullCache` is False).
@@ -276,10 +286,10 @@ impl Cache {
         self.handle.store.stats().take(enable, reset)
     }
 
-    /// Reads `size_limit` or `cull_limit` as stored now, or with `value` persists it (validated as
-    /// the constructor does) and returns it.
+    /// Reads `size_limit`, `cull_limit` or `eviction_policy` as stored now, or with `value` persists
+    /// it (validated as the constructor does) and returns it.
     #[pyo3(signature = (key, value = None, update = true))]
-    fn reset(&self, py: Python<'_>, key: &str, value: Option<&Bound<'_, PyAny>>, update: bool) -> PyResult<i64> {
+    fn reset(&self, py: Python<'_>, key: &str, value: Option<&Bound<'_, PyAny>>, update: bool) -> PyResult<Py<PyAny>> {
         let which = ResetLimit::parse(key, value, update)?;
         let handle = &self.handle;
         let limits = crate::detach(py, || {
@@ -292,7 +302,7 @@ impl Cache {
             })
         })
         .map_err(to_py_err)?;
-        Ok(which.of(limits))
+        which.of(py, limits)
     }
 
     // -- reads --------------------------------------------------------------------------------
@@ -507,6 +517,28 @@ impl Cache {
         crate::detach(py, || self.handle.run(timeout, |timeout| self.handle.store.clear(timeout))).map_err(to_py_err)
     }
 
+    /// Removes every entry tagged `tag` and stored before the call. Returns how many it removed.
+    /// `evict(None)` removes nothing: untagged entries have no tag to evict by. `timeout` as for
+    /// `expire`.
+    #[pyo3(signature = (tag, *, timeout = None, retry = false))]
+    fn evict(
+        &self,
+        py: Python<'_>,
+        tag: &Bound<'_, PyAny>,
+        timeout: Option<&Bound<'_, PyAny>>,
+        retry: bool,
+    ) -> PyResult<u64> {
+        let timeout = self.config.call_timeout(timeout)?;
+        let Some(encoded) = codec::key::encode_tag(Some(tag))? else { return Ok(0) };
+        let tag = encoded.key();
+        if retry {
+            return self
+                .remove_retrying(py, timeout, |store, snapshot, deadline| store.evict_until(snapshot, tag, deadline));
+        }
+        crate::detach(py, || self.handle.run(timeout, |timeout| self.handle.store.evict(timeout, tag)))
+            .map_err(to_py_err)
+    }
+
     /// Removes expired entries, then evicts until the cache is under `size_limit`. Returns how many
     /// it removed. `timeout` as for `expire`.
     #[pyo3(signature = (*, timeout = None, retry = false))]
@@ -600,6 +632,22 @@ impl Cache {
     }
 }
 
+/// `eviction_policy=` by diskcache's name. The two policies that need a write on every read are
+/// refused, saying so (plan 24, decision 6).
+pub(crate) fn parse_policy(name: &str) -> PyResult<EvictionPolicy> {
+    match name {
+        "least-recently-stored" => Ok(EvictionPolicy::LeastRecentlyStored),
+        "none" => Ok(EvictionPolicy::None),
+        "least-recently-used" | "least-frequently-used" => Err(PyValueError::new_err(format!(
+            "eviction_policy={name:?} isn't supported: it makes every read a write, which would serialize reads \
+             across processes (D-022); use 'least-recently-stored' or 'none'"
+        ))),
+        other => Err(PyValueError::new_err(format!(
+            "eviction_policy must be 'least-recently-stored' or 'none', not {other:?}"
+        ))),
+    }
+}
+
 /// The constructor arguments `Cache` and `FanoutCache` share, validated in the order `Cache`
 /// always checked them.
 struct Settings {
@@ -620,6 +668,7 @@ impl Settings {
         timeout: Option<&Bound<'_, PyAny>>,
         size_limit: Option<&Bound<'_, PyAny>>,
         cull_limit: Option<&Bound<'_, PyAny>>,
+        eviction_policy: Option<&str>,
         serializer: &str,
         max_connections: Option<&Bound<'_, PyAny>>,
         sqlite_cache_size: Option<&Bound<'_, PyAny>>,
@@ -634,7 +683,7 @@ impl Settings {
         let requested = Requested {
             size_limit: whole("size_limit", size_limit)?,
             cull_limit: whole("cull_limit", cull_limit)?,
-            eviction_policy: None,
+            eviction_policy: eviction_policy.map(parse_policy).transpose()?,
         };
         let max_connections = match whole("max_connections", max_connections)? {
             Some(n) if n < 1 => return Err(PyValueError::new_err("max_connections must be at least 1")),
@@ -1489,6 +1538,7 @@ impl ReopenOptions<'_, '_> {
 pub(crate) enum ResetLimit {
     Size(Option<i64>),
     Cull(Option<i64>),
+    Policy(Option<EvictionPolicy>),
 }
 
 impl ResetLimit {
@@ -1506,21 +1556,22 @@ impl ResetLimit {
                     "reset({key:?}) isn't supported: SQLite's settings are per process here (D-023)"
                 )));
             }
-            "eviction_policy" => {
-                return Err(PyValueError::new_err(
-                    "reset('eviction_policy') isn't supported yet: eviction is least-recently-stored",
-                ));
-            }
+            "eviction_policy" => Self::Policy(match given {
+                Some(v) => Some(parse_policy(v.extract()?)?),
+                None => None,
+            }),
             "statistics" => {
                 return Err(PyValueError::new_err("statistics are turned on and off with stats(enable=...)"));
             }
             _ => {
-                return Err(PyValueError::new_err(format!("reset() takes 'size_limit' or 'cull_limit', not {key:?}")));
+                return Err(PyValueError::new_err(format!(
+                    "reset() takes 'size_limit', 'cull_limit' or 'eviction_policy', not {key:?}"
+                )));
             }
         };
         if !update {
             return Err(PyValueError::new_err(
-                "reset(..., update=False) isn't supported: size_limit and cull_limit have no SQLite pragma to skip",
+                "reset(..., update=False) isn't supported: these settings have no SQLite pragma to skip",
             ));
         }
         Ok(parsed)
@@ -1530,18 +1581,21 @@ impl ResetLimit {
         match *self {
             Self::Size(value) => Requested { size_limit: value, cull_limit: None, eviction_policy: None },
             Self::Cull(value) => Requested { size_limit: None, cull_limit: value, eviction_policy: None },
+            Self::Policy(value) => Requested { size_limit: None, cull_limit: None, eviction_policy: value },
         }
     }
 
-    pub(crate) fn of(&self, limits: diskcache_oxide_core::open::Limits) -> i64 {
-        match self {
-            Self::Size(_) => limits.size_limit,
-            Self::Cull(_) => limits.cull_limit,
-        }
+    /// The setting `reset` returns: an int for a limit, the policy's name for `eviction_policy`.
+    pub(crate) fn of(&self, py: Python<'_>, limits: diskcache_oxide_core::open::Limits) -> PyResult<Py<PyAny>> {
+        Ok(match self {
+            Self::Size(_) => limits.size_limit.into_pyobject(py)?.into_any().unbind(),
+            Self::Cull(_) => limits.cull_limit.into_pyobject(py)?.into_any().unbind(),
+            Self::Policy(_) => limits.eviction_policy.name().into_pyobject(py)?.into_any().unbind(),
+        })
     }
 
     pub(crate) fn is_read(&self) -> bool {
-        matches!(self, Self::Size(None) | Self::Cull(None))
+        matches!(self, Self::Size(None) | Self::Cull(None) | Self::Policy(None))
     }
 }
 

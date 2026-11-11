@@ -145,3 +145,55 @@ def test_barrier_passes_its_tag_to_the_lock_factory(tmp_path: Path) -> None:
 
         assert work() == 2
         assert made == ['t']
+
+
+def test_a_fanout_cache_evicts_a_tag_from_every_shard(tmp_path: Path) -> None:
+    with FanoutCache(tmp_path, shards=4) as cache:
+        keys = [f'k{i}' for i in range(40)]
+        for key in keys:
+            cache.set(key, 1, tag='t')
+            cache.set(f'other-{key}', 1, tag='u')
+        assert len({cache.shard_of(key) for key in keys}) == 4
+        assert cache.evict('t') == 40
+        assert cache.evict('t', retry=True) == 0
+        assert cache.evict(None) == 0
+        assert len(cache) == 40
+        assert cache.evict('u', retry=True, timeout=5) == 40
+
+
+def test_a_fanout_evict_inside_a_one_shard_transaction_is_refused(tmp_path: Path) -> None:
+    with FanoutCache(tmp_path, shards=4) as cache:
+        cache.set('k', 1, tag='t')
+        with cache.transact(key='k'), pytest.raises(ValueError, match='evict'):
+            cache.evict('t')
+        assert cache.evict('t') == 1
+
+
+def test_evict_inside_a_transaction_joins_it(tmp_path: Path) -> None:
+    with Cache(tmp_path) as cache:
+        cache.set('a', 1, tag='t')
+        with pytest.raises(RuntimeError, match='boom'), cache.transact():
+            assert cache.evict('t') == 1
+            assert 'a' not in cache
+            raise RuntimeError('boom')
+        assert cache.get('a', tag=True) == (1, 't'), 'rolled back with the transaction'
+
+
+def test_evict_refuses_a_bad_tag_and_none_touches_nothing(any_cache: Any) -> None:
+    any_cache.set('k', 1)
+    with pytest.raises(TypeError, match='invalid tag'):
+        any_cache.evict([1])
+    assert any_cache.evict(None) == 0
+    assert len(any_cache) == 1
+
+
+def test_a_null_cache_evicts_from_its_invalidate_cache(tmp_path: Path) -> None:
+    with Cache(tmp_path) as real:
+        real.set('a', 1, tag='t')
+        real.set('b', 1, tag='t')
+        assert NullCache().evict('t') == 0
+        null = NullCache(invalidate=real)
+        assert null.evict(None) == 0
+        assert null.evict('t', retry=True) == 2
+        with pytest.raises(TypeError, match='invalid tag'):
+            null.evict([1])  # ty: ignore[invalid-argument-type]
