@@ -93,7 +93,8 @@ CREATE INDEX cache_store_seq ON cache (store_seq);
 CREATE INDEX cache_expire ON cache (expire_time) WHERE expire_time IS NOT NULL;
 CREATE INDEX cache_filename ON cache (filename) WHERE filename IS NOT NULL;
 CREATE TABLE settings (name TEXT PRIMARY KEY, value) WITHOUT ROWID;
--- Exactly one row. Updated in the same transaction as every row change.
+-- Exactly one row. Updated in the same transaction as every row change. Format 3 renames it `state`
+-- and adds `eviction_policy` (plan 24, release 3); the text below still says `totals`.
 CREATE TABLE totals (only INTEGER PRIMARY KEY CHECK (only = 1), count INTEGER NOT NULL, size INTEGER NOT NULL,
                      next_seq INTEGER NOT NULL, size_limit INTEGER NOT NULL, cull_limit INTEGER NOT NULL);
 -- PRAGMA user_version = 1

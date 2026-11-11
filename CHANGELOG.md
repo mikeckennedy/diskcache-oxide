@@ -4,7 +4,7 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
-**Delete your caches when you upgrade.** This release changes the on-disk format (format 3, for tags and the eviction policy). Opening a cache made by 0.1.2 raises `FormatMismatchError`, naming the database: stop every process using the cache, delete its directory (a FanoutCache's whole root, never one shard), and it's recreated empty on the next open. 0.1.2 refuses a format-3 cache the same way, neither version writes anything into the other's, and a 0.1.2 worker still running when its cache is deleted and recreated fails its writes instead of writing into the new one.
+**Delete your caches when you upgrade.** This release changes the on-disk format (format 3, for tags and the eviction policy). Opening a cache made by 0.1.2 raises `FormatMismatchError`, naming the database: stop every process using the cache, delete its directory (a FanoutCache's whole root, never one shard), and it's recreated empty on the next open. 0.1.2 refuses a format-3 cache the same way, and neither version writes anything into the other's. A 0.1.2 worker still running when its cache is deleted and recreated can't change the new one either: once it opens the new file, its writes, deletes and maintenance calls fail with "no such table" (only a `touch` gets through), because format 3 renames the table they all use.
 
 ### Added
 

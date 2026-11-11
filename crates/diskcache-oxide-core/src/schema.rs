@@ -6,9 +6,16 @@
 //! moved value files one level deep (plan 17); version 3 adds tags and the eviction policy. A new
 //! filename is no option even for a change confined to the database: two databases in one directory
 //! would share its value folders, and `check(fix=True)` removes value files its own database doesn't
-//! name. Version 3's `tag_type` is `NOT NULL` so that an older worker that outlives a deletion, and
-//! opens a pooled connection on the new file, fails its writes instead of writing rows that ignore
-//! the new rules.
+//! name.
+//!
+//! Version 3 also defends against an older worker that outlives the deletion and opens the new file
+//! by path (a pooled connection, or a closed handle used again): it would never check the format
+//! again. Formats 1 and 2 kept their counts and limits in a table named `totals`, which every write,
+//! delete, pop and maintenance call of theirs reads or updates; version 3 names it `state`, so each
+//! of those fails with "no such table" and writes nothing (architect, release 3's review, M1: under
+//! the old name a 0.1.2 `cull()` emptied a 'none' cache). `tag_type` is `NOT NULL` as well, so an
+//! older insert fails on its own. Only an older `touch` and reads still reach the new file, which
+//! breaks nothing.
 
 /// Database filename (D-002: never diskcache's `cache.db`).
 pub const DB_FILENAME: &str = "diskcache-oxide.sqlite";
@@ -21,7 +28,7 @@ pub const FORMAT_VERSION: i64 = 3;
 /// for a `str`, `KEY_TYPE_TYPED` for any other key type.
 pub const TAG_TYPE_NONE: i64 = 0;
 
-/// How a cache makes room when it's over `size_limit`, as stored in `totals.eviction_policy`.
+/// How a cache makes room when it's over `size_limit`, as stored in `state.eviction_policy`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EvictionPolicy {
     /// Evict the least recently stored entries (the default).
@@ -78,7 +85,7 @@ pub const KEY_TYPE_STR: i64 = 1;
 /// `key_type` of every other key, stored as a BLOB in the format `crate::key` defines.
 pub const KEY_TYPE_TYPED: i64 = 2;
 
-/// Creates every table and index plus the single `totals` row. Runs once, inside the creating
+/// Creates every table and index plus the single `state` row. Runs once, inside the creating
 /// connection's `BEGIN IMMEDIATE`, after `user_version` was re-checked under the lock.
 pub(crate) const CREATE: &str = "
 CREATE TABLE cache (
@@ -102,7 +109,7 @@ CREATE INDEX cache_expire ON cache (expire_time) WHERE expire_time IS NOT NULL;
 CREATE INDEX cache_filename ON cache (filename) WHERE filename IS NOT NULL;
 CREATE INDEX cache_tag ON cache (tag_type, tag, store_seq) WHERE tag IS NOT NULL;
 CREATE TABLE settings (name TEXT PRIMARY KEY, value) WITHOUT ROWID;
-CREATE TABLE totals (
+CREATE TABLE state (
     only INTEGER PRIMARY KEY CHECK (only = 1),
     count INTEGER NOT NULL,
     size INTEGER NOT NULL,

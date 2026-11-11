@@ -731,7 +731,7 @@ class Soak:
         conn = self.connect(name)
         try:
             conn.execute('BEGIN')  # One snapshot for the totals check.
-            count, size = conn.execute('SELECT count, size FROM totals').fetchone()
+            count, size = conn.execute('SELECT count, size FROM state').fetchone()
             rows, row_size = conn.execute('SELECT COUNT(*), COALESCE(SUM(size), 0) FROM cache').fetchone()
             info.update(rows=rows, totals_ok=(count, size) == (rows, row_size))
             if (count, size) != (rows, row_size):

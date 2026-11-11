@@ -267,7 +267,7 @@ impl Store {
                 .write_files(timeout, LockPriority::Normal, |writer, conn| {
                     // The policy too, in this transaction: under 'none' only the expired go (H2).
                     let (size_limit, size, policy): (i64, i64, i64) = conn
-                        .prepare_cached("SELECT size_limit, size, eviction_policy FROM totals WHERE only = 1")
+                        .prepare_cached("SELECT size_limit, size, eviction_policy FROM state WHERE only = 1")
                         .and_then(|mut stmt| stmt.query_row([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))))
                         .map_err(|e| Error::from_sqlite(e, timeout))?;
                     if policy != EvictionPolicy::LeastRecentlyStored.code()
@@ -275,7 +275,7 @@ impl Store {
                     {
                         return Ok(Changed::removing((false, 0), []));
                     }
-                    // Its size isn't needed: the next pass reads `totals` again.
+                    // Its size isn't needed: the next pass reads `state` again.
                     let batch = writer.delete_oldest(CHUNK)?.rows;
                     Ok(Changed::removing((true, count(batch.len())), batch))
                 })
@@ -319,7 +319,7 @@ impl Store {
     pub(crate) fn seq_snapshot(&self, timeout: Duration) -> Result<i64> {
         self.read(timeout, |conn| {
             conn.prepare_cached(
-                "SELECT MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1, next_seq) FROM totals WHERE only = 1",
+                "SELECT MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1, next_seq) FROM state WHERE only = 1",
             )
             .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
             .map_err(|e| Error::from_sqlite(e, timeout))
@@ -787,8 +787,8 @@ mod tests {
     fn totals(s: &Store) -> (i64, i64, i64, i64) {
         s.read(T, |c| {
             c.query_row(
-                "SELECT (SELECT count FROM totals), (SELECT COUNT(*) FROM cache),
-                        (SELECT size FROM totals), (SELECT COALESCE(SUM(size), 0) FROM cache)",
+                "SELECT (SELECT count FROM state), (SELECT COUNT(*) FROM cache),
+                        (SELECT size FROM state), (SELECT COALESCE(SUM(size), 0) FROM cache)",
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )

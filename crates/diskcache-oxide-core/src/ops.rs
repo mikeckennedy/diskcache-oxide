@@ -333,10 +333,10 @@ impl Store {
         })
     }
 
-    /// Rows stored, including expired ones not yet swept (as diskcache counts). O(1): `totals`.
+    /// Rows stored, including expired ones not yet swept (as diskcache counts). O(1): `state`.
     pub fn len(&self, timeout: Duration) -> Result<i64> {
         self.read(timeout, |conn| {
-            conn.prepare_cached("SELECT count FROM totals WHERE only = 1")
+            conn.prepare_cached("SELECT count FROM state WHERE only = 1")
                 .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
                 .map_err(|e| Error::from_sqlite(e, timeout))
         })
@@ -346,7 +346,7 @@ impl Store {
     pub fn volume(&self, timeout: Duration) -> Result<i64> {
         self.read(timeout, |conn| {
             let size: i64 = conn
-                .prepare_cached("SELECT size FROM totals WHERE only = 1")
+                .prepare_cached("SELECT size FROM state WHERE only = 1")
                 .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
                 .map_err(|e| Error::from_sqlite(e, timeout))?;
             volume_in(conn, size, timeout)
@@ -643,7 +643,7 @@ struct Put<'a> {
 }
 
 /// Stores `put` (pointing the row at `pending`'s value file if it was spilled), given the stored
-/// version `old` read in this transaction. Returns the change in `totals.size` and the replaced
+/// version `old` read in this transaction. Returns the change in `state.size` and the replaced
 /// version.
 fn put_value(
     writer: &RowWriter<'_>,
@@ -808,7 +808,7 @@ struct Prelude {
     /// the write's transaction, so a `reset('eviction_policy', ...)` made by another process since
     /// this handle opened is obeyed at once (architect, H2).
     evicts: bool,
-    /// `totals.size`: bytes in value files.
+    /// `state.size`: bytes in value files.
     size: i64,
     any_expired: bool,
     /// The stored version's `(size, filename)`, live or expired.
@@ -827,7 +827,7 @@ const PRELUDE_SQL: &str = "
 SELECT t.cull_limit, t.size_limit, t.size, t.eviction_policy,
        EXISTS (SELECT 1 FROM cache WHERE expire_time IS NOT NULL AND expire_time < ?3),
        c.id, c.size, c.filename, c.mode, c.value, c.expire_time
-FROM totals AS t
+FROM state AS t
 LEFT JOIN cache AS c ON c.key_type = ?1 AND c.key = ?2
 WHERE t.only = 1";
 
@@ -870,7 +870,7 @@ fn prelude(conn: &Connection, key: Key<'_>, now: f64, timeout: Duration) -> Resu
 /// One shared budget of `cull_limit` rows per call, as in diskcache: expired rows first (earliest
 /// expiry first), then, only if the cache is at or over `size_limit` and its policy evicts, the
 /// least recently stored.
-/// The limit is judged by what `totals.size` holds now, without reading it again: the prelude's
+/// The limit is judged by what `state.size` holds now, without reading it again: the prelude's
 /// figure from before this write, plus the write's own size change, less the value files the sweep
 /// just removed. Counting those still would evict live rows the sweep had made room for.
 fn cull(
@@ -891,10 +891,10 @@ fn cull(
     #[cfg(debug_assertions)]
     {
         let stored: i64 = tx
-            .prepare_cached("SELECT size FROM totals WHERE only = 1")
+            .prepare_cached("SELECT size FROM state WHERE only = 1")
             .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
             .map_err(|e| Error::from_sqlite(e, timeout))?;
-        debug_assert_eq!(size, stored, "the reckoned size and totals.size disagree");
+        debug_assert_eq!(size, stored, "the reckoned size and state.size disagree");
     }
     let mut removed = swept.rows;
     if budget > 0 && before.evicts && over_limit(tx, size, before.size_limit, timeout)? {
@@ -914,7 +914,7 @@ fn over_limit(tx: &Connection, size: i64, size_limit: i64, timeout: Duration) ->
     Ok(volume_in(tx, size, timeout)? >= size_limit)
 }
 
-/// `(page_count − freelist_count) × page_size + totals.size`: the database pages in use plus the
+/// `(page_count − freelist_count) × page_size + state.size`: the database pages in use plus the
 /// value files. Freed pages are left out: deleting rows never shrinks the file (the pages go on
 /// SQLite's freelist and get reused), so counting them would keep a full cache "over the limit"
 /// forever and culling could never converge (D-006 covers the difference from diskcache).
@@ -1358,9 +1358,7 @@ mod tests {
 
     fn len(store: &Store) -> i64 {
         store
-            .read(T, |c| {
-                c.query_row("SELECT count FROM totals", [], |r| r.get(0)).map_err(|e| Error::from_sqlite(e, T))
-            })
+            .read(T, |c| c.query_row("SELECT count FROM state", [], |r| r.get(0)).map_err(|e| Error::from_sqlite(e, T)))
             .unwrap()
     }
 
@@ -1787,7 +1785,7 @@ mod tests {
         }
         let totals = |s: &Store| -> (i64, i64, i64) {
             s.read(T, |c| {
-                c.query_row("SELECT count, size, next_seq FROM totals WHERE only = 1", [], |r| {
+                c.query_row("SELECT count, size, next_seq FROM state WHERE only = 1", [], |r| {
                     Ok((r.get(0)?, r.get(1)?, r.get(2)?))
                 })
                 .map_err(|e| Error::from_sqlite(e, T))
@@ -1916,7 +1914,7 @@ mod tests {
     fn set_policy_behind_the_handle(s: &Store, policy: EvictionPolicy) {
         // As another process's `reset('eviction_policy', ...)` would: this handle's cached copy is stale.
         s.write(T, |_, c| {
-            c.execute("UPDATE totals SET eviction_policy = ?1", [policy.code()])
+            c.execute("UPDATE state SET eviction_policy = ?1", [policy.code()])
                 .map(drop)
                 .map_err(|e| Error::from_sqlite(e, T))
         })
@@ -2015,7 +2013,7 @@ mod tests {
         held.finish(false).unwrap();
         assert_eq!(keys(&s), before, "the swept rows are back");
         assert_eq!(value_files(tmp.path()), files, "and so are their files, with the new one gone");
-        assert_eq!(s.volume(T).unwrap(), volume, "and totals.size with them");
+        assert_eq!(s.volume(T).unwrap(), volume, "and state.size with them");
     }
 
     #[test]
@@ -2080,12 +2078,12 @@ mod tests {
         crate::store::FAIL_NEXT_COMMITS_BUSY.with(|left| left.replace(0))
     }
 
-    /// `totals` agrees with the rows it counts.
+    /// `state` agrees with the rows it counts.
     fn assert_totals_exact(s: &Store, what: &str) {
         let (totals, rows): ((i64, i64), (i64, i64)) = s
             .read(T, |c| {
                 let totals =
-                    c.query_row("SELECT count, size FROM totals WHERE only = 1", [], |r| Ok((r.get(0)?, r.get(1)?)));
+                    c.query_row("SELECT count, size FROM state WHERE only = 1", [], |r| Ok((r.get(0)?, r.get(1)?)));
                 let rows = c.query_row("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM cache", [], |r| {
                     Ok((r.get(0)?, r.get(1)?))
                 });

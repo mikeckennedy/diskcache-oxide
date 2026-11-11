@@ -274,7 +274,7 @@ pub fn prepare_creating(
     if wanted != stored {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sqlite)?;
         tx.execute(
-            "UPDATE totals SET size_limit = ?1, cull_limit = ?2, eviction_policy = ?3 WHERE only = 1",
+            "UPDATE state SET size_limit = ?1, cull_limit = ?2, eviction_policy = ?3 WHERE only = 1",
             (wanted.size_limit, wanted.cull_limit, wanted.eviction_policy.code()),
         )
         .map_err(sqlite)?;
@@ -286,7 +286,7 @@ pub fn prepare_creating(
 /// Reads the persisted limits.
 pub fn read_limits(conn: &Connection, timeout: Duration) -> Result<Limits> {
     let (size_limit, cull_limit, policy): (i64, i64, i64) = conn
-        .query_row("SELECT size_limit, cull_limit, eviction_policy FROM totals WHERE only = 1", [], |row| {
+        .query_row("SELECT size_limit, cull_limit, eviction_policy FROM state WHERE only = 1", [], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
         .map_err(|e| Error::from_sqlite(e, timeout))?;
@@ -323,7 +323,7 @@ fn create_if_new(
         0 => {
             tx.execute_batch(CREATE).map_err(sqlite)?;
             tx.execute(
-                "INSERT INTO totals (only, count, size, next_seq, size_limit, cull_limit, eviction_policy)
+                "INSERT INTO state (only, count, size, next_seq, size_limit, cull_limit, eviction_policy)
                  VALUES (1, 0, 0, 1, ?1, ?2, ?3)",
                 (
                     requested.size_limit.unwrap_or(new_size_limit),
@@ -444,7 +444,7 @@ mod tests {
         let peer = connect(tmp.path(), T).unwrap();
         let before = data_version(&peer);
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
-        let _: i64 = tx.query_row("SELECT count FROM totals", [], |r| r.get(0)).unwrap();
+        let _: i64 = tx.query_row("SELECT count FROM state", [], |r| r.get(0)).unwrap();
         tx.commit().unwrap();
         assert_eq!(data_version(&peer), before);
     }
@@ -536,7 +536,7 @@ mod tests {
             }
         });
         let conn = connect(&dir, T).unwrap();
-        let rows: i64 = conn.query_row("SELECT COUNT(*) FROM totals", [], |r| r.get(0)).unwrap();
+        let rows: i64 = conn.query_row("SELECT COUNT(*) FROM state", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 1);
     }
 

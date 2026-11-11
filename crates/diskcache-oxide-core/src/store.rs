@@ -742,7 +742,7 @@ impl Store {
             };
             if wanted != stored {
                 tx.execute(
-                    "UPDATE totals SET size_limit = ?1, cull_limit = ?2, eviction_policy = ?3 WHERE only = 1",
+                    "UPDATE state SET size_limit = ?1, cull_limit = ?2, eviction_policy = ?3 WHERE only = 1",
                     (wanted.size_limit, wanted.cull_limit, wanted.eviction_policy.code()),
                 )
                 .map_err(|e| Error::from_sqlite(e, timeout))?;
@@ -2184,9 +2184,7 @@ mod tests {
 
     fn count(store: &Store) -> i64 {
         store
-            .read(T, |c| {
-                c.query_row("SELECT count FROM totals", [], |r| r.get(0)).map_err(|e| Error::from_sqlite(e, T))
-            })
+            .read(T, |c| c.query_row("SELECT count FROM state", [], |r| r.get(0)).map_err(|e| Error::from_sqlite(e, T)))
             .unwrap()
     }
 
@@ -2369,7 +2367,7 @@ mod tests {
                                 let now = live.fetch_add(1, Ordering::AcqRel) + 1;
                                 peak.fetch_max(now, Ordering::AcqRel);
                                 let n: i64 = c
-                                    .query_row("SELECT count FROM totals", [], |r| r.get(0))
+                                    .query_row("SELECT count FROM state", [], |r| r.get(0))
                                     .map_err(|e| Error::from_sqlite(e, T))?;
                                 live.fetch_sub(1, Ordering::AcqRel);
                                 Ok(n)

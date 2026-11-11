@@ -4,8 +4,10 @@ Format 3 is a version bump: a cache is deleted on upgrade, and neither version m
 other's database. 0.1.2 refuses a format-3 cache at open, this build refuses 0.1.2's format-2 cache,
 and both leave the files byte for byte as they were. A 0.1.2 handle open across the deletion writes
 nothing into the new file either: its open connections still hold the deleted one, and once it opens
-the new file by path (here, a closed handle used again) its writes fail on `tag_type`'s `NOT NULL`
-(architect, M1).
+the new file by path (here, a closed handle used again) every write and maintenance call it makes
+fails with "no such table: totals", because format 3 names that table `state` (architect, release 3's
+review, M1). Only `touch` still reaches the new file. Under the old name a 0.1.2 `cull()` evicted a
+'none' cache.
 
 The old side runs the shipped 0.1.2 wheel, in a Python of its own named by `DCO_OLD_PYTHON`
 (`scripts/mixed-version.sh` builds it); without it the test is skipped. Each side runs in its own
@@ -67,12 +69,19 @@ def write(i):
 threads = [threading.Thread(target=write, args=(i,)) for i in range(16)]
 for t in threads: t.start()
 for t in threads: t.join()
-c.close()
-try:
-    c.set('reopened', 1)  # A closed handle used again reopens by path: the new file.
-    reopened = None
-except Exception as e:
-    reopened = f'{type(e).__name__}: {e}'
+c.close()  # A closed handle used again reopens by path: the new file.
+calls = {
+    'set': lambda: c.set('x', 1), 'add': lambda: c.add('y', 1), 'delete': lambda: c.delete('k0'),
+    'pop': lambda: c.pop('k1'), 'incr': lambda: c.incr('n'), 'decr': lambda: c.decr('n'),
+    'cull': c.cull, 'expire': c.expire, 'clear': c.clear,
+    'touch': lambda: c.touch('nobody', 60),  # An absent key: a present one would get its expiry.
+}
+reopened = {}
+for name, call in calls.items():
+    try:
+        reopened[name] = repr(call())
+    except Exception as e:
+        reopened[name] = f'{type(e).__name__}: {e}'
 print(json.dumps({'errors': errors, 'reopened': reopened}), flush=True)
 """
 
@@ -139,18 +148,24 @@ def test_a_0_1_2_handle_open_across_a_recreate_writes_nothing_into_the_new_file(
         assert held.stdout is not None and held.stdin is not None
         assert held.stdout.readline().strip() == 'ready'
         shutil.rmtree(directory)  # The upgrade: the cache deleted while a worker still has it open.
-        with Cache(directory) as new:
-            new.set('new', 1)
+        with Cache(directory, size_limit=2**20, eviction_policy='none') as new:
+            for i in range(20):  # 2 MB in 1 MiB: an old cull() that ran would evict.
+                new.set(f'k{i}', b'x' * 100_000, tag='t')
+            new.set('n', 5, tag='t')
+        before = fingerprint(directory)
         held.stdin.write('go\n')
         held.stdin.flush()
         out, err = held.communicate(timeout=60)
         assert held.returncode == 0, err
     finally:
         held.kill()
-    # 0.1.2 doesn't check the format when a handle rejoins its store: the write itself is refused.
-    assert 'NOT NULL constraint failed: cache.tag_type' in json.loads(out)['reopened'], out
+    # 0.1.2 doesn't check the format when a handle rejoins its store: each call is refused instead.
+    reopened = json.loads(out)['reopened']
+    assert reopened.pop('touch') == 'False', out
+    for name, result in reopened.items():
+        assert result == 'OSError: SQLite error: no such table: totals', (name, result)
+    assert fingerprint(directory) == before, 'nothing was written into the new file'
     rows = run(sys.executable, ROWS, str(directory))
-    assert rows == {'version': 3, 'keys': ['new']}, (rows, out)
+    assert rows['version'] == 3 and len(rows['keys']) == 21, rows
     with Cache(directory) as new:
-        assert list(new) == ['new']
-        assert len(new) == 1
+        assert new.get('n', tag=True) == (5, 't')

@@ -8,7 +8,7 @@
 //!    held. A missing file, a file of the wrong size (a crash cut it short: nothing is fsynced, and
 //!    the read path already treats it as missing), or a name that isn't one `spill` writes is
 //!    reported if its row is still that version, and with `fix` removed by the D-013
-//!    compare-and-delete, which keeps `totals` right and does nothing if the row changed. Never
+//!    compare-and-delete, which keeps `state` right and does nothing if the row changed. Never
 //!    "corrected": that would serve the cut-short bytes as the value.
 //! 2. **Files against rows:** every file in the value directories older than
 //!    [`spill::TMP_MIN_AGE`] that no row names is reported, and with `fix` removed (regular files
@@ -249,7 +249,7 @@ impl Store {
         let (count, size, rows, sum): (i64, i64, i64, i64) = self.read(timeout, |conn| {
             conn.query_row(
                 "SELECT count, size, (SELECT COUNT(*) FROM cache), (SELECT COALESCE(SUM(size), 0) FROM cache)
-                 FROM totals WHERE only = 1",
+                 FROM state WHERE only = 1",
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
@@ -261,7 +261,7 @@ impl Store {
         if fix {
             self.write(timeout, |_, tx| {
                 tx.execute(
-                    "UPDATE totals SET count = (SELECT COUNT(*) FROM cache),
+                    "UPDATE state SET count = (SELECT COUNT(*) FROM cache),
                                        size = (SELECT COALESCE(SUM(size), 0) FROM cache) WHERE only = 1",
                     [],
                 )
@@ -464,7 +464,7 @@ mod tests {
         let tmp = TempDir::new("check-totals");
         let s = store(tmp.path());
         s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: b"v" }, None, NOW).unwrap();
-        raw(&s, "UPDATE totals SET count = 99, size = 1234 WHERE only = 1");
+        raw(&s, "UPDATE state SET count = 99, size = 1234 WHERE only = 1");
         let found = run(&s, true);
         assert!(found.contains(&Finding::Count { stored: 99, actual: 1, fixed: true }), "{found:?}");
         assert!(found.contains(&Finding::Size { stored: 1234, actual: 0, fixed: true }), "{found:?}");

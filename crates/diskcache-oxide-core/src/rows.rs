@@ -1,13 +1,13 @@
 //! `RowWriter`: the single choke point for every change to the `cache` table (04-design.md section 3).
 //!
 //! Every insert, overwrite and delete goes through here, inside the caller's write transaction,
-//! so the `totals` row (`count`, `size`, `next_seq`) always agrees with the table. Nothing else in
+//! so the `state` row (`count`, `size`, `next_seq`) always agrees with the table. Nothing else in
 //! the crate issues `INSERT`, `UPDATE` or `DELETE` against `cache`.
 //!
-//! `store_seq` never repeats (D-011): a new one is `max(MAX(store_seq) + 1, totals.next_seq)`.
+//! `store_seq` never repeats (D-011): a new one is `max(MAX(store_seq) + 1, state.next_seq)`.
 //! `MAX(store_seq)` alone would hand out a number again after the newest row is deleted, and a
 //! running `clear()` could then delete a write made after it started. So every delete first raises
-//! `totals.next_seq` (the floor) past the current maximum. Overwrites never touch `totals` unless
+//! `state.next_seq` (the floor) past the current maximum. Overwrites never touch `state` unless
 //! the count or size changes, which keeps a plain `set` to the same WAL pages as diskcache's.
 
 use std::time::Duration;
@@ -45,7 +45,7 @@ impl ToSql for Stored<'_> {
 /// The in-place update of a number's row (see [`RowWriter::update_number_in_place`]).
 pub(crate) const UPDATE_NUMBER_SQL: &str = "UPDATE cache SET mode = ?1, value = ?2, store_time = ?3,
          store_seq = MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1,
-                         (SELECT next_seq FROM totals WHERE only = 1))
+                         (SELECT next_seq FROM state WHERE only = 1))
      WHERE id = ?4";
 
 /// An entry's tag: a key value (D-052), in its own type so it can't be passed where a key belongs.
@@ -75,18 +75,18 @@ pub struct Removed {
     pub filename: Option<String>,
 }
 
-/// The rows a bulk delete removed, and the bytes of value files that came off `totals.size` with
+/// The rows a bulk delete removed, and the bytes of value files that came off `state.size` with
 /// them. `must_use` on [`Removed`] doesn't reach through a `Vec`, so the batch carries its own.
 #[derive(Debug, Default, PartialEq, Eq)]
 #[must_use = "its value files are unlinked only if its rows are returned through `Store::write_files`"]
 pub struct RemovedBatch {
     pub rows: Vec<Removed>,
-    /// What the delete subtracted from `totals.size`. A caller that judges `size_limit` by a
+    /// What the delete subtracted from `state.size`. A caller that judges `size_limit` by a
     /// figure it read before the delete takes this off (see `ops::cull`).
     pub freed: i64,
 }
 
-/// Writes rows inside one write transaction, keeping `totals` exact.
+/// Writes rows inside one write transaction, keeping `state` exact.
 #[derive(Debug)]
 pub struct RowWriter<'t> {
     /// A connection inside a write transaction: a `Transaction` (it derefs to `Connection`) or a
@@ -131,7 +131,7 @@ impl<'t> RowWriter<'t> {
                 "INSERT INTO cache (key_type, key, mode, value, filename, size, store_time, expire_time, tag_type, tag,
                                     store_seq)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                         (SELECT MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1, next_seq) FROM totals WHERE only = 1))
+                         (SELECT MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1, next_seq) FROM state WHERE only = 1))
                  ON CONFLICT (key_type, key) DO UPDATE SET
                      mode = excluded.mode, value = excluded.value, filename = excluded.filename,
                      size = excluded.size, store_time = excluded.store_time,
@@ -161,7 +161,7 @@ impl<'t> RowWriter<'t> {
                 )
             })
             .map_err(|e| self.sqlite(e))?;
-        // `totals` only changes when the count or size does: an inline overwrite writes no extra page.
+        // `state` only changes when the count or size does: an inline overwrite writes no extra page.
         let (count, size, replaced) = match old {
             Some((old_size, old_filename)) => (0, row.size - old_size, Some(Removed { filename: old_filename })),
             None => (1, row.size, None),
@@ -172,9 +172,9 @@ impl<'t> RowWriter<'t> {
 
     /// Overwrites the live inline number in row `id` with `value`, as a new store (a new
     /// `store_seq`, `store_time` = `now`). `expire_time`, `size` and `filename` are kept, and
-    /// `totals` is not written (an inline number changes neither the count nor the size). The
+    /// `state` is not written (an inline number changes neither the count nor the size). The
     /// version comes from the same expression as [`RowWriter::upsert_after`], never from
-    /// `totals.next_seq` alone, which is only a floor. Fails if the row isn't there.
+    /// `state.next_seq` alone, which is only a floor. Fails if the row isn't there.
     pub fn update_number_in_place(&self, id: i64, mode: i64, value: Stored<'_>, now: f64) -> Result<()> {
         let changed = self
             .tx
@@ -246,19 +246,19 @@ impl<'t> RowWriter<'t> {
             .map_err(|e| self.sqlite(e))
     }
 
-    /// Fixes up `totals` after the caller deleted `count` rows of `size` bytes itself in this
+    /// Fixes up `state` after the caller deleted `count` rows of `size` bytes itself in this
     /// transaction (maintenance chunks, which delete with their own bounded statements).
     pub fn adjust_totals_after_delete(&self, count: i64, size: i64) -> Result<()> {
         self.adjust_totals(-count, -size)
     }
 
-    /// Raises `totals.next_seq` past every `store_seq` in the table. Called before any delete, so a
-    /// deleted row's number is never handed out again. Touches the `totals` page the delete's count
+    /// Raises `state.next_seq` past every `store_seq` in the table. Called before any delete, so a
+    /// deleted row's number is never handed out again. Touches the `state` page the delete's count
     /// change writes anyway.
     pub fn raise_seq_floor(&self) -> Result<()> {
         self.tx
             .prepare_cached(
-                "UPDATE totals SET next_seq = MAX(next_seq, COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1)
+                "UPDATE state SET next_seq = MAX(next_seq, COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1)
                  WHERE only = 1",
             )
             .and_then(|mut stmt| stmt.execute([]))
@@ -303,7 +303,7 @@ impl<'t> RowWriter<'t> {
             return Ok(());
         }
         self.tx
-            .prepare_cached("UPDATE totals SET count = count + ?1, size = size + ?2 WHERE only = 1")
+            .prepare_cached("UPDATE state SET count = count + ?1, size = size + ?2 WHERE only = 1")
             .and_then(|mut stmt| stmt.execute((count, size)))
             .map(|_| ())
             .map_err(|e| self.sqlite(e))
@@ -352,7 +352,7 @@ mod tests {
     }
 
     fn totals(conn: &Connection) -> (i64, i64) {
-        conn.query_row("SELECT count, size FROM totals", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+        conn.query_row("SELECT count, size FROM state", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
     }
 
     fn actual(conn: &Connection) -> (i64, i64) {
