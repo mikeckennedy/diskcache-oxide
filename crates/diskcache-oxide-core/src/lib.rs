@@ -18,6 +18,7 @@ pub mod open;
 pub mod ops;
 pub mod poison;
 pub mod pool;
+pub mod queue;
 pub mod rows;
 pub mod schema;
 pub mod spill;

@@ -39,7 +39,7 @@ use crate::schema::{KEY_TYPE_STR, KEY_TYPE_TYPED};
 /// The deepest a typed key's tuples nest. Refused when encoding, so raising it later is compatible.
 pub const MAX_DEPTH: usize = 32;
 
-mod code {
+pub(crate) mod code {
     pub const END: u8 = 0x00;
     pub const NONE: u8 = 0x10;
     pub const FALSE: u8 = 0x20;
@@ -52,7 +52,7 @@ mod code {
     pub const ESCAPE: u8 = 0xFF;
 }
 
-const SIGN: u64 = 1 << 63;
+pub(crate) const SIGN: u64 = 1 << 63;
 
 /// Why a key can't be encoded, or stored bytes aren't a typed key.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

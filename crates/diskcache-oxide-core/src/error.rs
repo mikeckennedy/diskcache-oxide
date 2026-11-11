@@ -115,6 +115,15 @@ pub enum Error {
     #[error("integer overflow")]
     Overflow,
 
+    /// A queue `push` whose number would leave the queue's key range (D-057; Python `OverflowError`).
+    #[error("the queue's key range is full on that side")]
+    QueueFull,
+
+    /// A queue `push` found its next key already stored, which the range rules make impossible: it
+    /// refuses rather than overwrite (decision 24).
+    #[error("the queue's next key is already stored; refusing to overwrite it")]
+    QueueKeyTaken,
+
     /// A setting the cache can't honor, such as a `size_limit` under the minimum (D-005).
     #[error("{0}")]
     InvalidSetting(String),
@@ -211,6 +220,8 @@ impl Error {
             | Self::KeyMissing
             | Self::NotNumeric
             | Self::Overflow
+            | Self::QueueFull
+            | Self::QueueKeyTaken
             | Self::NestedTransaction
             | Self::WriteLockBusyInTransaction
             | Self::NoTransaction

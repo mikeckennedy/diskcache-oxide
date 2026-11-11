@@ -70,6 +70,8 @@ pub struct Popped {
     /// Its tag, when the caller asked for it ([`Store::pop_tagged`]); otherwise `None` whatever
     /// the tag.
     pub tag: Option<OwnedKey>,
+    /// Its key, for a removal by position ([`Store::pull_locked`]); `None` for one by key.
+    pub key: Option<OwnedKey>,
 }
 
 /// One stored version of a key: its row and its store sequence number (D-011, D-013). An overwrite
@@ -104,6 +106,22 @@ pub struct Hit<T> {
     /// The entry's tag, read with the version, when the caller asked for it ([`Store::get_tagged`]);
     /// otherwise `None` whatever the tag.
     pub tag: Option<OwnedKey>,
+    /// The row's key, read with the version, for a read that found its row by position (a queue's
+    /// head, the oldest or newest entry); `None` for a read by key.
+    pub key: Option<OwnedKey>,
+}
+
+/// What [`Store::pull_locked`] did.
+#[derive(Debug, PartialEq)]
+pub enum Pulled {
+    /// The queue had no live item.
+    Missing,
+    /// The head is gone; here is its value, with its key in [`Popped::key`].
+    Removed(Popped),
+    /// The head's mode was refused, so it stays (D-001, D-056).
+    Refused { mode: i64 },
+    /// The head was removed but its value file was cut short (a crash mid-write): try the next.
+    Lost,
 }
 
 /// What [`Store::delete_version_nowait`] did.
@@ -205,11 +223,33 @@ impl Store {
         now: f64,
         with_tag: bool,
         refuse: impl Fn(i64) -> bool,
-        mut decode: impl FnMut(i64, ValueRef<'_>) -> Result<T>,
+        decode: impl FnMut(i64, ValueRef<'_>) -> Result<T>,
     ) -> Result<Option<Hit<T>>> {
-        let key = key.into();
-        let (mut row, taken) =
-            self.read_with_deadline(timeout, |conn| look_up(conn, key, now, with_tag, timeout, &mut decode))?;
+        match self.read_at(timeout, Locate::Key(key.into()), &[], now, with_tag, refuse, decode)? {
+            Read::Hit(hit) => Ok(Some(hit)),
+            Read::Miss | Read::Lost(_) => Ok(None),
+        }
+    }
+
+    /// The read machine behind [`Store::get_tagged`] and the queue reads, for the row `locate` finds
+    /// (passing over the ids in `skip`): the first read, the re-read after a missing file and the
+    /// locked fallback all find the row the same way, so the version, the tag and the key always come
+    /// from one statement. A value file truly gone (the same version read again, D-013) is removed
+    /// without waiting and reported as [`Read::Lost`], so a caller reading by position can pass over
+    /// it rather than find it again.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn read_at<T>(
+        &self,
+        timeout: Duration,
+        locate: Locate<'_>,
+        skip: &[i64],
+        now: f64,
+        with_tag: bool,
+        refuse: impl Fn(i64) -> bool,
+        mut decode: impl FnMut(i64, ValueRef<'_>) -> Result<T>,
+    ) -> Result<Read<T>> {
+        let (mut row, taken) = self
+            .read_with_deadline(timeout, |conn| locate_row(conn, locate, skip, now, with_tag, timeout, &mut decode))?;
         // One budget for every read and the fallback's write. The first read's deadline if its slow
         // path took one, else `now + timeout` at the first missing file, since the fast path has no
         // wait to charge. A hit never reads the clock.
@@ -226,10 +266,10 @@ impl Store {
         loop {
             // The last re-read is examined too: it may already have the answer.
             let file = match row {
-                Found::Miss => return Ok(None),
-                Found::Inline(hit) => return Ok(Some(hit)),
+                Found::Miss => return Ok(Read::Miss),
+                Found::Inline(hit) => return Ok(Read::Hit(hit)),
                 Found::File(file) if refuse(file.mode) => {
-                    return Ok(Some(file.hit(decode(file.mode, ValueRef::Null)?)));
+                    return Ok(Read::Hit(file.hit(decode(file.mode, ValueRef::Null)?)));
                 }
                 Found::File(file) => file,
             };
@@ -240,11 +280,11 @@ impl Store {
             #[cfg(test)]
             run_hook(&BEFORE_OPTIMISTIC_READ, self);
             if let Some(bytes) = spill::read(self.directory(), &file.relative, file.size)? {
-                return Ok(Some(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?)));
+                return Ok(Read::Hit(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?)));
             }
             // Missing or short: overwritten since the row was read, or truly gone.
             row = self
-                .read(left(&mut budget), |conn| look_up(conn, key, now, with_tag, timeout, &mut decode))
+                .read(left(&mut budget), |conn| locate_row(conn, locate, skip, now, with_tag, timeout, &mut decode))
                 .map_err(whole_timeout)?;
             if let Found::File(again) = &row
                 && again.version == file.version
@@ -252,7 +292,7 @@ impl Store {
                 // Same version, no readable file: a true miss (D-013). Remove exactly that version,
                 // only if it needs no waiting; a later write's cleanup gets it otherwise.
                 let _ = self.delete_version_nowait(file.version);
-                return Ok(None);
+                return Ok(Read::Lost(file.version));
             }
         }
         // A writer keeps replacing the value faster than this reader can open it (D-016): take the
@@ -262,14 +302,14 @@ impl Store {
         // the file, so it isn't reached there; if it were, in a doomed one, the write would give
         // `TransactionAborted`.
         if self.check_writable().is_err() {
-            return Ok(None);
+            return Ok(Read::Miss);
         }
         #[cfg(test)]
         run_hook(&BEFORE_FALLBACK, self);
         let locked = self
             .write(left(&mut budget), |_, conn| {
                 let mut copy = |mode: i64, value: ValueRef<'_>| Ok((mode, owned(value)));
-                Ok(match look_up(conn, key, now, with_tag, timeout, &mut copy)? {
+                Ok(match locate_row(conn, locate, skip, now, with_tag, timeout, &mut copy)? {
                     Found::Miss => Locked::Miss,
                     Found::Inline(hit) => Locked::Inline(hit),
                     // Replaced by a value of a refused mode while this reader retried: never read it.
@@ -282,25 +322,25 @@ impl Store {
             })
             .map_err(whole_timeout)?;
         let (handle, path, file) = match locked {
-            Locked::Miss => return Ok(None),
-            Locked::Inline(Hit { value: (mode, value), expire_time, version, tag }) => {
+            Locked::Miss => return Ok(Read::Miss),
+            Locked::Inline(Hit { value: (mode, value), expire_time, version, tag, key }) => {
                 let value = decode(mode, (&value).into())?;
-                return Ok(Some(Hit { value, expire_time, version, tag }));
+                return Ok(Read::Hit(Hit { value, expire_time, version, tag, key }));
             }
-            Locked::Refused(file) => return Ok(Some(file.hit(decode(file.mode, ValueRef::Null)?))),
+            Locked::Refused(file) => return Ok(Read::Hit(file.hit(decode(file.mode, ValueRef::Null)?))),
             Locked::Lost(version) => {
                 // Gone though nothing could replace it: a true miss (D-013), as in the loop.
                 let _ = self.delete_version_nowait(version);
-                return Ok(None);
+                return Ok(Read::Lost(version));
             }
             Locked::Opened(handle, path, file) => (handle, path, file),
         };
         if let Some(bytes) = spill::read_open(&handle, &path, file.size)? {
-            return Ok(Some(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?)));
+            return Ok(Read::Hit(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?)));
         }
         // Short: written before a crash and never completed (no fsync). A true miss.
         let _ = self.delete_version_nowait(file.version);
-        Ok(None)
+        Ok(Read::Lost(file.version))
     }
 
     /// Deletes exactly `version` (nothing newer, D-013) and its value file, if that needs no waiting
@@ -538,10 +578,11 @@ impl Store {
                                 value: SqlValue::Blob(bytes),
                                 expire_time,
                                 tag,
+                                key: None,
                             })
                         } else {
                             let value = owned(row.get_ref(1).map_err(|e| Error::from_sqlite(e, timeout))?);
-                            Some(Popped { mode, value, expire_time, tag })
+                            Some(Popped { mode, value, expire_time, tag, key: None })
                         }
                     }
                     None => None,
@@ -555,6 +596,109 @@ impl Store {
                 }
                 None => Ok(Changed::removing(Pop::Missing, [])),
             }
+        })
+    }
+
+    /// Pushes `value` onto `side` of the queue `range` and returns its key (D-054, D-057): the next
+    /// number past that end, found and stored in one write transaction (the number is computed inside
+    /// it, which may run more than once), or [`START`](crate::queue::START) in an empty queue.
+    /// [`Error::QueueFull`] past either bound; a computed key that is already stored is
+    /// [`Error::QueueKeyTaken`], never an overwrite. Stored as `set` stores, with its sweep and cull.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push(
+        &self,
+        timeout: Duration,
+        range: &crate::queue::QueueRange,
+        side: crate::queue::Side,
+        value: Value<'_>,
+        expire: Option<f64>,
+        tag: Option<Tag<'_>>,
+        now: f64,
+    ) -> Result<OwnedKey> {
+        let pending = self.spill_if_large(value)?;
+        let result = self.write_files(timeout, LockPriority::Normal, |writer, tx| {
+            let key = crate::queue::next_key(tx, range, side, timeout)?;
+            let before = prelude(tx, key.as_key(), now, timeout)?;
+            if before.stored.is_some() {
+                return Err(Error::QueueKeyTaken);
+            }
+            let put = Put { key: key.as_key(), value, expire_time: expire_time(now, expire), tag };
+            let (delta, mut removed) = put_value(writer, put, pending.as_ref(), now, None)?;
+            removed.extend(cull(writer, tx, &before, delta, now, timeout)?);
+            Ok(Changed::removing(key, removed).creating(pending.as_ref().map(|p| p.relative.clone())))
+        });
+        settle_with(pending.as_ref(), result, |_| true)
+    }
+
+    /// The locked half of `pull` (D-056): in one write transaction, the live head from `side`,
+    /// removed. A head whose mode `refuse` rejects stays ([`Pulled::Refused`]); a head whose value
+    /// file is gone is removed and the next taken. A spilled value's file is opened under the lock and
+    /// read after the commit, so no large read holds the write lock, and a short read then is a lost
+    /// item ([`Pulled::Lost`]): the caller goes on to the next.
+    pub fn pull_locked(
+        &self,
+        timeout: Duration,
+        range: &crate::queue::QueueRange,
+        side: crate::queue::Side,
+        now: f64,
+        with_tag: bool,
+        refuse: impl Fn(i64) -> bool,
+    ) -> Result<Pulled> {
+        enum Taken {
+            Missing,
+            Refused(i64),
+            Inline(Popped),
+            Opened(File, PathBuf, FileRow),
+        }
+        let taken = self.write_files(timeout, LockPriority::Normal, |writer, tx| {
+            let mut gone = Vec::new();
+            let mut removed = Vec::new();
+            loop {
+                let mut copy = |mode: i64, value: ValueRef<'_>| Ok((mode, owned(value)));
+                let found = crate::queue::look_up_head(tx, range, side, &gone, now, with_tag, timeout, &mut copy)?;
+                let (id, seq) = match &found {
+                    Found::Miss => return Ok(Changed::removing(Taken::Missing, removed)),
+                    Found::Inline(hit) if refuse(hit.value.0) => {
+                        return Ok(Changed::removing(Taken::Refused(hit.value.0), removed));
+                    }
+                    Found::File(file) if refuse(file.mode) => {
+                        return Ok(Changed::removing(Taken::Refused(file.mode), removed));
+                    }
+                    Found::Inline(hit) => hit.version.parts(),
+                    Found::File(file) => file.version.parts(),
+                };
+                removed.extend(writer.delete_version(id, seq)?);
+                match found {
+                    Found::Miss => unreachable!("returned above"),
+                    Found::Inline(Hit { value: (mode, value), expire_time, tag, key, .. }) => {
+                        let popped = Popped { mode, value, expire_time, tag, key };
+                        return Ok(Changed::removing(Taken::Inline(popped), removed));
+                    }
+                    Found::File(file) => match spill::open(self.directory(), &file.relative)? {
+                        Some((handle, path)) => {
+                            return Ok(Changed::removing(Taken::Opened(handle, path, file), removed));
+                        }
+                        // Gone though nothing could replace it (D-013): removed above; the next.
+                        None => gone.push(id),
+                    },
+                }
+            }
+        })?;
+        Ok(match taken {
+            Taken::Missing => Pulled::Missing,
+            Taken::Refused(mode) => Pulled::Refused { mode },
+            Taken::Inline(popped) => Pulled::Removed(popped),
+            Taken::Opened(handle, path, file) => match spill::read_open(&handle, &path, file.size)? {
+                Some(bytes) => Pulled::Removed(Popped {
+                    mode: file.mode,
+                    value: SqlValue::Blob(bytes),
+                    expire_time: file.expire_time,
+                    tag: file.tag,
+                    key: file.key,
+                }),
+                // Cut short by a crash before it was complete: the item is lost.
+                None => Pulled::Lost,
+            },
         })
     }
 
@@ -686,25 +830,66 @@ fn settle_with<T>(pending: Option<&PendingFile>, result: Result<T>, used: impl F
 }
 
 /// What a lookup found: a decoded inline value, a value file still to read, or nothing.
-enum Found<T> {
+pub(crate) enum Found<T> {
     Miss,
     Inline(Hit<T>),
     File(FileRow),
 }
 
 /// A live row whose value is in a value file.
-struct FileRow {
-    version: Version,
-    mode: i64,
-    relative: String,
-    size: i64,
-    expire_time: Option<f64>,
-    tag: Option<OwnedKey>,
+pub(crate) struct FileRow {
+    pub(crate) version: Version,
+    pub(crate) mode: i64,
+    pub(crate) relative: String,
+    pub(crate) size: i64,
+    pub(crate) expire_time: Option<f64>,
+    pub(crate) tag: Option<OwnedKey>,
+    pub(crate) key: Option<OwnedKey>,
 }
 
 impl FileRow {
-    fn hit<T>(&self, value: T) -> Hit<T> {
-        Hit { value, expire_time: self.expire_time, version: self.version, tag: self.tag.clone() }
+    pub(crate) fn hit<T>(&self, value: T) -> Hit<T> {
+        Hit {
+            value,
+            expire_time: self.expire_time,
+            version: self.version,
+            tag: self.tag.clone(),
+            key: self.key.clone(),
+        }
+    }
+}
+
+/// What [`Store::read_at`] read: a live value, nothing, or a row whose value file was truly gone
+/// (removed if that needed no waiting).
+pub(crate) enum Read<T> {
+    Hit(Hit<T>),
+    Miss,
+    Lost(Version),
+}
+
+/// Where [`Store::read_at`] finds its row: by key, at a queue's head, or the oldest or newest entry.
+#[derive(Clone, Copy)]
+pub(crate) enum Locate<'a> {
+    Key(Key<'a>),
+    Head { range: &'a crate::queue::QueueRange, side: crate::queue::Side },
+    Inserted { last: bool },
+}
+
+fn locate_row<T>(
+    conn: &Connection,
+    locate: Locate<'_>,
+    skip: &[i64],
+    now: f64,
+    with_tag: bool,
+    timeout: Duration,
+    decode: &mut impl FnMut(i64, ValueRef<'_>) -> Result<T>,
+) -> Result<Found<T>> {
+    match locate {
+        Locate::Key(key) => look_up(conn, key, now, with_tag, timeout, decode),
+        Locate::Head { range, side } => {
+            crate::queue::look_up_head(conn, range, side, skip, now, with_tag, timeout, decode)
+        }
+        Locate::Inserted { last } => crate::queue::look_up_inserted(conn, last, skip, now, with_tag, timeout, decode),
     }
 }
 
@@ -737,15 +922,30 @@ fn look_up<T>(
     let mut stmt = conn.prepare_cached(if with_tag { LOOKUP_TAGGED_SQL } else { LOOKUP_SQL }).map_err(sqlite)?;
     let mut rows = stmt.query((key.key_type(), key, now)).map_err(sqlite)?;
     let Some(row) = rows.next().map_err(sqlite)? else { return Ok(Found::Miss) };
+    found_from_row(row, with_tag, None, timeout, decode)
+}
+
+/// A row read by [`LOOKUP_SQL`]'s first seven columns (`mode, value, expire_time, filename, size,
+/// id, store_seq`), and with `with_tag` its next two (`tag_type, tag`), as a [`Found`]; `key` is the
+/// row's key when the caller found it by position.
+pub(crate) fn found_from_row<T>(
+    row: &rusqlite::Row<'_>,
+    with_tag: bool,
+    key: Option<OwnedKey>,
+    timeout: Duration,
+    decode: &mut impl FnMut(i64, ValueRef<'_>) -> Result<T>,
+) -> Result<Found<T>> {
+    let sqlite = |e| Error::from_sqlite(e, timeout);
     let mode: i64 = row.get(0).map_err(sqlite)?;
     let expire_time: Option<f64> = row.get(2).map_err(sqlite)?;
     let version = Version { id: row.get(5).map_err(sqlite)?, store_seq: row.get(6).map_err(sqlite)? };
     let tag = if with_tag { stored_tag(row.get(7).map_err(sqlite)?, row.get_ref(8).map_err(sqlite)?)? } else { None };
     if let Some(relative) = row.get::<_, Option<String>>(3).map_err(sqlite)? {
-        Ok(Found::File(FileRow { version, mode, relative, size: row.get(4).map_err(sqlite)?, expire_time, tag }))
+        let size = row.get(4).map_err(sqlite)?;
+        Ok(Found::File(FileRow { version, mode, relative, size, expire_time, tag, key }))
     } else {
         let value = decode(mode, row.get_ref(1).map_err(sqlite)?)?;
-        Ok(Found::Inline(Hit { value, expire_time, version, tag }))
+        Ok(Found::Inline(Hit { value, expire_time, version, tag, key }))
     }
 }
 
@@ -1429,7 +1629,7 @@ mod tests {
         ] {
             assert_eq!(
                 s.pop(T, key, NOW, |_| false).unwrap(),
-                Pop::Removed(Popped { mode, value, expire_time: None, tag: None }),
+                Pop::Removed(Popped { mode, value, expire_time: None, tag: None, key: None }),
                 "{key}"
             );
         }
