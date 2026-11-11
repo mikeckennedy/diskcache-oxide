@@ -7,7 +7,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
-<meta name="description" content="Clear everything cached for one user or one object, by key prefix or by generation number.">
+<meta name="description" content="Clear everything cached for one user or one object: by key prefix, by tag, or by generation number.">
 
 <title>Invalidating groups of keys – diskcache-oxide | diskcache-oxide</title>
 <style>
@@ -450,13 +450,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
   <meta property="og:type" content="website">
   <meta property="og:title" content="Invalidating groups of keys – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="Clear everything cached for one user or one object, by key prefix or by generation number.">
+  <meta property="og:description" content="Clear everything cached for one user or one object: by key prefix, by tag, or by generation number.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/recipes/invalidating-groups.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Invalidating groups of keys – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="Clear everything cached for one user or one object, by key prefix or by generation number.">
+  <meta name="twitter:description" content="Clear everything cached for one user or one object: by key prefix, by tag, or by generation number.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -623,7 +623,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <ul class="collapse">
   <li><a href="#name-keys-hierarchically" id="toc-name-keys-hierarchically" class="nav-link active" data-scroll-target="#name-keys-hierarchically">Name keys hierarchically</a></li>
   <li><a href="#option-1-delete-by-prefix" id="toc-option-1-delete-by-prefix" class="nav-link" data-scroll-target="#option-1-delete-by-prefix">Option 1: delete by prefix</a></li>
-  <li><a href="#option-2-generation-numbers" id="toc-option-2-generation-numbers" class="nav-link" data-scroll-target="#option-2-generation-numbers">Option 2: generation numbers</a></li>
+  <li><a href="#option-2-tags" id="toc-option-2-tags" class="nav-link" data-scroll-target="#option-2-tags">Option 2: tags</a></li>
+  <li><a href="#option-3-generation-numbers" id="toc-option-3-generation-numbers" class="nav-link" data-scroll-target="#option-3-generation-numbers">Option 3: generation numbers</a></li>
   <li><a href="#which-to-use" id="toc-which-to-use" class="nav-link" data-scroll-target="#which-to-use">Which to use</a></li>
   <li><a href="#while-caching-is-switched-off" id="toc-while-caching-is-switched-off" class="nav-link" data-scroll-target="#while-caching-is-switched-off">While caching is switched off</a></li>
   </ul>
@@ -639,7 +640,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 <div>
   <div class="description">
-    Clear everything cached for one user or one object, by key prefix or by generation number.
+    Clear everything cached for one user or one object: by key prefix, by tag, or by generation number.
   </div>
 </div>
 
@@ -656,7 +657,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </header>
 
 
-<p>A user changes their display name, and for the next five minutes half the site still uses the old one: the profile page, the sidebar widget, three API responses, each cached on its own schedule and each wrong in its own way. A single change often makes many cache entries stale, and deleting them one by one means knowing every key that was ever derived from that user. There are two good ways to handle this. Both start with a naming convention.</p>
+<p>A user changes their display name, and for the next five minutes half the site still uses the old one: the profile page, the sidebar widget, three API responses, each cached on its own schedule and each wrong in its own way. A single change often makes many cache entries stale, and deleting them one by one means knowing every key that was ever derived from that user. There are three good ways to handle this: a naming convention and prefix deletes, tags, or generation numbers.</p>
 <section id="name-keys-hierarchically" class="level1">
 <h1>Name keys hierarchically</h1>
 <p>Put the thing a key depends on at the front of the key, from the general to the specific:</p>
@@ -670,7 +671,7 @@ episode:512:transcript</code></pre>
 <section id="option-1-delete-by-prefix" class="level1">
 <h1>Option 1: delete by prefix</h1>
 <p><code>iterkeys(prefix=...)</code> is an indexed range scan, so finding a user’s keys costs time in proportion to how many there are, not the size of the cache. It fetches keys a page at a time with no lock held in between, so deleting while iterating is safe.</p>
-<div id="06340c7b" class="cell" data-execution_count="1">
+<div id="7f845149" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -694,31 +695,50 @@ episode:512:transcript</code></pre>
 </div>
 <p>This is simple and frees the space right away. It costs one small write per key, so it’s best when a group has tens or hundreds of keys, not hundreds of thousands.</p>
 </section>
-<section id="option-2-generation-numbers" class="level1">
-<h1>Option 2: generation numbers</h1>
+<section id="option-2-tags" class="level1">
+<h1>Option 2: tags</h1>
+<p>A tag groups entries without a naming convention: pass <code>tag=</code> when you store, and <code>evict(tag)</code> removes every entry that has it. Entries for one user can live under unrelated keys, an API response keyed by URL, a rendered fragment keyed by template, and still go together.</p>
+<div id="8e0623b2" class="cell" data-execution_count="2">
+<div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'page:/settings'</span>, <span class="st">'&lt;html&gt;...'</span>, expire<span class="op">=</span><span class="dv">3600</span>, tag<span class="op">=</span><span class="st">'user:7'</span>)</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>((<span class="st">'api'</span>, <span class="st">'/v1/me'</span>, <span class="dv">7</span>), {<span class="st">'name'</span>: <span class="st">'Sam'</span>}, expire<span class="op">=</span><span class="dv">3600</span>, tag<span class="op">=</span><span class="st">'user:7'</span>)</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'page:/about'</span>, <span class="st">'&lt;html&gt;...'</span>, expire<span class="op">=</span><span class="dv">3600</span>)</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache.get(<span class="st">'page:/settings'</span>, tag<span class="op">=</span><span class="va">True</span>)[<span class="dv">1</span>])</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache.evict(<span class="st">'user:7'</span>), <span class="st">'removed'</span>)</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="bu">sorted</span>(cache, key<span class="op">=</span><span class="bu">repr</span>))</span></code></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>user:7
+2 removed
+['episode:512:page', 'page:/about', 'user:420:profile']</code></pre>
+</div>
+</div>
+<p><a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict</a> works in chunks over an index, like <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, letting other writers in between, and removes only entries stored before it started, so a fresh entry written for the user while it runs survives. A tag is any key type and is compared by exact type, so <code>tag=7</code> and <code>tag='7'</code> are different tags. An overwrite replaces the tag, and one without <code>tag=</code> leaves the entry untagged, so tag every write in the group. <code>memoize(tag=...)</code> tags every result it stores. Like prefix deletes, it frees the space at once, one row per entry.</p>
+</section>
+<section id="option-3-generation-numbers" class="level1">
+<h1>Option 3: generation numbers</h1>
 <p>Instead of deleting anything, keep a generation number per group and put it in every key. To invalidate the group, change the generation. Every old key becomes unreachable at once, in a single write, however many keys there were. The old entries are never read again, and they leave the cache when they expire or are evicted.</p>
-<div id="6b4016fa" class="cell" data-execution_count="2">
-<div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> generation(user_id: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    key <span class="op">=</span> <span class="ss">f'gen:user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">'</span></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    gen <span class="op">=</span> cache.get(key)</span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> gen <span class="kw">is</span> <span class="va">None</span>:</span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>        cache.add(key, time.time_ns())   <span class="co"># if several workers race, one value wins</span></span>
-<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>        gen <span class="op">=</span> cache.get(key)</span>
-<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> gen</span>
-<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> user_key(user_id: <span class="bu">int</span>, name: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
-<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="ss">f'user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">:g</span><span class="sc">{</span>generation(user_id)<span class="sc">}</span><span class="ss">:</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">'</span></span>
-<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> invalidate_user(user_id: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
-<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="ss">f'gen:user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">'</span>, time.time_ns())</span>
-<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(user_key(<span class="dv">7</span>, <span class="st">'profile'</span>), {<span class="st">'name'</span>: <span class="st">'Sam'</span>}, expire<span class="op">=</span><span class="dv">3600</span>)</span>
-<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache.get(user_key(<span class="dv">7</span>, <span class="st">'profile'</span>)))</span>
-<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a>invalidate_user(<span class="dv">7</span>)</span>
-<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache.get(user_key(<span class="dv">7</span>, <span class="st">'profile'</span>)))</span></code></pre></div>
+<div id="49f8538d" class="cell" data-execution_count="3">
+<div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> generation(user_id: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>    key <span class="op">=</span> <span class="ss">f'gen:user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">'</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>    gen <span class="op">=</span> cache.get(key)</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> gen <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>        cache.add(key, time.time_ns())   <span class="co"># if several workers race, one value wins</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>        gen <span class="op">=</span> cache.get(key)</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> gen</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> user_key(user_id: <span class="bu">int</span>, name: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="ss">f'user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">:g</span><span class="sc">{</span>generation(user_id)<span class="sc">}</span><span class="ss">:</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">'</span></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> invalidate_user(user_id: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="ss">f'gen:user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">'</span>, time.time_ns())</span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(user_key(<span class="dv">7</span>, <span class="st">'profile'</span>), {<span class="st">'name'</span>: <span class="st">'Sam'</span>}, expire<span class="op">=</span><span class="dv">3600</span>)</span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache.get(user_key(<span class="dv">7</span>, <span class="st">'profile'</span>)))</span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a>invalidate_user(<span class="dv">7</span>)</span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache.get(user_key(<span class="dv">7</span>, <span class="st">'profile'</span>)))</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>{'name': 'Sam'}
 None</code></pre>
@@ -731,13 +751,13 @@ None</code></pre>
 <h1>Which to use</h1>
 <ul>
 <li><strong>Prefix deletes</strong> when groups are small and you want the space back immediately.</li>
+<li><strong>Tags</strong> when a group’s keys don’t share a prefix, or come from code (like <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>) whose keys you don’t choose.</li>
 <li><strong>Generation numbers</strong> when groups are large, or invalidation is frequent, or many workers might invalidate the same group at the same time.</li>
 </ul>
 </section>
 <section id="while-caching-is-switched-off" class="level1">
 <h1>While caching is switched off</h1>
-<p>If you turn caching off with <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, pass the real cache as <code>invalidate=</code>. Prefix deletes still reach the real cache (<a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys</a> and <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> are both forwarded), so nothing stale is waiting when caching comes back on. See <a href="../user-guide/null-cache.html">NullCache</a>.</p>
-<p>Tags, which group keys without a naming convention, are planned (see the <a href="../user-guide/roadmap.html">roadmap</a>).</p>
+<p>If you turn caching off with <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, pass the real cache as <code>invalidate=</code>. Prefix deletes and <code>evict(tag)</code> still reach the real cache (<a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys</a>, <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> and <a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict</a> are all forwarded), so nothing stale is waiting when caching comes back on. See <a href="../user-guide/null-cache.html">NullCache</a>.</p>
 
 
 </section>

@@ -4,26 +4,28 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
-No cache needs deleting: the on-disk format is unchanged, and 0.1.2 and this release can share a cache directory during a deploy. 0.1.2 never sees the new key types in its lookups or iteration, though its `len()` counts them, and its `expire()`, `cull()` and `clear()` remove them as usual.
+**Delete your caches when you upgrade.** This release changes the on-disk format (format 3, for tags and the eviction policy). Opening a cache made by 0.1.2 raises `FormatMismatchError`, naming the database: stop every process using the cache, delete its directory (a FanoutCache's whole root, never one shard), and it's recreated empty on the next open. 0.1.2 refuses a format-3 cache the same way, neither version writes anything into the other's, and a 0.1.2 worker still running when its cache is deleted and recreated fails its writes instead of writing into the new one.
 
 ### Added
 
 - Keys of every native type: `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples of those, nested up to 32 deep, beside `str`. They're never pickled and compare by exact type, so `1`, `1.0` and `True` are three keys. `iterkeys()` lists `str` keys first, then the other types in a fixed order; `iterkeys(prefix=...)` lists `str` keys only. A FanoutCache routes every key type. Type checkers see `diskcache_oxide.Key`.
-- `memoize(name=None, typed=False, expire=None, ignore=())` on `Cache`, `FanoutCache` and `NullCache`, as diskcache's, with the same keys, so `f.__cache_key__(...)` returns the tuple diskcache would. Every argument must be a key type, checked before the function runs; `typed=True` stores type names. `Memoized` and `Memoizer` type the wrapper.
+- `memoize(name=None, typed=False, expire=None, tag=None, ignore=())` on `Cache`, `FanoutCache` and `NullCache`, as diskcache's, with the same keys, so `f.__cache_key__(...)` returns the tuple diskcache would. Every argument must be a key type, checked before the function runs; `typed=True` stores type names. `Memoized` and `Memoizer` type the wrapper.
 - `CorruptKeyError`, a `CorruptValueError`, raised by iteration that meets a stored key it can't read (a damaged page or file); it never skips one.
-- `reversed(cache)`, `pop(key, expire_time=True)`, a read-only `durable` attribute, and `reset(key, value)` to read or persist `size_limit` and `cull_limit` (a `FanoutCache` splits the total across its shards), on `Cache`, `FanoutCache` and `NullCache`.
+- `reversed(cache)`, `pop(key, expire_time=True)`, a read-only `durable` attribute, and `reset(key, value)` to read or persist `size_limit`, `cull_limit` and `eviction_policy` (a `FanoutCache` splits a `size_limit` total across its shards), on `Cache`, `FanoutCache` and `NullCache`.
 - Pickling a `Cache` or `FanoutCache`: it reopens the directory with the options the handle was opened with, in another process too. A `TypeRegistry` pickles (the global one by reference).
 - `stats(enable=True, reset=False)`: hit and miss counts of `get`, per process and in memory, so a `get` never writes.
 - `check(fix=False, retry=False)`: the database and value files against each other, as diskcache's, in short steps; `fix=True` removes entries whose files are missing or cut short and old orphan files, sweeps empty folders, corrects the totals and `VACUUM`s. `UnknownFileWarning` and `EmptyDirWarning`.
 - The coordination recipes `Lock`, `RLock`, `BoundedSemaphore`, `Averager`, `throttle`, `barrier` and `memoize_stampede`, as diskcache's, refusing a `NullCache` or `durable=True` cache, with `throttle`'s two diskcache bugs fixed. See the new Coordination guide page.
+- Tags: `tag=` (keyword-only) on `set` and `add`, any key type, compared by exact type, and `tag=True` on `get` and `pop`, returning diskcache's `(value, tag)` and `(value, expire_time, tag)` tuples. `evict(tag, *, timeout=None, retry=False)` on `Cache`, `FanoutCache` and `NullCache` removes every entry with that tag stored before the call, in chunks like `clear()`. `memoize(tag=...)` and the recipes' `tag=` tag what they store. An overwrite without `tag=` leaves the entry untagged; `add` on a live key, `touch` and `incr` keep its tag.
+- `eviction_policy='least-recently-stored'` (the default) or `'none'` on `Cache` and `FanoutCache`, stored in the cache and read inside every write, so a change from one process applies to all at their next write. Under `'none'` nothing is evicted for size, expired entries are still removed, and `cull()` returns how many it removed. `'least-recently-used'` and `'least-frequently-used'` raise `ValueError`. A read-only `eviction_policy` attribute.
 - `ENOVAL` and `UNKNOWN`, diskcache's sentinels.
-- `retry=True` (keyword-only) on `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`, `expire`, `cull` and `clear`: this cache's own `Timeout` is retried until the call gets through, even on a `durable=True` handle; one raised by your code (a hook, a `clock`) is not. A retried `expire`, `cull` or `clear` returns everything it removed.
+- `retry=True` (keyword-only) on `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`, `expire`, `cull`, `clear` and `evict`: this cache's own `Timeout` is retried until the call gets through, even on a `durable=True` handle; one raised by your code (a hook, a `clock`) is not. A retried `expire`, `cull`, `clear` or `evict` returns everything it removed.
 
 ### Changed
 
 - Iterating a cache is typed `Iterator[Key]` rather than `Iterator[str]`, since keys can now be other types; `iterkeys(prefix=...)` is still `Iterator[str]`. Type-checked code that treats every iterated key as a `str` needs a narrowing (`isinstance(key, str)`).
 - The `TypeError` for a key of the wrong type now names the types that are accepted.
-- `CacheLike` gained `memoize`, `stats`, `check`, `reset`, `durable` and `__reversed__`, and `pop` its `expire_time=`; a fake typed against it needs them too.
+- `CacheLike` gained `memoize`, `stats`, `check`, `reset`, `evict`, `durable`, `eviction_policy` and `__reversed__`, `get` and `pop` their `tag=` (and `pop` its `expire_time=`), and `set` and `add` theirs; a fake typed against it needs them too.
 - `transact(retry=True)` sleeps between attempts instead of retrying at once, so a `timeout=0` cache doesn't spin.
 
 ## [0.1.2] - 2026-11-09

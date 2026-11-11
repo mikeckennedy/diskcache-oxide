@@ -13,6 +13,7 @@ NullCache(
     *,
     size_limit=None,
     cull_limit=None,
+    eviction_policy=None,
     serializer="msgpack",
     pickle=False,
     types=None,

@@ -80,7 +80,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: note (to be pinned with an oxide test in Phase 2)
 - diskcache: `clear()` keeps deleting until the cache is empty, including entries written while it runs. In a repro with 50k entries and a concurrent writer, `clear()` removed 133k rows: 76k writes that had already succeeded were deleted and only 1 survived. Its running time grows with the write rate. Found by the Phase 0 locking tests (repro: `upstream/repros/clear_deletes_concurrent_writes.py`).
-- oxide: `clear()` removes the entries stored before it started (bounded by a `store_seq` snapshot) and always finishes. Writes that land while it runs, including overwrites of existing keys, survive.
+- oxide: `clear()` removes the entries stored before it started (bounded by a `store_seq` snapshot) and always finishes. Writes that land while it runs, including overwrites of existing keys, survive. `evict(tag)` is bounded the same way, where diskcache's pages on `rowid > last` and so also removes entries tagged under new keys while it runs.
 - Why: a maintenance call must be bounded, and it must not silently discard writes that callers saw succeed.
 
 ## D-012 A forked child can write even if another thread was writing at the fork
@@ -162,12 +162,12 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - oxide: `directory` is a required argument.
 - Why: a cache directory is a security boundary (D-015) and shared state across processes. An implicit temporary directory is almost never what a multi-process app wants, and it hides where the data lives.
 
-## D-022 No disk= or eviction_policy= (yet)
+## D-022 No disk=, and only the eviction policies that keep reads write-free
 
 - Kind: note
 - diskcache: accepts a `disk` class (also positionally, as the third argument) and `eviction_policy` (`least-recently-stored`, `least-recently-used`, `least-frequently-used`, `none`).
-- oxide: serialization is chosen with `serializer=` and `pickle=` instead of a `Disk` class, and there's no plan to support custom `Disk` subclasses; a type the codec doesn't know is registered per type instead (D-041). `eviction_policy` is always least-recently-stored until the other policies arrive in Phase 6a. Only `directory` and `timeout` can be passed positionally.
-- Why: a pluggable Python `Disk` would put Python code on every read and write in the Rust hot path.
+- oxide: serialization is chosen with `serializer=` and `pickle=` instead of a `Disk` class, and there's no plan to support custom `Disk` subclasses; a type the codec doesn't know is registered per type instead (D-041). `eviction_policy=` takes `'least-recently-stored'` (a new cache's default) or `'none'`, keyword-only, persisted in the cache like `size_limit`; `'least-recently-used'` and `'least-frequently-used'` raise `ValueError` saying why. The policy is read inside every write's transaction and `cull()`'s, not from a copy cached at open, so a `reset('eviction_policy', ...)` from another process applies to every open handle at its next write; the `eviction_policy` attribute is the handle's last look. There's no `tag_index` setting and no `create_tag_index()` or `drop_tag_index()`: tags are always indexed, with a partial index that untagged entries don't touch. Only `directory` and `timeout` can be passed positionally.
+- Why: a pluggable Python `Disk` would put Python code on every read and write in the Rust hot path. LRU and LFU make every `get` a write (diskcache updates the row's access time or count on each read), and reads that never write are what let many processes read at once. A policy cached at open would let a handle that outlives a switch to `'none'` keep evicting.
 
 ## D-023 sqlite_cache_size is a per-process memory budget, 1 MiB by default
 
@@ -323,7 +323,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: note
 - diskcache: `FanoutCache(directory=None, shards=8, timeout=0.010, disk=Disk, **settings)`, so `FanoutCache(path, 4)` asks for 4 shards. It also has `transact()` across every shard, `cache()`, `deque()` and `index()` sub-collections, `stats()`, `evict()` and tag indexes, `check()`, `reset()`, `read()`, `reversed()`, the `retry=`, `read=` and `tag=` arguments, settings read as attributes from shard 0, and pickling.
-- oxide: `FanoutCache(directory, timeout=None, *, shards=None, ...)`, with the same options as `Cache` plus `shards`. `shards` is keyword-only, so stock's `FanoutCache(path, 4)` would be a 4-second timeout here: pass `shards=4`. None of the features above exist yet except `transact`, which here is `transact(key=...)`, scoped to one shard (D-040); the rest come with Phase 6a and 6d. `directory` is required (D-021), and there's no `disk=` (D-022).
+- oxide: `FanoutCache(directory, timeout=None, *, shards=None, ...)`, with the same options as `Cache` plus `shards`. `shards` is keyword-only, so stock's `FanoutCache(path, 4)` would be a 4-second timeout here: pass `shards=4`. Of the features above, `transact` is `transact(key=...)`, scoped to one shard (D-040); `stats()`, `evict()` and tags, `check()`, `reset()`, `reversed()`, `retry=`, `tag=`, settings as attributes and pickling are there, as on `Cache`; the sub-collections and `read()`/`read=` aren't yet. `directory` is required (D-021), and there's no `disk=` (D-022).
 - Why: the positional `timeout` matches `Cache`'s signature, and each missing feature needs its own design across shards rather than a copy of stock's.
 
 ## D-040 FanoutCache.transact(key=...) covers one shard and refuses other shards' keys, reads included
@@ -385,7 +385,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: test-visible
 - diskcache: `retry` is a positional parameter of every call that takes it (`cache.set(k, v, None, False, None, True)` works), and `cache[k]`, `cache[k] = v` and `del cache[k]` pass `retry=True`, so they wait forever on a busy database.
-- oxide: `retry=False` is keyword-only, a strict `bool`, on `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`, `expire`, `cull` and `clear` (`Cache`, `FanoutCache`, `NullCache` and the protocols). With `retry=True` only a plain `Timeout` is retried, each round with the call's whole `timeout`; a durable handle then retries it rather than answering it as a miss. A retried `expire`, `cull` or `clear` keeps the snapshot it started from and returns everything every round removed (on a FanoutCache, from every shard). Dict syntax raises `Timeout` after `timeout`, as `Cache.get` does (D-034 says the same for FanoutCache). Only this cache's own `Timeout` is retried: one raised by the caller's code (a hook, a `clock`, a nested call) is raised at once. A retried `set` or `add` encodes its value once. A removal that couldn't take its snapshot at first takes it when it gets in, so writes made during the wait can be removed too. Inside a held transaction a retried call keeps the transaction, and its write lock, across rounds, as diskcache does.
+- oxide: `retry=False` is keyword-only, a strict `bool`, on `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`, `expire`, `cull`, `clear` and `evict` (`Cache`, `FanoutCache`, `NullCache` and the protocols). With `retry=True` only a plain `Timeout` is retried, each round with the call's whole `timeout`; a durable handle then retries it rather than answering it as a miss. A retried `expire`, `cull`, `clear` or `evict` keeps the snapshot it started from and returns everything every round removed (on a FanoutCache, from every shard). Dict syntax raises `Timeout` after `timeout`, as `Cache.get` does (D-034 says the same for FanoutCache). Only this cache's own `Timeout` is retried: one raised by the caller's code (a hook, a `clock`, a nested call) is raised at once. A retried `set` or `add` encodes its value once. A removal that couldn't take its snapshot at first takes it when it gets in, so writes made during the wait can be removed too. Inside a held transaction a retried call keeps the transaction, and its write lock, across rounds, as diskcache does.
 - Why: a positional `retry` after `read` and `tag`, which oxide doesn't have, would bind the wrong argument; and an unbounded wait hidden behind `cache[k]` is the hang this library exists to remove. Ask for it with `retry=True`.
 - Tests: `tests/conformance/test_retry.py`, `tests/unit/test_retry.py`
 
@@ -417,7 +417,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: test-visible
 - diskcache: `Lock`, `RLock`, `BoundedSemaphore`, `Averager`, `throttle` and `barrier` work on any cache; `RLock`'s owner is `'{pid}-{tid}'`; `throttle` raises `TypeError` once its bucket expires or is cleared, and every decoration refills the bucket (upstream bugs 13 and 14); a recipe that waits inside the caller's own transaction polls forever while holding the write lock; its checks are `assert`s.
-- oxide: the coordination recipes refuse a `NullCache` and a `durable=True` handle with `TypeError` (`memoize_stampede` follows `memoize` instead); `RLock`'s owner is `'{pid}-{tid}-{nonce}'`, the nonce made per process and again in a forked child; `throttle` treats a missing bucket as full and adds its bucket at decoration; a recipe that would wait inside this thread's own transaction on its cache raises `RuntimeError`; the release checks raise `AssertionError` explicitly (not stripped by `python -O`); on a `FanoutCache` a recipe's transaction covers its key's shard; `tag=` must be None until tags arrive.
+- oxide: the coordination recipes refuse a `NullCache` and a `durable=True` handle with `TypeError` (`memoize_stampede` follows `memoize` instead); `RLock`'s owner is `'{pid}-{tid}-{nonce}'`, the nonce made per process and again in a forked child; `throttle` treats a missing bucket as full and adds its bucket at decoration; a recipe that would wait inside this thread's own transaction on its cache raises `RuntimeError`; the release checks raise `AssertionError` explicitly (not stripped by `python -O`); on a `FanoutCache` a recipe's transaction covers its key's shard; `tag=` is any key type (D-052), and `barrier` passes it to the lock factory only when it isn't None, so a factory written without a `tag` parameter works.
 - Why: a lock that silently doesn't lock, or that one container's pid 7 shares with another's, is worse than an error (Michael's decisions 10, 16, 17 and 18, plan 24).
 - Tests: `tests/conformance/test_recipes.py`, `tests/unit/test_recipes.py`
 
@@ -425,9 +425,9 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: test-visible
 - diskcache: tags are stored as SQLite values and compared numerically, so `evict(1)` removes entries tagged `1`, `1.0` and `True`, a `True` tag reads back as `1`, a NaN tag is stored as no tag, and a tuple tag raises `ProgrammingError`.
-- oxide: a tag is any key type (D-004), stored and compared as a key is (D-044): `1`, `1.0` and `True` are three tags, a NaN tag raises `ValueError`, and a tuple is a tag. `tag=` is keyword-only, as `retry=` is (D-047). `evict(None)` is 0 and touches nothing, as in diskcache.
+- oxide: a tag is any key type (D-004), stored and compared as a key is (D-044): `1`, `1.0` and `True` are three tags, a NaN tag raises `ValueError`, and a tuple is a tag. A bad tag's error says "invalid tag". `tag=` is keyword-only on `set` and `add`, as `retry=` is (D-047), and `tag=True` on `get` and `pop` returns diskcache's tuples. `memoize` takes `tag` fourth, as diskcache does. `evict(None)` is 0 and touches nothing, as in diskcache.
 - Why: one rule for keys and tags, with an identity that follows from the value and its type.
-- Tests: `tests/conformance/test_tags.py`
+- Tests: `tests/conformance/test_tags.py`, `tests/unit/test_tags.py`
 
 ## D-053 `cull()` under `eviction_policy='none'` counts what it removed
 
@@ -435,7 +435,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - diskcache: under `'none'`, `cull()` removes the expired entries and then returns 0 (upstream bug 15).
 - oxide: it returns how many expired entries it removed. Under `'none'` nothing is ever evicted for size, by a write or by `cull()`, and the policy is read inside each write's transaction, so a handle opened before another process switched the cache to `'none'` stops evicting at once.
 - Why: `cull()`'s count is documented as what it removed.
-- Tests: `tests/conformance/test_tags.py`
+- Tests: `tests/conformance/test_tags.py`, `tests/unit/test_eviction_policy.py`
 
 # Community fork differences
 

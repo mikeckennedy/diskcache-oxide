@@ -12,6 +12,7 @@ Cache.add(
     value,
     expire=None,
     *,
+    tag=None,
     retry=False,
 )
 ```
@@ -31,6 +32,9 @@ The value, as for [set()](Cache.set.md#diskcache_oxide.Cache.set).
 
 `expire: float | None = None`  
 Seconds until the entry expires, or None for never.
+
+`tag: Key = None`  
+The entry's tag, as for [set()](Cache.set.md#diskcache_oxide.Cache.set). A live entry keeps its own.
 
 `retry: bool = ``False`  
 On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call gets through, each round with the whole [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), a `durable=True` handle included. Only [Timeout](Timeout.md#diskcache_oxide.Timeout) is retried.

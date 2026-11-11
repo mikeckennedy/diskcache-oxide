@@ -78,7 +78,7 @@ Already done from the old Phase 6 list: [`transact()`](transactions.md) and [`Fa
 
 ## Decided against, and why
 
-- **Least-recently-used and least-frequently-used eviction.** diskcache implements them by writing to the database on every [get](../reference/Cache.get.md#diskcache_oxide.Cache.get). Reads that never write are what let many processes read at once without queueing, so these stay out unless a design keeps reads write-free. Least-recently-stored stays the default, and `eviction_policy='none'` is coming.
+- **Least-recently-used and least-frequently-used eviction.** diskcache implements them by writing to the database on every [get](../reference/Cache.get.md#diskcache_oxide.Cache.get). Reads that never write are what let many processes read at once without queueing, so these stay out unless a design keeps reads write-free. Least-recently-stored stays the default, and `eviction_policy='none'` turns eviction off.
 - **`Deque` and `Index`**, for now. They come back if someone asks: an `Index` is only as general as the key types, and both default to a temporary directory, which diskcache-oxide doesn't do.
 - **`disk=` and `Disk` subclasses.** A Python class on every read and write would undo the Rust engine; `serializer=` and `register_type()` cover what people used them for.
 - **Pickled keys.** Keys are never pickled, so listing keys never runs pickle and a key's identity doesn't depend on pickle's bytes.

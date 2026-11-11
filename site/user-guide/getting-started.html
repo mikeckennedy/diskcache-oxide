@@ -783,12 +783,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    size_limit<span class="op">=</span><span class="dv">500</span> <span class="op">*</span> <span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>,   <span class="co"># 500 MiB (default 1 GiB, minimum 1 MiB)</span></span>
 <span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    cull_limit<span class="op">=</span><span class="dv">10</span>,                  <span class="co"># entries evicted per set() when over the limit (default 10)</span></span>
 <span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
-<p>When the cache’s on-disk volume goes over <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, each <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> evicts up to <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> of the least recently stored entries. <code>cache.volume()</code> reports the current size in bytes.</p>
+<p>When the cache’s on-disk volume goes over <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, each <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> evicts up to <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> of the least recently stored entries. <code>cache.volume()</code> reports the current size in bytes. For a cache that must never drop a live entry (job claims, locks, a queue), pass <code>eviction_policy='none'</code>: nothing is evicted for size, expired entries are still removed, and the cache can grow past <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>. Like the limits, the policy is stored in the cache, so every process shares it.</p>
 <p>Maintenance calls, all safe to run while other processes use the cache:</p>
 <ul>
 <li><code>cache.expire()</code> removes every expired entry and returns how many.</li>
 <li><code>cache.clear()</code> removes every entry that existed when it started, and keeps anything written while it runs.</li>
-<li><code>cache.cull()</code> evicts down to the size limit.</li>
+<li><code>cache.cull()</code> removes expired entries, then evicts down to the size limit (unless the policy is <code>'none'</code>), and returns how many it removed.</li>
+<li><code>cache.evict(tag)</code> removes every entry stored with <code>tag=tag</code> (see <a href="../recipes/invalidating-groups.html">Invalidating groups of keys</a>).</li>
 </ul>
 </section>
 <section id="timeouts" class="level1">

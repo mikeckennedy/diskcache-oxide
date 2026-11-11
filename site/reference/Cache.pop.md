@@ -12,6 +12,7 @@ Cache.pop(
     default=None,
     *,
     expire_time=False,
+    tag=False,
     retry=False,
 )
 ```
@@ -29,6 +30,12 @@ The key.
 `default: Any = None`  
 Returned when the key is missing or expired, or its value file is missing.
 
+`expire_time: bool = ``False`  
+Also return the entry's expiry time.
+
+`tag: bool = ``False`  
+Also return the entry's tag.
+
 `retry: bool = ``False`  
 On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call gets through, each round with the whole [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), a `durable=True` handle included. Only [Timeout](Timeout.md#diskcache_oxide.Timeout) is retried.
 
@@ -36,8 +43,10 @@ On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call get
 ## Returns
 
 
-`Any | tuple[Any, float | None]`  
-The removed value, or `default`. With `durable=True`, a [pop](Cache.pop.md#diskcache_oxide.Cache.pop) whose delete fails returns
+`Any | tuple[Any, float | None] | tuple[Any, Key] | tuple[Any, float | None, Key]`  
+The removed value, or `default`; with `expire_time` or `tag`, a tuple as [get](Cache.get.md#diskcache_oxide.Cache.get) returns.
+
+With `durable=True`, a [pop](Cache.pop.md#diskcache_oxide.Cache.pop) whose delete fails returns
 
 `default`, never the value, which could otherwise be delivered twice. The row stays.
 

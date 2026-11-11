@@ -12,6 +12,7 @@ CacheLike.set(
     value,
     expire=None,
     *,
+    tag=None,
     retry=False,
 )
 ```

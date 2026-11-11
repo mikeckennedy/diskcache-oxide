@@ -30,11 +30,11 @@ Every row of this table follows from that sentence, so you never have to guess, 
 | [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete), [touch](../reference/Cache.touch.md#diskcache_oxide.Cache.touch), `key in cache` | `False` | there's nothing there |
 | `pop(key, default)` | `default` | there's nothing there |
 | `len(cache)`, `cache.volume()` | `0` | it's empty and uses no disk |
-| [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) | `0` | nothing to remove |
+| [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull), `evict(tag)` | `0` | nothing to remove |
 | iteration, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) | nothing | it's empty |
 | `bool(cache)`, `cache.enabled` | `False` | caching is off |
 
-The constructor accepts the same arguments as [Cache](../reference/Cache.md#diskcache_oxide.Cache) and ignores them, and the directory is optional. Bad argument *types* still raise as they would on [Cache](../reference/Cache.md#diskcache_oxide.Cache) (a non-`str` key, `expire=True`), so code that passes with a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) in tests also works with a real one.
+The constructor accepts the same arguments as [Cache](../reference/Cache.md#diskcache_oxide.Cache) and ignores them, and the directory is optional. Bad argument *types* still raise as they would on [Cache](../reference/Cache.md#diskcache_oxide.Cache) (a list as a key or a tag, `expire=True`), so code that passes with a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) in tests also works with a real one.
 
 
 ## Watch [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add)
@@ -69,6 +69,7 @@ cache.get('user:42')             # None
 cache.delete('user:42')          # deleted from the real cache
 cache.pop('user:42')             # deleted from the real cache; returns the default
 cache.clear()                    # clears the real cache
+cache.evict('user:42')           # evicts the tag from the real cache
 cache.iterkeys(prefix='user:')   # the real cache's keys, so list-then-delete still works
 ```
 

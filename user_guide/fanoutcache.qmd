@@ -146,6 +146,6 @@ def bump(cache: ShardedCacheLike, key: str) -> None:
 
 ## What `FanoutCache` doesn't have yet
 
-Stock's `FanoutCache` also has `cache()`, `deque()` and `index()` sub-collections, `stats()`, `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, the `retry=`, `read=` and `tag=` arguments, settings read as attributes, and pickling. None of those exist yet; the ones that belong to a feature come with that feature (see the [roadmap](roadmap.qmd)), each designed across shards rather than copied. `directory` is required and there's no `disk=`, as for `Cache`.
+`stats()`, `check()`, `reset()`, `reversed()`, pickling, `retry=`, tags and `evict(tag)` (which removes the tag from every shard) and `eviction_policy=` (every shard's) work as on `Cache`. Stock's `cache()`, `deque()` and `index()` sub-collections and `read()`/`read=` don't exist yet; they come with their features (see the [roadmap](roadmap.qmd)), each designed across shards rather than copied. `directory` is required and there's no `disk=`, as for `Cache`.
 
 The constructor takes `shards` as a keyword: stock's `FanoutCache(path, 4)` means four shards, but here the second argument is `timeout`, so write `shards=4`.

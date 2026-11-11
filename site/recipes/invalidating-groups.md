@@ -1,6 +1,6 @@
 # Invalidating groups of keys
 
-A user changes their display name, and for the next five minutes half the site still uses the old one: the profile page, the sidebar widget, three API responses, each cached on its own schedule and each wrong in its own way. A single change often makes many cache entries stale, and deleting them one by one means knowing every key that was ever derived from that user. There are two good ways to handle this. Both start with a naming convention.
+A user changes their display name, and for the next five minutes half the site still uses the old one: the profile page, the sidebar widget, three API responses, each cached on its own schedule and each wrong in its own way. A single change often makes many cache entries stale, and deleting them one by one means knowing every key that was ever derived from that user. There are three good ways to handle this: a naming convention and prefix deletes, tags, or generation numbers.
 
 
 # Name keys hierarchically
@@ -48,7 +48,31 @@ print(sorted(cache))
 This is simple and frees the space right away. It costs one small write per key, so it's best when a group has tens or hundreds of keys, not hundreds of thousands.
 
 
-# Option 2: generation numbers
+# Option 2: tags
+
+A tag groups entries without a naming convention: pass `tag=` when you store, and `evict(tag)` removes every entry that has it. Entries for one user can live under unrelated keys, an API response keyed by URL, a rendered fragment keyed by template, and still go together.
+
+
+``` python
+cache.set('page:/settings', '<html>...', expire=3600, tag='user:7')
+cache.set(('api', '/v1/me', 7), {'name': 'Sam'}, expire=3600, tag='user:7')
+cache.set('page:/about', '<html>...', expire=3600)
+
+print(cache.get('page:/settings', tag=True)[1])
+print(cache.evict('user:7'), 'removed')
+print(sorted(cache, key=repr))
+```
+
+
+    user:7
+    2 removed
+    ['episode:512:page', 'page:/about', 'user:420:profile']
+
+
+[evict](../reference/Cache.evict.md#diskcache_oxide.Cache.evict) works in chunks over an index, like [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), letting other writers in between, and removes only entries stored before it started, so a fresh entry written for the user while it runs survives. A tag is any key type and is compared by exact type, so `tag=7` and `tag='7'` are different tags. An overwrite replaces the tag, and one without `tag=` leaves the entry untagged, so tag every write in the group. `memoize(tag=...)` tags every result it stores. Like prefix deletes, it frees the space at once, one row per entry.
+
+
+# Option 3: generation numbers
 
 Instead of deleting anything, keep a generation number per group and put it in every key. To invalidate the group, change the generation. Every old key becomes unreachable at once, in a single write, however many keys there were. The old entries are never read again, and they leave the cache when they expire or are evicted.
 
@@ -90,11 +114,10 @@ The generations are timestamps rather than a counter starting at 0 for a reason.
 # Which to use
 
 - **Prefix deletes** when groups are small and you want the space back immediately.
+- **Tags** when a group's keys don't share a prefix, or come from code (like [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize)) whose keys you don't choose.
 - **Generation numbers** when groups are large, or invalidation is frequent, or many workers might invalidate the same group at the same time.
 
 
 # While caching is switched off
 
-If you turn caching off with [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), pass the real cache as `invalidate=`. Prefix deletes still reach the real cache ([iterkeys](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) and [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) are both forwarded), so nothing stale is waiting when caching comes back on. See [NullCache](../user-guide/null-cache.md).
-
-Tags, which group keys without a naming convention, are planned (see the [roadmap](../user-guide/roadmap.md)).
+If you turn caching off with [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), pass the real cache as `invalidate=`. Prefix deletes and `evict(tag)` still reach the real cache ([iterkeys](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys), [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) and [evict](../reference/Cache.evict.md#diskcache_oxide.Cache.evict) are all forwarded), so nothing stale is waiting when caching comes back on. See [NullCache](../user-guide/null-cache.md).

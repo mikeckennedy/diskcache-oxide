@@ -8,7 +8,7 @@ This is the API documentation for the diskcache_oxide library.
 Disk-backed cache backed by SQLite, shared safely across threads and processes.
 
 
-Cache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False) -> 'Cache'
+Cache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False) -> 'Cache'
 
 A disk cache backed by SQLite, shared safely across threads and processes.
 
@@ -24,6 +24,11 @@ Args:
         1 MiB). Stored in the cache, so it applies to every process.
     cull_limit: How many least-recently-stored entries a `set()` evicts when the cache is over
         `size_limit` (default 10).
+    eviction_policy: `'least-recently-stored'` (a new cache's default) evicts the oldest stored
+        entries when over `size_limit`; `'none'` never evicts for size, only removing expired
+        entries, so the cache can grow past `size_limit`. Stored in the cache, so it applies to
+        every process, and every write reads it afresh. None keeps the stored one.
+        `'least-recently-used'` and `'least-frequently-used'` raise `ValueError` (D-022).
     serializer: `'msgpack'` (the default) or `'json'`, for values that aren't plain `str` or
         `bytes`.
     pickle: Allow pickle for values the serializer can't represent exactly. Without it, such
@@ -116,11 +121,16 @@ cull_limit
 
 The most entries a single `set()` evicts when the cache is over `size_limit`.
 
+eviction_policy
+
+`'least-recently-stored'` or `'none'`, as this handle last saw it stored (at open or its
+own `reset`). Writes read the stored policy afresh, so another process's change applies at once.
+
 enabled
 
 Always True for a real cache; False for a `NullCache`.
 
-set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Store `value` under `key`, replacing any existing value.
 
@@ -131,6 +141,9 @@ Args:
     value: The value: `str`, `bytes`, numbers, `Decimal`, `bool`, `None`, and lists, tuples, dicts,
         sets, frozensets, datetimes and dates of those, or anything picklable with `pickle=True`.
     expire: Seconds until the entry expires, or None for never.
+    tag: A label for the entry, which `evict(tag)` removes by: any value a key can be,
+        compared by exact type, so `1`, `1.0` and `True` are three tags. None for none. An
+        overwrite replaces the old tag, so an overwrite without one leaves the entry untagged.
     retry: On a `Timeout`, try again until the call gets through, each round with the
         whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
@@ -139,16 +152,18 @@ Returns:
     stored under `key` stays, and can be served stale.
 
 Raises:
-    TypeError: The value can't be stored exactly without pickle, or `expire` is a `bool`.
+    TypeError: The value can't be stored exactly without pickle, `expire` is a `bool`, or
+        `tag` isn't a valid key type.
     Timeout: Another process held the write lock for longer than `timeout`.
 
 Examples:
     ```python
     cache.set('episodes:popular', episodes, expire=300)   # expires in 5 minutes
+    cache.set('user:42:profile', profile, tag='user:42')  # evict('user:42') removes it
     cache.set('config', {'retries': 3})                   # never expires
     ```
 
-add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Store `value` only if `key` is missing or expired.
 
@@ -159,6 +174,7 @@ Args:
     key: The key.
     value: The value, as for `set()`.
     expire: Seconds until the entry expires, or None for never.
+    tag: The entry's tag, as for `set()`. A live entry keeps its own.
     retry: On a `Timeout`, try again until the call gets through, each round with the
         whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
@@ -259,7 +275,7 @@ Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 Returns:
     The new value.
 
-memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
+memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
 
 Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
 
@@ -276,11 +292,12 @@ Args:
         `f(1.0)` are two entries.
     expire: Seconds until a stored result expires; `None` never. Zero or negative never
         stores, as in diskcache.
+    tag: The tag every stored result gets, for `evict(tag)`: a key type, checked here.
     ignore: Positions and keyword names left out of the key.
 
 Raises:
-    TypeError: `name` is callable (the decorator was used without parentheses), the function
-        is `async def`, or, at a call, an argument isn't a key type (D-048).
+    TypeError: `name` is callable (the decorator was used without parentheses), `tag` isn't
+        a key type, the function is `async def`, or, at a call, an argument isn't a key type (D-048).
     ValueError: at a call, an argument is a NaN or a tuple nested too deep (D-048).
 
 Examples:
@@ -332,20 +349,6 @@ durable
 
 True for a `durable=True` handle.
 
-reset(self, key: 'str', value: 'Any' = Ellipsis, update: 'bool' = True) -> 'int'
-
-Read `size_limit` or `cull_limit` as stored now, or persist a new value and return it.
-
-Args:
-    key: `'size_limit'` or `'cull_limit'`.
-    value: The new value, checked as the constructor checks it; leave it out (or pass
-        `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
-    update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
-
-Raises:
-    ValueError: Another key, `update=False`, or a value the constructor would refuse.
-    TypeError: A value that isn't an `int`.
-
 __reversed__(self) -> 'Iterator[Key]'
 
 Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first).
@@ -394,6 +397,35 @@ Returns:
 Examples:
     ```python
     cache.clear(timeout=10.0)   # safe while other processes keep writing
+    ```
+
+evict(self, tag: 'Key', *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+
+Remove every entry tagged `tag` that existed when the call started.
+
+Works in chunks as `clear` does, and keeps writes that land while it runs. Tags compare by
+exact type, as keys do: `evict(1)` leaves entries tagged `1.0` or `True` (D-052). `evict(None)`
+removes nothing: untagged entries have no tag to evict by.
+
+Args:
+    tag: The tag.
+    timeout: Seconds each chunk may wait for the write lock (another thread's or another
+        process's), for this call only (default: the cache's `timeout`). It bounds each
+        wait, not the whole call.
+    retry: On a `Timeout`, try again until the call gets through, each round with the
+        whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
+
+Returns:
+    How many entries were removed.
+
+Raises:
+    TypeError: `tag` isn't a key type.
+
+Examples:
+    ```python
+    cache.set('user:42:profile', profile, tag='user:42')
+    cache.set('user:42:orders', orders, tag='user:42')
+    cache.evict('user:42')   # 2
     ```
 
 cull(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
@@ -538,7 +570,7 @@ __exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | Non
 
 Close the cache, as `close()` does.
 
-get(self, key: 'Key', default: 'Any' = None, *, expire_time: 'Literal[False]' = False, retry: 'bool' = False) -> 'Any'
+get(self, key: 'Key', default: 'Any' = None, *, expire_time: 'Literal[False]' = False, tag: 'Literal[False]' = False, retry: 'bool' = False) -> 'Any'
 
 Return the value stored for `key`, or `default` if it's missing or expired.
 
@@ -548,12 +580,15 @@ Args:
     key: The key to look up.
     default: Returned when the key is missing or expired.
     expire_time: Also return the entry's expiry time.
+    tag: Also return the entry's tag.
     retry: On a `Timeout`, try again until the call gets through, each round with the
         whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
 Returns:
     The value, or `default`. With `expire_time=True`, a `(value, expire_time)` tuple, where
     `expire_time` is a Unix timestamp, or None for an entry that never expires (or a miss).
+    With `tag=True`, `(value, tag)`, the tag None when untagged (or a miss); with both,
+    `(value, expire_time, tag)`.
 
 Raises:
     UnsafeValueError: The value was stored with pickle and this cache has `pickle=False`.
@@ -566,9 +601,10 @@ Examples:
     user = cache.get('user:42')                     # None on a miss
     user = cache.get('user:42', default={})         # {} on a miss
     value, expires_at = cache.get('user:42', expire_time=True)
+    value, tag = cache.get('user:42', tag=True)
     ```
 
-pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'Literal[False]' = False, retry: 'bool' = False) -> 'Any'
+pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'Literal[False]' = False, tag: 'Literal[False]' = False, retry: 'bool' = False) -> 'Any'
 
 Remove `key` and return its value, delivering it to exactly one caller.
 
@@ -581,11 +617,14 @@ a failed decode cost the value: one from a newer version, or any error from a pi
 Args:
     key: The key.
     default: Returned when the key is missing or expired, or its value file is missing.
+    expire_time: Also return the entry's expiry time.
+    tag: Also return the entry's tag.
     retry: On a `Timeout`, try again until the call gets through, each round with the
         whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
 Returns:
-    The removed value, or `default`. With `durable=True`, a `pop` whose delete fails returns
+    The removed value, or `default`; with `expire_time` or `tag`, a tuple as `get` returns.
+    With `durable=True`, a `pop` whose delete fails returns
     `default`, never the value, which could otherwise be delivered twice. The row stays.
 
 Raises:
@@ -603,6 +642,24 @@ Examples:
     ```python
     token = cache.pop('reset-token:abc')   # None if it was missing or already used
     ```
+
+reset(self, key: "Literal['size_limit', 'cull_limit']", value: 'Any' = Ellipsis, update: 'bool' = True) -> 'int'
+
+Read `size_limit`, `cull_limit` or `eviction_policy` as stored now, or persist a new value and
+return it.
+
+Args:
+    key: `'size_limit'`, `'cull_limit'` or `'eviction_policy'`.
+    value: The new value, checked as the constructor checks it; leave it out (or pass
+        `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
+    update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
+
+Returns:
+    The setting: an `int` for a limit, the policy's name for `eviction_policy`.
+
+Raises:
+    ValueError: Another key, `update=False`, or a value the constructor would refuse.
+    TypeError: A limit that isn't an `int`, or a policy that isn't a `str`.
 
 iterkeys(self, *, prefix: 'str', reverse: 'bool' = False) -> 'Iterator[str]'
 
@@ -634,7 +691,7 @@ Examples:
 A cache sharded over several SQLite databases, so writers in many processes stop queueing on one write lock.
 
 
-FanoutCache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, shards: 'int | None' = None, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False) -> 'FanoutCache'
+FanoutCache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, shards: 'int | None' = None, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False) -> 'FanoutCache'
 
 A disk cache split over several SQLite databases (shards), so reads and writes on different keys
 don't queue on one file's locks.
@@ -668,6 +725,7 @@ Args:
         shards, each of which culls on its own. Each shard needs at least 1 MiB, so the total must
         be at least `shards` MiB. With none given, a new root gets 1 GiB in all.
     cull_limit: As for `Cache`, per shard.
+    eviction_policy: As for `Cache`, on every shard.
     serializer: As for `Cache`.
     pickle: As for `Cache`.
     clock: As for `Cache`.
@@ -731,6 +789,10 @@ The most entries a single `set()` evicts from its shard when that shard is over 
 
 Shard 0's value: every shard's only while they were all created, and last set, under the same settings.
 
+eviction_policy
+
+Shard 0's eviction policy, as for `cull_limit`.
+
 enabled
 
 Always True for a real cache; False for a `NullCache`.
@@ -786,11 +848,11 @@ Examples:
         tx.set('totals:2026-11', n + 1)
     ```
 
-set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 As `Cache.set`, on the key's shard.
 
-add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 As `Cache.add`, on the key's shard: atomic across threads and processes.
 
@@ -863,6 +925,24 @@ Returns:
 Raises:
     Timeout: As for `expire`, with `removed` and `failed_shards`.
 
+evict(self, tag: 'Key', *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+
+Remove every entry tagged `tag` that existed when the call started, from every shard, as
+`Cache.evict`.
+
+Args:
+    tag: The tag.
+    timeout: As for `expire`: one budget for the whole call.
+    retry: On a `Timeout`, try again until the call gets through, each round with the
+        whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
+
+Returns:
+    How many entries were removed.
+
+Raises:
+    TypeError: `tag` isn't a key type.
+    Timeout: As for `expire`, with `removed` and `failed_shards`.
+
 cull(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
 
 Remove expired entries, then evict the least recently stored from each shard until it's
@@ -895,7 +975,7 @@ Raises:
     OSError: A real error, such as a full disk, on some shard, raised after every shard was
         tried. It carries `failed_shards` (see the class docs).
 
-memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
+memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
 
 Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
 
@@ -912,11 +992,12 @@ Args:
         `f(1.0)` are two entries.
     expire: Seconds until a stored result expires; `None` never. Zero or negative never
         stores, as in diskcache.
+    tag: The tag every stored result gets, for `evict(tag)`: a key type, checked here.
     ignore: Positions and keyword names left out of the key.
 
 Raises:
-    TypeError: `name` is callable (the decorator was used without parentheses), the function
-        is `async def`, or, at a call, an argument isn't a key type (D-048).
+    TypeError: `name` is callable (the decorator was used without parentheses), `tag` isn't
+        a key type, the function is `async def`, or, at a call, an argument isn't a key type (D-048).
     ValueError: at a call, an argument is a NaN or a tuple nested too deep (D-048).
 
 Examples:
@@ -967,20 +1048,6 @@ counts as nothing. A `FanoutCache` sums its shards.
 durable
 
 True for a `durable=True` handle.
-
-reset(self, key: 'str', value: 'Any' = Ellipsis, update: 'bool' = True) -> 'int'
-
-Read `size_limit` or `cull_limit` as stored now, or persist a new value and return it.
-
-Args:
-    key: `'size_limit'` or `'cull_limit'`.
-    value: The new value, checked as the constructor checks it; leave it out (or pass
-        `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
-    update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
-
-Raises:
-    ValueError: Another key, `update=False`, or a value the constructor would refuse.
-    TypeError: A value that isn't an `int`.
 
 __reversed__(self) -> 'Iterator[Key]'
 
@@ -1037,13 +1104,31 @@ __exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | Non
 
 Close the cache, as `close()` does.
 
-get(self, key: 'Key', default: 'Any' = None, *, expire_time: 'Literal[False]' = False, retry: 'bool' = False) -> 'Any'
+get(self, key: 'Key', default: 'Any' = None, *, expire_time: 'Literal[False]' = False, tag: 'Literal[False]' = False, retry: 'bool' = False) -> 'Any'
 
 As `Cache.get`, on the key's shard.
 
-pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'Literal[False]' = False, retry: 'bool' = False) -> 'Any'
+pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'Literal[False]' = False, tag: 'Literal[False]' = False, retry: 'bool' = False) -> 'Any'
 
 As `Cache.pop`, on the key's shard.
+
+reset(self, key: "Literal['size_limit', 'cull_limit']", value: 'Any' = Ellipsis, update: 'bool' = True) -> 'int'
+
+Read `size_limit`, `cull_limit` or `eviction_policy` as stored now, or persist a new value and
+return it.
+
+Args:
+    key: `'size_limit'`, `'cull_limit'` or `'eviction_policy'`.
+    value: The new value, checked as the constructor checks it; leave it out (or pass
+        `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
+    update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
+
+Returns:
+    The setting: an `int` for a limit, the policy's name for `eviction_policy`.
+
+Raises:
+    ValueError: Another key, `update=False`, or a value the constructor would refuse.
+    TypeError: A limit that isn't an `int`, or a policy that isn't a `str`.
 
 iterkeys(self, *, prefix: 'str', reverse: 'bool' = False) -> 'Iterator[str]'
 
@@ -1071,7 +1156,7 @@ Raises:
 Switched-off cache behaving as if every entry expires instantly.
 
 
-NullCache(directory: 'str | os.PathLike[str] | None' = None, timeout: 'float | None' = None, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, serializer: "Literal['msgpack', 'json']" = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int' = 8, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False, invalidate: 'CacheLike | None' = None) -> 'None'
+NullCache(directory: 'str | os.PathLike[str] | None' = None, timeout: 'float | None' = None, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: "Literal['msgpack', 'json']" = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int' = 8, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False, invalidate: 'CacheLike | None' = None) -> 'None'
 
 A switched-off cache, so app code needs no `if cache is None` checks.
 
@@ -1185,6 +1270,10 @@ cull_limit
 
 The cull limit passed to the constructor (default 10). Unused.
 
+eviction_policy
+
+The eviction policy passed to the constructor (default 'least-recently-stored'). Unused.
+
 enabled
 
 Always False: caching is off.
@@ -1201,13 +1290,15 @@ stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
 
 Always `(0, 0)`: nothing is looked up.
 
-reset(self, key: 'str', value: 'Any' = ENOVAL, update: 'bool' = True) -> 'int'
+reset(self, key: 'str', value: 'Any' = ENOVAL, update: 'bool' = True) -> 'Any'
 
-Read `size_limit` or `cull_limit`, or set it (checked as `Cache` checks it) and return it.
+Read `size_limit`, `cull_limit` or `eviction_policy`, or set it (checked as `Cache` checks it)
+and return it.
 
-get(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, retry: 'bool' = False) -> 'Any'
+get(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
 
-Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`.
+Return `default`, as every entry has already expired. With `expire_time=True` or `tag=True`,
+`(default, None)`; with both, `(default, None, None)`.
 
 __getitem__(self, key: 'Key', /) -> 'Any'
 
@@ -1241,7 +1332,7 @@ checkpoint(self, *, timeout: 'float | None' = None) -> 'bool'
 
 Always True: there is no write-ahead log to reset.
 
-set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Return True without storing anything: the write succeeds, then expires instantly.
 
@@ -1249,7 +1340,7 @@ __setitem__(self, key: 'Key', value: 'Any', /) -> 'None'
 
 Store nothing, as `set()` does.
 
-add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Return True without storing anything: the key is always absent, so the add succeeds.
 
@@ -1279,16 +1370,21 @@ __delitem__(self, key: 'Key', /) -> 'None'
 
 Raise `KeyError`, or with `invalidate=`, delete the key from that cache.
 
-pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, retry: 'bool' = False) -> 'Any'
+pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
 
-Return `default` (`(default, None)` with `expire_time=True`). With `invalidate=`, also delete
-the key from that cache.
+Return `default`, shaped as `get()` returns it. With `invalidate=`, also delete the key from
+that cache.
 
 clear(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
 
 0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count.
 
-memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
+evict(self, tag: 'Key', *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+
+0, or with `invalidate=`, evict `tag` from that cache (passing `timeout` on) and return its
+count.
+
+memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
 
 As `Cache.memoize`, but every call runs the function, as every entry has already expired. The
 arguments are still checked as keys, so a call that would fail on a real cache fails here.
@@ -1354,19 +1450,23 @@ cull_limit
 
 The most entries one `set()` evicts when over `size_limit`.
 
+eviction_policy
+
+`'least-recently-stored'` or `'none'`.
+
 enabled
 
 True if caching is on (`Cache`), False if it's off (`NullCache`).
 
-get(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, retry: 'bool' = False) -> 'Any'
+get(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
 
 Return the value for `key`, or `default` if it's missing or expired.
 
-set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Store `value` under `key`, with an optional expiry in seconds.
 
-add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Store `value` only if `key` is missing or expired. True if it was stored.
 
@@ -1374,7 +1474,7 @@ delete(self, key: 'Key', *, retry: 'bool' = False) -> 'bool'
 
 Remove `key`. True if a live entry was removed.
 
-pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, retry: 'bool' = False) -> 'Any'
+pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
 
 Remove `key` and return its value, or `default`.
 
@@ -1402,15 +1502,15 @@ stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
 
 `(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`.
 
-reset(self, key: 'str', value: 'Any' = Ellipsis, update: 'bool' = True) -> 'int'
+reset(self, key: 'str', value: 'Any' = Ellipsis, update: 'bool' = True) -> 'int | str'
 
-Read or set `size_limit` or `cull_limit`.
+Read or set `size_limit`, `cull_limit` or `eviction_policy`.
 
 __reversed__(self) -> 'Iterator[Key]'
 
 Keys in insertion order backwards, newest first.
 
-memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
+memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
 
 A decorator caching a function's results in this cache (diskcache's `memoize`).
 
@@ -1425,6 +1525,10 @@ Remove every expired entry. Returns how many were removed.
 clear(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
 
 Remove every entry that existed when the call started. Returns how many.
+
+evict(self, tag: 'Key', *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+
+Remove every entry tagged `tag` that existed when the call started. Returns how many.
 
 cull(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
 
@@ -1979,13 +2083,14 @@ cache = Cache(
 )
 ```
 
-When the cache's on-disk volume goes over `size_limit`, each `set()` evicts up to `cull_limit` of the least recently stored entries. `cache.volume()` reports the current size in bytes.
+When the cache's on-disk volume goes over `size_limit`, each `set()` evicts up to `cull_limit` of the least recently stored entries. `cache.volume()` reports the current size in bytes. For a cache that must never drop a live entry (job claims, locks, a queue), pass `eviction_policy='none'`: nothing is evicted for size, expired entries are still removed, and the cache can grow past `size_limit`. Like the limits, the policy is stored in the cache, so every process shares it.
 
 Maintenance calls, all safe to run while other processes use the cache:
 
 - `cache.expire()` removes every expired entry and returns how many.
 - `cache.clear()` removes every entry that existed when it started, and keeps anything written while it runs.
-- `cache.cull()` evicts down to the size limit.
+- `cache.cull()` removes expired entries, then evicts down to the size limit (unless the policy is `'none'`), and returns how many it removed.
+- `cache.evict(tag)` removes every entry stored with `tag=tag` (see [Invalidating groups of keys](../recipes/invalidating-groups.qmd)).
 
 ## Timeouts
 
@@ -2168,7 +2273,8 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | Clock | Reads `time.time()` | Reads the clock in Rust; pass `clock=` to control it |
 | `size_limit` | Anything (tiny values silently empty the cache) | At least 1 MiB |
 | `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
-| `disk=`, `eviction_policy=` | Supported | Not supported; `eviction_policy='none'` is planned, LRU and LFU aren't |
+| `disk=`, `eviction_policy=` | Supported | No `disk=`; `eviction_policy=` is `'least-recently-stored'` or `'none'`, and LRU and LFU raise `ValueError` |
+| Tags | Compared numerically (`1`, `1.0` and `True` are one tag); `tag` positional | Any key type, compared by exact type; `tag=` keyword-only on `set` and `add` |
 | `transact()` | `tx` is `None` | `tx` is the cache; see [`transact()`](#transact) below |
 | `FanoutCache` | Supported | Supported, with differences; see [`FanoutCache`](#fanoutcache) below |
 | Keys | Anything picklable | `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those; see [Keys](#keys) below |
@@ -2233,7 +2339,7 @@ Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples 
 - **`size_limit` is a total**, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0's share (D-036).
 - **`max_connections` is a total** across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least `shards` (D-037).
 - **`transact()` takes a key** and covers one shard: `with cache.transact(key=k):` where diskcache's `with cache.transact():` locks every shard. Calls for keys on other shards inside the block raise `ValueError`, reads included. A ported bare `transact()` raises `TypeError` (D-040).
-- **Not there yet:** `cache()`, `deque()` and `index()`, `evict()` and tags, `read()`, `read=` and `tag=` arguments, and settings beyond `size_limit` and `cull_limit` as attributes (D-039). `memoize`, `retry=`, `stats()`, `check()`, `reset()`, `reversed()` and pickling are there, as on `Cache`.
+- **Not there yet:** `cache()`, `deque()` and `index()`, and `read()` and `read=` (D-039). `memoize`, `retry=`, `stats()`, `check()`, `reset()`, `reversed()`, pickling, tags with `evict()`, `eviction_policy=` and settings as attributes are there, as on `Cache`.
 
 ## Truthiness
 
@@ -2385,10 +2491,13 @@ The full table of what each policy does with each failure is in [Values that can
 ## `FormatMismatchError`: a database this version can't read
 
 ```text
-FormatMismatchError: cache format version 3 is not supported (this build uses version 2) at /var/cache/my-app
+FormatMismatchError: cache format version 2 is not supported (this build uses version 3) (in /var/cache/my-app/diskcache-oxide.sqlite): it was made by an older diskcache-oxide: delete the cache's directory (a FanoutCache's whole root) with every process using it stopped, and it will be recreated empty
 ```
 
-The directory holds a database, or a `FanoutCache` manifest, written in a format this build doesn't know, usually by a newer diskcache-oxide. Nothing is read or changed. Upgrade this process to match the writer, or point it at a different directory. If the directory should be reset, stop every process using it and delete it; a cache starts cold without harm.
+The directory holds a database, or a `FanoutCache` manifest, written in a format this build doesn't know. Nothing is read or changed. The message says which way the versions differ:
+
+- **Made by an older diskcache-oxide**, as every cache made by 0.1.2 is after an upgrade to a release with format 3. Stop every process using the cache, delete the directory (for a `FanoutCache`, the whole root: one shard deleted alone would be recreated beside shards in the old format), and the next open creates it empty. A cache starts cold without harm. Don't delete only the `.sqlite` file: its value files would be left behind.
+- **Made by a newer diskcache-oxide:** upgrade this process to match the writer, or point it at a different directory.
 
 ## `LayoutMismatchError`: the wrong kind of cache for the directory
 
@@ -2512,7 +2621,7 @@ Already done from the old Phase 6 list: [`transact()`](transactions.qmd) and [`F
 
 ### Decided against, and why
 
-- **Least-recently-used and least-frequently-used eviction.** diskcache implements them by writing to the database on every `get`. Reads that never write are what let many processes read at once without queueing, so these stay out unless a design keeps reads write-free. Least-recently-stored stays the default, and `eviction_policy='none'` is coming.
+- **Least-recently-used and least-frequently-used eviction.** diskcache implements them by writing to the database on every `get`. Reads that never write are what let many processes read at once without queueing, so these stay out unless a design keeps reads write-free. Least-recently-stored stays the default, and `eviction_policy='none'` turns eviction off.
 - **`Deque` and `Index`**, for now. They come back if someone asks: an `Index` is only as general as the key types, and both default to a temporary directory, which diskcache-oxide doesn't do.
 - **`disk=` and `Disk` subclasses.** A Python class on every read and write would undo the Rust engine; `serializer=` and `register_type()` cover what people used them for.
 - **Pickled keys.** Keys are never pickled, so listing keys never runs pickle and a key's identity doesn't depend on pickle's bytes.
@@ -2708,11 +2817,11 @@ Every row of this table follows from that sentence, so you never have to guess, 
 | `delete`, `touch`, `key in cache` | `False` | there's nothing there |
 | `pop(key, default)` | `default` | there's nothing there |
 | `len(cache)`, `cache.volume()` | `0` | it's empty and uses no disk |
-| `expire()`, `clear()`, `cull()` | `0` | nothing to remove |
+| `expire()`, `clear()`, `cull()`, `evict(tag)` | `0` | nothing to remove |
 | iteration, `iterkeys()` | nothing | it's empty |
 | `bool(cache)`, `cache.enabled` | `False` | caching is off |
 
-The constructor accepts the same arguments as `Cache` and ignores them, and the directory is optional. Bad argument *types* still raise as they would on `Cache` (a non-`str` key, `expire=True`), so code that passes with a `NullCache` in tests also works with a real one.
+The constructor accepts the same arguments as `Cache` and ignores them, and the directory is optional. Bad argument *types* still raise as they would on `Cache` (a list as a key or a tag, `expire=True`), so code that passes with a `NullCache` in tests also works with a real one.
 
 ### Watch `add()`
 
@@ -2744,6 +2853,7 @@ cache.get('user:42')             # None
 cache.delete('user:42')          # deleted from the real cache
 cache.pop('user:42')             # deleted from the real cache; returns the default
 cache.clear()                    # clears the real cache
+cache.evict('user:42')           # evicts the tag from the real cache
 cache.iterkeys(prefix='user:')   # the real cache's keys, so list-then-delete still works
 ```
 
@@ -3051,7 +3161,7 @@ def bump(cache: ShardedCacheLike, key: str) -> None:
 
 ## What `FanoutCache` doesn't have yet
 
-Stock's `FanoutCache` also has `cache()`, `deque()` and `index()` sub-collections, `stats()`, `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, the `retry=`, `read=` and `tag=` arguments, settings read as attributes, and pickling. None of those exist yet; the ones that belong to a feature come with that feature (see the [roadmap](roadmap.qmd)), each designed across shards rather than copied. `directory` is required and there's no `disk=`, as for `Cache`.
+`stats()`, `check()`, `reset()`, `reversed()`, pickling, `retry=`, tags and `evict(tag)` (which removes the tag from every shard) and `eviction_policy=` (every shard's) work as on `Cache`. Stock's `cache()`, `deque()` and `index()` sub-collections and `read()`/`read=` don't exist yet; they come with their features (see the [roadmap](roadmap.qmd)), each designed across shards rather than copied. `directory` is required and there's no `disk=`, as for `Cache`.
 
 The constructor takes `shards` as a keyword: stock's `FanoutCache(path, 4)` means four shards, but here the second argument is `timeout`, so write `shards=4`.
 
@@ -3159,7 +3269,7 @@ A cache directory is shared by every process on the machine that opens it, and `
 ```python
 from diskcache_oxide import Cache, Lock, RLock, BoundedSemaphore, Averager, throttle, barrier
 
-locks = Cache('/var/cache/my-app/locks')
+locks = Cache('/var/cache/my-app/locks', eviction_policy='none')
 ```
 
 ## Lock
@@ -3221,11 +3331,11 @@ A running average whose total and count are updated together in one transaction,
 
 ## Things to know
 
-- **Use a cache of its own for coordination.** Lock and semaphore keys are cache entries: least-recently-stored culling removes the oldest first, and a lock held a long time is old, so a full cache can evict a held lock. `clear()` releases every lock in the cache. A small directory with a generous `size_limit` and nothing else in it avoids both.
+- **Use a cache of its own for coordination, with `eviction_policy='none'`.** Lock and semaphore keys are cache entries: least-recently-stored culling removes the oldest first, and a lock held a long time is old, so a full cache can evict a held lock. Under `'none'` nothing is ever evicted for size, only expired entries are removed, so give every lock an `expire`. `clear()` releases every lock in the cache, so keep other data out of it: `Cache('/var/cache/my-app/locks', eviction_policy='none')`.
 - **Not on a `NullCache` or a `durable=True` cache.** The recipes refuse them with `TypeError`: with caching off every caller would hold the lock at once, and a durable cache could drop the `delete` that releases one, leaving it held forever.
 - **Not while waiting inside your own transaction.** A recipe that would have to wait inside a `transact()` block on its own cache raises `RuntimeError`: waiting there holds the cache's write lock, so no other process could ever release the lock you're waiting for. Inside a transaction on a different cache, a contended recipe raises `TransactionBusy` at once rather than waiting ([D-030](divergences.qmd)).
 - **On a `FanoutCache`** each recipe locks only its key's shard.
-- `tag=` is accepted, so calls written for diskcache line up, but must be `None` until tags arrive.
+- `tag=` tags every entry a recipe writes, so `evict(tag)` releases them all at once. `barrier` passes it to the lock factory only when it isn't `None`.
 
 
 ### Concurrency and forks
@@ -3506,7 +3616,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-019 | Opening an existing cache | Writes to the database | Never writes unless settings change |
 | D-020 | Forking inside your own transaction | Child stalls for the timeout | Fails fast with `RuntimeError` |
 | D-021 | `directory` | Optional (temp dir) | Required |
-| D-022 | `disk=`, `eviction_policy=` | Supported | No `disk=`; `eviction_policy='none'` is planned, LRU and LFU aren't |
+| D-022 | `disk=`, `eviction_policy=` | Supported | No `disk=`; least-recently-stored or `'none'`, read on every write; LRU and LFU refused |
 | D-023 | SQLite memory | 32 MiB cache + 64 MiB mmap per thread | 1 MiB per pooled connection |
 | D-024 | WAL file size | Can grow past 1 GiB and stay there | Trimmed; `checkpoint()` on demand |
 | D-025 | A key iterator used by two threads at once | `ValueError` from the generator | `ValueError`, from a native iterator with no `send()` or `close()` |
@@ -3536,6 +3646,8 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-049 | `stats()` | Persisted and shared; `get` writes while on | Per process, in memory; `get` never writes |
 | D-050 | `check()` | Warns on every empty folder and stray file; fixes a wrong size | Skips empty folders and files under an hour old; removes a wrong-size entry |
 | D-051 | The coordination recipes | Work on any cache; `throttle` breaks after its bucket expires | Refuse `NullCache` and durable caches; `throttle` fixed; `RLock` owner has a nonce |
+| D-052 | Tag equality | Numeric: `evict(1)` removes `1`, `1.0` and `True` | Exact type, as keys: three tags |
+| D-053 | `cull()` under `eviction_policy='none'` | Returns 0 after removing expired entries | Returns how many it removed |
 
 ## Safety
 
@@ -3563,7 +3675,7 @@ diskcache's `expire()` works in chunks of 100, and when expired entries share on
 
 ### D-011: `clear()` keeps concurrent writes
 
-diskcache's `clear()` keeps deleting until the cache is empty, including entries written while it runs. In a reproduction with 50,000 entries and a concurrent writer, it deleted 76,000 writes that had already succeeded, and its running time grew with the write rate. diskcache-oxide's `clear()` removes only entries that existed when it started, and always finishes.
+diskcache's `clear()` keeps deleting until the cache is empty, including entries written while it runs. In a reproduction with 50,000 entries and a concurrent writer, it deleted 76,000 writes that had already succeeded, and its running time grew with the write rate. diskcache-oxide's `clear()` removes only entries that existed when it started, and always finishes. `evict(tag)` is bounded the same way.
 
 ### D-013 and D-016: large values under pressure
 
@@ -3626,7 +3738,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-006:** an empty cache's `volume()` differs, so a `size_limit` leaves slightly different room.
 - **D-007:** `Timeout` subclasses `TimeoutError`, so `except TimeoutError` catches it too.
 - **D-009:** `bool(Cache)` is always True and `bool(NullCache)` is False, so `if cache:` means "caching is on".
-- **D-022:** there's no `disk=` and there won't be: a Python `Disk` class would put Python code on every read and write; `serializer=` and `register_type()` cover what it was for. Eviction is always least-recently-stored for now. `eviction_policy='none'` is planned (queues need it); least-recently-used and least-frequently-used aren't, because they make every `get` a write (see the [roadmap](roadmap.qmd)).
+- **D-022:** there's no `disk=` and there won't be: a Python `Disk` class would put Python code on every read and write; `serializer=` and `register_type()` cover what it was for. `eviction_policy=` is `'least-recently-stored'` (the default) or `'none'`, stored in the cache and read inside every write, so a change made by one process applies to every other at its next write. Least-recently-used and least-frequently-used raise `ValueError`, because they make every `get` a write (see the [roadmap](roadmap.qmd)). Tags are always indexed, so there's no `tag_index` setting.
 - **D-041:** a type the codec doesn't know is registered per type with `register_type(cls, name=..., encode=..., decode=...)` (a dataclass needs only a name), process-wide or per cache with `types=`. It's stored as a tagged value and read back only where the name is registered, so nothing is imported by name; a registered type is never pickled; a `decode` error about the row is a `CorruptValueError` with yours as `__cause__`. See [Your own types](serialization.qmd#your-own-types).
 - **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.qmd#a-cache-that-cant-take-a-request-down).
 - **D-042:** a large value's file sits one folder deep, in at most 256 folders. A delete removes only the file; the last close in a process removes folders left empty and untouched for 30 seconds, and `clear()` removes the ones it emptied. A `FanoutCache`'s shards don't sweep yet. Before this, empty folders were never removed and a long-lived cache could hold 65,536 of them, about 257 MiB on ext4. See [Storage and WAL](storage-and-wal.qmd).
@@ -3639,6 +3751,8 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-049:** `stats()` counts hits and misses per process, in memory, so a `get` never writes. Every handle on a directory in one process shares the counts; other processes' aren't included, and a restart or a forked child starts at zero.
 - **D-050:** `check()` doesn't report empty value folders (normal on an open cache) and leaves files under an hour old alone, since a writer may own them. A value file of the wrong size was cut short by a crash, so `fix=True` removes its entry rather than correct the size and serve the short bytes.
 - **D-051:** the coordination recipes refuse a `NullCache` or `durable=True` cache, refuse to wait inside their own cache's transaction, give `RLock` a per-process owner nonce, and fix `throttle`'s two bugs (upstream bugs 13 and 14). See [Coordination](coordination.qmd).
+- **D-052:** tags are compared by exact type, as keys are: `1`, `1.0` and `True` are three tags, and a tuple can be one. diskcache compares them through SQLite, so its `evict(1)` removes all three and a `True` tag reads back as `1`. `tag=` is keyword-only on `set` and `add`.
+- **D-053:** under `eviction_policy='none'`, `cull()` returns how many expired entries it removed; diskcache's returns 0 (upstream bug 15).
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)
@@ -3936,9 +4050,9 @@ Why it's shaped this way:
 
 ### Invalidating groups of keys
 
-Clear everything cached for one user or one object, by key prefix or by generation number.
+Clear everything cached for one user or one object: by key prefix, by tag, or by generation number.
 
-A user changes their display name, and for the next five minutes half the site still uses the old one: the profile page, the sidebar widget, three API responses, each cached on its own schedule and each wrong in its own way. A single change often makes many cache entries stale, and deleting them one by one means knowing every key that was ever derived from that user. There are two good ways to handle this. Both start with a naming convention.
+A user changes their display name, and for the next five minutes half the site still uses the old one: the profile page, the sidebar widget, three API responses, each cached on its own schedule and each wrong in its own way. A single change often makes many cache entries stale, and deleting them one by one means knowing every key that was ever derived from that user. There are three good ways to handle this: a naming convention and prefix deletes, tags, or generation numbers.
 
 ## Name keys hierarchically
 
@@ -3979,7 +4093,23 @@ print(sorted(cache))
 
 This is simple and frees the space right away. It costs one small write per key, so it's best when a group has tens or hundreds of keys, not hundreds of thousands.
 
-## Option 2: generation numbers
+## Option 2: tags
+
+A tag groups entries without a naming convention: pass `tag=` when you store, and `evict(tag)` removes every entry that has it. Entries for one user can live under unrelated keys, an API response keyed by URL, a rendered fragment keyed by template, and still go together.
+
+```python
+cache.set('page:/settings', '<html>...', expire=3600, tag='user:7')
+cache.set(('api', '/v1/me', 7), {'name': 'Sam'}, expire=3600, tag='user:7')
+cache.set('page:/about', '<html>...', expire=3600)
+
+print(cache.get('page:/settings', tag=True)[1])
+print(cache.evict('user:7'), 'removed')
+print(sorted(cache, key=repr))
+```
+
+`evict` works in chunks over an index, like `clear()`, letting other writers in between, and removes only entries stored before it started, so a fresh entry written for the user while it runs survives. A tag is any key type and is compared by exact type, so `tag=7` and `tag='7'` are different tags. An overwrite replaces the tag, and one without `tag=` leaves the entry untagged, so tag every write in the group. `memoize(tag=...)` tags every result it stores. Like prefix deletes, it frees the space at once, one row per entry.
+
+## Option 3: generation numbers
 
 Instead of deleting anything, keep a generation number per group and put it in every key. To invalidate the group, change the generation. Every old key becomes unreachable at once, in a single write, however many keys there were. The old entries are never read again, and they leave the cache when they expire or are evicted.
 
@@ -4014,13 +4144,12 @@ The generations are timestamps rather than a counter starting at 0 for a reason.
 ## Which to use
 
 - **Prefix deletes** when groups are small and you want the space back immediately.
+- **Tags** when a group's keys don't share a prefix, or come from code (like `memoize`) whose keys you don't choose.
 - **Generation numbers** when groups are large, or invalidation is frequent, or many workers might invalidate the same group at the same time.
 
 ## While caching is switched off
 
-If you turn caching off with `NullCache`, pass the real cache as `invalidate=`. Prefix deletes still reach the real cache (`iterkeys` and `delete` are both forwarded), so nothing stale is waiting when caching comes back on. See [NullCache](../user-guide/null-cache.qmd).
-
-Tags, which group keys without a naming convention, are planned (see the [roadmap](../user-guide/roadmap.qmd)).
+If you turn caching off with `NullCache`, pass the real cache as `invalidate=`. Prefix deletes and `evict(tag)` still reach the real cache (`iterkeys`, `delete` and `evict` are all forwarded), so nothing stale is waiting when caching comes back on. See [NullCache](../user-guide/null-cache.qmd).
 
 ### Storing your own types
 

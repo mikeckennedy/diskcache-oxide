@@ -13,6 +13,7 @@ Cache(
     *,
     size_limit=None,
     cull_limit=None,
+    eviction_policy=None,
     serializer="msgpack",
     pickle=False,
     types=None,
@@ -44,6 +45,9 @@ The disk budget in bytes, database plus value files (default 1 GiB, minimum 1 Mi
 
 `cull_limit: int | None = None`  
 How many least-recently-stored entries a [set()](Cache.set.md#diskcache_oxide.Cache.set) evicts when the cache is over [size_limit](Cache.size_limit.md#diskcache_oxide.Cache.size_limit) (default 10).
+
+`eviction_policy: Literal[``"least-recently-stored", `<span class="st">`"none"``] | None`</span>` = None`  
+`'least-recently-stored'` (a new cache's default) evicts the oldest stored entries when over [size_limit](Cache.size_limit.md#diskcache_oxide.Cache.size_limit); `'none'` never evicts for size, only removing expired entries, so the cache can grow past [size_limit](Cache.size_limit.md#diskcache_oxide.Cache.size_limit). Stored in the cache, so it applies to every process, and every write reads it afresh. None keeps the stored one. `'least-recently-used'` and `'least-frequently-used'` raise `ValueError` (D-022).
 
 `serializer: str = ``"msgpack"`  
 `'msgpack'` (the default) or `'json'`, for values that aren't plain `str` or `bytes`.

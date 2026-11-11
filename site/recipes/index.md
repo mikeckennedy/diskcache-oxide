@@ -43,4 +43,4 @@ A shared cache does more jobs in a real app than caching. It elects a worker, co
 
 # Coming later
 
-More recipes will arrive with the features they need: tags and `AsyncCache` for asyncio apps. Locks, semaphores, throttles and a stampede-proof [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) are in [Coordination](../user-guide/coordination.md). [`FanoutCache`](../user-guide/fanoutcache.md) and [`transact()`](../user-guide/transactions.md) are here already and have their own guide pages. See the [roadmap](../user-guide/roadmap.md).
+More recipes will arrive with the features they need, such as `AsyncCache` for asyncio apps. Tags are in [Invalidating groups of keys](invalidating-groups.md). Locks, semaphores, throttles and a stampede-proof [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) are in [Coordination](../user-guide/coordination.md). [`FanoutCache`](../user-guide/fanoutcache.md) and [`transact()`](../user-guide/transactions.md) are here already and have their own guide pages. See the [roadmap](../user-guide/roadmap.md).

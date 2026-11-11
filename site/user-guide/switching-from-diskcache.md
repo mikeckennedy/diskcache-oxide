@@ -37,7 +37,8 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | Clock | Reads `time.time()` | Reads the clock in Rust; pass `clock=` to control it |
 | [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) | Anything (tiny values silently empty the cache) | At least 1 MiB |
 | `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
-| `disk=`, `eviction_policy=` | Supported | Not supported; `eviction_policy='none'` is planned, LRU and LFU aren't |
+| `disk=`, `eviction_policy=` | Supported | No `disk=`; `eviction_policy=` is `'least-recently-stored'` or `'none'`, and LRU and LFU raise `ValueError` |
+| Tags | Compared numerically (`1`, `1.0` and `True` are one tag); `tag` positional | Any key type, compared by exact type; `tag=` keyword-only on [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) and [add](../reference/Cache.add.md#diskcache_oxide.Cache.add) |
 | [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) | `tx` is `None` | `tx` is the cache; see [`transact()`](#transact) below |
 | [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) | Supported | Supported, with differences; see [`FanoutCache`](#fanoutcache) below |
 | Keys | Anything picklable | `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those; see [Keys](#keys) below |
@@ -106,7 +107,7 @@ Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples 
 - **[size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) is a total**, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0's share (D-036).
 - **`max_connections` is a total** across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least [shards](../reference/FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) (D-037).
 - **[transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) takes a key** and covers one shard: `with cache.transact(key=k):` where diskcache's `with cache.transact():` locks every shard. Calls for keys on other shards inside the block raise `ValueError`, reads included. A ported bare [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) raises `TypeError` (D-040).
-- **Not there yet:** `cache()`, `deque()` and `index()`, `evict()` and tags, `read()`, `read=` and `tag=` arguments, and settings beyond [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) and [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) as attributes (D-039). [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), `retry=`, [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats), [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check), [reset()](../reference/Cache.reset.md#diskcache_oxide.Cache.reset), `reversed()` and pickling are there, as on [Cache](../reference/Cache.md#diskcache_oxide.Cache).
+- **Not there yet:** `cache()`, `deque()` and `index()`, and `read()` and `read=` (D-039). [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), `retry=`, [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats), [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check), [reset()](../reference/Cache.reset.md#diskcache_oxide.Cache.reset), `reversed()`, pickling, tags with [evict()](../reference/Cache.evict.md#diskcache_oxide.Cache.evict), `eviction_policy=` and settings as attributes are there, as on [Cache](../reference/Cache.md#diskcache_oxide.Cache).
 
 
 # Truthiness

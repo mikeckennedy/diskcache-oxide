@@ -796,8 +796,12 @@ CorruptValueError: ...</code></pre>
 </section>
 <section id="formatmismatcherror-a-database-this-version-cant-read" class="level1">
 <h1><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>: a database this version can’t read</h1>
-<pre class="text"><code>FormatMismatchError: cache format version 3 is not supported (this build uses version 2) at /var/cache/my-app</code></pre>
-<p>The directory holds a database, or a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> manifest, written in a format this build doesn’t know, usually by a newer diskcache-oxide. Nothing is read or changed. Upgrade this process to match the writer, or point it at a different directory. If the directory should be reset, stop every process using it and delete it; a cache starts cold without harm.</p>
+<pre class="text"><code>FormatMismatchError: cache format version 2 is not supported (this build uses version 3) (in /var/cache/my-app/diskcache-oxide.sqlite): it was made by an older diskcache-oxide: delete the cache's directory (a FanoutCache's whole root) with every process using it stopped, and it will be recreated empty</code></pre>
+<p>The directory holds a database, or a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> manifest, written in a format this build doesn’t know. Nothing is read or changed. The message says which way the versions differ:</p>
+<ul>
+<li><strong>Made by an older diskcache-oxide</strong>, as every cache made by 0.1.2 is after an upgrade to a release with format 3. Stop every process using the cache, delete the directory (for a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, the whole root: one shard deleted alone would be recreated beside shards in the old format), and the next open creates it empty. A cache starts cold without harm. Don’t delete only the <code>.sqlite</code> file: its value files would be left behind.</li>
+<li><strong>Made by a newer diskcache-oxide:</strong> upgrade this process to match the writer, or point it at a different directory.</li>
+</ul>
 </section>
 <section id="layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory" class="level1">
 <h1><a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a>: the wrong kind of cache for the directory</h1>

@@ -767,49 +767,54 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <tr class="even">
 <td><code>disk=</code>, <code>eviction_policy=</code></td>
 <td>Supported</td>
-<td>Not supported; <code>eviction_policy='none'</code> is planned, LRU and LFU aren’t</td>
+<td>No <code>disk=</code>; <code>eviction_policy=</code> is <code>'least-recently-stored'</code> or <code>'none'</code>, and LRU and LFU raise <code>ValueError</code></td>
 </tr>
 <tr class="odd">
+<td>Tags</td>
+<td>Compared numerically (<code>1</code>, <code>1.0</code> and <code>True</code> are one tag); <code>tag</code> positional</td>
+<td>Any key type, compared by exact type; <code>tag=</code> keyword-only on <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> and <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a></td>
+</tr>
+<tr class="even">
 <td><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a></td>
 <td><code>tx</code> is <code>None</code></td>
 <td><code>tx</code> is the cache; see <a href="#transact"><code>transact()</code></a> below</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a></td>
 <td>Supported</td>
 <td>Supported, with differences; see <a href="#fanoutcache"><code>FanoutCache</code></a> below</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Keys</td>
 <td>Anything picklable</td>
 <td><code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code> and tuples of those; see <a href="#keys">Keys</a> below</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a></td>
 <td>Supported</td>
 <td>Supported, with the same keys; see <a href="#keys">Keys</a> below</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>retry=</code></td>
 <td>Positional; <code>cache[k]</code> retries forever</td>
 <td>Keyword-only; <code>cache[k]</code> raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a></td>
 <td>Persisted, shared by every process</td>
 <td>Per process, in memory (D-049)</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a></td>
 <td>Supported</td>
 <td>Supported, with differences (D-050)</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Locks, semaphores, <code>throttle</code>, <code>barrier</code>, <code>Averager</code>, <code>memoize_stampede</code></td>
 <td>Supported</td>
 <td>Supported, with differences; see <a href="../user-guide/coordination.html">Coordination</a></td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Tags</td>
 <td>Supported</td>
 <td>Planned</td>
@@ -860,7 +865,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> is a total</strong>, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0’s share (D-036).</li>
 <li><strong><code>max_connections</code> is a total</strong> across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> (D-037).</li>
 <li><strong><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> takes a key</strong> and covers one shard: <code>with cache.transact(key=k):</code> where diskcache’s <code>with cache.transact():</code> locks every shard. Calls for keys on other shards inside the block raise <code>ValueError</code>, reads included. A ported bare <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> raises <code>TypeError</code> (D-040).</li>
-<li><strong>Not there yet:</strong> <code>cache()</code>, <code>deque()</code> and <code>index()</code>, <code>evict()</code> and tags, <code>read()</code>, <code>read=</code> and <code>tag=</code> arguments, and settings beyond <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> and <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> as attributes (D-039). <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, <code>retry=</code>, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a>, <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset()</a>, <code>reversed()</code> and pickling are there, as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</li>
+<li><strong>Not there yet:</strong> <code>cache()</code>, <code>deque()</code> and <code>index()</code>, and <code>read()</code> and <code>read=</code> (D-039). <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, <code>retry=</code>, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a>, <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset()</a>, <code>reversed()</code>, pickling, tags with <a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict()</a>, <code>eviction_policy=</code> and settings as attributes are there, as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</li>
 </ul>
 </section>
 <section id="truthiness" class="level1">

@@ -8,10 +8,6 @@ Usage
 
 ``` python
 FanoutCache.pop(
-    key,
-    default=None,
-    *,
-    expire_time=False,
-    retry=False,
+    key, default=None, *, expire_time=False, tag=False, retry=False
 )
 ```

@@ -11,6 +11,7 @@ Cache.memoize(
     name=None,
     typed=False,
     expire=None,
+    tag=None,
     ignore=(),
 )
 ```
@@ -31,6 +32,9 @@ Also key on each argument's type, as `'module.qualname'` (D-045), so `f(1)` and 
 `expire: float | None = None`  
 Seconds until a stored result expires; `None` never. Zero or negative never stores, as in diskcache.
 
+`tag: Key = None`  
+The tag every stored result gets, for `evict(tag)`: a key type, checked here.
+
 `ignore: Iterable[int | str] = ()`\  
 Positions and keyword names left out of the key.
 
@@ -39,7 +43,7 @@ Positions and keyword names left out of the key.
 
 
 `TypeError`  
-`name` is callable (the decorator was used without parentheses), the function is `async def`, or, at a call, an argument isn't a key type (D-048).
+`name` is callable (the decorator was used without parentheses), `tag` isn't a key type, the function is `async def`, or, at a call, an argument isn't a key type (D-048).
 
 `ValueError`  
 at a call, an argument is a NaN or a tuple nested too deep (D-048).

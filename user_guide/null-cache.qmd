@@ -32,11 +32,11 @@ Every row of this table follows from that sentence, so you never have to guess, 
 | `delete`, `touch`, `key in cache` | `False` | there's nothing there |
 | `pop(key, default)` | `default` | there's nothing there |
 | `len(cache)`, `cache.volume()` | `0` | it's empty and uses no disk |
-| `expire()`, `clear()`, `cull()` | `0` | nothing to remove |
+| `expire()`, `clear()`, `cull()`, `evict(tag)` | `0` | nothing to remove |
 | iteration, `iterkeys()` | nothing | it's empty |
 | `bool(cache)`, `cache.enabled` | `False` | caching is off |
 
-The constructor accepts the same arguments as `Cache` and ignores them, and the directory is optional. Bad argument *types* still raise as they would on `Cache` (a non-`str` key, `expire=True`), so code that passes with a `NullCache` in tests also works with a real one.
+The constructor accepts the same arguments as `Cache` and ignores them, and the directory is optional. Bad argument *types* still raise as they would on `Cache` (a list as a key or a tag, `expire=True`), so code that passes with a `NullCache` in tests also works with a real one.
 
 ### Watch `add()`
 
@@ -68,6 +68,7 @@ cache.get('user:42')             # None
 cache.delete('user:42')          # deleted from the real cache
 cache.pop('user:42')             # deleted from the real cache; returns the default
 cache.clear()                    # clears the real cache
+cache.evict('user:42')           # evicts the tag from the real cache
 cache.iterkeys(prefix='user:')   # the real cache's keys, so list-then-delete still works
 ```
 

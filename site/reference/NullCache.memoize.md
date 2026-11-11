@@ -11,6 +11,7 @@ NullCache.memoize(
     name=None,
     typed=False,
     expire=None,
+    tag=None,
     ignore=(),
 )
 ```

@@ -8,7 +8,7 @@ A cache directory is shared by every process on the machine that opens it, and `
 ```python
 from diskcache_oxide import Cache, Lock, RLock, BoundedSemaphore, Averager, throttle, barrier
 
-locks = Cache('/var/cache/my-app/locks')
+locks = Cache('/var/cache/my-app/locks', eviction_policy='none')
 ```
 
 ## Lock
@@ -70,8 +70,8 @@ A running average whose total and count are updated together in one transaction,
 
 ## Things to know
 
-- **Use a cache of its own for coordination.** Lock and semaphore keys are cache entries: least-recently-stored culling removes the oldest first, and a lock held a long time is old, so a full cache can evict a held lock. `clear()` releases every lock in the cache. A small directory with a generous `size_limit` and nothing else in it avoids both.
+- **Use a cache of its own for coordination, with `eviction_policy='none'`.** Lock and semaphore keys are cache entries: least-recently-stored culling removes the oldest first, and a lock held a long time is old, so a full cache can evict a held lock. Under `'none'` nothing is ever evicted for size, only expired entries are removed, so give every lock an `expire`. `clear()` releases every lock in the cache, so keep other data out of it: `Cache('/var/cache/my-app/locks', eviction_policy='none')`.
 - **Not on a `NullCache` or a `durable=True` cache.** The recipes refuse them with `TypeError`: with caching off every caller would hold the lock at once, and a durable cache could drop the `delete` that releases one, leaving it held forever.
 - **Not while waiting inside your own transaction.** A recipe that would have to wait inside a `transact()` block on its own cache raises `RuntimeError`: waiting there holds the cache's write lock, so no other process could ever release the lock you're waiting for. Inside a transaction on a different cache, a contended recipe raises `TransactionBusy` at once rather than waiting ([D-030](divergences.qmd)).
 - **On a `FanoutCache`** each recipe locks only its key's shard.
-- `tag=` is accepted, so calls written for diskcache line up, but must be `None` until tags arrive.
+- `tag=` tags every entry a recipe writes, so `evict(tag)` releases them all at once. `barrier` passes it to the lock factory only when it isn't `None`.

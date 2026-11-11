@@ -113,13 +113,14 @@ cache = Cache(
 )
 ```
 
-When the cache's on-disk volume goes over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), each [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) evicts up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of the least recently stored entries. `cache.volume()` reports the current size in bytes.
+When the cache's on-disk volume goes over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), each [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) evicts up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of the least recently stored entries. `cache.volume()` reports the current size in bytes. For a cache that must never drop a live entry (job claims, locks, a queue), pass `eviction_policy='none'`: nothing is evicted for size, expired entries are still removed, and the cache can grow past [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit). Like the limits, the policy is stored in the cache, so every process shares it.
 
 Maintenance calls, all safe to run while other processes use the cache:
 
 - `cache.expire()` removes every expired entry and returns how many.
 - `cache.clear()` removes every entry that existed when it started, and keeps anything written while it runs.
-- `cache.cull()` evicts down to the size limit.
+- `cache.cull()` removes expired entries, then evicts down to the size limit (unless the policy is `'none'`), and returns how many it removed.
+- `cache.evict(tag)` removes every entry stored with `tag=tag` (see [Invalidating groups of keys](../recipes/invalidating-groups.md)).
 
 
 # Timeouts

@@ -827,7 +827,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>D-022</td>
 <td><code>disk=</code>, <code>eviction_policy=</code></td>
 <td>Supported</td>
-<td>No <code>disk=</code>; <code>eviction_policy='none'</code> is planned, LRU and LFU aren’t</td>
+<td>No <code>disk=</code>; least-recently-stored or <code>'none'</code>, read on every write; LRU and LFU refused</td>
 </tr>
 <tr class="odd">
 <td>D-023</td>
@@ -1003,6 +1003,18 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>Work on any cache; <code>throttle</code> breaks after its bucket expires</td>
 <td>Refuse <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and durable caches; <code>throttle</code> fixed; <code>RLock</code> owner has a nonce</td>
 </tr>
+<tr class="even">
+<td>D-052</td>
+<td>Tag equality</td>
+<td>Numeric: <code>evict(1)</code> removes <code>1</code>, <code>1.0</code> and <code>True</code></td>
+<td>Exact type, as keys: three tags</td>
+</tr>
+<tr class="odd">
+<td>D-053</td>
+<td><a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> under <code>eviction_policy='none'</code></td>
+<td>Returns 0 after removing expired entries</td>
+<td>Returns how many it removed</td>
+</tr>
 </tbody>
 </table>
 </section>
@@ -1033,7 +1045,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="d-011-clear-keeps-concurrent-writes" class="level2">
 <h2 class="anchored" data-anchor-id="d-011-clear-keeps-concurrent-writes">D-011: <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> keeps concurrent writes</h2>
-<p>diskcache’s <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> keeps deleting until the cache is empty, including entries written while it runs. In a reproduction with 50,000 entries and a concurrent writer, it deleted 76,000 writes that had already succeeded, and its running time grew with the write rate. diskcache-oxide’s <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> removes only entries that existed when it started, and always finishes.</p>
+<p>diskcache’s <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> keeps deleting until the cache is empty, including entries written while it runs. In a reproduction with 50,000 entries and a concurrent writer, it deleted 76,000 writes that had already succeeded, and its running time grew with the write rate. diskcache-oxide’s <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> removes only entries that existed when it started, and always finishes. <code>evict(tag)</code> is bounded the same way.</p>
 </section>
 <section id="d-013-and-d-016-large-values-under-pressure" class="level2">
 <h2 class="anchored" data-anchor-id="d-013-and-d-016-large-values-under-pressure">D-013 and D-016: large values under pressure</h2>
@@ -1100,7 +1112,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>D-006:</strong> an empty cache’s <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> differs, so a <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> leaves slightly different room.</li>
 <li><strong>D-007:</strong> <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> subclasses <code>TimeoutError</code>, so <code>except TimeoutError</code> catches it too.</li>
 <li><strong>D-009:</strong> <code>bool(Cache)</code> is always True and <code>bool(NullCache)</code> is False, so <code>if cache:</code> means “caching is on”.</li>
-<li><strong>D-022:</strong> there’s no <code>disk=</code> and there won’t be: a Python <code>Disk</code> class would put Python code on every read and write; <code>serializer=</code> and <code>register_type()</code> cover what it was for. Eviction is always least-recently-stored for now. <code>eviction_policy='none'</code> is planned (queues need it); least-recently-used and least-frequently-used aren’t, because they make every <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> a write (see the <a href="../user-guide/roadmap.html">roadmap</a>).</li>
+<li><strong>D-022:</strong> there’s no <code>disk=</code> and there won’t be: a Python <code>Disk</code> class would put Python code on every read and write; <code>serializer=</code> and <code>register_type()</code> cover what it was for. <code>eviction_policy=</code> is <code>'least-recently-stored'</code> (the default) or <code>'none'</code>, stored in the cache and read inside every write, so a change made by one process applies to every other at its next write. Least-recently-used and least-frequently-used raise <code>ValueError</code>, because they make every <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> a write (see the <a href="../user-guide/roadmap.html">roadmap</a>). Tags are always indexed, so there’s no <code>tag_index</code> setting.</li>
 <li><strong>D-041:</strong> a type the codec doesn’t know is registered per type with <code>register_type(cls, name=..., encode=..., decode=...)</code> (a dataclass needs only a name), process-wide or per cache with <code>types=</code>. It’s stored as a tagged value and read back only where the name is registered, so nothing is imported by name; a registered type is never pickled; a <code>decode</code> error about the row is a <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> with yours as <code>__cause__</code>. See <a href="../user-guide/serialization.html#your-own-types">Your own types</a>.</li>
 <li><strong>D-028:</strong> <code>Cache(..., durable=True)</code> has no counterpart in diskcache. It answers an outage on a single-key call as a miss or <code>False</code>, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See <a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">A cache that can’t take a request down</a>.</li>
 <li><strong>D-042:</strong> a large value’s file sits one folder deep, in at most 256 folders. A delete removes only the file; the last close in a process removes folders left empty and untouched for 30 seconds, and <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> removes the ones it emptied. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s shards don’t sweep yet. Before this, empty folders were never removed and a long-lived cache could hold 65,536 of them, about 257 MiB on ext4. See <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>.</li>
@@ -1113,6 +1125,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>D-049:</strong> <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> counts hits and misses per process, in memory, so a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> never writes. Every handle on a directory in one process shares the counts; other processes’ aren’t included, and a restart or a forked child starts at zero.</li>
 <li><strong>D-050:</strong> <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> doesn’t report empty value folders (normal on an open cache) and leaves files under an hour old alone, since a writer may own them. A value file of the wrong size was cut short by a crash, so <code>fix=True</code> removes its entry rather than correct the size and serve the short bytes.</li>
 <li><strong>D-051:</strong> the coordination recipes refuse a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> or <code>durable=True</code> cache, refuse to wait inside their own cache’s transaction, give <code>RLock</code> a per-process owner nonce, and fix <code>throttle</code>’s two bugs (upstream bugs 13 and 14). See <a href="../user-guide/coordination.html">Coordination</a>.</li>
+<li><strong>D-052:</strong> tags are compared by exact type, as keys are: <code>1</code>, <code>1.0</code> and <code>True</code> are three tags, and a tuple can be one. diskcache compares them through SQLite, so its <code>evict(1)</code> removes all three and a <code>True</code> tag reads back as <code>1</code>. <code>tag=</code> is keyword-only on <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> and <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>.</li>
+<li><strong>D-053:</strong> under <code>eviction_policy='none'</code>, <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> returns how many expired entries it removed; diskcache’s returns 0 (upstream bug 15).</li>
 <li><strong>D-025:</strong> <code>iter(cache)</code> and <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> return a native iterator, not a generator. Two threads calling <code>next()</code> on the same one at once get <code>ValueError</code> at once, as with a shared generator.</li>
 </ul>
 <section id="fanoutcache-d-032-to-d-040" class="level2">

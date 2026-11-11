@@ -753,7 +753,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>it’s empty and uses no disk</td>
 </tr>
 <tr class="odd">
-<td><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>, <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a></td>
+<td><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>, <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a>, <code>evict(tag)</code></td>
 <td><code>0</code></td>
 <td>nothing to remove</td>
 </tr>
@@ -769,7 +769,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </tr>
 </tbody>
 </table>
-<p>The constructor accepts the same arguments as <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and ignores them, and the directory is optional. Bad argument <em>types</em> still raise as they would on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (a non-<code>str</code> key, <code>expire=True</code>), so code that passes with a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> in tests also works with a real one.</p>
+<p>The constructor accepts the same arguments as <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and ignores them, and the directory is optional. Bad argument <em>types</em> still raise as they would on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (a list as a key or a tag, <code>expire=True</code>), so code that passes with a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> in tests also works with a real one.</p>
 <section id="watch-add" class="level2">
 <h2 class="anchored" data-anchor-id="watch-add">Watch <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a></h2>
 <p>The rule means <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> always succeeds on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. If you use <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> to claim a job so only one worker runs it, then with caching off every worker’s claim succeeds and the job runs once per worker. That’s harmless for idempotent work and wrong for work with side effects, like sending email. Keep claims like that on a cache that’s never switched off.</p>
@@ -794,7 +794,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>cache.delete(<span class="st">'user:42'</span>)          <span class="co"># deleted from the real cache</span></span>
 <span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>cache.pop(<span class="st">'user:42'</span>)             <span class="co"># deleted from the real cache; returns the default</span></span>
 <span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>cache.clear()                    <span class="co"># clears the real cache</span></span>
-<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>cache.iterkeys(prefix<span class="op">=</span><span class="st">'user:'</span>)   <span class="co"># the real cache's keys, so list-then-delete still works</span></span></code></pre></div>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>cache.evict(<span class="st">'user:42'</span>)           <span class="co"># evicts the tag from the real cache</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>cache.iterkeys(prefix<span class="op">=</span><span class="st">'user:'</span>)   <span class="co"># the real cache's keys, so list-then-delete still works</span></span></code></pre></div>
 <p>When caching comes back on, nothing you invalidated by removing it is waiting.</p>
 <p>Only removals are forwarded, so invalidating by <em>writing</em> is lost while caching is off. Overwriting the stale value with a fresh <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, or bumping a version key with <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> so readers build a new key, does nothing, and the old value is served once caching is back on:</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> NullCache(invalidate<span class="op">=</span>real)   <span class="co"># real holds 'user:42' = old_profile, and 'users:version' = 3</span></span>
