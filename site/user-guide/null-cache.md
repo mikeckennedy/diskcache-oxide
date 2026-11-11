@@ -29,6 +29,9 @@ Every row of this table follows from that sentence, so you never have to guess, 
 | `incr(key, delta, default)` | `default + delta` | it starts from the default each time; `KeyError` if `default=None` |
 | [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete), [touch](../reference/Cache.touch.md#diskcache_oxide.Cache.touch), `key in cache` | `False` | there's nothing there |
 | `pop(key, default)` | `default` | there's nothing there |
+| `push(value, ...)` | the first key a queue gets | the item expired the instant it was written |
+| [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull), [peek()](../reference/Cache.peek.md#diskcache_oxide.Cache.peek) | the default | the queue is empty; never forwarded to `invalidate=` |
+| [peekitem()](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem) | raises `KeyError` | it's empty |
 | `len(cache)`, `cache.volume()` | `0` | it's empty and uses no disk |
 | [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull), `evict(tag)` | `0` | nothing to remove |
 | iteration, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) | nothing | it's empty |

@@ -72,7 +72,7 @@ See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
 ::: {.callout-note}
 **0.1.2, the first release.** The core `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. Before it shipped, the code ran three gauntlets. A conformance suite runs the same tests against real diskcache 5.6.3, so every difference is a decision written down in [Divergences](user-guide/divergences.qmd), never an accident. A sanitizer pass put the whole codebase, bundled SQLite included, under Miri, ThreadSanitizer (with a free-threaded CPython built under it too), AddressSanitizer and LeakSanitizer. And a 24-hour soak threw processes, threads, forks, `SIGKILL` and `clear()` under load at one directory for a day, then checked it for corruption, lost writes and leaks. It's on its way into production at [Talk Python](https://talkpython.fm).
 
-Keys can be `str`, `bytes`, `int`, `float`, `bool`, `None` or tuples of those, and `memoize`, `retry=`, `stats()`, `check()`, tags with `evict(tag)`, `eviction_policy='none'` and the coordination recipes work as in diskcache. Not here yet: `AsyncCache`, and `Deque` and `Index`. Custom `disk=` classes and least-recently-used eviction aren't coming. See [Vision and roadmap](user-guide/roadmap.qmd).
+Keys can be `str`, `bytes`, `int`, `float`, `bool`, `None` or tuples of those, and `memoize`, `retry=`, `stats()`, `check()`, tags with `evict(tag)`, `eviction_policy='none'`, the queue calls `push`/`pull`/`peek` and the coordination recipes work as in diskcache. Not here yet: `AsyncCache`, and `Deque` and `Index`. Custom `disk=` classes and least-recently-used eviction aren't coming. See [Vision and roadmap](user-guide/roadmap.qmd).
 :::
 
 ## Install

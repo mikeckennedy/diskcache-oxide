@@ -28,6 +28,8 @@ Two caches share the run directory:
   - `pq:<tick>`, `pqw:<token>` and `delivered:<token>`, the exactly-once lane: every `run` worker's
     threads aim at the same wall-clock tick, race an add() into the slot and race pop() out of it, and
     whoever gets the token records it with add('delivered:<token>'), where a False is a duplicate.
+    Each round also push()es a token onto the shared queue `pqueue` and pull()s one from its front,
+    delivered and checked the same way;
     `maint verify-pq` checks at the end that no recorded token vanished, allowing for kills.
 
 The other roles run lanes that plan 09 needs, on stores of their own:
@@ -109,6 +111,8 @@ PACE_MAX_BEHIND = 0.02
 # thread, between its pop and its add.
 PQ_TICKS_PER_S = 2
 PQ_THREADS = 2
+# The queue that every `run` worker's exactly-once threads also push to and pull from, on the ledger.
+QUEUE_PREFIX = 'pqueue'
 
 # Budgets for the lanes that measure calls. A call that takes longer than its budget by more than
 # OVERRUN_ALLOWANCE is a failure. The overshoot the design allows is one poll plus the interpreter
@@ -542,6 +546,7 @@ class Worker:
                 # in case every consumer of one was descheduled or killed.
                 for slot in (tick, tick, tick - 1, tick - 2, tick - 4):
                     self.pq_consume(f'pq:{slot}')
+                self.queue_round(f'q.{token}', tick)
             except Timeout:
                 with self.lock:
                     self.timeouts += 1
@@ -571,6 +576,32 @@ class Worker:
             self.problem(
                 f'duplicate delivery: {slot} gave {token} to worker {self.id}, which another pop had already delivered'
             )
+
+    def queue_round(self, token: str, tick: int) -> None:
+        """The queue calls on the same ledger (plan 24, release 4): push this thread's token onto one
+        queue every worker shares, record it, then pull one item from the front and deliver it as the
+        slot lane does, so a token pulled twice, or pushed under a key some other push returned, shows up
+        as a duplicate delivery or a lost token at the end."""
+        self.ledger.push(token, prefix=QUEUE_PREFIX)
+        self.ledger.set(f'pqw:{token}', tick)
+        self.count('queue_pushed')
+        key, pulled = self.ledger.pull(prefix=QUEUE_PREFIX)
+        if key is None:
+            return
+        if not isinstance(pulled, str) or not pulled.startswith('q.'):
+            self.problem(f'{key} pulled {pulled!r}, which no producer pushed')
+            return
+        self.count('queue_pulled')
+        while True:
+            try:
+                first = self.ledger.add(f'delivered:{pulled}', self.id)
+                break
+            except Timeout:
+                with self.lock:
+                    self.timeouts += 1
+        if not first:
+            self.count('pq_duplicates')
+            self.problem(f'duplicate delivery: {key} pulled {pulled}, which another pull had already delivered')
 
     def record(self, op: str, ns: int) -> None:
         with self.lock:
@@ -1719,6 +1750,7 @@ def verify_pq(run_dir: Path) -> dict[str, Any]:
     produced = {key.removeprefix('pqw:') for key in ledger.iterkeys(prefix='pqw:')}
     delivered = {key.removeprefix('delivered:') for key in ledger.iterkeys(prefix='delivered:')}
     queued = {ledger.get(key) for key in ledger.iterkeys(prefix='pq:')}
+    queued |= {ledger.get(key) for key in ledger.iterkeys(prefix=f'{QUEUE_PREFIX}-')}
     queued.discard(None)
     ledger.close()
     return {
@@ -1730,7 +1762,9 @@ def verify_pq(run_dir: Path) -> dict[str, Any]:
         # A kill between a winning add and its record leaves a token with no record: harmless.
         'unrecorded': len((delivered | queued) - produced),
         'ticks_per_s': PQ_TICKS_PER_S,
-        'threads': PQ_THREADS,
+        # Tokens a kill can lose per worker: each thread has at most one slot token and one queue item
+        # between its removal and its delivery record.
+        'threads': PQ_THREADS * 2,
     }
 
 

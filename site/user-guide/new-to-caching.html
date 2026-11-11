@@ -698,7 +698,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>A slightly old answer is acceptable, or you can tell when it stops being right.</strong> This is the one that bites, and the rest of this page is mostly about it.</li>
 </ul>
 <p>Here it is in the smallest possible form. The first call does the work; the second gets the copy:</p>
-<div id="0ded09a4" class="cell" data-execution_count="1">
+<div id="c04632aa" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -719,8 +719,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    popular_episodes()</span>
 <span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f'</span><span class="sc">{</span>attempt<span class="sc">}</span><span class="ss">: </span><span class="sc">{</span>(time.perf_counter() <span class="op">-</span> start) <span class="op">*</span> <span class="dv">1000</span><span class="sc">:.2f}</span><span class="ss"> ms'</span>)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>first call: 61.62 ms
-second call: 0.01 ms</code></pre>
+<pre><code>first call: 59.83 ms
+second call: 0.12 ms</code></pre>
 </div>
 </div>
 <p>That shape, check the cache, do the work on a miss, store the result, is called <strong>cache-aside</strong>, and it’s the one you’ll use most. The <a href="../recipes/caching-expensive-calls.html">caching recipe</a> turns it into a decorator.</p>
@@ -798,7 +798,7 @@ second call: 0.01 ms</code></pre>
 <li><strong>Put the version in the key.</strong> If the key is <code>episode:512:v7:page</code>, then publishing revision 8 means readers ask for <code>episode:512:v8:page</code>, miss, and rebuild, and the old entry is simply never asked for again. Nothing is deleted; the stale copy expires on its own.</li>
 </ol>
 <p>Most apps use all three: an expiry on everything, a delete where the write is obvious, and versioned keys for things that have a natural version. Here’s the expiry half, with a fake clock so it runs instantly:</p>
-<div id="da980d3e" class="cell" data-execution_count="2">
+<div id="6630c29a" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>now <span class="op">=</span> [<span class="fl">1_000_000.0</span>]</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tempfile.mkdtemp(), clock<span class="op">=</span><span class="kw">lambda</span>: now[<span class="dv">0</span>])</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>

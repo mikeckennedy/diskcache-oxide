@@ -38,6 +38,7 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | `size_limit` | Anything (tiny values silently empty the cache) | At least 1 MiB |
 | `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
 | `disk=`, `eviction_policy=` | Supported | No `disk=`; `eviction_policy=` is `'least-recently-stored'` or `'none'`, and LRU and LFU raise `ValueError` |
+| Queues (`push`, `pull`, `peek`, `peekitem`) | Any key in the range is an item; `peek` writes | Only keys of the queue's exact shape; `peek` never writes; `pull` decodes first; `Cache` only |
 | Tags | Compared numerically (`1`, `1.0` and `True` are one tag); `tag` positional | Any key type, compared by exact type; `tag=` keyword-only on `set` and `add` |
 | `transact()` | `tx` is `None` | `tx` is the cache; see [`transact()`](#transact) below |
 | `FanoutCache` | Supported | Supported, with differences; see [`FanoutCache`](#fanoutcache) below |

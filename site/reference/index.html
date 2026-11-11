@@ -678,6 +678,24 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.pull.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.pull()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.peek.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.peek()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.peekitem.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.peekitem()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/Cache.transact.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.transact()</span></span></a>
   </div>
@@ -758,6 +776,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/Cache.iterkeys.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.iterkeys()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.push.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.push()</span></span></a>
   </div>
 </li>
       </ul>
@@ -1234,6 +1258,30 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/NullCache.pop.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.pop()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.push.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.push()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.pull.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.pull()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.peek.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.peek()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.peekitem.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.peekitem()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1897,6 +1945,18 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Close this handle and return its connections.</p>
 </dd>
+<dt><a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="doc-function doc-label doc-label-method">Cache.pull()</a></dt>
+<dd>
+<p>Remove and return the item at <code>side</code> of a queue, as diskcache’s <code>pull</code>.</p>
+</dd>
+<dt><a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="doc-function doc-label doc-label-method">Cache.peek()</a></dt>
+<dd>
+<p>The item at <code>side</code> of a queue, without removing it, as diskcache’s <code>peek</code>.</p>
+</dd>
+<dt><a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="doc-function doc-label doc-label-method">Cache.peekitem()</a></dt>
+<dd>
+<p>The newest entry (or with <code>last=False</code>, the oldest) of any key, without removing it, as</p>
+</dd>
 <dt><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="doc-function doc-label doc-label-method">Cache.transact()</a></dt>
 <dd>
 <p>A write transaction, for <code>with cache.transact() as tx:</code>.</p>
@@ -1952,6 +2012,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="doc-function doc-label doc-label-method">Cache.iterkeys()</a></dt>
 <dd>
 <p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
+</dd>
+<dt><a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="doc-function doc-label doc-label-method">Cache.push()</a></dt>
+<dd>
+<p>Push <code>value</code> onto a queue and return its key, as diskcache’s <code>push</code>.</p>
 </dd>
 </dl>
 </section>
@@ -2151,7 +2215,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="doc-class doc-label doc-label-protocol">TransactionalCacheLike</a></dt>
 <dd>
-<p>A <code>CacheLike</code> with <code>transact()</code>, which <code>Cache</code> and <code>NullCache</code> both have.</p>
+<p>A <code>CacheLike</code> with <code>transact()</code> and the queue calls (<code>push</code>, <code>pull</code>, <code>peek</code>, <code>peekitem</code>), which</p>
 </dd>
 <dt><a href="../reference/ShardedCacheLike.html#diskcache_oxide.ShardedCacheLike" class="doc-class doc-label doc-label-protocol">ShardedCacheLike</a></dt>
 <dd>
@@ -2280,6 +2344,22 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/NullCache.pop.html#diskcache_oxide.NullCache.pop" class="doc-function doc-label doc-label-method">NullCache.pop()</a></dt>
 <dd>
 <p>Return <code>default</code>, shaped as <code>get()</code> returns it. With <code>invalidate=</code>, also delete the key from</p>
+</dd>
+<dt><a href="../reference/NullCache.push.html#diskcache_oxide.NullCache.push" class="doc-function doc-label doc-label-method">NullCache.push()</a></dt>
+<dd>
+<p>Store nothing and return the key an empty queue’s first item gets: the item expires the instant</p>
+</dd>
+<dt><a href="../reference/NullCache.pull.html#diskcache_oxide.NullCache.pull" class="doc-function doc-label doc-label-method">NullCache.pull()</a></dt>
+<dd>
+<p>Return <code>default</code> (widened as <code>Cache.pull</code> widens it): the queue is always empty. Never forwarded</p>
+</dd>
+<dt><a href="../reference/NullCache.peek.html#diskcache_oxide.NullCache.peek" class="doc-function doc-label doc-label-method">NullCache.peek()</a></dt>
+<dd>
+<p>Return <code>default</code>, as <code>pull</code> does.</p>
+</dd>
+<dt><a href="../reference/NullCache.peekitem.html#diskcache_oxide.NullCache.peekitem" class="doc-function doc-label doc-label-method">NullCache.peekitem()</a></dt>
+<dd>
+<p>Raise <code>KeyError</code>: the cache is always empty.</p>
 </dd>
 <dt><a href="../reference/NullCache.clear.html#diskcache_oxide.NullCache.clear" class="doc-function doc-label doc-label-method">NullCache.clear()</a></dt>
 <dd>

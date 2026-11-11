@@ -31,6 +31,9 @@ Every row of this table follows from that sentence, so you never have to guess, 
 | `incr(key, delta, default)` | `default + delta` | it starts from the default each time; `KeyError` if `default=None` |
 | `delete`, `touch`, `key in cache` | `False` | there's nothing there |
 | `pop(key, default)` | `default` | there's nothing there |
+| `push(value, ...)` | the first key a queue gets | the item expired the instant it was written |
+| `pull()`, `peek()` | the default | the queue is empty; never forwarded to `invalidate=` |
+| `peekitem()` | raises `KeyError` | it's empty |
 | `len(cache)`, `cache.volume()` | `0` | it's empty and uses no disk |
 | `expire()`, `clear()`, `cull()`, `evict(tag)` | `0` | nothing to remove |
 | iteration, `iterkeys()` | nothing | it's empty |

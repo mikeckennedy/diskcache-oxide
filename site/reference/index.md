@@ -92,6 +92,15 @@ Copy the write-ahead log into the database and truncate it to zero.
 [Cache.close()](Cache.close.md#diskcache_oxide.Cache.close)  
 Close this handle and return its connections.
 
+[Cache.pull()](Cache.pull.md#diskcache_oxide.Cache.pull)  
+Remove and return the item at `side` of a queue, as diskcache's `pull`.
+
+[Cache.peek()](Cache.peek.md#diskcache_oxide.Cache.peek)  
+The item at `side` of a queue, without removing it, as diskcache's `peek`.
+
+[Cache.peekitem()](Cache.peekitem.md#diskcache_oxide.Cache.peekitem)  
+The newest entry (or with `last=False`, the oldest) of any key, without removing it, as
+
 [Cache.transact()](Cache.transact.md#diskcache_oxide.Cache.transact)  
 A write transaction, for `with cache.transact() as tx:`.
 
@@ -133,6 +142,9 @@ Read `size_limit`, `cull_limit` or `eviction_policy` as stored now, or persist a
 
 [Cache.iterkeys()](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)  
 Iterate over keys in sorted order, optionally only those starting with `prefix`.
+
+[Cache.push()](Cache.push.md#diskcache_oxide.Cache.push)  
+Push `value` onto a queue and return its key, as diskcache's `push`.
 
 
 ## FanoutCache
@@ -285,7 +297,7 @@ A switched-off cache, so app code needs no `if cache is None` checks.
 What application code can rely on from a `Cache`, a `FanoutCache` or a `NullCache`.
 
 [TransactionalCacheLike](TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike)  
-A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have.
+A `CacheLike` with `transact()` and the queue calls (`push`, `pull`, `peek`, `peekitem`), which
 
 [ShardedCacheLike](ShardedCacheLike.md#diskcache_oxide.ShardedCacheLike)  
 A `CacheLike` with a sharded cache's `transact(*, key, retry=False)`, which `FanoutCache` and
@@ -383,6 +395,18 @@ Raise `KeyError`, or with `invalidate=`, delete the key from that cache.
 
 [NullCache.pop()](NullCache.pop.md#diskcache_oxide.NullCache.pop)  
 Return `default`, shaped as `get()` returns it. With `invalidate=`, also delete the key from
+
+[NullCache.push()](NullCache.push.md#diskcache_oxide.NullCache.push)  
+Store nothing and return the key an empty queue's first item gets: the item expires the instant
+
+[NullCache.pull()](NullCache.pull.md#diskcache_oxide.NullCache.pull)  
+Return `default` (widened as `Cache.pull` widens it): the queue is always empty. Never forwarded
+
+[NullCache.peek()](NullCache.peek.md#diskcache_oxide.NullCache.peek)  
+Return `default`, as `pull` does.
+
+[NullCache.peekitem()](NullCache.peekitem.md#diskcache_oxide.NullCache.peekitem)  
+Raise `KeyError`: the cache is always empty.
 
 [NullCache.clear()](NullCache.clear.md#diskcache_oxide.NullCache.clear)  
 0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count.

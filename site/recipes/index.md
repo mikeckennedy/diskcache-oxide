@@ -24,6 +24,8 @@ A shared cache does more jobs in a real app than caching. It elects a worker, co
 
 **[Counting things](counters.md).** View counts, download totals and usage quotas with [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) and [decr()](../reference/Cache.decr.md#diskcache_oxide.Cache.decr), flushed to the database with [pop()](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) so no count is lost or doubled.
 
+**[Work queues](work-queues.md).** A queue every worker on the machine shares: [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push) at one end, [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) from the other, each item delivered to exactly one worker.
+
 **[Single-use keys](single-use-keys.md).** Reset links, verification codes and idempotency keys: [pop()](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) hands a value to exactly one caller, and [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) accepts a key exactly once.
 
 

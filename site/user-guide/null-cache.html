@@ -748,21 +748,36 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>there’s nothing there</td>
 </tr>
 <tr class="even">
+<td><code>push(value, ...)</code></td>
+<td>the first key a queue gets</td>
+<td>the item expired the instant it was written</td>
+</tr>
+<tr class="odd">
+<td><a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a>, <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek()</a></td>
+<td>the default</td>
+<td>the queue is empty; never forwarded to <code>invalidate=</code></td>
+</tr>
+<tr class="even">
+<td><a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem()</a></td>
+<td>raises <code>KeyError</code></td>
+<td>it’s empty</td>
+</tr>
+<tr class="odd">
 <td><code>len(cache)</code>, <code>cache.volume()</code></td>
 <td><code>0</code></td>
 <td>it’s empty and uses no disk</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>, <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a>, <code>evict(tag)</code></td>
 <td><code>0</code></td>
 <td>nothing to remove</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>iteration, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a></td>
 <td>nothing</td>
 <td>it’s empty</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>bool(cache)</code>, <code>cache.enabled</code></td>
 <td><code>False</code></td>
 <td>caching is off</td>

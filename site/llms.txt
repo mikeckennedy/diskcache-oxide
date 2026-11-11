@@ -48,6 +48,9 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Cache.volume](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.volume.html): The cache's size on disk in bytes: the database plus value files
 - [Cache.checkpoint](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.checkpoint.html): Copy the write-ahead log into the database and truncate it to zero
 - [Cache.close](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.close.html): Close this handle and return its connections
+- [Cache.pull](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.pull.html): Remove and return the item at `side` of a queue, as diskcache's `pull`
+- [Cache.peek](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.peek.html): The item at `side` of a queue, without removing it, as diskcache's `peek`
+- [Cache.peekitem](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.peekitem.html): The newest entry (or with `last=False`, the oldest) of any key, without removing it, as
 - [Cache.transact](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.transact.html): A write transaction, for `with cache.transact() as tx:`
 - [Cache.__getitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__getitem__.html): `cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under
 - [Cache.__setitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__setitem__.html): `cache[key] = value`: store a value that never expires, like `set()`. Under `durable=True` a failed write is
@@ -62,6 +65,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Cache.pop](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.pop.html): Remove `key` and return its value, delivering it to exactly one caller
 - [Cache.reset](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.reset.html): Read `size_limit`, `cull_limit` or `eviction_policy` as stored now, or persist a new value and
 - [Cache.iterkeys](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.iterkeys.html): Iterate over keys in sorted order, optionally only those starting with `prefix`
+- [Cache.push](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.push.html): Push `value` onto a queue and return its key, as diskcache's `push`
 
 #### FanoutCache
 > A cache sharded over several SQLite databases, so writers in many processes stop queueing on one write lock.
@@ -117,7 +121,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 
 - [NullCache](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.html): A switched-off cache, so app code needs no `if cache is None` checks
 - [CacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.html): What application code can rely on from a `Cache`, a `FanoutCache` or a `NullCache`
-- [TransactionalCacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/TransactionalCacheLike.html): A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have
+- [TransactionalCacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/TransactionalCacheLike.html): A `CacheLike` with `transact()` and the queue calls (`push`, `pull`, `peek`, `peekitem`), which
 - [ShardedCacheLike](https://mkennedy.codes/docs/diskcache-oxide/reference/ShardedCacheLike.html): A `CacheLike` with a sharded cache's `transact(*, key, retry=False)`, which `FanoutCache` and
 
 #### NullCache Methods
@@ -152,6 +156,10 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [NullCache.delete](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.delete.html): False, or with `invalidate=`, delete the key from that cache and return its result
 - [NullCache.__delitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.__delitem__.html): Raise `KeyError`, or with `invalidate=`, delete the key from that cache
 - [NullCache.pop](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.pop.html): Return `default`, shaped as `get()` returns it. With `invalidate=`, also delete the key from
+- [NullCache.push](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.push.html): Store nothing and return the key an empty queue's first item gets: the item expires the instant
+- [NullCache.pull](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.pull.html): Return `default` (widened as `Cache.pull` widens it): the queue is always empty. Never forwarded
+- [NullCache.peek](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.peek.html): Return `default`, as `pull` does
+- [NullCache.peekitem](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.peekitem.html): Raise `KeyError`: the cache is always empty
 - [NullCache.clear](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.clear.html): 0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count
 - [NullCache.evict](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.evict.html): 0, or with `invalidate=`, evict `tag` from that cache (passing `timeout` on) and return its
 - [NullCache.memoize](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.memoize.html): As `Cache.memoize`, but every call runs the function, as every entry has already expired. The
@@ -290,6 +298,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Serving stale values while refreshing](https://mkennedy.codes/docs/diskcache-oxide/recipes/stale-while-revalidate.html): Give an entry a freshness deadline shorter than its expiry, so readers never wait for a recompute and only one worker does it
 - [Testing code that uses a cache](https://mkennedy.codes/docs/diskcache-oxide/recipes/testing.html): pytest fixtures for a real cache, a NullCache, and a fake clock for testing expiry
 - [Sharing a cache across web workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/web-workers.html): Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI, Flask, Django and Celery
+- [Work queues](https://mkennedy.codes/docs/diskcache-oxide/recipes/work-queues.html): A queue every worker on the machine shares: push() at one end, pull() from the other, each item delivered to exactly one worker, with no Redis
 
 ### Agent Skill and Full Context
 

@@ -770,51 +770,56 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>No <code>disk=</code>; <code>eviction_policy=</code> is <code>'least-recently-stored'</code> or <code>'none'</code>, and LRU and LFU raise <code>ValueError</code></td>
 </tr>
 <tr class="odd">
+<td>Queues (<a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push</a>, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull</a>, <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a>, <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem</a>)</td>
+<td>Any key in the range is an item; <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a> writes</td>
+<td>Only keys of the queue’s exact shape; <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a> never writes; <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull</a> decodes first; <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> only</td>
+</tr>
+<tr class="even">
 <td>Tags</td>
 <td>Compared numerically (<code>1</code>, <code>1.0</code> and <code>True</code> are one tag); <code>tag</code> positional</td>
 <td>Any key type, compared by exact type; <code>tag=</code> keyword-only on <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> and <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a></td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a></td>
 <td><code>tx</code> is <code>None</code></td>
 <td><code>tx</code> is the cache; see <a href="#transact"><code>transact()</code></a> below</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a></td>
 <td>Supported</td>
 <td>Supported, with differences; see <a href="#fanoutcache"><code>FanoutCache</code></a> below</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Keys</td>
 <td>Anything picklable</td>
 <td><code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code> and tuples of those; see <a href="#keys">Keys</a> below</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a></td>
 <td>Supported</td>
 <td>Supported, with the same keys; see <a href="#keys">Keys</a> below</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>retry=</code></td>
 <td>Positional; <code>cache[k]</code> retries forever</td>
 <td>Keyword-only; <code>cache[k]</code> raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a></td>
 <td>Persisted, shared by every process</td>
 <td>Per process, in memory (D-049)</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a></td>
 <td>Supported</td>
 <td>Supported, with differences (D-050)</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Locks, semaphores, <code>throttle</code>, <code>barrier</code>, <code>Averager</code>, <code>memoize_stampede</code></td>
 <td>Supported</td>
 <td>Supported, with differences; see <a href="../user-guide/coordination.html">Coordination</a></td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Tags</td>
 <td>Supported</td>
 <td>Planned</td>

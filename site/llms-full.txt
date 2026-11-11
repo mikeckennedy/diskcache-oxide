@@ -493,6 +493,54 @@ Examples:
     cache.close(checkpoint=False)                # skip the checkpoint, for a quick exit
     ```
 
+pull(self, prefix: 'str | None' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
+
+Remove and return the item at `side` of a queue, as diskcache's `pull`.
+
+Reads and decodes the item first, then deletes exactly that stored version, as `pop` does, so an
+item this process can't read stays queued for one that can (D-056): a pickled item on a
+`pickle=False` handle raises `UnsafeValueError`, and a newer deploy's value raises, or with
+`on_decode_error='miss'` returns `default`. An item no build could read is removed and
+reported, and the pull goes on to the next. Expired items are passed over. Inside a
+`transact()` block it joins the transaction, and a rollback puts the item back.
+
+Args:
+    prefix: The queue's name, or None for the int queue.
+    default: Returned when the queue is empty (default `(None, None)`).
+    side: `'front'` (the default) or `'back'`.
+    expire_time: Also return the item's expiry time.
+    tag: Also return the item's tag.
+    retry: As for `get()`.
+
+Returns:
+    `(key, value)`, or with `expire_time` and `tag` `((key, value), expire_time, tag)` and the
+    pairs, as `get()`'s tuples; `default`, widened to match, when empty.
+
+Examples:
+    ```python
+    key, job = jobs.pull(prefix='transcode')
+    if key is not None:
+        transcode(job)
+    ```
+
+peek(self, prefix: 'str | None' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
+
+The item at `side` of a queue, without removing it, as diskcache's `peek`.
+
+Never writes (D-055): expired items are passed over and left for `expire()`. Arguments and
+return values as for `pull()`.
+
+peekitem(self, last: 'bool' = True, *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
+
+The newest entry (or with `last=False`, the oldest) of any key, without removing it, as
+diskcache's `peekitem`. Never writes; expired entries are passed over.
+
+Returns:
+    `(key, value)`, widened with `expire_time` and `tag` as for `pull()`.
+
+Raises:
+    KeyError: The cache has no live entry.
+
 transact(self, retry: 'bool' = False) -> 'Transaction[Cache]'
 
 A write transaction, for `with cache.transact() as tx:`.
@@ -683,6 +731,39 @@ Examples:
     for key in cache.iterkeys(prefix='user:42:'):   # an indexed range scan, sorted
         cache.delete(key)
     newest_first = cache.iterkeys(reverse=True)
+    ```
+
+push(self, value: 'Any', prefix: 'None' = None, side: "Literal['front', 'back']" = 'back', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'int | None'
+
+Push `value` onto a queue and return its key, as diskcache's `push`.
+
+With `prefix=None` the queue's keys are ints, numbered from 500,000,000,000,000; with a prefix,
+`str` keys `'{prefix}-'` and 15 digits. `side='back'` takes the next number up, `'front'` the next
+down. Only keys of exactly that shape belong to the queue: a float, an ordinary key that shares
+the prefix, or a nested prefix's items are ignored (D-054), so use a prefix no other key starts
+with. The number is found and the item stored in one write transaction, so concurrent pushes in
+any process never collide, and a push never overwrites a key.
+
+Args:
+    value: The value, as for `set()`.
+    prefix: The queue's name, or None for the int queue.
+    side: `'back'` (the default) or `'front'`.
+    expire: Seconds until the item expires, or None for never.
+    tag: The item's tag, as for `set()`.
+    retry: As for `set()`.
+
+Returns:
+    The item's key. With `durable=True`, None if the write failed (nothing was stored).
+
+Raises:
+    OverflowError: The queue's numbers are used up on that side (D-057).
+    ValueError: `side` isn't `'front'` or `'back'`.
+    TypeError: `prefix` isn't a `str` or None, or as for `set()`.
+
+Examples:
+    ```python
+    jobs = Cache('/var/cache/my-app/jobs', eviction_policy='none')
+    jobs.push({'episode': 512}, prefix='transcode')   # 'transcode-500000000000000'
     ```
 
 
@@ -1210,7 +1291,8 @@ Examples:
 
 TransactionalCacheLike(*args, **kwargs)
 
-A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have.
+A `CacheLike` with `transact()` and the queue calls (`push`, `pull`, `peek`, `peekitem`), which
+`Cache` and `NullCache` both have and `FanoutCache` doesn't.
 
 On a `Cache`, `with cache.transact() as tx:` runs the block's calls on this thread in one write
 transaction; `tx` is the cache. On a `NullCache` it's a no-op that yields the `NullCache`.
@@ -1374,6 +1456,24 @@ pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, tag
 
 Return `default`, shaped as `get()` returns it. With `invalidate=`, also delete the key from
 that cache.
+
+push(self, value: 'Any', prefix: 'str | None' = None, side: "Literal['front', 'back']" = 'back', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'int | str'
+
+Store nothing and return the key an empty queue's first item gets: the item expires the instant
+it's written. Never forwarded to `invalidate=`.
+
+pull(self, prefix: 'str | None' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
+
+Return `default` (widened as `Cache.pull` widens it): the queue is always empty. Never forwarded
+to `invalidate=`, which a switched-off cache must not consume.
+
+peek(self, prefix: 'str | None' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
+
+Return `default`, as `pull` does.
+
+peekitem(self, last: 'bool' = True, *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
+
+Raise `KeyError`: the cache is always empty.
 
 clear(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
 
@@ -2274,6 +2374,7 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | `size_limit` | Anything (tiny values silently empty the cache) | At least 1 MiB |
 | `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
 | `disk=`, `eviction_policy=` | Supported | No `disk=`; `eviction_policy=` is `'least-recently-stored'` or `'none'`, and LRU and LFU raise `ValueError` |
+| Queues (`push`, `pull`, `peek`, `peekitem`) | Any key in the range is an item; `peek` writes | Only keys of the queue's exact shape; `peek` never writes; `pull` decodes first; `Cache` only |
 | Tags | Compared numerically (`1`, `1.0` and `True` are one tag); `tag` positional | Any key type, compared by exact type; `tag=` keyword-only on `set` and `add` |
 | `transact()` | `tx` is `None` | `tx` is the cache; see [`transact()`](#transact) below |
 | `FanoutCache` | Supported | Supported, with differences; see [`FanoutCache`](#fanoutcache) below |
@@ -2816,6 +2917,9 @@ Every row of this table follows from that sentence, so you never have to guess, 
 | `incr(key, delta, default)` | `default + delta` | it starts from the default each time; `KeyError` if `default=None` |
 | `delete`, `touch`, `key in cache` | `False` | there's nothing there |
 | `pop(key, default)` | `default` | there's nothing there |
+| `push(value, ...)` | the first key a queue gets | the item expired the instant it was written |
+| `pull()`, `peek()` | the default | the queue is empty; never forwarded to `invalidate=` |
+| `peekitem()` | raises `KeyError` | it's empty |
 | `len(cache)`, `cache.volume()` | `0` | it's empty and uses no disk |
 | `expire()`, `clear()`, `cull()`, `evict(tag)` | `0` | nothing to remove |
 | iteration, `iterkeys()` | nothing | it's empty |
@@ -3648,6 +3752,10 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-051 | The coordination recipes | Work on any cache; `throttle` breaks after its bucket expires | Refuse `NullCache` and durable caches; `throttle` fixed; `RLock` owner has a nonce |
 | D-052 | Tag equality | Numeric: `evict(1)` removes `1`, `1.0` and `True` | Exact type, as keys: three tags |
 | D-053 | `cull()` under `eviction_policy='none'` | Returns 0 after removing expired entries | Returns how many it removed |
+| D-054 | A queue's keys | Any key in the range: a float, `'user-9'`, another queue's items | Only keys of the queue's exact shape |
+| D-055 | `peek()`, `peekitem()` | Delete expired heads; hang on a missing value file | Never write; pass over a missing file |
+| D-056 | `pull()` | Deletes, then decodes: an unreadable item is lost | Decodes, then deletes: it stays queued |
+| D-057 | `push()` past its range, a bad `side` | Leaves the range, then `IntegrityError`; `KeyError` | `OverflowError`; `ValueError` |
 
 ## Safety
 
@@ -3753,6 +3861,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-051:** the coordination recipes refuse a `NullCache` or `durable=True` cache, refuse to wait inside their own cache's transaction, give `RLock` a per-process owner nonce, and fix `throttle`'s two bugs (upstream bugs 13 and 14). See [Coordination](coordination.qmd).
 - **D-052:** tags are compared by exact type, as keys are: `1`, `1.0` and `True` are three tags, and a tuple can be one. diskcache compares them through SQLite, so its `evict(1)` removes all three and a `True` tag reads back as `1`. `tag=` is keyword-only on `set` and `add`.
 - **D-053:** under `eviction_policy='none'`, `cull()` returns how many expired entries it removed; diskcache's returns 0 (upstream bug 15).
+- **D-054 to D-057:** the queue calls. A queue's items are only keys of its exact shape, so floats, ordinary keys that share the prefix and nested queues never mix in (upstream bugs 17 and 18); `peek()` and `peekitem()` never write and never hang on a missing value file (bug 16); `pull()` decodes before it deletes, so an item this process can't read stays queued; and `push()` raises `OverflowError` rather than leave its range or overwrite a key. See [Work queues](../recipes/work-queues.qmd).
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)
@@ -4512,6 +4621,75 @@ Counting a request under several keys (total, per path, per status) is three `in
 - **`durable=True` drops counts silently.** A failed `incr()` returns `default + delta` so a rate limiter fails open, but for a quota or a view count that's a lost increment with only a log line to show for it. Let these raise, and catch `Timeout` where you call them.
 - **Not an id generator.** Two callers can get the same number back under `durable=True`, and a cleared cache restarts at zero. Ids come from the database.
 - **One machine.** Every worker on a host shares the counts; two hosts behind a load balancer each have their own, so flush each host's counts to the database and sum there.
+
+### Work queues
+
+A queue every worker on the machine shares: push() at one end, pull() from the other, each item delivered to exactly one worker, with no Redis.
+
+A web request needs a thumbnail rendered, an email sent or a transcript cleaned up, and none of it should make the user wait. The usual answer is a queue and a worker, and the usual queue is Redis. On one machine a cache directory does the job: `push()` adds an item at one end, `pull()` takes one from the other, and every process that opens the directory shares the queue.
+
+```python
+import tempfile
+
+from diskcache_oxide import Cache
+
+jobs = Cache(tempfile.mkdtemp(), eviction_policy='none')
+
+for episode in (510, 511, 512):
+    jobs.push({'episode': episode, 'step': 'transcode'}, prefix='transcode')
+
+key, job = jobs.pull(prefix='transcode')
+print(key, job)
+```
+
+## How it works
+
+- **A queue is a range of keys.** `push(value, prefix='transcode')` stores the item under `'transcode-500000000000000'`, then `...001`, and so on; with no prefix the keys are ints. `side='front'` pushes to the other end, and `pull(side='back')` takes the newest item, so the same calls make a stack or a deque.
+- **Each item goes to exactly one worker.** `pull()` reads the front item, then deletes exactly the version it read; a worker that loses that race to another reads the new front. Run as many workers, in as many processes, as you like.
+- **Nothing is lost to a reader that can't read it.** An item this process can't decode, a pickled value on a `pickle=False` cache or a value of a type a newer deploy registered, stays at the front for a worker that can, and `pull()` raises (or, with `on_decode_error='miss'`, returns the default). An item no build could read (damaged bytes) is removed: by default `pull()` then raises `CorruptValueError`, and with `on_decode_error='miss'` it logs the item and moves on to the next one.
+- **`peek()` looks without taking.** It never writes, so any number of processes can watch a queue at once. `peekitem()` gives the newest or oldest entry of the whole cache.
+
+```python
+print(jobs.peek(prefix='transcode'))                # the next item, left in place
+print(jobs.peek(prefix='transcode', side='back'))   # the newest
+print(len(jobs))
+```
+
+## A worker loop
+
+`pull()` returns `(None, None)` when the queue is empty, or the `default` you pass.
+
+```python
+import time
+
+def work(job: dict) -> None:
+    print('transcoding', job['episode'])
+
+def drain(cache: Cache, idle_sleep: float = 0.5, stop_after_idle: int = 1) -> None:
+    idle = 0
+    while idle < stop_after_idle:
+        key, job = cache.pull(prefix='transcode')
+        if key is None:
+            idle += 1
+            time.sleep(idle_sleep)
+            continue
+        idle = 0
+        work(job)
+
+drain(jobs, idle_sleep=0.01)
+```
+
+A pulled item is gone as soon as `pull()` returns, so a worker that crashes halfway through `work()` loses it. If a job must survive that, keep a record of it under a key of its own until it's done (`cache.set(f'running:{key}', job, expire=600)` after the pull, `delete` it after the work), and have a sweeper push back anything whose record outlived its lease.
+
+## Things to know
+
+- **Open the queue's cache with `eviction_policy='none'`.** Least-recently-stored eviction removes the oldest entries first, and the oldest entry in a queue is the next one to be pulled: a full cache would silently drop the front of the queue. Under `'none'` nothing is evicted for size; only items you gave an `expire` ever vanish.
+- **Use a prefix no other key starts with.** Only keys of exactly the queue's shape (`'{prefix}-'` and 15 digits) belong to it, so an ordinary key like `'transcode-settings'`, or another queue's `'transcode-hd-...'`, is never pulled or numbered as one of its items (D-054). But such keys still sit inside the queue's range, and each call steps past them.
+- **Expired items are passed over.** An item pushed with `expire=` is never pulled or peeked after it expires, and `expire()` or a later write removes it.
+- **Keys are reused.** After the front item is pulled, a push to the front takes its number again, so don't use an item's key as a lasting id.
+- **Inside a transaction,** `push()` and `pull()` join it, and a rollback puts a pulled item back, after your code has already seen it.
+- **Not on a `FanoutCache`.** A queue spread over shards would have no order, so the queue calls are on `Cache` only (and on `NullCache`, where a queue is always empty and pushes store nothing).
+- **Past the end,** after 500 trillion pushes to one side, `push()` raises `OverflowError` rather than overwrite anything (D-057).
 
 ### Single-use keys
 

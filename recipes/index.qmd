@@ -24,6 +24,8 @@ A shared cache does more jobs in a real app than caching. It elects a worker, co
 
 **[Counting things](counters.qmd).** View counts, download totals and usage quotas with `incr()` and `decr()`, flushed to the database with `pop()` so no count is lost or doubled.
 
+**[Work queues](work-queues.qmd).** A queue every worker on the machine shares: `push()` at one end, `pull()` from the other, each item delivered to exactly one worker.
+
 **[Single-use keys](single-use-keys.qmd).** Reset links, verification codes and idempotency keys: `pop()` hands a value to exactly one caller, and `add()` accepts a key exactly once.
 
 ## State

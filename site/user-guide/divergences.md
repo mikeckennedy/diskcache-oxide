@@ -62,6 +62,10 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-051 | The coordination recipes | Work on any cache; `throttle` breaks after its bucket expires | Refuse [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and durable caches; `throttle` fixed; `RLock` owner has a nonce |
 | D-052 | Tag equality | Numeric: `evict(1)` removes `1`, `1.0` and `True` | Exact type, as keys: three tags |
 | D-053 | [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) under `eviction_policy='none'` | Returns 0 after removing expired entries | Returns how many it removed |
+| D-054 | A queue's keys | Any key in the range: a float, `'user-9'`, another queue's items | Only keys of the queue's exact shape |
+| D-055 | [peek()](../reference/Cache.peek.md#diskcache_oxide.Cache.peek), [peekitem()](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem) | Delete expired heads; hang on a missing value file | Never write; pass over a missing file |
+| D-056 | [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) | Deletes, then decodes: an unreadable item is lost | Decodes, then deletes: it stays queued |
+| D-057 | [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push) past its range, a bad `side` | Leaves the range, then `IntegrityError`; `KeyError` | `OverflowError`; `ValueError` |
 
 
 # Safety
@@ -190,6 +194,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-051:** the coordination recipes refuse a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) or `durable=True` cache, refuse to wait inside their own cache's transaction, give `RLock` a per-process owner nonce, and fix `throttle`'s two bugs (upstream bugs 13 and 14). See [Coordination](coordination.md).
 - **D-052:** tags are compared by exact type, as keys are: `1`, `1.0` and `True` are three tags, and a tuple can be one. diskcache compares them through SQLite, so its `evict(1)` removes all three and a `True` tag reads back as `1`. `tag=` is keyword-only on [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) and [add](../reference/Cache.add.md#diskcache_oxide.Cache.add).
 - **D-053:** under `eviction_policy='none'`, [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) returns how many expired entries it removed; diskcache's returns 0 (upstream bug 15).
+- **D-054 to D-057:** the queue calls. A queue's items are only keys of its exact shape, so floats, ordinary keys that share the prefix and nested queues never mix in (upstream bugs 17 and 18); [peek()](../reference/Cache.peek.md#diskcache_oxide.Cache.peek) and [peekitem()](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem) never write and never hang on a missing value file (bug 16); [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) decodes before it deletes, so an item this process can't read stays queued; and [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push) raises `OverflowError` rather than leave its range or overwrite a key. See [Work queues](../recipes/work-queues.md).
 - **D-025:** `iter(cache)` and [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 

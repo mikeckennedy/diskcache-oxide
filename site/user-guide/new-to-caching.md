@@ -39,8 +39,8 @@ for attempt in ('first call', 'second call'):
 ```
 
 
-    first call: 61.62 ms
-    second call: 0.01 ms
+    first call: 59.83 ms
+    second call: 0.12 ms
 
 
 That shape, check the cache, do the work on a miss, store the result, is called **cache-aside**, and it's the one you'll use most. The [caching recipe](../recipes/caching-expensive-calls.md) turns it into a decorator.
