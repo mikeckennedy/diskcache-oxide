@@ -507,6 +507,16 @@ class Cache:
             cache.delete(episode.__cache_key__(42))  # forget one call
             ```
         """
+    def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
+        """`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
+
+        Returns the counts as they were, then resets them if `reset`, then turns counting on or off
+        with `enable` (off by default). Counted per process and in memory, never in the database, so
+        a read never writes: other processes' lookups aren't included, the counts start from zero
+        when the process (or a forked child) starts, and every handle on one directory in a process
+        shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
+        counts as nothing. A `FanoutCache` sums its shards.
+        """
     @property
     def durable(self) -> bool:
         """True for a `durable=True` handle."""
@@ -1030,6 +1040,16 @@ class FanoutCache:
 
             cache.delete(episode.__cache_key__(42))  # forget one call
             ```
+        """
+    def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
+        """`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
+
+        Returns the counts as they were, then resets them if `reset`, then turns counting on or off
+        with `enable` (off by default). Counted per process and in memory, never in the database, so
+        a read never writes: other processes' lookups aren't included, the counts start from zero
+        when the process (or a forked child) starts, and every handle on one directory in a process
+        shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
+        counts as nothing. A `FanoutCache` sums its shards.
         """
     @property
     def durable(self) -> bool:

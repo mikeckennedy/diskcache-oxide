@@ -150,6 +150,9 @@ pub struct Store {
     /// later open of the same directory however it's spelled. Falls back to `directory`.
     canonical: PathBuf,
     file_id: FileId,
+    /// This database's hit and miss counters in this process (`stats()`), shared with every later
+    /// store on the same file.
+    stats: Arc<crate::stats::Stats>,
     /// Held open so the inode stays reserved while any handle is open (see [`open_pin`]). Released
     /// when the last handle closes (D-018: nothing left open); the store is then `retired`, and the
     /// registry only revives it for the same directory, since the inode number may since have been
@@ -536,6 +539,7 @@ impl Store {
             directory: options.directory.clone(),
             canonical,
             file_id,
+            stats: crate::stats::for_file(file_id),
             pin: Mutex::new(Some(pin)),
             retired: AtomicBool::new(false),
             pool: Pool::new(&gate, usize::try_from(options.max_connections).unwrap_or(usize::MAX)),
@@ -1312,6 +1316,12 @@ impl Store {
     #[must_use]
     pub fn wal_stats(&self) -> crate::wal::WalStats {
         self.wal.stats()
+    }
+
+    /// This database's `stats()` counters in this process.
+    #[must_use]
+    pub fn stats(&self) -> &crate::stats::Stats {
+        &self.stats
     }
 
     /// Fails with [`Error::Unwritable`] in a child forked inside a transaction on this file (D-020).

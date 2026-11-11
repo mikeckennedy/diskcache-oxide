@@ -116,3 +116,22 @@ def test_check_reports_an_old_unknown_file_and_fix_removes_it(cache: Any, cache_
     cache.check(fix=True)
     assert not stray.exists()
     assert cache.get('big') == b'x' * (2 * backend.spill_threshold)
+
+
+@pytest.mark.requires('statistics')
+@pytest.mark.diverges(backend='oxide', ref='D-049', reason='counted per process', raises=AssertionError)
+def test_stats_are_shared_with_other_processes(cache: Any, cache_dir: Path, backend: Backend) -> None:
+    import multiprocessing
+
+    from tests.conformance import proc_workers
+
+    cache.stats(enable=True, reset=True)
+    cache.set('k', 1)
+    cache.get('k')
+    spawn = multiprocessing.get_context('spawn')
+    results = spawn.Queue()
+    child = spawn.Process(target=proc_workers.stats_reader, args=(backend.name, str(cache_dir), results))
+    child.start()
+    seen = results.get(timeout=60)
+    child.join(60)
+    assert seen == (1, 0), 'another process sees the counts'

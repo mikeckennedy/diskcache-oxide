@@ -100,6 +100,19 @@ class CacheLike(Protocol):
     def decr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
         """Subtract `delta` from the number under `key`, atomically, and return the result."""
 
+    @property
+    def durable(self) -> bool:
+        """True for a `durable=True` handle (always False on a `NullCache`)."""
+
+    def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
+        """`(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`."""
+
+    def reset(self, key: str, value: Any = ..., update: bool = True) -> int:
+        """Read or set `size_limit` or `cull_limit`."""
+
+    def __reversed__(self) -> Iterator[Key]:
+        """Keys in insertion order backwards, newest first."""
+
     def memoize(
         self,
         name: str | None = None,

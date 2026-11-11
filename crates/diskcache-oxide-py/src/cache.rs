@@ -241,6 +241,13 @@ impl Cache {
         self.config.failures.is_some()
     }
 
+    /// `(hits, misses)` of `get` and `cache[key]` in this process, as they were; then resets them
+    /// with `reset`, and turns counting on or off with `enable`, as diskcache's `stats()`.
+    #[pyo3(signature = (enable = true, reset = false))]
+    fn stats(&self, enable: bool, reset: bool) -> (u64, u64) {
+        self.handle.store.stats().take(enable, reset)
+    }
+
     /// Reads `size_limit` or `cull_limit` as stored now, or with `value` persists it (validated as
     /// the constructor does) and returns it.
     #[pyo3(signature = (key, value = None, update = true))]
@@ -962,12 +969,26 @@ impl HandleConfig {
     ) -> PyResult<Option<(Py<PyAny>, Option<f64>)>> {
         let store = &*handle.store;
         let read = handle.run(self.timeout, |timeout| self.read_row(py, store, timeout, key, now));
-        let Some(Some(hit)) = self.attempt(py, store, Op::Get, now, read)? else { return Ok(None) };
+        // `stats()`: a durable outage answered as a miss counts as nothing, as diskcache's `Timeout`.
+        let hit = match self.attempt(py, store, Op::Get, now, read)? {
+            Some(Some(hit)) => hit,
+            Some(None) => {
+                store.stats().record(false);
+                return Ok(None);
+            }
+            None => return Ok(None),
+        };
         match hit.value {
-            Ok(value) => Ok(Some((value, hit.expire_time))),
-            Err((mode, e)) => self
-                .decode_failed(py, store, handle.shard, key, Op::Get, mode, e, Row::Stored(hit.version))
-                .map(|()| None),
+            Ok(value) => {
+                store.stats().record(true);
+                Ok(Some((value, hit.expire_time)))
+            }
+            Err((mode, e)) => {
+                // A value that can't be decoded and is answered as a miss counts as one.
+                self.decode_failed(py, store, handle.shard, key, Op::Get, mode, e, Row::Stored(hit.version))?;
+                store.stats().record(false);
+                Ok(None)
+            }
         }
     }
 

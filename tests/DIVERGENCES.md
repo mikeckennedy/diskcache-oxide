@@ -397,6 +397,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: keys are never pickled (D-004, D-001). Pass a list as a tuple, or leave an argument that can't be a key out with `ignore=` (a connection, a client) and let the others identify the call.
 - Tests: `tests/unit/test_memoize.py`
 
+## D-049 `stats()` counts per process, in memory
+
+- Kind: test-visible
+- diskcache: hits and misses are stored in the database's `Settings` table, shared by every process and kept across restarts; with statistics on, every `get` becomes a write transaction to count it.
+- oxide: counted in memory, per process: every handle on a directory in one process shares the counts, they survive closing the last handle, a forked child and a restarted process start at zero, and other processes' lookups aren't included. Counted by `get` and `cache[key]` only (as diskcache); a durable outage answered as a miss counts as nothing. A `FanoutCache` sums its shards. `statistics=` isn't a constructor setting; `stats(enable=...)` turns counting on and off.
+- Why: a `get` that writes would queue every reader behind the write lock, and reads that never write are what let many processes read at once (Michael's decision 7, plan 24). Sum the workers' counts yourself, or through `Caches`.
+- Tests: `tests/conformance/test_parity.py`, `tests/unit/test_stats.py`
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.

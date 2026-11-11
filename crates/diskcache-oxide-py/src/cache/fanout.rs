@@ -184,6 +184,16 @@ impl FanoutCache {
         self.config.failures.is_some()
     }
 
+    /// As `Cache.stats`, summed over the shards; `enable` and `reset` apply to every shard.
+    #[pyo3(signature = (enable = true, reset = false))]
+    fn stats(&self, enable: bool, reset: bool) -> PyResult<(u64, u64)> {
+        self.refuse_fan_out("stats()")?;
+        Ok(self.shards.iter().fold((0, 0), |(hits, misses), handle| {
+            let (h, m) = handle.store.stats().take(enable, reset);
+            (hits + h, misses + m)
+        }))
+    }
+
     /// As `Cache.reset`, over every shard under one `timeout`. A `size_limit` is a total, split
     /// across the shards as the constructor splits it, and read back as the total; a `cull_limit`
     /// is every shard's. Stops at the first shard that fails, raising its error.

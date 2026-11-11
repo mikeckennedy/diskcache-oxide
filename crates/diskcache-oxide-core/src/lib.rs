@@ -23,6 +23,7 @@ pub mod spill;
 pub mod sqlite;
 pub mod sqlite_mutex;
 mod stack;
+pub mod stats;
 pub mod store;
 mod sync;
 #[cfg(test)]

@@ -241,6 +241,30 @@ def fork_while_a_write_retries(directory: Path) -> list[str]:
     return failures
 
 
+def stats_after_fork(directory: Path) -> list[str]:
+    """`stats()` counts per process (decision 19): a forked child starts at zero, keeps counting on,
+    and the parent's counts are its own."""
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.stats(enable=True, reset=True)
+    cache.set('k', 1)
+    cache.get('k')
+
+    def child() -> None:
+        assert cache.stats() == (0, 0), cache.stats()
+        cache.get('k')
+        cache.get('missing')
+        assert cache.stats() == (1, 1), cache.stats()
+
+    code = wait(fork(child))
+    failures = []
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if cache.stats() != (1, 0):
+        failures.append(f"the parent's counts changed: {cache.stats()}")
+    cache.close()
+    return failures
+
+
 def two_forkers(directory: Path) -> list[str]:
     """Two threads fork at the same time, repeatedly, while a third reads and writes the cache."""
     rounds = 10
@@ -1017,6 +1041,7 @@ SCENARIOS = {
     'fork-while-a-write-waits': fork_while_a_write_waits,
     'fork-while-a-write-retries': fork_while_a_write_retries,
     'two-forkers': two_forkers,
+    'stats-after-fork': stats_after_fork,
     'parent-closes-after-fork': parent_closes_after_fork,
     'shared-iterator-while-a-fork-waits': shared_iterator_while_a_fork_waits,
     'fanout-fork-while-writing': fanout_fork_while_writing,

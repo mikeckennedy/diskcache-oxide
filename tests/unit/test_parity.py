@@ -127,7 +127,9 @@ def test_a_cache_passed_to_a_spawned_process_opens_there(tmp_path: Path) -> None
     ],
 )
 @pytest.mark.parametrize('make', [lambda p: Cache(p), lambda p: FanoutCache(p, shards=2), lambda p: NullCache()])
-def test_reset_refuses_what_it_cannot_do(tmp_path: Path, make: Any, call: Any, error: type, match: str) -> None:
+def test_reset_refuses_what_it_cannot_do(
+    tmp_path: Path, make: Any, call: Any, error: type[Exception], match: str
+) -> None:
     cache = make(tmp_path)
     with pytest.raises(error, match=match):
         call(cache)

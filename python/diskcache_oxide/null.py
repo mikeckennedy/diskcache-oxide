@@ -214,6 +214,10 @@ class NullCache:
         """Always False: a `NullCache` has no outages to answer."""
         return False
 
+    def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
+        """Always `(0, 0)`: nothing is looked up."""
+        return (0, 0)
+
     def reset(self, key: str, value: Any = ENOVAL, update: bool = True) -> int:
         """Read `size_limit` or `cull_limit`, or set it (checked as `Cache` checks it) and return it."""
         if key.startswith('sqlite_'):
