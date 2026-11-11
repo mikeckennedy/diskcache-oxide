@@ -135,3 +135,11 @@ def test_stats_are_shared_with_other_processes(cache: Any, cache_dir: Path, back
     seen = results.get(timeout=60)
     child.join(60)
     assert seen == (1, 0), 'another process sees the counts'
+
+
+@pytest.mark.requires('check')
+@pytest.mark.diverges(backend='oxide', ref='D-050', reason='empty value folders are normal', raises=AssertionError)
+def test_check_reports_an_empty_value_folder(cache: Any, cache_dir: Path) -> None:
+    cache.set('k', 1)
+    (cache_dir / 'ab').mkdir()  # An empty folder where value files live.
+    assert any('empty directory' in str(w.message) for w in cache.check())

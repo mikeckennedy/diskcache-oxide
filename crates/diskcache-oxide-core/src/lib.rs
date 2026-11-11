@@ -6,6 +6,7 @@
 // deny, not forbid, so that `stack` and `sqlite_mutex` alone can allow it.
 #![deny(unsafe_code)]
 
+pub mod check;
 mod error;
 pub mod fanout;
 pub mod gate;

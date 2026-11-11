@@ -9,6 +9,7 @@ need more than `retry` (a sharded cache's `transact(key=...)`) can still be a `C
 from __future__ import annotations
 
 import os
+import warnings
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager
 from types import TracebackType
@@ -103,6 +104,9 @@ class CacheLike(Protocol):
     @property
     def durable(self) -> bool:
         """True for a `durable=True` handle (always False on a `NullCache`)."""
+
+    def check(self, fix: bool = False, retry: bool = False) -> list[warnings.WarningMessage]:
+        """Check the database and value files against each other; `[]` on a `NullCache`."""
 
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """`(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`."""

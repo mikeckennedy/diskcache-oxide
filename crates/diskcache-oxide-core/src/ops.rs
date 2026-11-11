@@ -78,6 +78,18 @@ pub struct Version {
     store_seq: i64,
 }
 
+impl Version {
+    /// A version read from a row elsewhere in the core (`check`).
+    pub(crate) fn new(id: i64, store_seq: i64) -> Self {
+        Self { id, store_seq }
+    }
+
+    /// `(id, store_seq)`.
+    pub(crate) fn parts(self) -> (i64, i64) {
+        (self.id, self.store_seq)
+    }
+}
+
 /// A live value found by [`Store::get_with`].
 #[derive(Debug, PartialEq)]
 pub struct Hit<T> {

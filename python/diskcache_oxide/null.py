@@ -32,6 +32,7 @@ expire/timeout, non-`str` keys), so code that works with a `NullCache` also work
 from __future__ import annotations
 
 import os
+import warnings
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, nullcontext
 from types import TracebackType
@@ -213,6 +214,11 @@ class NullCache:
     def durable(self) -> bool:
         """Always False: a `NullCache` has no outages to answer."""
         return False
+
+    def check(self, fix: bool = False, retry: bool = False) -> list[warnings.WarningMessage]:
+        """Always `[]`: there is nothing to check."""
+        _check_retry(retry)
+        return []
 
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """Always `(0, 0)`: nothing is looked up."""

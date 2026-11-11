@@ -58,6 +58,7 @@ from diskcache_oxide._core import (
     sqlite_version,
 )
 from diskcache_oxide._types import Key, Memoized, Memoizer
+from diskcache_oxide._warnings import EmptyDirWarning, UnknownFileWarning
 from diskcache_oxide.caches import Caches, CacheStats
 from diskcache_oxide.null import NullCache
 from diskcache_oxide.protocol import CacheLike, ShardedCacheLike, TransactionalCacheLike
@@ -107,6 +108,7 @@ __all__ = [
     'Caches',
     'CorruptKeyError',
     'ENOVAL',
+    'EmptyDirWarning',
     'CorruptValueError',
     'FanoutCache',
     'ForeignValueError',
@@ -123,6 +125,7 @@ __all__ = [
     'TransactionalCacheLike',
     'TypeRegistry',
     'UNKNOWN',
+    'UnknownFileWarning',
     'UnsafeValueError',
     '__version__',
     'register_type',

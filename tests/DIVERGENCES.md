@@ -405,6 +405,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: a `get` that writes would queue every reader behind the write lock, and reads that never write are what let many processes read at once (Michael's decision 7, plan 24). Sum the workers' counts yourself, or through `Caches`.
 - Tests: `tests/conformance/test_parity.py`, `tests/unit/test_stats.py`
 
+## D-050 `check()` doesn't report empty value folders, and keeps young files
+
+- Kind: test-visible
+- diskcache: `check()` warns about every empty directory (`EmptyDirWarning`) and every file no entry names (`UnknownFileWarning`), whatever its age, and `fix=True` removes them; a wrong-size value file has its row's size corrected to the file's.
+- oxide: empty value folders aren't reported (they're normal on an open cache, D-042) and `fix=True` sweeps them; a file no entry names is reported, and removed by `fix=True`, only once it's over an hour old (a younger one may be a writer's in flight: its `.tmp`, or a renamed `.val` between a busy commit and its retry), and only inside a value folder is one ever removed; a wrong-size file means a crash cut it short, so `fix=True` removes the entry rather than serve the short bytes. The database's own files are never reported or touched. `check()` runs in short steps, without holding the write lock across the scan.
+- Why: a `check(fix=True)` that deleted a live writer's file, or blessed a truncated value, would cause the damage it's meant to find (Michael's decision 20, plan 24).
+- Tests: `tests/conformance/test_parity.py`, `check::tests`
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.

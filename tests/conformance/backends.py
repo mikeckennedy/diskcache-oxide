@@ -60,6 +60,7 @@ OXIDE_EARLY_FEATURES = frozenset(
         'pickling',
         'reset',
         'statistics',
+        'check',
     }
 )
 assert OXIDE_EARLY_FEATURES <= set(FEATURE_PHASES)

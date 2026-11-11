@@ -184,6 +184,32 @@ impl FanoutCache {
         self.config.failures.is_some()
     }
 
+    /// As `Cache.check`, over every shard in turn, each with the cache's `timeout`.
+    #[pyo3(signature = (fix = false, retry = false))]
+    fn check(&self, py: Python<'_>, fix: bool, retry: bool) -> PyResult<Py<pyo3::types::PyList>> {
+        self.refuse_fan_out("check()")?;
+        let mut found = Vec::new();
+        for (i, handle) in self.shards.iter().enumerate() {
+            if i > 0 {
+                py.check_signals()?;
+            }
+            loop {
+                let started = Instant::now();
+                let checked =
+                    crate::detach(py, || handle.run(self.config.timeout, |timeout| handle.store.check(fix, timeout)));
+                match checked {
+                    Ok(shard) => {
+                        found.extend(shard);
+                        break;
+                    }
+                    Err(Error::Timeout { .. }) if retry => super::pause_before_retry(py, started)?,
+                    Err(error) => return Err(to_py_err(error)),
+                }
+            }
+        }
+        super::findings_to_warnings(py, found)
+    }
+
     /// As `Cache.stats`, summed over the shards; `enable` and `reset` apply to every shard.
     #[pyo3(signature = (enable = true, reset = false))]
     fn stats(&self, enable: bool, reset: bool) -> PyResult<(u64, u64)> {

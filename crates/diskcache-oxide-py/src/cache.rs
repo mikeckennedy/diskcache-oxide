@@ -241,6 +241,22 @@ impl Cache {
         self.config.failures.is_some()
     }
 
+    /// Checks the database and the value files against each other, as diskcache's `check()`: a list
+    /// of `warnings.WarningMessage`. With `fix`, repairs what it can and `VACUUM`s.
+    #[pyo3(signature = (fix = false, retry = false))]
+    fn check(&self, py: Python<'_>, fix: bool, retry: bool) -> PyResult<Py<pyo3::types::PyList>> {
+        let handle = &self.handle;
+        let found = loop {
+            let started = Instant::now();
+            match crate::detach(py, || handle.run(self.config.timeout, |timeout| handle.store.check(fix, timeout))) {
+                Ok(found) => break found,
+                Err(Error::Timeout { .. }) if retry => pause_before_retry(py, started)?,
+                Err(error) => return Err(to_py_err(error)),
+            }
+        };
+        findings_to_warnings(py, found)
+    }
+
     /// `(hits, misses)` of `get` and `cache[key]` in this process, as they were; then resets them
     /// with `reset`, and turns counting on or off with `enable`, as diskcache's `stats()`.
     #[pyo3(signature = (enable = true, reset = false))]
@@ -1503,6 +1519,40 @@ impl ResetLimit {
     pub(crate) fn is_read(&self) -> bool {
         matches!(self, Self::Size(None) | Self::Cull(None))
     }
+}
+
+/// `check()`'s findings as diskcache returns them: `warnings.WarningMessage` objects, made directly
+/// (no `catch_warnings`, which swaps global state and obeys `-W error`), with diskcache's messages.
+pub(crate) fn findings_to_warnings(
+    py: Python<'_>,
+    findings: Vec<diskcache_oxide_core::check::Finding>,
+) -> PyResult<Py<pyo3::types::PyList>> {
+    use diskcache_oxide_core::check::Finding;
+    let warnings = py.import("warnings")?;
+    let message_type = warnings.getattr("WarningMessage")?;
+    let user = py.get_type::<pyo3::exceptions::PyUserWarning>().into_any();
+    let unknown = py.import("diskcache_oxide._warnings")?.getattr("UnknownFileWarning")?;
+    let out = pyo3::types::PyList::empty(py);
+    for finding in findings {
+        let (text, category) = match finding {
+            Finding::Integrity(line) => (line, &user),
+            Finding::MissingFile { path, .. } => (format!("file not found: {}", path.display()), &user),
+            Finding::WrongSize { path, expected, actual, .. } => {
+                (format!("wrong file size: {}, {actual} != {expected}", path.display()), &user)
+            }
+            Finding::BadFilename { name, .. } => (format!("damaged file name in a row: {name:?}"), &user),
+            Finding::UnknownFile { path, .. } => (format!("unknown file: {}", path.display()), &unknown),
+            Finding::Count { stored, actual, .. } => {
+                (format!("Settings.count != COUNT(Cache.key); {stored} != {actual}"), &user)
+            }
+            Finding::Size { stored, actual, .. } => {
+                (format!("Settings.size != SUM(Cache.size); {stored} != {actual}"), &user)
+            }
+        };
+        let message = category.call1((text,))?;
+        out.append(message_type.call1((message, category, "diskcache_oxide", 0))?)?;
+    }
+    Ok(out.unbind())
 }
 
 /// A lazy iterator over a cache's keys, one page per fetch.

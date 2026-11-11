@@ -1125,6 +1125,37 @@ impl Store {
         }
     }
 
+    /// `VACUUM`, then a forced checkpoint, for `check(fix=True)`: rewrites the database without
+    /// its free pages. Holds this process's write lock throughout, so its writers queue (within their
+    /// timeouts) rather than meet SQLite's lock; other processes' writers wait on SQLite's. A long
+    /// single step: a fork waits for it, it writes the whole database through the WAL, and SQLite
+    /// builds a full temporary copy in `SQLITE_TMPDIR` or `/tmp`. Never inside a held transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NestedTransaction`] at gate depth > 0; a `Timeout` for the whole `timeout`; SQLite's
+    /// errors (a full disk among them).
+    pub(crate) fn vacuum(&self, timeout: Duration) -> Result<()> {
+        if GATE.own_depth() > 0 {
+            return Err(Error::NestedTransaction);
+        }
+        let deadline = lockwait::deadline_after(Instant::now(), timeout);
+        let token = self.write_lock.lock_until(deadline).ok_or(Error::Timeout { seconds: timeout.as_secs_f64() })?;
+        let result = lockwait::retry(deadline.saturating_duration_since(Instant::now()), |attempt_deadline| {
+            let _permit = self.reserve_slot(attempt_deadline)?;
+            let gate = enter_until(attempt_deadline)?;
+            let lease = self.lease(&gate, timeout)?;
+            lease.conn().execute_batch("VACUUM").map_err(|e| Error::from_sqlite(e, timeout))
+        })
+        .map_err(|error| match error {
+            Error::Timeout { .. } => Error::Timeout { seconds: timeout.as_secs_f64() },
+            other => other,
+        });
+        drop(token);
+        result?;
+        self.checkpoint(timeout).map(drop)
+    }
+
     /// The `-wal` file's size in bytes (0 if it doesn't exist).
     fn wal_bytes(&self) -> u64 {
         std::fs::metadata(&self.wal_path).map_or(0, |m| m.len())

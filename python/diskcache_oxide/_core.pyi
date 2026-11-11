@@ -1,6 +1,7 @@
 """Type stubs for the compiled `diskcache_oxide._core` extension (hand-written, checked by tests/unit/test_stubs.py)."""
 
 import os
+import warnings
 from collections.abc import Callable, Iterable, Iterator
 from types import TracebackType
 from typing import Any, Literal, Self, final, overload
@@ -506,6 +507,30 @@ class Cache:
 
             cache.delete(episode.__cache_key__(42))  # forget one call
             ```
+        """
+    def check(self, fix: bool = False, retry: bool = False) -> list[warnings.WarningMessage]:
+        """Check the database and the value files against each other, as diskcache's `check()`.
+
+        Reports, as a list of `warnings.WarningMessage` (nothing is issued through `warnings`): lines
+        of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size
+        (`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache
+        directory, that no entry names and that is over an hour old (`unknown file: ...`, an
+        `UnknownFileWarning`; a younger one may be a writer's in flight); and stored totals that
+        don't match the rows. Empty value folders aren't reported: they're normal on an open cache.
+        Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and
+        `VACUUM`.
+
+        Args:
+            fix: Also repair: remove an entry whose file is missing or the wrong size (it reads as a
+                miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
+                value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
+                whole database through the write-ahead log and needs a temporary copy of it in
+                `SQLITE_TMPDIR` or `/tmp`; forks and writers wait for it.
+            retry: On a `Timeout`, start again until it gets through.
+
+        Raises:
+            RuntimeError: Inside this thread's own `transact()` block.
+            Timeout: A step waited longer than `timeout` (and `retry` is False).
         """
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
@@ -1040,6 +1065,30 @@ class FanoutCache:
 
             cache.delete(episode.__cache_key__(42))  # forget one call
             ```
+        """
+    def check(self, fix: bool = False, retry: bool = False) -> list[warnings.WarningMessage]:
+        """Check the database and the value files against each other, as diskcache's `check()`.
+
+        Reports, as a list of `warnings.WarningMessage` (nothing is issued through `warnings`): lines
+        of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size
+        (`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache
+        directory, that no entry names and that is over an hour old (`unknown file: ...`, an
+        `UnknownFileWarning`; a younger one may be a writer's in flight); and stored totals that
+        don't match the rows. Empty value folders aren't reported: they're normal on an open cache.
+        Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and
+        `VACUUM`.
+
+        Args:
+            fix: Also repair: remove an entry whose file is missing or the wrong size (it reads as a
+                miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
+                value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
+                whole database through the write-ahead log and needs a temporary copy of it in
+                `SQLITE_TMPDIR` or `/tmp`; forks and writers wait for it.
+            retry: On a `Timeout`, start again until it gets through.
+
+        Raises:
+            RuntimeError: Inside this thread's own `transact()` block.
+            Timeout: A step waited longer than `timeout` (and `retry` is False).
         """
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
