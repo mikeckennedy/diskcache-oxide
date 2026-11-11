@@ -69,6 +69,8 @@ make docs-serve
 
 # Release artifacts and gates
 scripts/build_pgo.sh [3.14 3.14t 3.15 3.15t]   # PGO wheels into dist/
+make wheels                                     # the same, all four, under nice
+make wheels-local                               # just 3.15, for a quick local wheel
 scripts/sanitize.sh [--lanes A,B,C,D,E] [--quick]   # Miri, TSan, ASan lanes; results in sanitize-results/
 soak/run.sh --hours 24                          # the soak; soak-results/latest/status.txt is the live view
 ```
