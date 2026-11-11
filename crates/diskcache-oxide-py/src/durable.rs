@@ -33,10 +33,15 @@ pub(crate) enum Op {
     Incr,
     Decr,
     Delete,
+    Push,
+    Pull,
+    Peek,
+    PeekItem,
 }
 
 /// Each `Op`'s name, by its discriminant.
-const OP_NAMES: [&str; 9] = ["get", "in", "pop", "set", "add", "touch", "incr", "decr", "delete"];
+const OP_NAMES: [&str; 13] =
+    ["get", "in", "pop", "set", "add", "touch", "incr", "decr", "delete", "push", "pull", "peek", "peekitem"];
 
 /// One limit on logging, with its counts.
 struct Bucket {

@@ -52,6 +52,7 @@ OXIDE_EARLY_FEATURES = frozenset(
     {
         'transact',
         'tags',
+        'peek_pull_push',
         'eviction_policy',
         'fanout',
         'key_types',

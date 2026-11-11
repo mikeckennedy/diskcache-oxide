@@ -822,6 +822,136 @@ class Cache:
         and then by operation. Empty on a handle that isn't durable."""
     def _handle_count(self) -> int:
         """Test hook: how many open handles this cache's store counts, deferred releases included."""
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int | None:
+        """Push `value` onto a queue and return its key, as diskcache's `push`.
+
+        With `prefix=None` the queue's keys are ints, numbered from 500,000,000,000,000; with a prefix,
+        `str` keys `'{prefix}-'` and 15 digits. `side='back'` takes the next number up, `'front'` the next
+        down. Only keys of exactly that shape belong to the queue: a float, an ordinary key that shares
+        the prefix, or a nested prefix's items are ignored (D-054), so use a prefix no other key starts
+        with. The number is found and the item stored in one write transaction, so concurrent pushes in
+        any process never collide, and a push never overwrites a key.
+
+        Args:
+            value: The value, as for `set()`.
+            prefix: The queue's name, or None for the int queue.
+            side: `'back'` (the default) or `'front'`.
+            expire: Seconds until the item expires, or None for never.
+            tag: The item's tag, as for `set()`.
+            retry: As for `set()`.
+
+        Returns:
+            The item's key. With `durable=True`, None if the write failed (nothing was stored).
+
+        Raises:
+            OverflowError: The queue's numbers are used up on that side (D-057).
+            ValueError: `side` isn't `'front'` or `'back'`.
+            TypeError: `prefix` isn't a `str` or None, or as for `set()`.
+
+        Examples:
+            ```python
+            jobs = Cache('/var/cache/my-app/jobs', eviction_policy='none')
+            jobs.push({'episode': 512}, prefix='transcode')   # 'transcode-500000000000000'
+            ```
+        """
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: str,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> str | None: ...
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: str | None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int | str | None: ...
+    def pull(
+        self,
+        prefix: str | None = None,
+        default: Any = (None, None),
+        side: Literal['front', 'back'] = 'front',
+        *,
+        expire_time: bool = False,
+        tag: bool = False,
+        retry: bool = False,
+    ) -> Any:
+        """Remove and return the item at `side` of a queue, as diskcache's `pull`.
+
+        Reads and decodes the item first, then deletes exactly that stored version, as `pop` does, so an
+        item this process can't read stays queued for one that can (D-056): a pickled item on a
+        `pickle=False` handle raises `UnsafeValueError`, and a newer deploy's value raises, or with
+        `on_decode_error='miss'` returns `default`. An item no build could read is removed and
+        reported, and the pull goes on to the next. Expired items are passed over. Inside a
+        `transact()` block it joins the transaction, and a rollback puts the item back.
+
+        Args:
+            prefix: The queue's name, or None for the int queue.
+            default: Returned when the queue is empty (default `(None, None)`).
+            side: `'front'` (the default) or `'back'`.
+            expire_time: Also return the item's expiry time.
+            tag: Also return the item's tag.
+            retry: As for `get()`.
+
+        Returns:
+            `(key, value)`, or with `expire_time` and `tag` `((key, value), expire_time, tag)` and the
+            pairs, as `get()`'s tuples; `default`, widened to match, when empty.
+
+        Examples:
+            ```python
+            key, job = jobs.pull(prefix='transcode')
+            if key is not None:
+                transcode(job)
+            ```
+        """
+
+    def peek(
+        self,
+        prefix: str | None = None,
+        default: Any = (None, None),
+        side: Literal['front', 'back'] = 'front',
+        *,
+        expire_time: bool = False,
+        tag: bool = False,
+        retry: bool = False,
+    ) -> Any:
+        """The item at `side` of a queue, without removing it, as diskcache's `peek`.
+
+        Never writes (D-055): expired items are passed over and left for `expire()`. Arguments and
+        return values as for `pull()`.
+        """
+
+    def peekitem(self, last: bool = True, *, expire_time: bool = False, tag: bool = False, retry: bool = False) -> Any:
+        """The newest entry (or with `last=False`, the oldest) of any key, without removing it, as
+        diskcache's `peekitem`. Never writes; expired entries are passed over.
+
+        Returns:
+            `(key, value)`, widened with `expire_time` and `tag` as for `pull()`.
+
+        Raises:
+            KeyError: The cache has no live entry.
+        """
+
     def transact(self, retry: bool = False) -> Transaction[Cache]:
         """A write transaction, for `with cache.transact() as tx:`.
 

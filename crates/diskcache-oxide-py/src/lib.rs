@@ -144,7 +144,8 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
         Error::InvalidSetting(_) => PyValueError::new_err(message),
         Error::KeyMissing => pyo3::exceptions::PyKeyError::new_err(message),
         Error::NotNumeric => PyTypeError::new_err(message),
-        Error::Overflow => pyo3::exceptions::PyOverflowError::new_err(message),
+        Error::Overflow | Error::QueueFull => pyo3::exceptions::PyOverflowError::new_err(message),
+        Error::QueueKeyTaken => pyo3::exceptions::PyRuntimeError::new_err(message),
         Error::CorruptKey(_) => CorruptKeyError::new_err(message),
         _ => PyOSError::new_err(message),
     }

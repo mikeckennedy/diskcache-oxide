@@ -262,7 +262,8 @@ class CacheLike(Protocol):
 
 @runtime_checkable
 class TransactionalCacheLike(CacheLike, Protocol):
-    """A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have.
+    """A `CacheLike` with `transact()` and the queue calls (`push`, `pull`, `peek`, `peekitem`), which
+    `Cache` and `NullCache` both have and `FanoutCache` doesn't.
 
     On a `Cache`, `with cache.transact() as tx:` runs the block's calls on this thread in one write
     transaction; `tx` is the cache. On a `NullCache` it's a no-op that yields the `NullCache`.
@@ -280,6 +281,78 @@ class TransactionalCacheLike(CacheLike, Protocol):
 
     def transact(self, retry: bool = False) -> AbstractContextManager[Self]:
         """A context manager holding a write transaction for the block, yielding the cache."""
+
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int | None: ...
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: str,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> str | None: ...
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: str | None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int | str | None: ...
+    def push(
+        self,
+        value: Any,
+        prefix: str | None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int | str | None:
+        """Push `value` onto a queue and return its key (None on a durable outage)."""
+
+    def pull(
+        self,
+        prefix: str | None = None,
+        default: Any = (None, None),
+        side: Literal['front', 'back'] = 'front',
+        *,
+        expire_time: bool = False,
+        tag: bool = False,
+        retry: bool = False,
+    ) -> Any:
+        """Remove and return `(key, value)` from a queue, or `default`."""
+
+    def peek(
+        self,
+        prefix: str | None = None,
+        default: Any = (None, None),
+        side: Literal['front', 'back'] = 'front',
+        *,
+        expire_time: bool = False,
+        tag: bool = False,
+        retry: bool = False,
+    ) -> Any:
+        """`(key, value)` at a queue's end, or `default`, without removing it."""
+
+    def peekitem(self, last: bool = True, *, expire_time: bool = False, tag: bool = False, retry: bool = False) -> Any:
+        """The newest (or oldest) `(key, value)` of any key, without removing it."""
 
 
 @runtime_checkable

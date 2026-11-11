@@ -119,7 +119,7 @@ pub enum Pulled {
     /// The head is gone; here is its value, with its key in [`Popped::key`].
     Removed(Popped),
     /// The head's mode was refused, so it stays (D-001, D-056).
-    Refused { mode: i64 },
+    Refused { mode: i64, key: Option<OwnedKey> },
     /// The head was removed but its value file was cut short (a crash mid-write): try the next.
     Lost,
 }
@@ -646,7 +646,7 @@ impl Store {
     ) -> Result<Pulled> {
         enum Taken {
             Missing,
-            Refused(i64),
+            Refused(i64, Option<OwnedKey>),
             Inline(Popped),
             Opened(File, PathBuf, FileRow),
         }
@@ -659,10 +659,10 @@ impl Store {
                 let (id, seq) = match &found {
                     Found::Miss => return Ok(Changed::removing(Taken::Missing, removed)),
                     Found::Inline(hit) if refuse(hit.value.0) => {
-                        return Ok(Changed::removing(Taken::Refused(hit.value.0), removed));
+                        return Ok(Changed::removing(Taken::Refused(hit.value.0, hit.key.clone()), removed));
                     }
                     Found::File(file) if refuse(file.mode) => {
-                        return Ok(Changed::removing(Taken::Refused(file.mode), removed));
+                        return Ok(Changed::removing(Taken::Refused(file.mode, file.key.clone()), removed));
                     }
                     Found::Inline(hit) => hit.version.parts(),
                     Found::File(file) => file.version.parts(),
@@ -686,7 +686,7 @@ impl Store {
         })?;
         Ok(match taken {
             Taken::Missing => Pulled::Missing,
-            Taken::Refused(mode) => Pulled::Refused { mode },
+            Taken::Refused(mode, key) => Pulled::Refused { mode, key },
             Taken::Inline(popped) => Pulled::Removed(popped),
             Taken::Opened(handle, path, file) => match spill::read_open(&handle, &path, file.size)? {
                 Some(bytes) => Pulled::Removed(Popped {

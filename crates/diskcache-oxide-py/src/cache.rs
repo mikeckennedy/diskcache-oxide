@@ -17,7 +17,8 @@ use std::collections::{HashSet, VecDeque};
 use diskcache_oxide_core::key::{Key, OwnedKey};
 use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, Snapshot};
 use diskcache_oxide_core::open::{Requested, Role};
-use diskcache_oxide_core::ops::{Hit, Number, Pop, Value, Version, VersionDelete};
+use diskcache_oxide_core::ops::{Hit, Number, Pop, Pulled, Value, Version, VersionDelete};
+use diskcache_oxide_core::queue::{QueueRange, Side};
 use diskcache_oxide_core::rows::Tag;
 use diskcache_oxide_core::schema::{DEFAULT_SIZE_LIMIT, EvictionPolicy};
 use diskcache_oxide_core::store::{
@@ -488,6 +489,90 @@ impl Cache {
     ) -> PyResult<Py<PyAny>> {
         let durable = slf.get().config.failures.is_some();
         memoize_on(slf.as_any(), name, typed, expire, tag, ignore, durable)
+    }
+
+    // -- the queue calls (plan 24, release 4) --------------------------------------------------
+
+    /// Pushes `value` onto the queue `prefix` (None: the int queue) at `side` and returns its key.
+    #[pyo3(signature = (value, prefix = None, side = "back", expire = None, *, tag = None, retry = false))]
+    #[allow(clippy::too_many_arguments)]
+    fn push(
+        &self,
+        py: Python<'_>,
+        value: &Bound<'_, PyAny>,
+        prefix: Option<&Bound<'_, PyAny>>,
+        side: &str,
+        expire: Option<&Bound<'_, PyAny>>,
+        tag: Option<&Bound<'_, PyAny>>,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let range = queue_range(prefix)?;
+        let side = queue_side(side)?;
+        let t = codec::key::encode_tag(tag)?;
+        let (encoded, expire) = self.config.encode_value(py, value, expire)?;
+        let tag = t.as_ref().map(|t| Tag(t.key()));
+        retrying(py, retry, || self.config.push(py, &self.handle, &range, side, &encoded, expire, tag))
+    }
+
+    /// Removes and returns `(key, value)` from `side` of the queue `prefix`, or `default`.
+    #[pyo3(
+        signature = (prefix = None, default = QueueDefault(None), side = "front", *, expire_time = false, tag = false, retry = false),
+        text_signature = "($self, prefix=None, default=(None, None), side='front', *, expire_time=False, tag=False, retry=False)"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn pull(
+        &self,
+        py: Python<'_>,
+        prefix: Option<&Bound<'_, PyAny>>,
+        default: QueueDefault,
+        side: &str,
+        expire_time: bool,
+        tag: bool,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let range = queue_range(prefix)?;
+        let side = queue_side(side)?;
+        let wants = Wants { expire_time, tag };
+        retrying(py, retry, || self.config.pull(py, &self.handle, &range, side, default.or_pair(py)?, wants))
+    }
+
+    /// `(key, value)` at `side` of the queue `prefix`, or `default`, without removing it.
+    #[pyo3(
+        signature = (prefix = None, default = QueueDefault(None), side = "front", *, expire_time = false, tag = false, retry = false),
+        text_signature = "($self, prefix=None, default=(None, None), side='front', *, expire_time=False, tag=False, retry=False)"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn peek(
+        &self,
+        py: Python<'_>,
+        prefix: Option<&Bound<'_, PyAny>>,
+        default: QueueDefault,
+        side: &str,
+        expire_time: bool,
+        tag: bool,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let range = queue_range(prefix)?;
+        let side = queue_side(side)?;
+        let wants = Wants { expire_time, tag };
+        retrying(py, retry, || {
+            let found = self.config.peek_at(py, &self.handle, Position::Head(&range, side), wants.tag)?;
+            self.config.queue_answer(py, found, default.or_pair(py)?, wants)
+        })
+    }
+
+    /// The newest `(key, value)` (or with `last=False`, the oldest), of any key, without removing it.
+    #[pyo3(signature = (last = true, *, expire_time = false, tag = false, retry = false))]
+    #[allow(clippy::fn_params_excessive_bools)] // diskcache's signature.
+    fn peekitem(&self, py: Python<'_>, last: bool, expire_time: bool, tag: bool, retry: bool) -> PyResult<Py<PyAny>> {
+        let wants = Wants { expire_time, tag };
+        retrying(py, retry, || {
+            let found = self.config.peek_at(py, &self.handle, Position::Item { last }, wants.tag)?;
+            if found.is_none() {
+                return Err(PyKeyError::new_err("dictionary is empty"));
+            }
+            self.config.queue_answer(py, found, py.None(), wants)
+        })
     }
 
     // -- maintenance and iteration -------------------------------------------------------------
@@ -1162,6 +1247,211 @@ impl HandleConfig {
                 let e = codec::refusal(mode);
                 self.decode_failed(py, store, shard, key, Op::Pop, mode, e, Row::Kept).map(|()| None)
             }
+        }
+    }
+
+    // -- the queue calls (plan 24, release 4) ---------------------------------------------------
+
+    /// `push`: the value encoded once, outside any retry; the new key, or None when a durable handle
+    /// answers an outage (the item was never stored).
+    #[allow(clippy::too_many_arguments)]
+    fn push(
+        &self,
+        py: Python<'_>,
+        handle: &StoreHandle,
+        range: &QueueRange,
+        side: Side,
+        encoded: &codec::Encoded<'_>,
+        expire: Option<f64>,
+        tag: Option<Tag<'_>>,
+    ) -> PyResult<Py<PyAny>> {
+        let value = stored_value(&encoded.payload, encoded.mode.as_u8())?;
+        let now = self.now(py)?;
+        let pushed =
+            handle.run(self.timeout, |timeout| handle.store.push(timeout, range, side, value, expire, tag, now));
+        match self.attempt(py, &handle.store, Op::Push, now, pushed)? {
+            Some(key) => codec::key::decode_owned(py, &key),
+            None => Ok(py.None()),
+        }
+    }
+
+    /// `peek` and `peekitem`: the live item at `position` with its key, decoded, or `None`. Never
+    /// writes, and counts nothing in `stats()`. A value that can't be decoded goes through the decode
+    /// policy as `get`'s does, and is then a miss.
+    fn peek_at(
+        &self,
+        py: Python<'_>,
+        handle: &StoreHandle,
+        position: Position<'_>,
+        with_tag: bool,
+    ) -> PyResult<Option<Item>> {
+        let now = self.now(py)?;
+        let (store, codec) = (&*handle.store, &self.codec);
+        let op = match position {
+            Position::Head(..) => Op::Peek,
+            Position::Item { .. } => Op::PeekItem,
+        };
+        let read = handle.run(self.timeout, |timeout| {
+            let refuse = |mode| codec.refuses(mode);
+            let decode =
+                |mode: i64, value: ValueRef<'_>| Ok(decode_value(py, codec, mode, value).map_err(|e| (mode, e)));
+            match position {
+                Position::Head(range, side) => store.peek(timeout, range, side, now, with_tag, refuse, decode),
+                Position::Item { last } => store.peekitem(timeout, last, now, with_tag, refuse, decode),
+            }
+        });
+        let Some(Some(hit)) = self.attempt(py, store, op, now, read)? else { return Ok(None) };
+        let Some(key) = hit.key else { return Ok(None) };
+        match hit.value {
+            Ok(value) => Ok(Some((key, value, hit.expire_time, hit.tag))),
+            Err((mode, e)) => {
+                self.decode_failed(py, store, handle.shard, key.as_key(), op, mode, e, Row::Stored(hit.version))?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// `pull` (decision 23, D-056): read and decode the head as `peek` does, then delete exactly that
+    /// version, so an item this process can't read stays queued. A head lost to another puller means
+    /// read the new one; after [`PULL_ATTEMPTS`] losses, the locked removal, which can't starve. An
+    /// item no build could read is removed and reported, and the pull goes on to the next, so a miss
+    /// still means an empty queue; a head that stays (foreign, refused, a hook's failure) is a miss
+    /// or an error by the decode policy. One deadline for the whole call.
+    fn pull(
+        &self,
+        py: Python<'_>,
+        handle: &StoreHandle,
+        range: &QueueRange,
+        side: Side,
+        default: Py<PyAny>,
+        wants: Wants,
+    ) -> PyResult<Py<PyAny>> {
+        let now = self.now(py)?;
+        // In a child that can't write (D-020) a read could see an item; a pull fails.
+        let ready = handle.run(self.timeout, |timeout| handle.store.check_writable().map(|()| timeout));
+        let found = match self.attempt(py, &handle.store, Op::Pull, now, ready)? {
+            Some(timeout) => self.pull_item(py, handle, range, side, now, timeout, wants.tag)?,
+            None => None,
+        };
+        self.queue_answer(py, found, default, wants)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn pull_item(
+        &self,
+        py: Python<'_>,
+        handle: &StoreHandle,
+        range: &QueueRange,
+        side: Side,
+        now: f64,
+        timeout: Duration,
+        with_tag: bool,
+    ) -> PyResult<Option<Item>> {
+        let (store, shard, codec) = (&*handle.store, handle.shard, &self.codec);
+        let deadline = lockwait::deadline_after(Instant::now(), timeout);
+        let left = || deadline.saturating_duration_since(Instant::now());
+        let mut losses = 0;
+        while losses < PULL_ATTEMPTS {
+            let read = store.peek(
+                left(),
+                range,
+                side,
+                now,
+                with_tag,
+                |mode| codec.refuses(mode),
+                |mode, value| Ok(decode_value(py, codec, mode, value).map_err(|e| (mode, e))),
+            );
+            let Some(Some(hit)) = self.pull_attempt(py, store, now, read)? else { return Ok(None) };
+            let Some(key) = hit.key else { return Ok(None) };
+            match hit.value {
+                Ok(value) => match self.pull_attempt(py, store, now, store.delete_version(left(), hit.version))? {
+                    Some(true) => return Ok(Some((key, value, hit.expire_time, hit.tag))),
+                    Some(false) => losses += 1,
+                    None => return Ok(None),
+                },
+                Err((mode, e)) if !matches!(self.classify(py, store, mode, &e), Failure::Unreadable) => {
+                    // Stays for whoever can read it: nothing this puller can take.
+                    self.decode_failed(py, store, shard, key.as_key(), Op::Pull, mode, e, Row::Stored(hit.version))?;
+                    return Ok(None);
+                }
+                Err((mode, e)) => match self.pull_attempt(py, store, now, store.delete_version(left(), hit.version))? {
+                    // Removed and reported; then the next item.
+                    Some(true) => {
+                        self.decode_failed(py, store, shard, key.as_key(), Op::Pull, mode, e, Row::Removed)?;
+                    }
+                    Some(false) => losses += 1,
+                    None => {
+                        self.decode_failed(
+                            py,
+                            store,
+                            shard,
+                            key.as_key(),
+                            Op::Pull,
+                            mode,
+                            e,
+                            Row::Stored(hit.version),
+                        )?;
+                        return Ok(None);
+                    }
+                },
+            }
+            if left().is_zero() {
+                self.pull_attempt(py, store, now, Err::<(), _>(Error::Timeout { seconds: 0.0 }))?;
+                return Ok(None);
+            }
+        }
+        loop {
+            let removed = store.pull_locked(left(), range, side, now, with_tag, |mode| codec.refuses(mode));
+            match self.pull_attempt(py, store, now, removed)? {
+                None | Some(Pulled::Missing) => return Ok(None),
+                // Cut short by a crash: that item is lost; the next.
+                Some(Pulled::Lost) => {}
+                Some(Pulled::Refused { mode, key }) => {
+                    let key = key.unwrap_or_else(|| range.first_key());
+                    let e = codec::refusal(mode);
+                    self.decode_failed(py, store, shard, key.as_key(), Op::Pull, mode, e, Row::Kept)?;
+                    return Ok(None);
+                }
+                Some(Pulled::Removed(popped)) => {
+                    let key = popped.key.clone().unwrap_or_else(|| range.first_key());
+                    match decode_value(py, codec, popped.mode, popped.value_ref()) {
+                        Ok(value) => return Ok(Some((key, value, popped.expire_time, popped.tag))),
+                        Err(e) => {
+                            self.decode_failed(py, store, shard, key.as_key(), Op::Pull, popped.mode, e, Row::Removed)?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// [`HandleConfig::attempt`] for a store call during `pull`.
+    fn pull_attempt<T>(
+        &self,
+        py: Python<'_>,
+        store: &Store,
+        now: f64,
+        result: Result<T, Error>,
+    ) -> PyResult<Option<T>> {
+        self.attempt(py, store, Op::Pull, now, result.map_err(|e| self.whole_timeout(e)))
+    }
+
+    /// A queue call's answer in diskcache's shapes: `(key, value)`, widened with `expire_time` and
+    /// `tag`; `default` (widened to match) for none.
+    fn queue_answer(
+        &self,
+        py: Python<'_>,
+        found: Option<Item>,
+        default: Py<PyAny>,
+        wants: Wants,
+    ) -> PyResult<Py<PyAny>> {
+        let _ = self;
+        match found {
+            Some((key, value, expires, tag)) => {
+                let pair = PyTuple::new(py, [codec::key::decode_owned(py, &key)?, value])?.into_any().unbind();
+                wants.answer(py, pair, expires, tag.as_ref())
+            }
+            None => wants.answer(py, default, None, None),
         }
     }
 
@@ -2011,6 +2301,16 @@ enum Row {
     Kept,
 }
 
+/// Where `peek_at` reads: a queue's head, or the newest or oldest entry.
+#[derive(Clone, Copy)]
+enum Position<'a> {
+    Head(&'a QueueRange, Side),
+    Item { last: bool },
+}
+
+/// A queue item read or removed: its key, value, expiry and (if asked for) tag.
+type Item = (OwnedKey, Py<PyAny>, Option<f64>, Option<OwnedKey>);
+
 /// What a read of a live row found: the value, or the row's mode and why it couldn't be decoded.
 type Decoded = Hit<Result<Py<PyAny>, (i64, PyErr)>>;
 
@@ -2192,6 +2492,51 @@ impl<'a, 'py> FromPyObject<'a, 'py> for IncrDefault {
         if obj.is_none() { Ok(IncrDefault(None)) } else { number("default", &obj).map(|n| IncrDefault(Some(n))) }
     }
 }
+
+/// `pull`/`peek`'s `default`: any object, `None` included, told apart from being left out (diskcache's
+/// `(None, None)`).
+pub(crate) struct QueueDefault(Option<Py<PyAny>>);
+
+impl QueueDefault {
+    fn or_pair(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match &self.0 {
+            Some(given) => Ok(given.clone_ref(py)),
+            None => Ok(PyTuple::new(py, [py.None(), py.None()])?.into_any().unbind()),
+        }
+    }
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for QueueDefault {
+    type Error = PyErr;
+
+    fn extract(obj: pyo3::Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(QueueDefault(Some(obj.to_owned().unbind())))
+    }
+}
+
+/// A queue's `prefix`: None for the int queue, else a `str` (`''` included).
+fn queue_range(prefix: Option<&Bound<'_, PyAny>>) -> PyResult<QueueRange> {
+    match prefix {
+        None => Ok(QueueRange::Int),
+        Some(p) => match p.cast_exact::<PyString>() {
+            Ok(s) => Ok(QueueRange::Prefixed(s.to_str()?.to_owned())),
+            Err(_) => Err(PyTypeError::new_err(format!("prefix must be a str or None, not {}", p.get_type().name()?))),
+        },
+    }
+}
+
+/// A queue's `side`: `'front'` or `'back'` (D-057: `ValueError`, where diskcache raises `KeyError`).
+fn queue_side(side: &str) -> PyResult<Side> {
+    match side {
+        "front" => Ok(Side::Front),
+        "back" => Ok(Side::Back),
+        other => Err(PyValueError::new_err(format!("side must be 'front' or 'back', not {other:?}"))),
+    }
+}
+
+/// How many times `pull` may lose its head to another puller before it takes the locked removal
+/// (decision 23): fewer than `pop`'s, since pullers race for one head by design.
+const PULL_ATTEMPTS: usize = 3;
 
 /// An `incr`/`decr` operand: an exact int (fits 64 bits) or a float.
 fn number(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Number> {

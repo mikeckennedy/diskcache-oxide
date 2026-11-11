@@ -81,6 +81,7 @@ def d020(directory: Path) -> list[str]:
     other = directory.parent / f'{directory.name}-other'
     cache = Cache(directory, timeout=TIMEOUT)
     cache.set('before', 'parent')
+    queued = cache.push('queued')
     hold = cache.transact()
     hold.__enter__()
     cache.set('in-hold', 1)
@@ -104,6 +105,9 @@ def d020(directory: Path) -> list[str]:
         fails_fast('pop of a key the child can read', lambda: cache.pop('before'))
         fails_fast('pop of a missing key', lambda: cache.pop('missing'))
         assert cache.get('before') == 'parent', 'the refused pop removed nothing'
+        fails_fast('pull from a queue', cache.pull)
+        fails_fast('push onto a queue', lambda: cache.push('child'))
+        assert cache.peek() == (queued, 'queued'), 'peek still reads, and the refused pull removed nothing'
         fresh = Cache(directory, timeout=TIMEOUT)
         assert fresh.get('before') == 'parent'
         fails_fast('write through a fresh Cache', lambda: fresh.set('child', 1))

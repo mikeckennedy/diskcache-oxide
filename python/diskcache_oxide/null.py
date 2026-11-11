@@ -7,14 +7,17 @@ is written and is swept straight away. Every result follows from that one senten
 - `set` and `add` return True (the key was absent, so an add "succeeds");
 - `incr`/`decr` return `default ± delta`, and raise `KeyError` when `default=None`;
 - `delete`, `touch` and `in` are False;
-- `len`, `volume`, `clear`, `expire` and `cull` are 0;
+- `len`, `volume`, `clear`, `expire`, `cull` and `evict` are 0;
+- a queue is always empty: `push` returns the key an empty queue's first item gets, `pull` and
+  `peek` return the default, and `peekitem` raises `KeyError`;
 - iteration yields nothing.
 
 It's falsy and its `enabled` is False, so `if cache:` reads as "caching is on".
 
 **`invalidate=`.** Passing `invalidate=real_cache` forwards the operations that *remove* data to
-that cache: `delete`, `pop` (as a delete), `clear`, and `iterkeys` (so enumerate-then-delete
-revocation still works). Invalidation by removal then still lands while caching is off. Everything
+that cache: `delete`, `pop` (as a delete), `clear`, `evict`, and `iterkeys` (so
+enumerate-then-delete revocation still works). The queue calls are never forwarded: a switched-off
+cache must not consume a real queue's items. Invalidation by removal then still lands while caching is off. Everything
 else stays null, so invalidation that writes doesn't: a `set` that overwrites the stale value, or an
 `incr` that bumps a version key, is dropped, and the old value is served again once caching is back
 on.
@@ -87,6 +90,18 @@ def _check_policy(value: object) -> None:
         )
     if value not in _POLICIES:
         raise ValueError(f"eviction_policy must be 'least-recently-stored' or 'none', not {value!r}")
+
+
+def _check_prefix(prefix: object) -> None:
+    """A queue's `prefix`, as `Cache` checks it."""
+    if prefix is not None and type(prefix) is not str:
+        raise TypeError(f'prefix must be a str or None, not {type(prefix).__name__}')
+
+
+def _check_side(side: object) -> None:
+    """A queue's `side`, as `Cache` checks it (D-057)."""
+    if side not in ('front', 'back'):
+        raise ValueError(f"side must be 'front' or 'back', not {side!r}")
 
 
 def _check_tag(tag: object) -> None:
@@ -493,6 +508,98 @@ class NullCache:
         if self._invalidate is not None:
             self._invalidate.delete(key, retry=retry) if retry else self._invalidate.delete(key)
         return _answer(default, expire_time, tag)
+
+    # -- the queue calls: always empty, never forwarded -----------------------------------------
+
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int: ...
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: str,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> str: ...
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: str | None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int | str: ...
+    def push(
+        self,
+        value: Any,
+        prefix: str | None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int | str:
+        """Store nothing and return the key an empty queue's first item gets: the item expires the instant
+        it's written. Never forwarded to `invalidate=`."""
+        _check_retry(retry)
+        _check_prefix(prefix)
+        _check_side(side)
+        _check_seconds('expire', expire)
+        _check_tag(tag)
+        return 500_000_000_000_000 if prefix is None else f'{prefix}-500000000000000'
+
+    def pull(
+        self,
+        prefix: str | None = None,
+        default: Any = (None, None),
+        side: Literal['front', 'back'] = 'front',
+        *,
+        expire_time: bool = False,
+        tag: bool = False,
+        retry: bool = False,
+    ) -> Any:
+        """Return `default` (widened as `Cache.pull` widens it): the queue is always empty. Never forwarded
+        to `invalidate=`, which a switched-off cache must not consume."""
+        _check_retry(retry)
+        _check_prefix(prefix)
+        _check_side(side)
+        return _answer(default, expire_time, tag)
+
+    def peek(
+        self,
+        prefix: str | None = None,
+        default: Any = (None, None),
+        side: Literal['front', 'back'] = 'front',
+        *,
+        expire_time: bool = False,
+        tag: bool = False,
+        retry: bool = False,
+    ) -> Any:
+        """Return `default`, as `pull` does."""
+        _check_retry(retry)
+        _check_prefix(prefix)
+        _check_side(side)
+        return _answer(default, expire_time, tag)
+
+    def peekitem(self, last: bool = True, *, expire_time: bool = False, tag: bool = False, retry: bool = False) -> Any:
+        """Raise `KeyError`: the cache is always empty."""
+        _check_retry(retry)
+        raise KeyError('dictionary is empty')
 
     def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count."""

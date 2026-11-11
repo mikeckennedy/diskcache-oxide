@@ -91,6 +91,12 @@ impl QueueRange {
         }
     }
 
+    /// The key of the first item an empty queue gets: what a reset of this queue would hand out.
+    #[must_use]
+    pub fn first_key(&self) -> OwnedKey {
+        self.key_of(START)
+    }
+
     /// The key of item number `n`.
     pub(crate) fn key_of(&self, n: i64) -> OwnedKey {
         match self {
@@ -495,7 +501,7 @@ mod tests {
         push(&s, &q, Side::Back, "second");
         assert_eq!(
             s.pull_locked(T, &q, Side::Front, NOW, false, |mode| mode == MODE_BYTES).unwrap(),
-            Pulled::Refused { mode: MODE_BYTES }
+            Pulled::Refused { mode: MODE_BYTES, key: Some(OwnedKey::Str("q-500000000000000".into())) }
         );
         assert_eq!(rows(&s), 2, "a refused head stays, and the queue behind it waits");
         let Pulled::Removed(popped) = s.pull_locked(T, &q, Side::Front, NOW, true, |_| false).unwrap() else {
