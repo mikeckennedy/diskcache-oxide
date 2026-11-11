@@ -598,13 +598,15 @@ ts = [threading.Thread(target=hammer, args=(v,)) for v in (1, 2)]
     # by name: three of tests/unit/test_stack.py's four scenarios run on a small Python thread stack
     # (128 KiB), and a TSan interpreter's minimum is 200,704 bytes ("size must be at least 200704
     # bytes"), so the stacks they are about can't be set (every-position, on a 512 KiB stack, stays:
-    # the broadest codec-recursion check in the suite); and one wall-clock bound (clear() inside a
-    # held transaction within 60 ms, 65 ms seen) that TSan's slowdown breaks. All run natively on 3.14t.
+    # the broadest codec-recursion check in the suite); and two wall-clock bounds that TSan's slowdown
+    # breaks: clear() inside a held transaction within 60 ms (65 ms seen), and cull() against 4 writer
+    # threads within 4 s (about 0.25 s natively, 4.07 s seen). All run natively on 3.14t.
     env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider -o timeout=600 tests/unit \
         --deselect 'tests/unit/test_stack.py::test_scenario[the-deepest-row]' \
         --deselect 'tests/unit/test_stack.py::test_scenario[reads]' \
         --deselect 'tests/unit/test_stack.py::test_scenario[writes]' \
         --deselect 'tests/unit/test_concurrency.py::test_clear_inside_a_held_transaction_doesnt_pause_for_a_writer_that_cant_get_in' \
+        --deselect 'tests/unit/test_concurrency.py::test_cull_finishes_promptly_while_threads_hammer_writes' \
         >"$unit" 2>&1 || rc=1
     env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider -o timeout=600 --backend=oxide tests/conformance >"$conf" 2>&1 || rc=1
     local slow="$OUT/D-slow.log" slow_result=''
