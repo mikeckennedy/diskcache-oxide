@@ -153,9 +153,43 @@ Designed 2026-11-10, after release 1, from diskcache 5.6.3's `core.py` and `reci
 
 ## Release 3 (0.4.0): format 3, tags and `eviction_policy='none'`
 
-- A `tag` column with a partial index, `tag=` on writes and `tag=True` on reads, `evict(tag, retry=False)` chunked and bounded like `clear()` (D-011), fanned out per D-035. `memoize(tag=)` turns on.
-- A persisted `eviction_policy` setting, `'least-recently-stored'` (default) or `'none'`; any other value raises `ValueError` naming why LRU/LFU are out.
-- `FORMAT_VERSION` 3: a minor bump, caches deleted on upgrade, every worker stopped, said first in the changelog.
+Designed 2026-11-10, after release 2.
+
+### Decision (Michael, 2026-11-10, release 3)
+
+22. **Format 3 is a version bump, and caches are deleted on upgrade** (decision 4's "one bump", confirmed when the alternative was put to him: adding the columns in place, which would let old workers drop tags and ignore `eviction_policy='none'` during a deploy). A format-2 cache is refused with `FormatMismatchError`, which names the file and says to delete the cache with every worker stopped.
+
+### Schema (format 3)
+
+- `cache` gains `tag_type INTEGER` and `tag TEXT`, both NULL for an untagged entry, and a partial index `cache_tag ON cache (tag_type, tag) WHERE tag IS NOT NULL`, so untagged rows cost nothing. A tag is any key type (D-004), stored as a key is (a `str` as TEXT under `tag_type = 1`, anything else as a typed BLOB under 2, through the same `Key` and encoder): diskcache's tags (str, bytes, int, float) are covered.
+- `totals` gains `eviction_policy INTEGER NOT NULL` (1 least-recently-stored, 0 none), set at creation and by an explicit `eviction_policy=` or `reset('eviction_policy', ...)`, as `size_limit` is.
+- `FORMAT_VERSION` 3. Nothing else changes: the key encoding, the value modes, spill, the manifest and shard hash are as in release 1.
+
+### API
+
+- **Tags:** keyword-only `tag=None` on `set` and `add`; keyword-only `tag=False` on `get` and `pop`, returning `(value, tag)`, or with `expire_time=True` too `(value, expire_time, tag)` (diskcache's order); `(default, None)` and `(default, None, None)` on a miss. `incr`'s in-place update and `touch` keep the tag; `incr` of a missing key stores none (diskcache's insert). `cache[k] = v` stores none. `memoize(tag=)` and the recipes' `tag=` turn on. On `NullCache` and the protocols.
+- **`evict(tag, *, timeout=None, retry=False) -> int`:** removes every entry with that tag stored before the call, in chunks like `clear()` (D-011: a write made meanwhile survives), and returns the count; a FanoutCache fans out and reports partial failure as D-035 does. Not inside this thread's own transaction (as `clear`).
+- **`eviction_policy=None`** on `Cache` and `FanoutCache` (None: keep the stored one; a new cache gets `'least-recently-stored'`), `'least-recently-stored'` or `'none'`; `'least-recently-used'` and `'least-frequently-used'` raise `ValueError` saying why they're out (decision 6); anything else `ValueError`. With `'none'` neither a write nor `cull()` ever evicts for size (expired entries are still swept), so `size_limit` is unenforced; `volume()` still reports. A read-only `eviction_policy` attribute; `reset('eviction_policy', ...)` reads and sets it.
+- No `tag_index`, `create_tag_index` or `drop_tag_index` (decision 5): the index always exists.
+
+### Engine
+
+- `NewRow` gains `tag: Option<Key>`; the upsert writes `tag_type`/`tag` (an overwrite replaces the tag, NULL when none). `Store::set`/`add` take the tag; `get_with` and the pop paths read the tag columns and hand an `OwnedKey` back only when the caller asks (`Hit.tag`), so a plain `get` builds nothing extra.
+- `Store::evict(timeout, tag)` and `evict_until(snapshot, tag, deadline)`, built on `clear`'s chunked delete with `tag_type = ? AND tag = ?` on the partial index.
+- Cull reads `eviction_policy` with the other limits (`Limits` gains it; cached as `size_limit` is) and skips `delete_oldest` under `'none'`.
+
+### Conformance and divergences
+
+- Conformance first, against diskcache: tags through set/add/get/pop, every tag type, `incr`/`touch` and tags, `evict` (count, only that tag, a later write survives), `eviction_policy='none'` never evicting, `'least-recently-stored'` as today.
+- D-entries: `tag=` keyword-only (beside D-047); `evict` bounded by a snapshot (D-011's rule); LRU/LFU refused and no `tag_index` toggle (D-022 rewritten).
+
+### Steps
+
+1. Conformance tests, green on diskcache and the community fork.
+2. Schema, `FORMAT_VERSION` 3, tags in the core and binding.
+3. `evict`.
+4. `eviction_policy`.
+5. Docs (the changelog opens with the cache deletion), then the architect's release review.
 
 ## Release 4 (0.5.0): queue calls
 
