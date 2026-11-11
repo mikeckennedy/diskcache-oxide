@@ -1872,7 +1872,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L957-L990" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L957-L989" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Cache</span><span class="op">.</span><span class="sig-name">transact</span>(<span class="va">retry</span><span class="op">=</span><span class="cn-bool">False</span>)</span></code></pre></div>
@@ -1888,11 +1888,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dl>
 <dt><code><span class="doc-parameter-name">retry</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">bool</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="va">False</span></span></code></dt>
 <dd>
-<p>Keep trying to begin while it times out, instead of raising <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>. Never retries <a href="TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a>. Each attempt waits up to <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>.</p>
-</dd>
-<dt><code><span class="doc-parameter-name">retry</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">bool</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="va">False</span></span></code></dt>
-<dd>
-On a <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, try again until the call gets through, each round with the whole <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, a <code>durable=True</code> handle included. Only <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> is retried.
+Keep trying to begin while it times out, instead of raising <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, each attempt with the whole <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, a <code>durable=True</code> handle included. Only <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> is retried, never <a href="TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a>.
 </dd>
 </dl>
 </div>

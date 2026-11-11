@@ -972,10 +972,9 @@ class Cache:
         exits cleanly when its writes are gone.
 
         Args:
-            retry: Keep trying to begin while it times out, instead of raising `Timeout`. Never
-                retries `TransactionBusy`. Each attempt waits up to `timeout`.
-            retry: On a `Timeout`, try again until the call gets through, each round with the
-                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
+            retry: Keep trying to begin while it times out, instead of raising `Timeout`, each
+                attempt with the whole `timeout`, a `durable=True` handle included. Only `Timeout`
+                is retried, never `TransactionBusy`.
 
         Raises:
             TypeError: `retry` isn't a `bool`.

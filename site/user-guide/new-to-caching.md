@@ -39,7 +39,7 @@ for attempt in ('first call', 'second call'):
 ```
 
 
-    first call: 60.75 ms
+    first call: 55.46 ms
     second call: 0.02 ms
 
 

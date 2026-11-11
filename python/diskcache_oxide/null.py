@@ -29,7 +29,7 @@ at once, and an exception in the block doesn't undo them.
 
 The constructor accepts the same arguments as `Cache` and ignores them, so switching between the
 two is a one-line change. Bad argument *types* still raise as they would on `Cache` (`bool`
-expire/timeout, non-`str` keys), so code that works with a `NullCache` also works with a real one.
+expire/timeout, a list as a key or a tag), so code that works with a `NullCache` also works with a real one.
 """
 
 from __future__ import annotations
@@ -178,7 +178,7 @@ class NullCache:
     Args:
         directory: Accepted and ignored, like every other `Cache` argument, so switching between
             the two is a one-line change.
-        invalidate: A real cache to forward removals to (`delete`, `pop`, `clear` and `iterkeys`),
+        invalidate: A real cache to forward removals to (`delete`, `pop`, `clear`, `evict` and `iterkeys`),
             so invalidation by removal still lands while caching is off. Writes aren't forwarded:
             an overwriting `set` or a version-bump `incr` is dropped, and the old value is served
             once caching is back on.
@@ -667,10 +667,10 @@ class NullCache:
         Args:
             retry: Accepted for `Cache.transact()`'s signature; it must be a `bool`.
             key: Accepted so a switched-off sharded cache's `transact(key=...)` works too; it must be
-                a `str` or None.
+                a key or None.
 
         Raises:
-            TypeError: `retry` isn't a `bool`, or `key` isn't a `str` or None.
+            TypeError: `retry` isn't a `bool`, or `key` isn't a key type.
         """
         if not isinstance(retry, bool):
             raise TypeError(f'retry must be a bool, not {type(retry).__name__}')

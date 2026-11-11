@@ -562,10 +562,9 @@ rolled back after an error inside it) raises `TransactionAborted` at its exit, s
 exits cleanly when its writes are gone.
 
 Args:
-    retry: Keep trying to begin while it times out, instead of raising `Timeout`. Never
-        retries `TransactionBusy`. Each attempt waits up to `timeout`.
-    retry: On a `Timeout`, try again until the call gets through, each round with the
-        whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
+    retry: Keep trying to begin while it times out, instead of raising `Timeout`, each
+        attempt with the whole `timeout`, a `durable=True` handle included. Only `Timeout`
+        is retried, never `TransactionBusy`.
 
 Raises:
     TypeError: `retry` isn't a `bool`.
@@ -1250,7 +1249,7 @@ swept straight away: reads miss, writes succeed, and it's always empty. It's fal
 Args:
     directory: Accepted and ignored, like every other `Cache` argument, so switching between
         the two is a one-line change.
-    invalidate: A real cache to forward removals to (`delete`, `pop`, `clear` and `iterkeys`),
+    invalidate: A real cache to forward removals to (`delete`, `pop`, `clear`, `evict` and `iterkeys`),
         so invalidation by removal still lands while caching is off. Writes aren't forwarded:
         an overwriting `set` or a version-bump `incr` is dropped, and the old value is served
         once caching is back on.
@@ -1505,10 +1504,10 @@ land at once, and an exception in the block doesn't undo them.
 Args:
     retry: Accepted for `Cache.transact()`'s signature; it must be a `bool`.
     key: Accepted so a switched-off sharded cache's `transact(key=...)` works too; it must be
-        a `str` or None.
+        a key or None.
 
 Raises:
-    TypeError: `retry` isn't a `bool`, or `key` isn't a `str` or None.
+    TypeError: `retry` isn't a `bool`, or `key` isn't a key type.
 
 expire(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
 

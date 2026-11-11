@@ -4,18 +4,22 @@ A cache is a directory: every thread and process that opens the same path shares
 survives restarts. The entry points:
 
 - `Cache(directory)`: the cache. `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`,
-  dict syntax, `iterkeys(prefix=)`, `expire()`, `clear()`, `cull()`, `checkpoint()`, `transact()`.
+  dict syntax, `iterkeys(prefix=)`, `expire()`, `clear()`, `cull()`, `checkpoint()`, `transact()`,
+  `memoize()`, tags with `evict(tag)`, and the queue calls `push`, `pull`, `peek`, `peekitem`.
+  Keys are `str`, `bytes`, `int`, `float`, `bool`, `None` or tuples of those.
 - `FanoutCache(directory, shards=8)`: the same API over several databases, for many processes that
   write often.
 - `NullCache()`: caching switched off, with the same API, so call sites don't change.
 - `Caches(base_dir)`: a registry of named caches, each opened on first use.
 - `CacheLike`, `TransactionalCacheLike`, `ShardedCacheLike`: protocols for code that accepts any of
   them.
+- `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, `Averager`, `memoize_stampede`: the
+  coordination recipes, holding across every process.
 - `register_type(cls, name=..., encode=..., decode=...)`: store your own types without pickle; a
   dataclass needs only a name. `registry` is the process-wide `TypeRegistry` behind it.
 - Exceptions: `Timeout` (a `TimeoutError`), `TransactionBusy` (a `Timeout`), `TransactionAborted`,
   `FormatMismatchError` and `LayoutMismatchError` (`RuntimeError`s), `UnsafeValueError` (a
-  `TypeError`), `CorruptValueError` and `ForeignValueError` (`ValueError`s).
+  `TypeError`), `CorruptValueError`, `CorruptKeyError` and `ForeignValueError` (`ValueError`s).
 
 There is no command-line interface and no environment variable to set. Warnings and swallowed
 failures go to the `diskcache_oxide` logger.

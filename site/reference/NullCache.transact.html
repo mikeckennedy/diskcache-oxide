@@ -1893,7 +1893,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><code><span class="doc-parameter-name">key</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Key | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
-Accepted so a switched-off sharded cache’s <code>transact(key=...)</code> works too; it must be a <code>str</code> or None.
+Accepted so a switched-off sharded cache’s <code>transact(key=...)</code> works too; it must be a key or None.
 </dd>
 </dl>
 </div>
@@ -1904,7 +1904,7 @@ Accepted so a switched-off sharded cache’s <code>transact(key=...)</code> work
 <dl>
 <dt><code> <span class="doc-parameter-annotation">TypeError</span></code></dt>
 <dd>
-<code>retry</code> isn’t a <code>bool</code>, or <code>key</code> isn’t a <code>str</code> or None.
+<code>retry</code> isn’t a <code>bool</code>, or <code>key</code> isn’t a key type.
 </dd>
 </dl>
 </div>
