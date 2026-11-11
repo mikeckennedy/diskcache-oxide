@@ -671,7 +671,7 @@ episode:512:transcript</code></pre>
 <section id="option-1-delete-by-prefix" class="level1">
 <h1>Option 1: delete by prefix</h1>
 <p><code>iterkeys(prefix=...)</code> is an indexed range scan, so finding a user’s keys costs time in proportion to how many there are, not the size of the cache. It fetches keys a page at a time with no lock held in between, so deleting while iterating is safe.</p>
-<div id="7f845149" class="cell" data-execution_count="1">
+<div id="2e1333bd" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -698,7 +698,7 @@ episode:512:transcript</code></pre>
 <section id="option-2-tags" class="level1">
 <h1>Option 2: tags</h1>
 <p>A tag groups entries without a naming convention: pass <code>tag=</code> when you store, and <code>evict(tag)</code> removes every entry that has it. Entries for one user can live under unrelated keys, an API response keyed by URL, a rendered fragment keyed by template, and still go together.</p>
-<div id="8e0623b2" class="cell" data-execution_count="2">
+<div id="56b566fe" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'page:/settings'</span>, <span class="st">'&lt;html&gt;...'</span>, expire<span class="op">=</span><span class="dv">3600</span>, tag<span class="op">=</span><span class="st">'user:7'</span>)</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>((<span class="st">'api'</span>, <span class="st">'/v1/me'</span>, <span class="dv">7</span>), {<span class="st">'name'</span>: <span class="st">'Sam'</span>}, expire<span class="op">=</span><span class="dv">3600</span>, tag<span class="op">=</span><span class="st">'user:7'</span>)</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'page:/about'</span>, <span class="st">'&lt;html&gt;...'</span>, expire<span class="op">=</span><span class="dv">3600</span>)</span>
@@ -717,7 +717,7 @@ episode:512:transcript</code></pre>
 <section id="option-3-generation-numbers" class="level1">
 <h1>Option 3: generation numbers</h1>
 <p>Instead of deleting anything, keep a generation number per group and put it in every key. To invalidate the group, change the generation. Every old key becomes unreachable at once, in a single write, however many keys there were. The old entries are never read again, and they leave the cache when they expire or are evicted.</p>
-<div id="49f8538d" class="cell" data-execution_count="3">
+<div id="47cf05f8" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> generation(user_id: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>

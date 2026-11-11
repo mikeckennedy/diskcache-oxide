@@ -652,6 +652,8 @@ class Cache:
         value: Any = ...,
         update: bool = True,
     ) -> Literal['least-recently-stored', 'none']: ...
+    @overload
+    def reset(self, key: str, value: Any = ..., update: bool = True) -> int | str: ...
     def __reversed__(self) -> Iterator[Key]:
         """Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first)."""
     @overload
@@ -1330,6 +1332,8 @@ class FanoutCache:
         value: Any = ...,
         update: bool = True,
     ) -> Literal['least-recently-stored', 'none']: ...
+    @overload
+    def reset(self, key: str, value: Any = ..., update: bool = True) -> int | str: ...
     def __reversed__(self) -> Iterator[Key]:
         """Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first)."""
     @overload

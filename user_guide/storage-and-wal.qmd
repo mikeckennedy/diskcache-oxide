@@ -38,10 +38,10 @@ cache = Cache('/var/cache/my-app', size_limit=500 * 1024 * 1024, cull_limit=10)
 ```
 
 - `size_limit` is the cache's disk budget in bytes: the database plus value files. The default is 1 GiB and the minimum is 1 MiB.
-- When a `set()` finds the cache over its limit, it evicts up to `cull_limit` of the least recently stored entries (default 10). `cull()` evicts down to the limit on demand.
+- When a `set()` finds the cache over its limit, it evicts up to `cull_limit` of the least recently stored entries (default 10). `cull()` evicts down to the limit on demand. Under `eviction_policy='none'` neither evicts: only expired entries are removed, and the cache can grow past its limit.
 - `volume()` reports the current size.
 
-Least-recently-stored eviction means a `get` never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU policies are planned (see the [roadmap](roadmap.qmd)).
+Least-recently-stored eviction means a `get` never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU aren't supported, because they make every `get` a write (D-022, and see the [roadmap](roadmap.qmd)).
 
 ## Memory: `max_connections` and `sqlite_cache_size`
 
@@ -103,4 +103,4 @@ All of these work in chunks, release the database between chunks so other writer
 
 - `expire()` removes every expired entry and its value file.
 - `clear()` removes every entry that existed when it started, and keeps writes that land while it runs.
-- `cull()` evicts down to `size_limit`.
+- `cull()` removes expired entries, then evicts down to `size_limit` (nothing under `eviction_policy='none'`).

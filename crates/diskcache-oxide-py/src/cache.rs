@@ -1149,7 +1149,7 @@ impl HandleConfig {
         }
         let codec = &self.codec;
         let refuse = |mode| codec.refuses(mode);
-        let removed = store.pop(left(), key, now, refuse);
+        let removed = store.pop_tagged(left(), key, now, with_tag, refuse);
         match self.pop_attempt(py, store, now, removed)? {
             None | Some(Pop::Missing) => Ok(None),
             Some(Pop::Removed(popped)) => match decode_value(py, codec, popped.mode, popped.value_ref()) {

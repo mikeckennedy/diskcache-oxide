@@ -10,6 +10,8 @@ Usage
 NullCache.reset(self, key: Literal['size_limit', 'cull_limit'], value: Any = ..., update: bool = True) -> int
  
 NullCache.reset(self, key: Literal['eviction_policy'], value: Any = ..., update: bool = True) -> Literal['least-recently-stored', 'none']
+ 
+NullCache.reset(self, key: str, value: Any = ..., update: bool = True) -> int | str
 ```
 
 

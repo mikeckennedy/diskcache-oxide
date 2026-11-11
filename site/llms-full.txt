@@ -3447,10 +3447,10 @@ cache = Cache('/var/cache/my-app', size_limit=500 * 1024 * 1024, cull_limit=10)
 ```
 
 - `size_limit` is the cache's disk budget in bytes: the database plus value files. The default is 1 GiB and the minimum is 1 MiB.
-- When a `set()` finds the cache over its limit, it evicts up to `cull_limit` of the least recently stored entries (default 10). `cull()` evicts down to the limit on demand.
+- When a `set()` finds the cache over its limit, it evicts up to `cull_limit` of the least recently stored entries (default 10). `cull()` evicts down to the limit on demand. Under `eviction_policy='none'` neither evicts: only expired entries are removed, and the cache can grow past its limit.
 - `volume()` reports the current size.
 
-Least-recently-stored eviction means a `get` never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU policies are planned (see the [roadmap](roadmap.qmd)).
+Least-recently-stored eviction means a `get` never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU aren't supported, because they make every `get` a write (D-022, and see the [roadmap](roadmap.qmd)).
 
 ## Memory: `max_connections` and `sqlite_cache_size`
 
@@ -3512,7 +3512,7 @@ All of these work in chunks, release the database between chunks so other writer
 
 - `expire()` removes every expired entry and its value file.
 - `clear()` removes every entry that existed when it started, and keeps writes that land while it runs.
-- `cull()` evicts down to `size_limit`.
+- `cull()` removes expired entries, then evicts down to `size_limit` (nothing under `eviction_policy='none'`).
 
 
 
@@ -4333,10 +4333,10 @@ Two things can make a claim vanish early, and both argue for keeping claims out 
 - **Switching caching off.** A `NullCache` follows the rule "every entry expires the instant it's written", so its `add()` always returns `True`. With caching off, every worker's claim succeeds and the job runs once per worker. That's harmless for idempotent jobs and wrong for jobs with side effects, like sending email.
 - **Eviction.** When a cache is over its `size_limit`, it evicts the least recently stored entries, and a claim is exactly the kind of small, rarely written entry that goes first. If it's evicted before it expires, a second worker can claim the job.
 
-A separate cache directory just for coordination, which is never swapped for a `NullCache` and holds only a handful of tiny keys, avoids both:
+A separate cache directory just for coordination, which is never swapped for a `NullCache` and never evicts (`eviction_policy='none'`, so only expired claims go), avoids both:
 
 ```python
-coordination = Cache('/var/cache/my-app-coordination')
+coordination = Cache('/var/cache/my-app-coordination', eviction_policy='none')
 ```
 
 Proper cross-process `Lock` and `BoundedSemaphore` recipes are planned (see the [roadmap](../user-guide/roadmap.qmd)).
@@ -4616,7 +4616,7 @@ Tokens and idempotency keys aren't a copy of something you can recompute, so two
 - **Eviction.** A cache at its `size_limit` evicts the least recently stored entries, and an unused token is a tiny, old entry, exactly what goes first. An evicted reset link is a dead link; an evicted idempotency key is a double charge.
 - **Switching caching off.** A `NullCache` never stores, so `pop()` returns `None` and no token can ever be redeemed, and its `add()` always returns `True`, so every retry charges again.
 
-Give them a directory of their own, with a `size_limit` they'll never reach and no `NullCache` in front of it, as the [job claims](run-once.qmd#give-claims-their-own-small-cache) recipe does. [`Caches`](../user-guide/caches.qmd) can register it under its own name so the rest of the app's caches can still be switched off.
+Give them a directory of their own, opened with `eviction_policy='none'` so nothing is evicted for size (tokens still expire) and with no `NullCache` in front of it, as the [job claims](run-once.qmd#give-claims-their-own-small-cache) recipe does. [`Caches`](../user-guide/caches.qmd) can register it under its own name so the rest of the app's caches can still be switched off.
 
 `durable=True` is safe here, if you check return values: a `pop()` whose delete fails returns `None` rather than risk delivering the token twice (the user clicks again), `add()` fails closed, and a `set()` that was dropped returns `False`, so `issue_reset_token` should raise rather than hand out a link that was never stored. See [errors](../user-guide/errors.qmd).
 

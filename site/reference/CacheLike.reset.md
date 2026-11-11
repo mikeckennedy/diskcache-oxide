@@ -10,4 +10,6 @@ Usage
 CacheLike.reset(self, key: Literal['size_limit', 'cull_limit'], value: Any = ..., update: bool = True) -> int
  
 CacheLike.reset(self, key: Literal['eviction_policy'], value: Any = ..., update: bool = True) -> Literal['least-recently-stored', 'none']
+ 
+CacheLike.reset(self, key: str, value: Any = ..., update: bool = True) -> int | str
 ```

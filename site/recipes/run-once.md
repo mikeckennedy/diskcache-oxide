@@ -84,10 +84,10 @@ Two things can make a claim vanish early, and both argue for keeping claims out 
 - **Switching caching off.** A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) follows the rule "every entry expires the instant it's written", so its [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) always returns `True`. With caching off, every worker's claim succeeds and the job runs once per worker. That's harmless for idempotent jobs and wrong for jobs with side effects, like sending email.
 - **Eviction.** When a cache is over its [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), it evicts the least recently stored entries, and a claim is exactly the kind of small, rarely written entry that goes first. If it's evicted before it expires, a second worker can claim the job.
 
-A separate cache directory just for coordination, which is never swapped for a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and holds only a handful of tiny keys, avoids both:
+A separate cache directory just for coordination, which is never swapped for a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and never evicts (`eviction_policy='none'`, so only expired claims go), avoids both:
 
 ``` python
-coordination = Cache('/var/cache/my-app-coordination')
+coordination = Cache('/var/cache/my-app-coordination', eviction_policy='none')
 ```
 
 Proper cross-process `Lock` and `BoundedSemaphore` recipes are planned (see the [roadmap](../user-guide/roadmap.md)).

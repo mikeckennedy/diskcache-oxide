@@ -34,7 +34,7 @@ Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
 ## Returns
 
 
-`int | Literal['least-recently-stored', 'none']`  
+`int | Literal['least-recently-stored', 'none'] | int | str`  
 The setting: an `int` for a limit, the policy's name for [eviction_policy](Cache.eviction_policy.md#diskcache_oxide.Cache.eviction_policy).
 
 

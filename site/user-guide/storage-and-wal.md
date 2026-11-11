@@ -36,10 +36,10 @@ cache = Cache('/var/cache/my-app', size_limit=500 * 1024 * 1024, cull_limit=10)
 ```
 
 - [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) is the cache's disk budget in bytes: the database plus value files. The default is 1 GiB and the minimum is 1 MiB.
-- When a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) finds the cache over its limit, it evicts up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of the least recently stored entries (default 10). [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) evicts down to the limit on demand.
+- When a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) finds the cache over its limit, it evicts up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of the least recently stored entries (default 10). [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) evicts down to the limit on demand. Under `eviction_policy='none'` neither evicts: only expired entries are removed, and the cache can grow past its limit.
 - [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) reports the current size.
 
-Least-recently-stored eviction means a [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU policies are planned (see the [roadmap](roadmap.md)).
+Least-recently-stored eviction means a [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU aren't supported, because they make every [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) a write (D-022, and see the [roadmap](roadmap.md)).
 
 
 # Memory: `max_connections` and `sqlite_cache_size`
@@ -109,4 +109,4 @@ All of these work in chunks, release the database between chunks so other writer
 
 - [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) removes every expired entry and its value file.
 - [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) removes every entry that existed when it started, and keeps writes that land while it runs.
-- [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) evicts down to [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit).
+- [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) removes expired entries, then evicts down to [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) (nothing under `eviction_policy='none'`).

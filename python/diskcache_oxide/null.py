@@ -275,6 +275,8 @@ class NullCache:
         value: Any = ...,
         update: bool = True,
     ) -> Literal['least-recently-stored', 'none']: ...
+    @overload
+    def reset(self, key: str, value: Any = ..., update: bool = True) -> int | str: ...
     def reset(self, key: str, value: Any = ENOVAL, update: bool = True) -> Any:
         """Read `size_limit`, `cull_limit` or `eviction_policy`, or set it (checked as `Cache` checks it)
         and return it."""

@@ -180,6 +180,8 @@ class CacheLike(Protocol):
         value: Any = ...,
         update: bool = True,
     ) -> Literal['least-recently-stored', 'none']: ...
+    @overload
+    def reset(self, key: str, value: Any = ..., update: bool = True) -> int | str: ...
     def reset(self, key: str, value: Any = ..., update: bool = True) -> int | str:
         """Read or set `size_limit`, `cull_limit` or `eviction_policy`."""
 

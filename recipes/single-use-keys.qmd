@@ -102,7 +102,7 @@ Tokens and idempotency keys aren't a copy of something you can recompute, so two
 - **Eviction.** A cache at its `size_limit` evicts the least recently stored entries, and an unused token is a tiny, old entry, exactly what goes first. An evicted reset link is a dead link; an evicted idempotency key is a double charge.
 - **Switching caching off.** A `NullCache` never stores, so `pop()` returns `None` and no token can ever be redeemed, and its `add()` always returns `True`, so every retry charges again.
 
-Give them a directory of their own, with a `size_limit` they'll never reach and no `NullCache` in front of it, as the [job claims](run-once.qmd#give-claims-their-own-small-cache) recipe does. [`Caches`](../user-guide/caches.qmd) can register it under its own name so the rest of the app's caches can still be switched off.
+Give them a directory of their own, opened with `eviction_policy='none'` so nothing is evicted for size (tokens still expire) and with no `NullCache` in front of it, as the [job claims](run-once.qmd#give-claims-their-own-small-cache) recipe does. [`Caches`](../user-guide/caches.qmd) can register it under its own name so the rest of the app's caches can still be switched off.
 
 `durable=True` is safe here, if you check return values: a `pop()` whose delete fails returns `None` rather than risk delivering the token twice (the user clicks again), `add()` fails closed, and a `set()` that was dropped returns `False`, so `issue_reset_token` should raise rather than hand out a link that was never stored. See [errors](../user-guide/errors.qmd).
 

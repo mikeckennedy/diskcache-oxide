@@ -67,7 +67,8 @@ pub struct Popped {
     pub value: SqlValue,
     /// When the popped value would have expired, or `None` for never.
     pub expire_time: Option<f64>,
-    /// Its tag, or `None` if it had none.
+    /// Its tag, when the caller asked for it ([`Store::pop_tagged`]); otherwise `None` whatever
+    /// the tag.
     pub tag: Option<OwnedKey>,
 }
 
@@ -489,6 +490,19 @@ impl Store {
         now: f64,
         refuse: impl Fn(i64) -> bool,
     ) -> Result<Pop> {
+        self.pop_tagged(timeout, key, now, false, refuse)
+    }
+
+    /// [`Store::pop`], with the entry's tag in [`Popped::tag`] when `with_tag`; otherwise the tag
+    /// isn't decoded at all, so a damaged one can't fail a `pop` that didn't ask for it.
+    pub fn pop_tagged<'k>(
+        &self,
+        timeout: Duration,
+        key: impl Into<Key<'k>>,
+        now: f64,
+        with_tag: bool,
+        refuse: impl Fn(i64) -> bool,
+    ) -> Result<Pop> {
         let key = key.into();
         self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             let found = {
@@ -506,10 +520,14 @@ impl Store {
                             return Ok(Changed::removing(Pop::Refused { mode }, []));
                         }
                         let expire_time: Option<f64> = row.get(4).map_err(|e| Error::from_sqlite(e, timeout))?;
-                        let tag = stored_tag(
-                            row.get(5).map_err(|e| Error::from_sqlite(e, timeout))?,
-                            row.get_ref(6).map_err(|e| Error::from_sqlite(e, timeout))?,
-                        )?;
+                        let tag = if with_tag {
+                            stored_tag(
+                                row.get(5).map_err(|e| Error::from_sqlite(e, timeout))?,
+                                row.get_ref(6).map_err(|e| Error::from_sqlite(e, timeout))?,
+                            )?
+                        } else {
+                            None
+                        };
                         let filename: Option<String> = row.get(2).map_err(|e| Error::from_sqlite(e, timeout))?;
                         if let Some(relative) = filename {
                             // Under the write lock nothing can replace the file, so read it here. A
@@ -519,7 +537,7 @@ impl Store {
                                 mode,
                                 value: SqlValue::Blob(bytes),
                                 expire_time,
-                                tag: tag.clone(),
+                                tag,
                             })
                         } else {
                             let value = owned(row.get_ref(1).map_err(|e| Error::from_sqlite(e, timeout))?);
@@ -1255,9 +1273,27 @@ mod tests {
         assert_eq!(tag_of("inline"), Some(None));
         // pop, inline and from a file, carries the tag.
         for (key, want) in [("n", OwnedKey::Str("c".into())), ("file", OwnedKey::Typed(typed))] {
-            let Pop::Removed(popped) = s.pop(T, key, NOW, |_| false).unwrap() else { panic!("{key} missing") };
+            let Pop::Removed(popped) = s.pop_tagged(T, key, NOW, true, |_| false).unwrap() else {
+                panic!("{key} missing")
+            };
             assert_eq!(popped.tag, Some(want), "{key}");
         }
+    }
+
+    #[test]
+    fn a_damaged_tag_fails_only_a_pop_that_asked_for_it() {
+        let tmp = TempDir::new("ops-tag-damaged-pop");
+        let s = store(tmp.path(), Requested::default());
+        let typed = typed_tag(1);
+        for key in ["a", "b"] {
+            s.set_tagged(T, key, text("v"), None, Some(Tag((&typed).into())), NOW).unwrap();
+        }
+        s.write(T, |_, c| {
+            c.execute("UPDATE cache SET tag = X'FF00'", []).map(drop).map_err(|e| Error::from_sqlite(e, T))
+        })
+        .unwrap();
+        assert!(matches!(s.pop(T, "a", NOW, |_| false).unwrap(), Pop::Removed(Popped { tag: None, .. })));
+        assert!(matches!(s.pop_tagged(T, "b", NOW, true, |_| false), Err(Error::CorruptKey(_))));
     }
 
     #[test]

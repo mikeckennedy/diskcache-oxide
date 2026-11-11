@@ -721,10 +721,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, size_limit<span class="op">=</span><span class="dv">500</span> <span class="op">*</span> <span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>, cull_limit<span class="op">=</span><span class="dv">10</span>)</span></code></pre></div>
 <ul>
 <li><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> is the cache’s disk budget in bytes: the database plus value files. The default is 1 GiB and the minimum is 1 MiB.</li>
-<li>When a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> finds the cache over its limit, it evicts up to <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> of the least recently stored entries (default 10). <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> evicts down to the limit on demand.</li>
+<li>When a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> finds the cache over its limit, it evicts up to <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> of the least recently stored entries (default 10). <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> evicts down to the limit on demand. Under <code>eviction_policy='none'</code> neither evicts: only expired entries are removed, and the cache can grow past its limit.</li>
 <li><a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> reports the current size.</li>
 </ul>
-<p>Least-recently-stored eviction means a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU policies are planned (see the <a href="../user-guide/roadmap.html">roadmap</a>).</p>
+<p>Least-recently-stored eviction means a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU aren’t supported, because they make every <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> a write (D-022, and see the <a href="../user-guide/roadmap.html">roadmap</a>).</p>
 </section>
 <section id="memory-max_connections-and-sqlite_cache_size" class="level1">
 <h1>Memory: <code>max_connections</code> and <code>sqlite_cache_size</code></h1>
@@ -771,7 +771,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <ul>
 <li><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes every expired entry and its value file.</li>
 <li><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> removes every entry that existed when it started, and keeps writes that land while it runs.</li>
-<li><a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> evicts down to <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>.</li>
+<li><a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> removes expired entries, then evicts down to <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> (nothing under <code>eviction_policy='none'</code>).</li>
 </ul>
 
 
