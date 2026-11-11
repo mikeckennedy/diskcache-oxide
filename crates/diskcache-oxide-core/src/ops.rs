@@ -70,8 +70,6 @@ pub struct Popped {
     /// Its tag, when the caller asked for it ([`Store::pop_tagged`]); otherwise `None` whatever
     /// the tag.
     pub tag: Option<OwnedKey>,
-    /// Its key, for a removal by position ([`Store::pull_locked`]); `None` for one by key.
-    pub key: Option<OwnedKey>,
 }
 
 /// One stored version of a key: its row and its store sequence number (D-011, D-013). An overwrite
@@ -109,19 +107,6 @@ pub struct Hit<T> {
     /// The row's key, read with the version, for a read that found its row by position (a queue's
     /// head, the oldest or newest entry); `None` for a read by key.
     pub key: Option<OwnedKey>,
-}
-
-/// What [`Store::pull_locked`] did.
-#[derive(Debug, PartialEq)]
-pub enum Pulled {
-    /// The queue had no live item.
-    Missing,
-    /// The head is gone; here is its value, with its key in [`Popped::key`].
-    Removed(Popped),
-    /// The head's mode was refused, so it stays (D-001, D-056).
-    Refused { mode: i64, key: Option<OwnedKey> },
-    /// The head was removed but its value file was cut short (a crash mid-write): try the next.
-    Lost,
 }
 
 /// What [`Store::delete_version_nowait`] did.
@@ -578,11 +563,10 @@ impl Store {
                                 value: SqlValue::Blob(bytes),
                                 expire_time,
                                 tag,
-                                key: None,
                             })
                         } else {
                             let value = owned(row.get_ref(1).map_err(|e| Error::from_sqlite(e, timeout))?);
-                            Some(Popped { mode, value, expire_time, tag, key: None })
+                            Some(Popped { mode, value, expire_time, tag })
                         }
                     }
                     None => None,
@@ -628,78 +612,6 @@ impl Store {
             Ok(Changed::removing(key, removed).creating(pending.as_ref().map(|p| p.relative.clone())))
         });
         settle_with(pending.as_ref(), result, |_| true)
-    }
-
-    /// The locked half of `pull` (D-056): in one write transaction, the live head from `side`,
-    /// removed. A head whose mode `refuse` rejects stays ([`Pulled::Refused`]); a head whose value
-    /// file is gone is removed and the next taken. A spilled value's file is opened under the lock and
-    /// read after the commit, so no large read holds the write lock, and a short read then is a lost
-    /// item ([`Pulled::Lost`]): the caller goes on to the next.
-    pub fn pull_locked(
-        &self,
-        timeout: Duration,
-        range: &crate::queue::QueueRange,
-        side: crate::queue::Side,
-        now: f64,
-        with_tag: bool,
-        refuse: impl Fn(i64) -> bool,
-    ) -> Result<Pulled> {
-        enum Taken {
-            Missing,
-            Refused(i64, Option<OwnedKey>),
-            Inline(Popped),
-            Opened(File, PathBuf, FileRow),
-        }
-        let taken = self.write_files(timeout, LockPriority::Normal, |writer, tx| {
-            let mut gone = Vec::new();
-            let mut removed = Vec::new();
-            loop {
-                let mut copy = |mode: i64, value: ValueRef<'_>| Ok((mode, owned(value)));
-                let found = crate::queue::look_up_head(tx, range, side, &gone, now, with_tag, timeout, &mut copy)?;
-                let (id, seq) = match &found {
-                    Found::Miss => return Ok(Changed::removing(Taken::Missing, removed)),
-                    Found::Inline(hit) if refuse(hit.value.0) => {
-                        return Ok(Changed::removing(Taken::Refused(hit.value.0, hit.key.clone()), removed));
-                    }
-                    Found::File(file) if refuse(file.mode) => {
-                        return Ok(Changed::removing(Taken::Refused(file.mode, file.key.clone()), removed));
-                    }
-                    Found::Inline(hit) => hit.version.parts(),
-                    Found::File(file) => file.version.parts(),
-                };
-                removed.extend(writer.delete_version(id, seq)?);
-                match found {
-                    Found::Miss => unreachable!("returned above"),
-                    Found::Inline(Hit { value: (mode, value), expire_time, tag, key, .. }) => {
-                        let popped = Popped { mode, value, expire_time, tag, key };
-                        return Ok(Changed::removing(Taken::Inline(popped), removed));
-                    }
-                    Found::File(file) => match spill::open(self.directory(), &file.relative)? {
-                        Some((handle, path)) => {
-                            return Ok(Changed::removing(Taken::Opened(handle, path, file), removed));
-                        }
-                        // Gone though nothing could replace it (D-013): removed above; the next.
-                        None => gone.push(id),
-                    },
-                }
-            }
-        })?;
-        Ok(match taken {
-            Taken::Missing => Pulled::Missing,
-            Taken::Refused(mode, key) => Pulled::Refused { mode, key },
-            Taken::Inline(popped) => Pulled::Removed(popped),
-            Taken::Opened(handle, path, file) => match spill::read_open(&handle, &path, file.size)? {
-                Some(bytes) => Pulled::Removed(Popped {
-                    mode: file.mode,
-                    value: SqlValue::Blob(bytes),
-                    expire_time: file.expire_time,
-                    tag: file.tag,
-                    key: file.key,
-                }),
-                // Cut short by a crash before it was complete: the item is lost.
-                None => Pulled::Lost,
-            },
-        })
     }
 
     /// Sets a live entry's expiry (`None` = never) without counting as a store. Returns whether `key`
@@ -1629,7 +1541,7 @@ mod tests {
         ] {
             assert_eq!(
                 s.pop(T, key, NOW, |_| false).unwrap(),
-                Pop::Removed(Popped { mode, value, expire_time: None, tag: None, key: None }),
+                Pop::Removed(Popped { mode, value, expire_time: None, tag: None }),
                 "{key}"
             );
         }

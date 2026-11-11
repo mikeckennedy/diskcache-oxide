@@ -100,6 +100,8 @@ def _check_prefix(prefix: object) -> None:
 
 def _check_side(side: object) -> None:
     """A queue's `side`, as `Cache` checks it (D-057)."""
+    if type(side) is not str:
+        raise TypeError(f"argument 'side': {type(side).__name__!r} object is not a str")
     if side not in ('front', 'back'):
         raise ValueError(f"side must be 'front' or 'back', not {side!r}")
 

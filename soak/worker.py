@@ -1762,9 +1762,9 @@ def verify_pq(run_dir: Path) -> dict[str, Any]:
         # A kill between a winning add and its record leaves a token with no record: harmless.
         'unrecorded': len((delivered | queued) - produced),
         'ticks_per_s': PQ_TICKS_PER_S,
-        # Tokens a kill can lose per worker: each thread has at most one slot token and one queue item
-        # between its removal and its delivery record.
-        'threads': PQ_THREADS * 2,
+        # Tokens a kill can lose per worker: each thread finishes one delivery before it starts the next,
+        # so it has at most one token removed and not yet recorded.
+        'threads': PQ_THREADS,
     }
 
 

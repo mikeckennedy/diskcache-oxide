@@ -901,8 +901,10 @@ class Cache:
         Reads and decodes the item first, then deletes exactly that stored version, as `pop` does, so an
         item this process can't read stays queued for one that can (D-056): a pickled item on a
         `pickle=False` handle raises `UnsafeValueError`, and a newer deploy's value raises, or with
-        `on_decode_error='miss'` returns `default`. An item no build could read is removed and
-        reported, and the pull goes on to the next. Expired items are passed over. Inside a
+        `on_decode_error='miss'` returns `default`. An item no build could read is removed, then raised
+        as `CorruptValueError`, or under `'miss'` reported while the pull goes on to the next. A puller
+        that loses the head to others reads the new one; one that keeps losing until `timeout` raises
+        `Timeout`, having taken nothing. Expired items are passed over. Inside a
         `transact()` block it joins the transaction, and a rollback puts the item back.
 
         Args:
@@ -937,13 +939,13 @@ class Cache:
     ) -> Any:
         """The item at `side` of a queue, without removing it, as diskcache's `peek`.
 
-        Never writes (D-055): expired items are passed over and left for `expire()`. Arguments and
+        Writes only what `get` would (D-055): expired items are passed over and left for `expire()`. Arguments and
         return values as for `pull()`.
         """
 
     def peekitem(self, last: bool = True, *, expire_time: bool = False, tag: bool = False, retry: bool = False) -> Any:
         """The newest entry (or with `last=False`, the oldest) of any key, without removing it, as
-        diskcache's `peekitem`. Never writes; expired entries are passed over.
+        diskcache's `peekitem`. Writes only what `get` would; expired entries are passed over.
 
         Returns:
             `(key, value)`, widened with `expire_time` and `tag` as for `pull()`.

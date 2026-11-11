@@ -660,7 +660,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 
 <p>A web request needs a thumbnail rendered, an email sent or a transcript cleaned up, and none of it should make the user wait. The usual answer is a queue and a worker, and the usual queue is Redis. On one machine a cache directory does the job: <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push()</a> adds an item at one end, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> takes one from the other, and every process that opens the directory shares the queue.</p>
-<div id="3ed7125d" class="cell" data-execution_count="1">
+<div id="92abeaeb" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -680,11 +680,11 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>How it works</h1>
 <ul>
 <li><strong>A queue is a range of keys.</strong> <code>push(value, prefix='transcode')</code> stores the item under <code>'transcode-500000000000000'</code>, then <code>...001</code>, and so on; with no prefix the keys are ints. <code>side='front'</code> pushes to the other end, and <code>pull(side='back')</code> takes the newest item, so the same calls make a stack or a deque.</li>
-<li><strong>Each item goes to exactly one worker.</strong> <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> reads the front item, then deletes exactly the version it read; a worker that loses that race to another reads the new front. Run as many workers, in as many processes, as you like.</li>
+<li><strong>Each item goes to exactly one worker.</strong> <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> reads the front item, then deletes exactly the version it read; a worker that loses that race to another reads the new front, and since every lost race is another worker’s progress, the queue always drains. Run as many workers, in as many processes, as you like.</li>
 <li><strong>Nothing is lost to a reader that can’t read it.</strong> An item this process can’t decode, a pickled value on a <code>pickle=False</code> cache or a value of a type a newer deploy registered, stays at the front for a worker that can, and <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> raises (or, with <code>on_decode_error='miss'</code>, returns the default). An item no build could read (damaged bytes) is removed: by default <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> then raises <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a>, and with <code>on_decode_error='miss'</code> it logs the item and moves on to the next one.</li>
-<li><strong><a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek()</a> looks without taking.</strong> It never writes, so any number of processes can watch a queue at once. <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem()</a> gives the newest or oldest entry of the whole cache.</li>
+<li><strong><a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek()</a> looks without taking.</strong> It takes no lock in the normal case, so any number of processes can watch a queue at once. <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem()</a> gives the newest or oldest entry of the whole cache.</li>
 </ul>
-<div id="354cae4c" class="cell" data-execution_count="2">
+<div id="8d4d6fc3" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(jobs.peek(prefix<span class="op">=</span><span class="st">'transcode'</span>))                <span class="co"># the next item, left in place</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(jobs.peek(prefix<span class="op">=</span><span class="st">'transcode'</span>, side<span class="op">=</span><span class="st">'back'</span>))   <span class="co"># the newest</span></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="bu">len</span>(jobs))</span></code></pre></div>
@@ -698,7 +698,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-worker-loop" class="level1">
 <h1>A worker loop</h1>
 <p><a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> returns <code>(None, None)</code> when the queue is empty, or the <code>default</code> you pass.</p>
-<div id="ef1f1e70" class="cell" data-execution_count="3">
+<div id="2132eff6" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> work(job: <span class="bu">dict</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
@@ -721,7 +721,32 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 transcoding 512</code></pre>
 </div>
 </div>
-<p>A pulled item is gone as soon as <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> returns, so a worker that crashes halfway through <code>work()</code> loses it. If a job must survive that, keep a record of it under a key of its own until it’s done (<code>cache.set(f'running:{key}', job, expire=600)</code> after the pull, <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> it after the work), and have a sweeper push back anything whose record outlived its lease.</p>
+<p>A pulled item is gone as soon as <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> returns, so a worker that crashes halfway through <code>work()</code> loses it. If a job must survive that, give each job an id of its own and move it to a running record in the same transaction as the pull, so no crash can fall between the two. Delete the record when the work is done, and have a sweeper push back any record older than its lease:</p>
+<div id="263a941b" class="cell" data-execution_count="4">
+<div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> uuid</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>jobs.push({<span class="st">'id'</span>: uuid.uuid4().<span class="bu">hex</span>, <span class="st">'episode'</span>: <span class="dv">513</span>, <span class="st">'step'</span>: <span class="st">'transcode'</span>}, prefix<span class="op">=</span><span class="st">'transcode'</span>)</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> jobs.transact():</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>    key, job <span class="op">=</span> jobs.pull(prefix<span class="op">=</span><span class="st">'transcode'</span>)</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> key <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>        jobs.<span class="bu">set</span>(<span class="ss">f"running:</span><span class="sc">{</span>job[<span class="st">'id'</span>]<span class="sc">}</span><span class="ss">"</span>, (time.time(), job))   <span class="co"># no expire: the sweeper decides</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>work(job)</span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>jobs.delete(<span class="ss">f"running:</span><span class="sc">{</span>job[<span class="st">'id'</span>]<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> requeue_stale(cache: Cache, lease: <span class="bu">float</span> <span class="op">=</span> <span class="dv">600</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> record <span class="kw">in</span> cache.iterkeys(prefix<span class="op">=</span><span class="st">'running:'</span>):</span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a>        started, stale <span class="op">=</span> cache.get(record, (<span class="va">None</span>, <span class="va">None</span>))</span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> started <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span> <span class="kw">and</span> time.time() <span class="op">-</span> started <span class="op">&gt;</span> lease:</span>
+<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a>            <span class="cf">with</span> cache.transact():</span>
+<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a>                cache.push(stale, prefix<span class="op">=</span><span class="st">'transcode'</span>, side<span class="op">=</span><span class="st">'front'</span>)</span>
+<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a>                cache.delete(record)</span></code></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>transcoding 513</code></pre>
+</div>
+</div>
+<p>The key isn’t a lasting id (see below), which is why the job carries its own.</p>
 </section>
 <section id="things-to-know" class="level1">
 <h1>Things to know</h1>

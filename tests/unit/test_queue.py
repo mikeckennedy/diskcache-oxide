@@ -5,8 +5,10 @@ protocols. diskcache's behavior is in the conformance suite (`tests/conformance/
 
 from __future__ import annotations
 
+import multiprocessing
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -185,3 +187,82 @@ def test_the_queue_calls_are_on_transactional_caches_only(tmp_path: Path) -> Non
 def test_peekitem_on_an_empty_cache_raises_key_error(tmp_path: Path) -> None:
     with Cache(tmp_path) as cache, pytest.raises(KeyError, match='dictionary is empty'):
         cache.peekitem()
+
+
+def test_a_peek_that_removes_an_unreadable_head_reads_on(tmp_path: Path) -> None:
+    with Cache(tmp_path) as cache:
+        cache.set('older', 1)
+        cache.set('newest', {'a': 1})
+    damage(tmp_path, 'newest', "UPDATE cache SET value = X'C1' WHERE key = ?")
+    with Cache(tmp_path, on_decode_error='miss') as cache:
+        assert cache.peekitem() == ('older', 1), 'not KeyError: the cache isn’t empty'
+
+
+def test_racing_pullers_never_remove_a_foreign_head(tmp_path: Path) -> None:
+    with Cache(tmp_path) as cache:
+        key = cache.push('from a newer build', prefix='q')  # A str key, so the damage can find it.
+        cache.push('behind it', prefix='q')
+    damage(tmp_path, key, 'UPDATE cache SET mode = 99 WHERE key = ?')
+    with Cache(tmp_path, on_decode_error='miss') as cache:
+        results: list[Any] = []
+
+        def worker() -> None:
+            for _ in range(50):
+                results.append(cache.pull(prefix='q'))
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(60)
+        assert set(results) == {(None, None)}
+        assert len(cache) == 2, 'the foreign head and the item behind it are both still queued'
+
+
+@pytest.mark.parametrize('make', [lambda p: Cache(p), lambda p: NullCache(p)], ids=['Cache', 'NullCache'])
+def test_a_side_that_is_not_a_str_is_a_type_error_naming_it(tmp_path: Path, make: Any) -> None:
+    cache = make(tmp_path)
+    with pytest.raises(TypeError, match='side'):
+        cache.push('v', side=1)
+    cache.close()
+
+
+def _produce(directory: str, worker: int, items: int) -> None:
+    with Cache(directory) as cache:
+        for i in range(items):
+            side = 'back' if i % 2 else 'front'
+            cache.push((worker, i, b'x' * 100_000), prefix='jobs', side=side)
+
+
+def _consume(directory: str, results: Any, stop_after_idle: int) -> None:
+    got = []
+    idle = 0
+    with Cache(directory) as cache:
+        while idle < stop_after_idle:
+            key, item = cache.pull(prefix='jobs', side='back' if len(got) % 2 else 'front')
+            if key is None:
+                idle += 1
+                time.sleep(0.01)
+                continue
+            idle = 0
+            got.append((item[0], item[1]))
+    results.put(got)
+
+
+@pytest.mark.slow
+def test_pullers_in_many_processes_deliver_every_spilled_item_exactly_once(tmp_path: Path) -> None:
+    spawn = multiprocessing.get_context('spawn')
+    results = spawn.Queue()
+    producers = [spawn.Process(target=_produce, args=(str(tmp_path), w, 150)) for w in range(4)]
+    consumers = [spawn.Process(target=_consume, args=(str(tmp_path), results, 300)) for _ in range(8)]
+    for p in producers + consumers:
+        p.start()
+    for p in producers:
+        p.join(120)
+    delivered = [item for _ in consumers for item in results.get(timeout=120)]
+    for p in consumers:
+        p.join(60)
+    assert sorted(delivered) == sorted((w, i) for w in range(4) for i in range(150))
+    with Cache(tmp_path) as cache:
+        assert len(cache) == 0
+    assert not list(tmp_path.rglob('*.val')), 'every value file went with its item'

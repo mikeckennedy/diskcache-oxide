@@ -17,7 +17,7 @@ use std::collections::{HashSet, VecDeque};
 use diskcache_oxide_core::key::{Key, OwnedKey};
 use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, Snapshot};
 use diskcache_oxide_core::open::{Requested, Role};
-use diskcache_oxide_core::ops::{Hit, Number, Pop, Pulled, Value, Version, VersionDelete};
+use diskcache_oxide_core::ops::{Hit, Number, Pop, Value, Version, VersionDelete};
 use diskcache_oxide_core::queue::{QueueRange, Side};
 use diskcache_oxide_core::rows::Tag;
 use diskcache_oxide_core::schema::{DEFAULT_SIZE_LIMIT, EvictionPolicy};
@@ -1275,9 +1275,10 @@ impl HandleConfig {
         }
     }
 
-    /// `peek` and `peekitem`: the live item at `position` with its key, decoded, or `None`. Never
-    /// writes, and counts nothing in `stats()`. A value that can't be decoded goes through the decode
-    /// policy as `get`'s does, and is then a miss.
+    /// `peek` and `peekitem`: the live item at `position` with its key, decoded, or `None`. Writes only
+    /// what `get` would (D-055), and counts nothing in `stats()`. A value that can't be decoded goes
+    /// through the decode policy as `get`'s does: one no build could read is removed without waiting,
+    /// and the read goes on to the next item; one that stays is a miss.
     fn peek_at(
         &self,
         py: Python<'_>,
@@ -1291,32 +1292,43 @@ impl HandleConfig {
             Position::Head(..) => Op::Peek,
             Position::Item { .. } => Op::PeekItem,
         };
-        let read = handle.run(self.timeout, |timeout| {
-            let refuse = |mode| codec.refuses(mode);
-            let decode =
-                |mode: i64, value: ValueRef<'_>| Ok(decode_value(py, codec, mode, value).map_err(|e| (mode, e)));
-            match position {
-                Position::Head(range, side) => store.peek(timeout, range, side, now, with_tag, refuse, decode),
-                Position::Item { last } => store.peekitem(timeout, last, now, with_tag, refuse, decode),
-            }
-        });
-        let Some(Some(hit)) = self.attempt(py, store, op, now, read)? else { return Ok(None) };
-        let Some(key) = hit.key else { return Ok(None) };
-        match hit.value {
-            Ok(value) => Ok(Some((key, value, hit.expire_time, hit.tag))),
-            Err((mode, e)) => {
-                self.decode_failed(py, store, handle.shard, key.as_key(), op, mode, e, Row::Stored(hit.version))?;
-                Ok(None)
+        // The version whose decode last failed as unreadable: read again once it's been removed, and
+        // stop at a miss if it comes back (its removal had to be skipped).
+        let mut failed: Option<Version> = None;
+        loop {
+            let read = handle.run(self.timeout, |timeout| {
+                let refuse = |mode| codec.refuses(mode);
+                let decode =
+                    |mode: i64, value: ValueRef<'_>| Ok(decode_value(py, codec, mode, value).map_err(|e| (mode, e)));
+                match position {
+                    Position::Head(range, side) => store.peek(timeout, range, side, now, with_tag, refuse, decode),
+                    Position::Item { last } => store.peekitem(timeout, last, now, with_tag, refuse, decode),
+                }
+            });
+            let Some(Some(hit)) = self.attempt(py, store, op, now, read)? else { return Ok(None) };
+            let Some(key) = hit.key else { return Ok(None) };
+            match hit.value {
+                Ok(value) => return Ok(Some((key, value, hit.expire_time, hit.tag))),
+                Err((mode, e)) => {
+                    let unreadable = matches!(self.classify(py, store, mode, &e), Failure::Unreadable);
+                    self.decode_failed(py, store, handle.shard, key.as_key(), op, mode, e, Row::Stored(hit.version))?;
+                    if !unreadable || failed == Some(hit.version) {
+                        return Ok(None);
+                    }
+                    failed = Some(hit.version);
+                }
             }
         }
     }
 
-    /// `pull` (decision 23, D-056): read and decode the head as `peek` does, then delete exactly that
-    /// version, so an item this process can't read stays queued. A head lost to another puller means
-    /// read the new one; after [`PULL_ATTEMPTS`] losses, the locked removal, which can't starve. An
-    /// item no build could read is removed and reported, and the pull goes on to the next, so a miss
-    /// still means an empty queue; a head that stays (foreign, refused, a hook's failure) is a miss
-    /// or an error by the decode policy. One deadline for the whole call.
+    /// `pull` (decisions 23 and 25, D-056): read and decode the head as `peek` does, then delete
+    /// exactly that version, so an item this process can't read stays queued on every path: there is
+    /// no remove-then-decode fallback. A head lost to another puller means read the new one (each loss
+    /// is another puller's progress), pausing briefly with the interpreter released after
+    /// [`PULL_QUICK_LOSSES`] losses in a row; a puller that keeps losing until the deadline raises
+    /// `Timeout` and has taken nothing. An item no build could read is removed and reported, and the
+    /// pull goes on to the next, so a miss still means an empty queue; a head that stays (foreign,
+    /// refused, a hook's failure) is a miss or an error by the decode policy.
     fn pull(
         &self,
         py: Python<'_>,
@@ -1350,8 +1362,8 @@ impl HandleConfig {
         let (store, shard, codec) = (&*handle.store, handle.shard, &self.codec);
         let deadline = lockwait::deadline_after(Instant::now(), timeout);
         let left = || deadline.saturating_duration_since(Instant::now());
-        let mut losses = 0;
-        while losses < PULL_ATTEMPTS {
+        let mut losses: u32 = 0;
+        loop {
             let read = store.peek(
                 left(),
                 range,
@@ -1363,10 +1375,10 @@ impl HandleConfig {
             );
             let Some(Some(hit)) = self.pull_attempt(py, store, now, read)? else { return Ok(None) };
             let Some(key) = hit.key else { return Ok(None) };
-            match hit.value {
+            let lost = match hit.value {
                 Ok(value) => match self.pull_attempt(py, store, now, store.delete_version(left(), hit.version))? {
                     Some(true) => return Ok(Some((key, value, hit.expire_time, hit.tag))),
-                    Some(false) => losses += 1,
+                    Some(false) => true,
                     None => return Ok(None),
                 },
                 Err((mode, e)) if !matches!(self.classify(py, store, mode, &e), Failure::Unreadable) => {
@@ -1378,8 +1390,9 @@ impl HandleConfig {
                     // Removed and reported; then the next item.
                     Some(true) => {
                         self.decode_failed(py, store, shard, key.as_key(), Op::Pull, mode, e, Row::Removed)?;
+                        false
                     }
-                    Some(false) => losses += 1,
+                    Some(false) => true,
                     None => {
                         self.decode_failed(
                             py,
@@ -1394,33 +1407,18 @@ impl HandleConfig {
                         return Ok(None);
                     }
                 },
-            }
+            };
             if left().is_zero() {
                 self.pull_attempt(py, store, now, Err::<(), _>(Error::Timeout { seconds: 0.0 }))?;
                 return Ok(None);
             }
-        }
-        loop {
-            let removed = store.pull_locked(left(), range, side, now, with_tag, |mode| codec.refuses(mode));
-            match self.pull_attempt(py, store, now, removed)? {
-                None | Some(Pulled::Missing) => return Ok(None),
-                // Cut short by a crash: that item is lost; the next.
-                Some(Pulled::Lost) => {}
-                Some(Pulled::Refused { mode, key }) => {
-                    let key = key.unwrap_or_else(|| range.first_key());
-                    let e = codec::refusal(mode);
-                    self.decode_failed(py, store, shard, key.as_key(), Op::Pull, mode, e, Row::Kept)?;
-                    return Ok(None);
+            if lost {
+                losses += 1;
+                if losses > PULL_QUICK_LOSSES {
+                    pull_backoff(py, losses, left())?;
                 }
-                Some(Pulled::Removed(popped)) => {
-                    let key = popped.key.clone().unwrap_or_else(|| range.first_key());
-                    match decode_value(py, codec, popped.mode, popped.value_ref()) {
-                        Ok(value) => return Ok(Some((key, value, popped.expire_time, popped.tag))),
-                        Err(e) => {
-                            self.decode_failed(py, store, shard, key.as_key(), Op::Pull, popped.mode, e, Row::Removed)?;
-                        }
-                    }
-                }
+            } else {
+                losses = 0;
             }
         }
     }
@@ -2534,9 +2532,23 @@ fn queue_side(side: &str) -> PyResult<Side> {
     }
 }
 
-/// How many times `pull` may lose its head to another puller before it takes the locked removal
-/// (decision 23): fewer than `pop`'s, since pullers race for one head by design.
-const PULL_ATTEMPTS: usize = 3;
+/// How many races in a row `pull` may lose to other pullers before it pauses between tries.
+const PULL_QUICK_LOSSES: u32 = 3;
+
+/// The pause after `losses` lost races in a row: up to 50 µs per loss past the quick ones, at most
+/// 2 ms, jittered so pullers that lost together don't retry together, with the interpreter released;
+/// never past what's `left` of the call.
+fn pull_backoff(py: Python<'_>, losses: u32, left: Duration) -> PyResult<()> {
+    py.check_signals()?;
+    let ceiling = Duration::from_micros(50 * u64::from(losses - PULL_QUICK_LOSSES)).min(Duration::from_millis(2));
+    let nanos = u64::from(SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos()));
+    let ceiling_ns = u64::try_from(ceiling.as_nanos()).unwrap_or(u64::MAX).max(1);
+    let pause = Duration::from_nanos(nanos % ceiling_ns).min(left);
+    if !pause.is_zero() {
+        crate::detach(py, || std::thread::sleep(pause));
+    }
+    Ok(())
+}
 
 /// An `incr`/`decr` operand: an exact int (fits 64 bits) or a float.
 fn number(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Number> {

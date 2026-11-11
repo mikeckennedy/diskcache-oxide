@@ -24,9 +24,9 @@ print(key, job)
 # How it works
 
 - **A queue is a range of keys.** `push(value, prefix='transcode')` stores the item under `'transcode-500000000000000'`, then `...001`, and so on; with no prefix the keys are ints. `side='front'` pushes to the other end, and `pull(side='back')` takes the newest item, so the same calls make a stack or a deque.
-- **Each item goes to exactly one worker.** [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) reads the front item, then deletes exactly the version it read; a worker that loses that race to another reads the new front. Run as many workers, in as many processes, as you like.
+- **Each item goes to exactly one worker.** [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) reads the front item, then deletes exactly the version it read; a worker that loses that race to another reads the new front, and since every lost race is another worker's progress, the queue always drains. Run as many workers, in as many processes, as you like.
 - **Nothing is lost to a reader that can't read it.** An item this process can't decode, a pickled value on a `pickle=False` cache or a value of a type a newer deploy registered, stays at the front for a worker that can, and [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) raises (or, with `on_decode_error='miss'`, returns the default). An item no build could read (damaged bytes) is removed: by default [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) then raises [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError), and with `on_decode_error='miss'` it logs the item and moves on to the next one.
-- **[peek()](../reference/Cache.peek.md#diskcache_oxide.Cache.peek) looks without taking.** It never writes, so any number of processes can watch a queue at once. [peekitem()](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem) gives the newest or oldest entry of the whole cache.
+- **[peek()](../reference/Cache.peek.md#diskcache_oxide.Cache.peek) looks without taking.** It takes no lock in the normal case, so any number of processes can watch a queue at once. [peekitem()](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem) gives the newest or oldest entry of the whole cache.
 
 
 ``` python
@@ -71,7 +71,36 @@ drain(jobs, idle_sleep=0.01)
     transcoding 512
 
 
-A pulled item is gone as soon as [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) returns, so a worker that crashes halfway through `work()` loses it. If a job must survive that, keep a record of it under a key of its own until it's done (`cache.set(f'running:{key}', job, expire=600)` after the pull, [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) it after the work), and have a sweeper push back anything whose record outlived its lease.
+A pulled item is gone as soon as [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) returns, so a worker that crashes halfway through `work()` loses it. If a job must survive that, give each job an id of its own and move it to a running record in the same transaction as the pull, so no crash can fall between the two. Delete the record when the work is done, and have a sweeper push back any record older than its lease:
+
+
+``` python
+import uuid
+
+jobs.push({'id': uuid.uuid4().hex, 'episode': 513, 'step': 'transcode'}, prefix='transcode')
+
+with jobs.transact():
+    key, job = jobs.pull(prefix='transcode')
+    if key is not None:
+        jobs.set(f"running:{job['id']}", (time.time(), job))   # no expire: the sweeper decides
+
+work(job)
+jobs.delete(f"running:{job['id']}")
+
+def requeue_stale(cache: Cache, lease: float = 600) -> None:
+    for record in cache.iterkeys(prefix='running:'):
+        started, stale = cache.get(record, (None, None))
+        if started is not None and time.time() - started > lease:
+            with cache.transact():
+                cache.push(stale, prefix='transcode', side='front')
+                cache.delete(record)
+```
+
+
+    transcoding 513
+
+
+The key isn't a lasting id (see below), which is why the job carries its own.
 
 
 # Things to know

@@ -1,6 +1,7 @@
 //! The queue calls (plan 24, release 4; D-054 to D-057): a queue's key range, finding its head and
-//! its end, and the reads `peek` and `peekitem`. `push` and the locked half of `pull` are writes and
-//! live beside the other writes in `ops`.
+//! its end, and the reads `peek` and `peekitem`. `push` is a write and lives beside the other writes
+//! in `ops`. `pull` is `peek` and then [`Store::delete_version`] of exactly the version read, retried
+//! by the binding, which decodes in between (decision 25: never a remove-then-decode).
 //!
 //! A queue is a range of keys, as diskcache's: with no prefix the `int` keys `0 < n < END`, with one
 //! the `str` keys `'{prefix}-'` and 15 digits, numbered from [`START`]. Unlike diskcache's, a key
@@ -91,12 +92,6 @@ impl QueueRange {
         }
     }
 
-    /// The key of the first item an empty queue gets: what a reset of this queue would hand out.
-    #[must_use]
-    pub fn first_key(&self) -> OwnedKey {
-        self.key_of(START)
-    }
-
     /// The key of item number `n`.
     pub(crate) fn key_of(&self, n: i64) -> OwnedKey {
         match self {
@@ -109,8 +104,8 @@ impl QueueRange {
 fn int_key(n: i64) -> OwnedKey {
     let mut encoder = Encoder::new();
     encoder.int(n);
-    // One int is always a complete key.
-    OwnedKey::Typed(encoder.finish().unwrap_or_else(|_| unreachable!("a lone int is a valid key")))
+    #[allow(clippy::expect_used)] // One int is always a complete key.
+    OwnedKey::Typed(encoder.finish().expect("a lone int is a valid key"))
 }
 
 /// The range's rows in order, from the front or the back. Every statement here walks the
@@ -288,7 +283,7 @@ mod tests {
     use super::*;
     use crate::key::Key;
     use crate::open::Requested;
-    use crate::ops::{Pop, Pulled, Value};
+    use crate::ops::{Pop, Value};
     use crate::rows::Tag;
     use crate::schema::{MODE_BYTES, MODE_STR};
     use crate::store::{DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, OpenOptions};
@@ -332,12 +327,11 @@ mod tests {
         s.peek(T, range, side, now, false, |_| false, bytes_of).unwrap().map(|hit| (hit.key.unwrap(), hit.value))
     }
 
+    /// A pull as the binding does it: the head read, then exactly that version deleted.
     fn pull(s: &Store, range: &QueueRange, side: Side) -> Option<(OwnedKey, Vec<u8>)> {
-        match s.pull_locked(T, range, side, NOW, false, |_| false).unwrap() {
-            Pulled::Removed(p) => Some((p.key.unwrap(), bytes_of(p.mode, (&p.value).into()).unwrap())),
-            Pulled::Missing => None,
-            other => panic!("{other:?}"),
-        }
+        let hit = s.peek(T, range, side, NOW, false, |_| false, bytes_of).unwrap()?;
+        assert!(s.delete_version(T, hit.version).unwrap(), "no other puller here");
+        Some((hit.key.unwrap(), hit.value))
     }
 
     fn rows(s: &Store) -> i64 {
@@ -450,7 +444,8 @@ mod tests {
         assert_eq!(newest.value, b"new");
         let oldest = s.peekitem(T, false, NOW + 10.0, false, |_| false, bytes_of).unwrap().unwrap();
         assert_eq!((oldest.key, oldest.value), (Some(int_key(START + 1)), b"new".to_vec()), "skips the expired");
-        s.pull_locked(T, &q, Side::Front, NOW + 10.0, false, |_| false).unwrap();
+        let live = s.peek(T, &q, Side::Front, NOW + 10.0, false, |_| false, bytes_of).unwrap().unwrap();
+        assert!(s.delete_version(T, live.version).unwrap());
         assert!(s.peekitem(T, false, NOW + 10.0, false, |_| false, bytes_of).unwrap().is_none(), "only expired left");
     }
 
@@ -491,25 +486,24 @@ mod tests {
     }
 
     #[test]
-    fn pull_locked_leaves_a_refused_head_and_reads_a_spilled_one_after_the_commit() {
-        let tmp = TempDir::new("queue-pull");
+    fn a_refused_spilled_head_is_never_read_and_a_tagged_one_comes_with_its_tag() {
+        let tmp = TempDir::new("queue-refused");
         let s = store(tmp.path());
         let q = QueueRange::Prefixed("q".into());
         let big = vec![b'z'; crate::spill::THRESHOLD * 2];
         s.push(T, &q, Side::Back, Value::Bytes { mode: MODE_BYTES, data: &big }, None, Some(Tag(Key::Str("t"))), NOW)
             .unwrap();
         push(&s, &q, Side::Back, "second");
-        assert_eq!(
-            s.pull_locked(T, &q, Side::Front, NOW, false, |mode| mode == MODE_BYTES).unwrap(),
-            Pulled::Refused { mode: MODE_BYTES, key: Some(OwnedKey::Str("q-500000000000000".into())) }
-        );
-        assert_eq!(rows(&s), 2, "a refused head stays, and the queue behind it waits");
-        let Pulled::Removed(popped) = s.pull_locked(T, &q, Side::Front, NOW, true, |_| false).unwrap() else {
-            panic!()
-        };
-        assert_eq!(popped.value, rusqlite::types::Value::Blob(big));
-        assert_eq!(popped.tag, Some(OwnedKey::Str("t".into())));
-        assert!(walk(tmp.path()).is_empty(), "its file went at the commit");
+        let refused = s
+            .peek(T, &q, Side::Front, NOW, true, |mode| mode == MODE_BYTES, |_, v| Ok(matches!(v, ValueRef::Null)))
+            .unwrap()
+            .unwrap();
+        assert!(refused.value, "decode saw Null: the file was never read");
+        assert_eq!(rows(&s), 2, "and the head stays, with the queue behind it");
+        let hit = s.peek(T, &q, Side::Front, NOW, true, |_| false, bytes_of).unwrap().unwrap();
+        assert_eq!((hit.value, hit.tag), (big, Some(OwnedKey::Str("t".into()))));
+        assert!(s.delete_version(T, hit.version).unwrap());
+        assert!(walk(tmp.path()).is_empty(), "its file went with its row");
         let (count, size): (i64, i64) = s
             .read(T, |c| {
                 c.query_row("SELECT count, size FROM state", [], |r| Ok((r.get(0)?, r.get(1)?)))

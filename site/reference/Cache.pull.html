@@ -1872,7 +1872,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L889-L926" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/_core.pyi#L889-L928" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Cache</span><span class="op">.</span><span class="sig-name">pull</span>(</span>
@@ -1886,7 +1886,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
 </div>
 <div class="doc-text">
-<p>Reads and decodes the item first, then deletes exactly that stored version, as <a href="Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> does, so an item this process can’t read stays queued for one that can (D-056): a pickled item on a <code>pickle=False</code> handle raises <a href="UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>, and a newer deploy’s value raises, or with <code>on_decode_error='miss'</code> returns <code>default</code>. An item no build could read is removed and reported, and the pull goes on to the next. Expired items are passed over. Inside a <a href="Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block it joins the transaction, and a rollback puts the item back.</p>
+<p>Reads and decodes the item first, then deletes exactly that stored version, as <a href="Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> does, so an item this process can’t read stays queued for one that can (D-056): a pickled item on a <code>pickle=False</code> handle raises <a href="UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>, and a newer deploy’s value raises, or with <code>on_decode_error='miss'</code> returns <code>default</code>. An item no build could read is removed, then raised as <a href="CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a>, or under <code>'miss'</code> reported while the pull goes on to the next. A puller that loses the head to others reads the new one; one that keeps losing until <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> raises <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, having taken nothing. Expired items are passed over. Inside a <a href="Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block it joins the transaction, and a rollback puts the item back.</p>
 </div>
 <section id="parameters" class="level2 doc-parameters">
 <h2 class="doc-parameters">Parameters</h2>

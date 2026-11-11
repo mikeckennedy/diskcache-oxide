@@ -17,7 +17,7 @@ Cache.peekitem(
 ```
 
 
-diskcache's [peekitem](Cache.peekitem.md#diskcache_oxide.Cache.peekitem). Never writes; expired entries are passed over.
+diskcache's [peekitem](Cache.peekitem.md#diskcache_oxide.Cache.peekitem). Writes only what [get](Cache.get.md#diskcache_oxide.Cache.get) would; expired entries are passed over.
 
 
 ## Returns

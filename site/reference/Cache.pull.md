@@ -19,7 +19,7 @@ Cache.pull(
 ```
 
 
-Reads and decodes the item first, then deletes exactly that stored version, as [pop](Cache.pop.md#diskcache_oxide.Cache.pop) does, so an item this process can't read stays queued for one that can (D-056): a pickled item on a `pickle=False` handle raises [UnsafeValueError](UnsafeValueError.md#diskcache_oxide.UnsafeValueError), and a newer deploy's value raises, or with `on_decode_error='miss'` returns `default`. An item no build could read is removed and reported, and the pull goes on to the next. Expired items are passed over. Inside a [transact()](Cache.transact.md#diskcache_oxide.Cache.transact) block it joins the transaction, and a rollback puts the item back.
+Reads and decodes the item first, then deletes exactly that stored version, as [pop](Cache.pop.md#diskcache_oxide.Cache.pop) does, so an item this process can't read stays queued for one that can (D-056): a pickled item on a `pickle=False` handle raises [UnsafeValueError](UnsafeValueError.md#diskcache_oxide.UnsafeValueError), and a newer deploy's value raises, or with `on_decode_error='miss'` returns `default`. An item no build could read is removed, then raised as [CorruptValueError](CorruptValueError.md#diskcache_oxide.CorruptValueError), or under `'miss'` reported while the pull goes on to the next. A puller that loses the head to others reads the new one; one that keeps losing until [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) raises [Timeout](Timeout.md#diskcache_oxide.Timeout), having taken nothing. Expired items are passed over. Inside a [transact()](Cache.transact.md#diskcache_oxide.Cache.transact) block it joins the transaction, and a rollback puts the item back.
 
 
 ## Parameters

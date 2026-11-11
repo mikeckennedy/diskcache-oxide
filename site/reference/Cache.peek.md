@@ -19,4 +19,4 @@ Cache.peek(
 ```
 
 
-Never writes (D-055): expired items are passed over and left for [expire()](Cache.expire.md#diskcache_oxide.Cache.expire). Arguments and return values as for [pull()](Cache.pull.md#diskcache_oxide.Cache.pull).
+Writes only what [get](Cache.get.md#diskcache_oxide.Cache.get) would (D-055): expired items are passed over and left for [expire()](Cache.expire.md#diskcache_oxide.Cache.expire). Arguments and return values as for [pull()](Cache.pull.md#diskcache_oxide.Cache.pull).

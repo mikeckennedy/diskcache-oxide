@@ -445,11 +445,11 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: a queue must never hand out, renumber or crash on a key that isn't one of its items.
 - Tests: `tests/conformance/test_queue.py`, `tests/unit/test_queue.py`
 
-## D-055 peek and peekitem never write, and never spin
+## D-055 peek and peekitem don't delete what they pass, and never spin
 
 - Kind: test-visible
 - diskcache: `peek` and `peekitem` take the write lock and delete the expired entries they pass, and both loop forever when the head's value file is missing, since that row is never deleted (upstream bug 16).
-- oxide: they take no write lock: the head is the first live entry, and expired ones are left to `expire()` and the next write's sweep. A head whose value file is gone is removed without waiting, as `get` removes one (D-013), and the call goes on to the next item.
+- oxide: they write only what `get` would: the head is the first live entry, and expired ones are left to `expire()` and the next write's sweep. A head whose value file is gone, or whose bytes no build could read (under `on_decode_error='miss'`), is removed without waiting, as `get` removes one (D-013), and the call goes on to the next item. Like `get`, a read that keeps losing a spilled head to overwrites takes the write lock once to read it (D-016).
 - Why: reads never write (D-019), so any number of processes can peek at once.
 - Tests: `tests/conformance/test_queue.py`, `tests/unit/test_queue.py`
 
@@ -457,8 +457,8 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: test-visible
 - diskcache: `pull` deletes the head in its transaction and decodes it afterwards, so an item it can't decode is lost.
-- oxide: `pull` reads and decodes the head first and then deletes exactly that version, as `pop` does (D-026), falling back to a locked removal after losing the head to other pullers 3 times. An item this process can't read stays at the head: a pickled one under `pickle=False` raises `UnsafeValueError`, and a foreign one (a newer deploy's type) raises or, under `on_decode_error='miss'`, makes `pull` return the default. One that no build could read is removed; it then raises `CorruptValueError`, or under `on_decode_error='miss'` is reported and `pull` goes on to the next item rather than returning the default, so a worker draining the queue doesn't stop early.
-- Why: a queue's producer and consumer are often different services, upgraded at different times (Michael, decision 23).
+- oxide: `pull` reads and decodes the head first and then deletes exactly that version, as `pop` does (D-026), and unlike `pop` it never falls back to removing before it decodes: a puller that loses the head to another reads the new one, pausing briefly after a few losses in a row, and one that keeps losing until its `timeout` raises `Timeout` having taken nothing. An item this process can't read stays at the head: a pickled one under `pickle=False` raises `UnsafeValueError`, and a foreign one (a newer deploy's type) raises or, under `on_decode_error='miss'`, makes `pull` return the default. One that no build could read is removed; it then raises `CorruptValueError`, or under `on_decode_error='miss'` is reported and `pull` goes on to the next item rather than returning the default, so a worker draining the queue doesn't stop early.
+- Why: a queue's producer and consumer are often different services, upgraded at different times (Michael, decisions 23 and 25). Each lost race is another puller's progress, so the queue always drains.
 - Tests: `tests/unit/test_queue.py`
 
 ## D-057 push raises past its range, and a bad side is a ValueError
