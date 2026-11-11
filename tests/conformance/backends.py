@@ -34,6 +34,10 @@ FEATURE_PHASES: dict[str, str] = {
     'memoize': '6a',
     'key_types': '6a',
     'retry': '6a',
+    'reversed': '6a',
+    'pop_expire_time': '6a',
+    'pickling': '6a',
+    'reset': '6a',
     'peek_pull_push': '6a',
     'read': '6a',
     'check': '6a',
@@ -75,6 +79,10 @@ class Backend:
     patches_time_time: bool = False
     # The imported backend package (diskcache, diskcache_oxide, ...).
     _module: Any
+
+    def recipe(self, name: str) -> Any:
+        """A recipe or constant from the backend's package (`Lock`, `throttle`, `ENOVAL`, ...)."""
+        return getattr(self._module, name)
 
     def make_cache(
         self,
