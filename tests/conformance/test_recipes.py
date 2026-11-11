@@ -164,3 +164,15 @@ def test_memoize_stampede_caches_and_keys_like_memoize(cache: Any, backend: Back
     assert key[1:] == (4, None)
     value, seconds = cache.get(key)
     assert value == 16 and seconds >= 0
+
+
+@pytest.mark.diverges(
+    backend='oxide', ref='D-051', reason='the owner carries a per-process nonce', raises=AssertionError
+)
+def test_an_rlock_stores_its_owner_as_pid_and_thread(cache: Any, backend: Backend) -> None:
+    import os
+
+    rlock = backend.recipe('RLock')(cache, 'owned')
+    rlock.acquire()
+    assert cache.get('owned') == (f'{os.getpid()}-{threading.get_ident()}', 1)
+    rlock.release()

@@ -184,6 +184,11 @@ impl FanoutCache {
         self.config.failures.is_some()
     }
 
+    /// As `Cache._in_transaction`: whether this thread holds a transaction on any of the shards.
+    fn _in_transaction(&self) -> bool {
+        self.shards.iter().any(|h| h.store.held_by_this_thread())
+    }
+
     /// As `Cache.check`, over every shard in turn, each with the cache's `timeout`.
     #[pyo3(signature = (fix = false, retry = false))]
     fn check(&self, py: Python<'_>, fix: bool, retry: bool) -> PyResult<Py<pyo3::types::PyList>> {

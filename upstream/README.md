@@ -20,6 +20,8 @@ Status checked on 2026-10-27, against open and closed issues and PRs in both rep
 | 10 | Opening a cache with unchanged settings writes to the database | `open_writes_unchanged_settings.py` | not reported (related: #113, read-only caches) | fixed (PR #17) | fixed (D-019) |
 | 11 | `iterkeys()` takes quadratic time | `iterkeys_is_quadratic.py` | not reported (Talk Python measured 23 s at 400k keys) | not reported | fixed: keyset-paged range scan, 10 ms at 400k keys (Spike 4a) |
 | 12 | A large value set inside a `transact()` that rolls back leaves its file on disk | `rolled_back_transact_leaks_value_file.py` | not checked | not checked | not affected: a rolled-back transaction's files are removed (pinned in plan 17's tests) |
+| 13 | `throttle(expire=...)` raises `TypeError` once its bucket expires or is cleared | `throttle_crashes_after_its_bucket_expires.py` | not checked | not checked | fixed: a missing bucket is a full one (D-051) |
+| 14 | Every decoration of a throttled function refills the shared bucket | `throttle_decoration_refills_the_bucket.py` | not checked | not checked | fixed: decoration adds the bucket (D-051) |
 
 ## 1. A top-level NaN reads back as None
 
@@ -75,3 +77,11 @@ Inside `with cache.transact():`, a `set` of a large value writes its file at onc
 - `incr` on `True` raises `TypeError: can't concat int to bytes` (a bool is stored pickled).
 - `pop` on a missing key returns `None` instead of raising like `dict.pop`.
 - An empty open cache is falsy because `__len__` is 0. Upstream PR #350 proposes `__bool__`.
+
+## 13. throttle(expire=...) raises TypeError once its bucket expires
+
+`throttle` keeps its token bucket under one key, set when the function is decorated. Each call does `last, tally = cache.get(key)` with no default (recipes.py, `throttle`). Once the row is gone (it expired after an idle gap longer than `expire`, a `clear()` removed it, or culling evicted it), `get` returns `None` and unpacking it raises `TypeError` on every later call. Found while porting the recipes for plan 24 (2026-11-10). **Impact:** a throttled function stops working entirely after a quiet period, or after any cache maintenance.
+
+## 14. Every decoration of a throttled function refills the shared bucket
+
+At decoration `throttle` runs `cache.set(key, (now, count))`, resetting the bucket to full. Every worker process that imports the module decorates the function again, so each one refills the bucket the others share, and a limit of `count` per `seconds` becomes up to `count` per worker start. Found with bug 13. **Impact:** the throttle doesn't limit a multi-process app, which is when it's needed.

@@ -61,6 +61,7 @@ OXIDE_EARLY_FEATURES = frozenset(
         'reset',
         'statistics',
         'check',
+        'recipes',
     }
 )
 assert OXIDE_EARLY_FEATURES <= set(FEATURE_PHASES)

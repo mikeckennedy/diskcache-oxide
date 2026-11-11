@@ -62,6 +62,7 @@ from diskcache_oxide._warnings import EmptyDirWarning, UnknownFileWarning
 from diskcache_oxide.caches import Caches, CacheStats
 from diskcache_oxide.null import NullCache
 from diskcache_oxide.protocol import CacheLike, ShardedCacheLike, TransactionalCacheLike
+from diskcache_oxide.recipes import Averager, BoundedSemaphore, Lock, RLock, barrier, memoize_stampede, throttle
 
 
 def register_type[T](
@@ -101,6 +102,13 @@ def registered_types() -> dict[str, type]:
 
 
 __all__ = [
+    'throttle',
+    'memoize_stampede',
+    'barrier',
+    'RLock',
+    'Lock',
+    'BoundedSemaphore',
+    'Averager',
     'BUNDLED_SQLITE_VERSION',
     'Cache',
     'CacheLike',

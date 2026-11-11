@@ -241,6 +241,12 @@ impl Cache {
         self.config.failures.is_some()
     }
 
+    /// For the recipes: whether this thread holds a transaction on this cache, inside which a recipe
+    /// that waited would hold the write lock and could never be released by another process.
+    fn _in_transaction(&self) -> bool {
+        self.handle.store.held_by_this_thread()
+    }
+
     /// Checks the database and the value files against each other, as diskcache's `check()`: a list
     /// of `warnings.WarningMessage`. With `fix`, repairs what it can and `VACUUM`s.
     #[pyo3(signature = (fix = false, retry = false))]

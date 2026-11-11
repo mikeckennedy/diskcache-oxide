@@ -265,6 +265,37 @@ def stats_after_fork(directory: Path) -> list[str]:
     return failures
 
 
+def rlock_after_fork(directory: Path) -> list[str]:
+    """An RLock the parent holds is another owner's in a forked child (decision 18): the child can't
+    re-enter it (it would wait) or release it (AssertionError), and the parent still can."""
+    from diskcache_oxide import RLock
+
+    cache = Cache(directory, timeout=TIMEOUT)
+    rlock = RLock(cache, 'shared')
+    rlock.acquire()
+
+    def child() -> None:
+        try:
+            rlock.release()
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("the child released its parent's lock")
+        got = threading.Event()
+        threading.Thread(target=lambda: (rlock.acquire(), got.set()), daemon=True).start()
+        assert not got.wait(0.3), "the child re-entered its parent's lock"
+
+    code = wait(fork(child))
+    failures = []
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    rlock.release()
+    with rlock:
+        pass
+    cache.close()
+    return failures
+
+
 def two_forkers(directory: Path) -> list[str]:
     """Two threads fork at the same time, repeatedly, while a third reads and writes the cache."""
     rounds = 10
@@ -1042,6 +1073,7 @@ SCENARIOS = {
     'fork-while-a-write-retries': fork_while_a_write_retries,
     'two-forkers': two_forkers,
     'stats-after-fork': stats_after_fork,
+    'rlock-after-fork': rlock_after_fork,
     'parent-closes-after-fork': parent_closes_after_fork,
     'shared-iterator-while-a-fork-waits': shared_iterator_while_a_fork_waits,
     'fanout-fork-while-writing': fanout_fork_while_writing,

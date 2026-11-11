@@ -413,6 +413,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: a `check(fix=True)` that deleted a live writer's file, or blessed a truncated value, would cause the damage it's meant to find (Michael's decision 20, plan 24).
 - Tests: `tests/conformance/test_parity.py`, `check::tests`
 
+## D-051 The coordination recipes
+
+- Kind: test-visible
+- diskcache: `Lock`, `RLock`, `BoundedSemaphore`, `Averager`, `throttle` and `barrier` work on any cache; `RLock`'s owner is `'{pid}-{tid}'`; `throttle` raises `TypeError` once its bucket expires or is cleared, and every decoration refills the bucket (upstream bugs 13 and 14); a recipe that waits inside the caller's own transaction polls forever while holding the write lock; its checks are `assert`s.
+- oxide: the coordination recipes refuse a `NullCache` and a `durable=True` handle with `TypeError` (`memoize_stampede` follows `memoize` instead); `RLock`'s owner is `'{pid}-{tid}-{nonce}'`, the nonce made per process and again in a forked child; `throttle` treats a missing bucket as full and adds its bucket at decoration; a recipe that would wait inside this thread's own transaction on its cache raises `RuntimeError`; the release checks raise `AssertionError` explicitly (not stripped by `python -O`); on a `FanoutCache` a recipe's transaction covers its key's shard; `tag=` must be None until tags arrive.
+- Why: a lock that silently doesn't lock, or that one container's pid 7 shares with another's, is worse than an error (Michael's decisions 10, 16, 17 and 18, plan 24).
+- Tests: `tests/conformance/test_recipes.py`, `tests/unit/test_recipes.py`
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.
