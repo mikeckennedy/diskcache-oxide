@@ -54,6 +54,8 @@ pub enum Order {
     Key { reverse: bool },
     /// Insertion order (`id`), which `__iter__` follows. An overwrite keeps its place.
     Inserted,
+    /// Insertion order backwards, newest first, which `__reversed__` follows.
+    InsertedReverse,
 }
 
 /// Where an iteration stopped: the last key returned (key order) or the last `id` (insertion order).
@@ -400,17 +402,23 @@ fn page(
     // A prefix's bounds: its start, and the first string past every one that starts with it.
     let (lower, upper) = prefix.unwrap_or(("", None));
     let keys = match order {
-        Order::Inserted => {
+        Order::Inserted | Order::InsertedReverse => {
+            let reverse = order == Order::InsertedReverse;
             let after = match cursor {
                 Cursor::Id(id) => *id,
+                // Backwards from the newest row.
+                _ if reverse => i64::MAX,
                 _ => 0,
             };
             // Every key type this build knows; a later build's key types stay invisible, as typed keys
             // are to 0.1.2.
+            let sql = if reverse {
+                "SELECT id, key_type, key FROM cache WHERE id < ?1 AND key_type IN (?2, ?3) ORDER BY id DESC LIMIT ?4"
+            } else {
+                "SELECT id, key_type, key FROM cache WHERE id > ?1 AND key_type IN (?2, ?3) ORDER BY id LIMIT ?4"
+            };
             let rows: Vec<(i64, OwnedKey)> = conn
-                .prepare_cached(
-                    "SELECT id, key_type, key FROM cache WHERE id > ?1 AND key_type IN (?2, ?3) ORDER BY id LIMIT ?4",
-                )
+                .prepare_cached(sql)
                 .and_then(|mut stmt| {
                     stmt.query_map((after, KEY_TYPE_STR, KEY_TYPE_TYPED, size), |r| {
                         Ok((r.get(0)?, stored_key(r.get(1)?, r.get_ref(2)?)))
@@ -681,6 +689,8 @@ mod tests {
             reversed.reverse();
             assert_eq!(walk(&s, Order::Key { reverse: true }, size), reversed, "reverse, pages of {size}");
             assert_eq!(walk(&s, Order::Inserted, size), inserted, "insertion order, pages of {size}");
+            let backwards: Vec<OwnedKey> = inserted.iter().rev().cloned().collect();
+            assert_eq!(walk(&s, Order::InsertedReverse, size), backwards, "reverse insertion order, pages of {size}");
         }
         assert_eq!(
             all(&s, Order::Key { reverse: false }, Some("")).len(),

@@ -65,6 +65,8 @@ impl Value<'_> {
 pub struct Popped {
     pub mode: i64,
     pub value: SqlValue,
+    /// When the popped value would have expired, or `None` for never.
+    pub expire_time: Option<f64>,
 }
 
 /// One stored version of a key: its row and its store sequence number (D-011, D-013). An overwrite
@@ -422,7 +424,7 @@ impl Store {
             let found = {
                 let mut stmt = tx
                     .prepare_cached(
-                        "SELECT mode, value, filename, size FROM cache
+                        "SELECT mode, value, filename, size, expire_time FROM cache
                          WHERE key_type = ?1 AND key = ?2 AND (expire_time IS NULL OR expire_time > ?3)",
                     )
                     .map_err(|e| Error::from_sqlite(e, timeout))?;
@@ -433,16 +435,20 @@ impl Store {
                         if refuse(mode) {
                             return Ok(Changed::removing(Pop::Refused { mode }, []));
                         }
+                        let expire_time: Option<f64> = row.get(4).map_err(|e| Error::from_sqlite(e, timeout))?;
                         let filename: Option<String> = row.get(2).map_err(|e| Error::from_sqlite(e, timeout))?;
                         if let Some(relative) = filename {
                             // Under the write lock nothing can replace the file, so read it here. A
                             // missing file acts missing (D-013); the row goes below.
                             let size: i64 = row.get(3).map_err(|e| Error::from_sqlite(e, timeout))?;
-                            spill::read(self.directory(), &relative, size)?
-                                .map(|bytes| Popped { mode, value: SqlValue::Blob(bytes) })
+                            spill::read(self.directory(), &relative, size)?.map(|bytes| Popped {
+                                mode,
+                                value: SqlValue::Blob(bytes),
+                                expire_time,
+                            })
                         } else {
                             let value = owned(row.get_ref(1).map_err(|e| Error::from_sqlite(e, timeout))?);
-                            Some(Popped { mode, value })
+                            Some(Popped { mode, value, expire_time })
                         }
                     }
                     None => None,
@@ -1162,7 +1168,11 @@ mod tests {
             ("int", MODE_INT, SqlValue::Integer(-7)),
             ("real", MODE_REAL, SqlValue::Real(2.5)),
         ] {
-            assert_eq!(s.pop(T, key, NOW, |_| false).unwrap(), Pop::Removed(Popped { mode, value }), "{key}");
+            assert_eq!(
+                s.pop(T, key, NOW, |_| false).unwrap(),
+                Pop::Removed(Popped { mode, value, expire_time: None }),
+                "{key}"
+            );
         }
         assert_eq!(len(&s), 0);
         assert!(value_files(tmp.path()).is_empty(), "the popped value's file went with it");

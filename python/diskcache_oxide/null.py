@@ -37,6 +37,7 @@ from contextlib import AbstractContextManager, nullcontext
 from types import TracebackType
 from typing import Any, Literal, Self, overload
 
+from diskcache_oxide._constants import ENOVAL
 from diskcache_oxide._core import TypeRegistry
 from diskcache_oxide._types import Key, Memoizer
 from diskcache_oxide.protocol import CacheLike
@@ -69,6 +70,14 @@ def _check_key(key: object, depth: int = 0) -> None:
             _check_key(item, depth + 1)
         return
     raise TypeError(f'cache keys must be {_KEY_TYPES}, not {kind.__name__}')
+
+
+_MIN_SIZE_LIMIT = 1 << 20
+
+
+def _check_size_limit(value: int) -> None:
+    if value < _MIN_SIZE_LIMIT:
+        raise ValueError(f'size_limit must be at least {_MIN_SIZE_LIMIT} bytes, got {value}')
 
 
 def _check_retry(value: object) -> None:
@@ -200,6 +209,37 @@ class NullCache:
         """Always False: caching is off."""
         return False
 
+    @property
+    def durable(self) -> bool:
+        """Always False: a `NullCache` has no outages to answer."""
+        return False
+
+    def reset(self, key: str, value: Any = ENOVAL, update: bool = True) -> int:
+        """Read `size_limit` or `cull_limit`, or set it (checked as `Cache` checks it) and return it."""
+        if key.startswith('sqlite_'):
+            raise ValueError(f"reset({key!r}) isn't supported: SQLite's settings are per process here (D-023)")
+        if key == 'eviction_policy':
+            raise ValueError("reset('eviction_policy') isn't supported yet: eviction is least-recently-stored")
+        if key == 'statistics':
+            raise ValueError('statistics are turned on and off with stats(enable=...)')
+        if key not in ('size_limit', 'cull_limit'):
+            raise ValueError(f"reset() takes 'size_limit' or 'cull_limit', not {key!r}")
+        if not update:
+            raise ValueError(
+                "reset(..., update=False) isn't supported: size_limit and cull_limit have no SQLite pragma to skip"
+            )
+        if value is not ENOVAL:
+            if type(value) is not int:
+                raise TypeError(f'{key} must be an int or None, not {type(value).__name__}')
+            if key == 'size_limit':
+                _check_size_limit(value)
+                self._size_limit = value
+            else:
+                if value < 0:
+                    raise ValueError(f'cull_limit must not be negative, got {value}')
+                self._cull_limit = value
+        return self._size_limit if key == 'size_limit' else self._cull_limit
+
     # -- reads: nothing is ever present ---------------------------------------------------------
 
     @overload
@@ -234,6 +274,10 @@ class NullCache:
         return False
 
     def __iter__(self) -> Iterator[Key]:
+        """Yields nothing."""
+        return iter(())
+
+    def __reversed__(self) -> Iterator[Key]:
         """Yields nothing."""
         return iter(())
 
@@ -309,13 +353,22 @@ class NullCache:
         if not self.delete(key) and self._invalidate is None:
             raise KeyError(key)
 
-    def pop(self, key: Key, default: Any = None, *, retry: bool = False) -> Any:
-        """Return `default`. With `invalidate=`, also delete the key from that cache."""
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False
+    ) -> Any: ...
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None]: ...
+    def pop(self, key: Key, default: Any = None, *, expire_time: bool = False, retry: bool = False) -> Any:
+        """Return `default` (`(default, None)` with `expire_time=True`). With `invalidate=`, also delete
+        the key from that cache."""
         _check_retry(retry)
         _check_key(key)
         if self._invalidate is not None:
             self._invalidate.delete(key, retry=retry) if retry else self._invalidate.delete(key)
-        return default
+        return (default, None) if expire_time else default
 
     def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count."""

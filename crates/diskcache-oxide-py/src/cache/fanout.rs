@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use diskcache_oxide_core::fanout::{self, Manifest, ShardRequest};
 use diskcache_oxide_core::key::{Key, OwnedKey};
 use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, PAGE, Snapshot};
-use diskcache_oxide_core::open::Role;
+use diskcache_oxide_core::open::{Requested, Role};
 use diskcache_oxide_core::ops::Number;
 use diskcache_oxide_core::store::Store;
 use diskcache_oxide_core::{Error, lockwait};
@@ -29,7 +29,10 @@ use pyo3::gc::PyVisit;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-use super::{DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, Transaction, retrying, whole};
+use super::{
+    DecodePolicy, Delta, HandleConfig, IncrDefault, Reduced, ReopenOptions, ResetLimit, Settings, StoreHandle,
+    Transaction, retrying, whole,
+};
 use crate::codec::TypeRegistry;
 use crate::to_py_err;
 
@@ -169,6 +172,47 @@ impl FanoutCache {
         self.config.traverse(&visit)
     }
 
+    /// Pickles as the root, its shard count and the options this handle was opened with, as `Cache`.
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<Reduced> {
+        let rebuild = py.import("diskcache_oxide._pickling")?.getattr("rebuild")?.unbind();
+        Ok((rebuild, ("FanoutCache", self.config.reopen.bind(py).copy()?.unbind())))
+    }
+
+    /// True for a `durable=True` handle.
+    #[getter]
+    fn durable(&self) -> bool {
+        self.config.failures.is_some()
+    }
+
+    /// As `Cache.reset`, over every shard under one `timeout`. A `size_limit` is a total, split
+    /// across the shards as the constructor splits it, and read back as the total; a `cull_limit`
+    /// is every shard's. Stops at the first shard that fails, raising its error.
+    #[pyo3(signature = (key, value = None, update = true))]
+    fn reset(&self, py: Python<'_>, key: &str, value: Option<&Bound<'_, PyAny>>, update: bool) -> PyResult<i64> {
+        self.refuse_fan_out("reset()")?;
+        let which = ResetLimit::parse(key, value, update)?;
+        let count = u32::try_from(self.shards.len()).unwrap_or(u32::MAX);
+        let requested = match &which {
+            ResetLimit::Size(Some(total)) => Requested {
+                size_limit: Some(
+                    diskcache_oxide_core::store::split_size_limit("size_limit", *total, count).map_err(to_py_err)?,
+                ),
+                cull_limit: None,
+            },
+            _ => which.requested(),
+        };
+        let read = which.is_read();
+        let limits =
+            self.every_shard(
+                py,
+                |store, left| if read { store.read_limits(left) } else { store.set_limits(left, requested) },
+            )?;
+        Ok(match which {
+            ResetLimit::Size(_) => limits.iter().map(|l| l.size_limit).sum(),
+            ResetLimit::Cull(_) => limits.first().map_or(0, |l| l.cull_limit),
+        })
+    }
+
     // -- routed to one shard -------------------------------------------------------------------
 
     #[pyo3(signature = (key, default = None, *, expire_time = false, retry = false))]
@@ -244,17 +288,20 @@ impl FanoutCache {
         if self.delete(py, key, false)? { Ok(()) } else { Err(PyKeyError::new_err(key.clone().unbind())) }
     }
 
-    #[pyo3(signature = (key, default = None, *, retry = false))]
+    #[pyo3(signature = (key, default = None, *, expire_time = false, retry = false))]
     fn pop(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         default: Option<Py<PyAny>>,
+        expire_time: bool,
         retry: bool,
     ) -> PyResult<Py<PyAny>> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
-        retrying(py, retry, || self.config.pop(py, self.routed(name)?, name, default.as_ref().map(|d| d.clone_ref(py))))
+        retrying(py, retry, || {
+            self.config.pop(py, self.routed(name)?, name, default.as_ref().map(|d| d.clone_ref(py)), expire_time)
+        })
     }
 
     #[pyo3(signature = (key, expire = None, *, retry = false))]
@@ -416,7 +463,16 @@ impl FanoutCache {
     /// order the keys were stored in across the whole cache.
     fn __iter__(slf: Py<Self>) -> PyResult<FanoutKeyIterator> {
         slf.get().refuse_fan_out("iteration")?;
-        Ok(FanoutKeyIterator::new(slf, Walk::Shards { shard: 0, cursor: Cursor::Start, buffer: VecDeque::new() }, None))
+        let walk = Walk::Shards { shard: 0, cursor: Cursor::Start, buffer: VecDeque::new(), reverse: false };
+        Ok(FanoutKeyIterator::new(slf, walk, None))
+    }
+
+    /// Every key once, newest first: the last shard's in reverse insertion order, then the one
+    /// before, as diskcache chains its shards.
+    fn __reversed__(slf: Py<Self>) -> PyResult<FanoutKeyIterator> {
+        slf.get().refuse_fan_out("iteration")?;
+        let walk = Walk::Shards { shard: 0, cursor: Cursor::Start, buffer: VecDeque::new(), reverse: true };
+        Ok(FanoutKeyIterator::new(slf, walk, None))
     }
 
     // -- lifecycle ----------------------------------------------------------------------------
@@ -496,6 +552,20 @@ impl FanoutCache {
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
     ) -> PyResult<Self> {
+        let reopen = ReopenOptions {
+            timeout,
+            serializer,
+            pickle,
+            types: types.as_ref(),
+            clock: clock.as_ref(),
+            max_connections,
+            sqlite_cache_size,
+            wal_size_limit,
+            wal_checkpoint,
+            on_decode_error: on_decode_error.as_ref(),
+            durable,
+        }
+        .build(py, &directory)?;
         let settings = Settings::parse(
             py,
             timeout,
@@ -514,14 +584,16 @@ impl FanoutCache {
         };
         let stores = crate::detach(py, || open(&directory, &settings, request))
             .map_err(|(e, shards)| open_error(py, e, shards))?;
-        let shards = stores
+        let shards: Box<[StoreHandle]> = stores
             .into_iter()
             .enumerate()
             .map(|(shard, store)| StoreHandle { store, shard, closed: AtomicBool::new(false) })
             .collect();
+        // The count actually opened, which an existing root decides.
+        reopen.bind(py).set_item("shards", shards.len())?;
         Ok(Self {
             shards,
-            config: HandleConfig::new(&directory, &settings, pickle, types, clock, on_decode_error, durable),
+            config: HandleConfig::new(&directory, &settings, pickle, types, clock, on_decode_error, durable, reopen),
         })
     }
 
@@ -810,7 +882,8 @@ pub(crate) struct FanoutKeyIterator {
 /// Where a [`FanoutKeyIterator`] is.
 enum Walk {
     /// `__iter__`: shard `shard` in insertion order, then the next shard from its start.
-    Shards { shard: usize, cursor: Cursor, buffer: VecDeque<OwnedKey> },
+    /// `shard` counts the shards walked so far; `reverse` walks them last to first, each newest first.
+    Shards { shard: usize, cursor: Cursor, buffer: VecDeque<OwnedKey>, reverse: bool },
     /// `iterkeys`: a k-way merge. `heads` holds each shard's next key, and `shards[i]` the keys
     /// buffered behind it. A shard in `pending` has nothing buffered: it is read at the start of the
     /// next `next()`, before any key is chosen, so an error there loses nothing and can be retried.
@@ -911,14 +984,17 @@ impl FanoutKeyIterator {
             other => to_py_err(other),
         };
         match &mut *walk {
-            Walk::Shards { shard, cursor, buffer } => loop {
+            Walk::Shards { shard, cursor, buffer, reverse } => loop {
                 if let Some(key) = buffer.pop_front() {
                     return crate::codec::key::decode_owned(py, &key).map(Some);
                 }
-                if *shard >= self.cache.get().shards.len() {
+                let shards = self.cache.get().shards.len();
+                if *shard >= shards {
                     return Ok(None);
                 }
-                let (keys, next) = self.page(*shard, PAGE, Order::Inserted, cursor, deadline).map_err(whole)?;
+                let (at, order) =
+                    if *reverse { (shards - 1 - *shard, Order::InsertedReverse) } else { (*shard, Order::Inserted) };
+                let (keys, next) = self.page(at, PAGE, order, cursor, deadline).map_err(whole)?;
                 if keys.is_empty() {
                     *shard += 1;
                     *cursor = Cursor::Start;

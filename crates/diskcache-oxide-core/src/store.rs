@@ -699,31 +699,51 @@ impl Store {
         if options.requested == Requested::default() {
             return Ok(());
         }
-        let result = self.write(timeout, |_writer, tx| {
-            let stored = open::read_limits(tx, options.timeout)?;
+        match self.set_limits(timeout, options.requested) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                self.release_now_or_defer();
+                Err(error)
+            }
+        }
+    }
+
+    /// Persists the limits `requested` names, keeping the others, and returns them all (`reset`,
+    /// and a handle that opens with explicit limits). Writes only if they change (D-019).
+    ///
+    /// # Errors
+    ///
+    /// An invalid value ([`Requested::validate`]), or the write's errors.
+    pub fn set_limits(&self, timeout: Duration, requested: Requested) -> Result<Limits> {
+        requested.validate()?;
+        let limits = self.write(timeout, |_writer, tx| {
+            let stored = open::read_limits(tx, timeout)?;
             let wanted = Limits {
-                size_limit: options.requested.size_limit.unwrap_or(stored.size_limit),
-                cull_limit: options.requested.cull_limit.unwrap_or(stored.cull_limit),
+                size_limit: requested.size_limit.unwrap_or(stored.size_limit),
+                cull_limit: requested.cull_limit.unwrap_or(stored.cull_limit),
             };
             if wanted != stored {
                 tx.execute(
                     "UPDATE totals SET size_limit = ?1, cull_limit = ?2 WHERE only = 1",
                     (wanted.size_limit, wanted.cull_limit),
                 )
-                .map_err(|e| Error::from_sqlite(e, options.timeout))?;
+                .map_err(|e| Error::from_sqlite(e, timeout))?;
             }
             Ok(wanted)
-        });
-        match result {
-            Ok(limits) => {
-                self.cache_limits(limits);
-                Ok(())
-            }
-            Err(error) => {
-                self.release_now_or_defer();
-                Err(error)
-            }
-        }
+        })?;
+        self.cache_limits(limits);
+        Ok(limits)
+    }
+
+    /// The limits as stored now (another process may have changed them), refreshing the cached copy.
+    ///
+    /// # Errors
+    ///
+    /// The read's errors.
+    pub fn read_limits(&self, timeout: Duration) -> Result<Limits> {
+        let limits = self.read(timeout, |conn| open::read_limits(conn, timeout))?;
+        self.cache_limits(limits);
+        Ok(limits)
     }
 
     /// Releases the handle a failed open registered, with no wait (the open has used its budget):
@@ -2051,6 +2071,7 @@ pub fn drain_deferred_releases() {
 }
 
 mod shards;
+pub use shards::split_size_limit;
 
 #[cfg(test)]
 mod fork_timeout;

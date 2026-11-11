@@ -37,6 +37,7 @@ under. `NullCache`, the protocols and `Caches` are pure Python.
 from collections.abc import Callable
 from typing import Any
 
+from diskcache_oxide._constants import ENOVAL, UNKNOWN
 from diskcache_oxide._core import (
     BUNDLED_SQLITE_VERSION,
     Cache,
@@ -105,6 +106,7 @@ __all__ = [
     'CacheStats',
     'Caches',
     'CorruptKeyError',
+    'ENOVAL',
     'CorruptValueError',
     'FanoutCache',
     'ForeignValueError',
@@ -120,6 +122,7 @@ __all__ = [
     'TransactionBusy',
     'TransactionalCacheLike',
     'TypeRegistry',
+    'UNKNOWN',
     'UnsafeValueError',
     '__version__',
     'register_type',

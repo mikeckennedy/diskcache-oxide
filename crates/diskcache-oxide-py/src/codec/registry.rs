@@ -202,6 +202,33 @@ impl TypeRegistry {
         self.map.load().by_type.len()
     }
 
+    /// The global registry pickles by reference (unpickling gives that process's own
+    /// `diskcache_oxide.registry`, never a copy); any other as its registrations, so a cache opened
+    /// with `types=` pickles if its classes and functions do.
+    fn __reduce__(slf: &Bound<'_, Self>) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        let py = slf.py();
+        let pickling = py.import("diskcache_oxide._pickling")?;
+        if global(py)?.bind(py).is(slf) {
+            return Ok((
+                pickling.getattr("global_registry")?.unbind(),
+                pyo3::types::PyTuple::empty(py).into_any().unbind(),
+            ));
+        }
+        let entries = pyo3::types::PyList::empty(py);
+        let map = slf.get().map.load();
+        let mut sorted: Vec<&Arc<Entry>> = map.by_name.values().collect();
+        sorted.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        for entry in sorted {
+            let (encode, decode) = match &entry.kind {
+                Kind::Explicit { encode, decode } => (encode.clone_ref(py).into_any(), decode.clone_ref(py).into_any()),
+                Kind::Dataclass { .. } => (py.None(), py.None()),
+            };
+            entries.append((entry.ty.clone_ref(py), entry.name.as_str(), encode, decode))?;
+        }
+        let args = pyo3::types::PyTuple::new(py, [entries.into_any()])?.into_any().unbind();
+        Ok((pickling.getattr("rebuild_registry")?.unbind(), args))
+    }
+
     fn __repr__(&self) -> String {
         let map = self.map.load();
         let mut names: Vec<&str> = map.by_name.keys().map(String::as_str).collect();

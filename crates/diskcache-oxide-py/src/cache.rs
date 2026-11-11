@@ -71,6 +71,9 @@ struct HandleConfig {
     /// across a `FanoutCache`'s shards, so one shard's report mustn't silence another's (see
     /// `first_report`).
     reported: Mutex<HashSet<(usize, Version)>>,
+    /// What pickling the handle rebuilds it from: the absolute directory and the options the handle
+    /// was opened with, as passed (settings persisted in the directory aren't carried).
+    reopen: Py<pyo3::types::PyDict>,
 }
 
 /// How many reported versions a handle remembers before it forgets them all and starts over.
@@ -114,6 +117,20 @@ impl Cache {
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
     ) -> PyResult<Self> {
+        let reopen = ReopenOptions {
+            timeout,
+            serializer,
+            pickle,
+            types: types.as_ref(),
+            clock: clock.as_ref(),
+            max_connections,
+            sqlite_cache_size,
+            wal_size_limit,
+            wal_checkpoint,
+            on_decode_error: on_decode_error.as_ref(),
+            durable,
+        }
+        .build(py, &directory)?;
         let settings = Settings::parse(
             py,
             timeout,
@@ -130,7 +147,7 @@ impl Cache {
         let store = crate::detach(py, || Store::open(&options)).map_err(to_py_err)?;
         Ok(Self {
             handle: StoreHandle { store, shard: 0, closed: AtomicBool::new(false) },
-            config: HandleConfig::new(&directory, &settings, pickle, types, clock, on_decode_error, durable),
+            config: HandleConfig::new(&directory, &settings, pickle, types, clock, on_decode_error, durable, reopen),
         })
     }
 
@@ -208,6 +225,39 @@ impl Cache {
     /// `on_decode_error` callable that refers back to the cache would otherwise leak both.
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         self.config.traverse(&visit)
+    }
+
+    /// Pickles as the directory and the options this handle was opened with, so unpickling (in
+    /// another process, say) opens the same cache. A `clock` or `on_decode_error` that doesn't
+    /// pickle makes the cache not pickle either.
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<Reduced> {
+        let rebuild = py.import("diskcache_oxide._pickling")?.getattr("rebuild")?.unbind();
+        Ok((rebuild, ("Cache", self.config.reopen.bind(py).copy()?.unbind())))
+    }
+
+    /// True for a `durable=True` handle.
+    #[getter]
+    fn durable(&self) -> bool {
+        self.config.failures.is_some()
+    }
+
+    /// Reads `size_limit` or `cull_limit` as stored now, or with `value` persists it (validated as
+    /// the constructor does) and returns it.
+    #[pyo3(signature = (key, value = None, update = true))]
+    fn reset(&self, py: Python<'_>, key: &str, value: Option<&Bound<'_, PyAny>>, update: bool) -> PyResult<i64> {
+        let which = ResetLimit::parse(key, value, update)?;
+        let handle = &self.handle;
+        let limits = crate::detach(py, || {
+            handle.run(self.config.timeout, |timeout| {
+                if which.is_read() {
+                    handle.store.read_limits(timeout)
+                } else {
+                    handle.store.set_limits(timeout, which.requested())
+                }
+            })
+        })
+        .map_err(to_py_err)?;
+        Ok(which.of(limits))
     }
 
     // -- reads --------------------------------------------------------------------------------
@@ -314,16 +364,19 @@ impl Cache {
         if self.delete(py, key, false)? { Ok(()) } else { Err(PyKeyError::new_err(key.clone().unbind())) }
     }
 
-    #[pyo3(signature = (key, default = None, *, retry = false))]
+    #[pyo3(signature = (key, default = None, *, expire_time = false, retry = false))]
     fn pop(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         default: Option<Py<PyAny>>,
+        expire_time: bool,
         retry: bool,
     ) -> PyResult<Py<PyAny>> {
         let k = codec::key::encode_key(key)?;
-        retrying(py, retry, || self.config.pop(py, &self.handle, k.key(), default.as_ref().map(|d| d.clone_ref(py))))
+        retrying(py, retry, || {
+            self.config.pop(py, &self.handle, k.key(), default.as_ref().map(|d| d.clone_ref(py)), expire_time)
+        })
     }
 
     #[pyo3(signature = (key, expire = None, *, retry = false))]
@@ -432,6 +485,11 @@ impl Cache {
     /// Keys in insertion order (an overwrite keeps its place).
     fn __iter__(slf: Py<Self>) -> KeyIterator {
         KeyIterator::new(slf, Order::Inserted, None)
+    }
+
+    /// Keys in insertion order backwards, newest first.
+    fn __reversed__(slf: Py<Self>) -> KeyIterator {
+        KeyIterator::new(slf, Order::InsertedReverse, None)
     }
 
     // -- lifecycle ----------------------------------------------------------------------------
@@ -674,6 +732,7 @@ pub(crate) fn pause_before_retry(py: Python<'_>, started: Instant) -> PyResult<(
 
 impl HandleConfig {
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         directory: &std::path::Path,
         settings: &Settings,
@@ -682,6 +741,7 @@ impl HandleConfig {
         clock: Option<Py<PyAny>>,
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
+        reopen: Py<pyo3::types::PyDict>,
     ) -> Self {
         let timeout = settings.timeout;
         Self {
@@ -692,12 +752,14 @@ impl HandleConfig {
             on_decode_error: on_decode_error.unwrap_or(if durable { DecodePolicy::Miss } else { DecodePolicy::Raise }),
             failures: durable.then(|| Box::new(Failures::new(timeout.as_secs_f64()))),
             reported: Mutex::new(HashSet::new()),
+            reopen,
         }
     }
 
     /// Visits the Python objects the handle holds, for `__traverse__`.
     fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
         self.codec.traverse(visit)?;
+        visit.call(&self.reopen)?;
         if let Some(clock) = &self.clock {
             visit.call(clock)?;
         }
@@ -861,6 +923,7 @@ impl HandleConfig {
         handle: &StoreHandle,
         key: Key<'_>,
         default: Option<Py<PyAny>>,
+        expire_time: bool,
     ) -> PyResult<Py<PyAny>> {
         let now = self.now(py)?;
         // In a child that can't write (D-020) a read could report a miss; a pop fails.
@@ -869,7 +932,12 @@ impl HandleConfig {
             Some(timeout) => self.pop_value(py, handle, key, now, timeout)?,
             None => None,
         };
-        Ok(popped.unwrap_or_else(|| default.unwrap_or_else(|| py.None())))
+        let (value, expires) = popped.unwrap_or_else(|| (default.unwrap_or_else(|| py.None()), None));
+        if expire_time {
+            Ok(PyTuple::new(py, [value, expires.into_pyobject(py)?.into_any().unbind()])?.into_any().unbind())
+        } else {
+            Ok(value)
+        }
     }
 
     fn touch(
@@ -943,7 +1011,7 @@ impl HandleConfig {
         key: Key<'_>,
         now: f64,
         timeout: Duration,
-    ) -> PyResult<Option<Py<PyAny>>> {
+    ) -> PyResult<Option<(Py<PyAny>, Option<f64>)>> {
         let (store, shard) = (&*handle.store, handle.shard);
         let deadline = lockwait::deadline_after(Instant::now(), timeout);
         let left = || deadline.saturating_duration_since(Instant::now());
@@ -954,7 +1022,7 @@ impl HandleConfig {
                 Ok(value) => {
                     let deleted = store.delete_version(left(), hit.version);
                     match self.pop_attempt(py, store, now, deleted)? {
-                        Some(true) => return Ok(Some(value)),
+                        Some(true) => return Ok(Some((value, hit.expire_time))),
                         Some(false) => {}
                         None => return Ok(None),
                     }
@@ -976,7 +1044,7 @@ impl HandleConfig {
         match self.pop_attempt(py, store, now, removed)? {
             None | Some(Pop::Missing) => Ok(None),
             Some(Pop::Removed(popped)) => match decode_value(py, codec, popped.mode, popped.value_ref()) {
-                Ok(value) => Ok(Some(value)),
+                Ok(value) => Ok(Some((value, popped.expire_time))),
                 Err(e) => {
                     self.decode_failed(py, store, shard, key, Op::Pop, popped.mode, e, Row::Removed).map(|()| None)
                 }
@@ -1290,6 +1358,130 @@ pub(crate) fn memoize_on(
     };
     let memoize = py.import("diskcache_oxide._memoize")?.getattr("memoize")?;
     memoize.call1((cache, name, typed, expire, ignore, !durable)).map(Bound::unbind)
+}
+
+/// What `__reduce__` returns: `diskcache_oxide._pickling.rebuild` and its arguments.
+pub(crate) type Reduced = (Py<PyAny>, (&'static str, Py<pyo3::types::PyDict>));
+
+/// A handle's options as passed, for [`HandleConfig::reopen`]: only those given, so an unpickled
+/// handle gets today's defaults for the rest.
+pub(crate) struct ReopenOptions<'a, 'py> {
+    pub timeout: Option<&'a Bound<'py, PyAny>>,
+    pub serializer: &'a str,
+    pub pickle: bool,
+    pub types: Option<&'a Py<TypeRegistry>>,
+    pub clock: Option<&'a Py<PyAny>>,
+    pub max_connections: Option<&'a Bound<'py, PyAny>>,
+    pub sqlite_cache_size: Option<&'a Bound<'py, PyAny>>,
+    pub wal_size_limit: Option<&'a Bound<'py, PyAny>>,
+    pub wal_checkpoint: &'a str,
+    pub on_decode_error: Option<&'a DecodePolicy>,
+    pub durable: bool,
+}
+
+impl ReopenOptions<'_, '_> {
+    pub(crate) fn build(&self, py: Python<'_>, directory: &std::path::Path) -> PyResult<Py<pyo3::types::PyDict>> {
+        let d = pyo3::types::PyDict::new(py);
+        let absolute = std::path::absolute(directory).unwrap_or_else(|_| directory.to_path_buf());
+        d.set_item("directory", absolute)?;
+        if let Some(timeout) = self.timeout {
+            d.set_item("timeout", timeout)?;
+        }
+        if self.serializer != "msgpack" {
+            d.set_item("serializer", self.serializer)?;
+        }
+        if self.pickle {
+            d.set_item("pickle", true)?;
+        }
+        if let Some(types) = self.types {
+            d.set_item("types", types)?;
+        }
+        if let Some(clock) = self.clock {
+            d.set_item("clock", clock)?;
+        }
+        for (name, value) in [
+            ("max_connections", self.max_connections),
+            ("sqlite_cache_size", self.sqlite_cache_size),
+            ("wal_size_limit", self.wal_size_limit),
+        ] {
+            if let Some(value) = value {
+                d.set_item(name, value)?;
+            }
+        }
+        if self.wal_checkpoint != "manual" {
+            d.set_item("wal_checkpoint", self.wal_checkpoint)?;
+        }
+        match self.on_decode_error {
+            Some(DecodePolicy::Raise) => d.set_item("on_decode_error", "raise")?,
+            Some(DecodePolicy::Miss) => d.set_item("on_decode_error", "miss")?,
+            Some(DecodePolicy::Report(callback)) => d.set_item("on_decode_error", callback)?,
+            None => {}
+        }
+        if self.durable {
+            d.set_item("durable", true)?;
+        }
+        Ok(d.unbind())
+    }
+}
+
+/// Which limit a `reset(key, ...)` names, and the value to set (`None` to read it).
+pub(crate) enum ResetLimit {
+    Size(Option<i64>),
+    Cull(Option<i64>),
+}
+
+impl ResetLimit {
+    /// `reset(key, value=ENOVAL, update=True)`'s arguments, checked as the constructor checks them.
+    pub(crate) fn parse(key: &str, value: Option<&Bound<'_, PyAny>>, update: bool) -> PyResult<Self> {
+        let given = match value {
+            Some(v) if !v.is(v.py().import("diskcache_oxide._constants")?.getattr("ENOVAL")?) => Some(v),
+            _ => None,
+        };
+        let parsed = match key {
+            "size_limit" => Self::Size(whole("size_limit", given)?),
+            "cull_limit" => Self::Cull(whole("cull_limit", given)?),
+            _ if key.starts_with("sqlite_") => {
+                return Err(PyValueError::new_err(format!(
+                    "reset({key:?}) isn't supported: SQLite's settings are per process here (D-023)"
+                )));
+            }
+            "eviction_policy" => {
+                return Err(PyValueError::new_err(
+                    "reset('eviction_policy') isn't supported yet: eviction is least-recently-stored",
+                ));
+            }
+            "statistics" => {
+                return Err(PyValueError::new_err("statistics are turned on and off with stats(enable=...)"));
+            }
+            _ => {
+                return Err(PyValueError::new_err(format!("reset() takes 'size_limit' or 'cull_limit', not {key:?}")));
+            }
+        };
+        if !update {
+            return Err(PyValueError::new_err(
+                "reset(..., update=False) isn't supported: size_limit and cull_limit have no SQLite pragma to skip",
+            ));
+        }
+        Ok(parsed)
+    }
+
+    pub(crate) fn requested(&self) -> Requested {
+        match *self {
+            Self::Size(value) => Requested { size_limit: value, cull_limit: None },
+            Self::Cull(value) => Requested { size_limit: None, cull_limit: value },
+        }
+    }
+
+    pub(crate) fn of(&self, limits: diskcache_oxide_core::open::Limits) -> i64 {
+        match self {
+            Self::Size(_) => limits.size_limit,
+            Self::Cull(_) => limits.cull_limit,
+        }
+    }
+
+    pub(crate) fn is_read(&self) -> bool {
+        matches!(self, Self::Size(None) | Self::Cull(None))
+    }
 }
 
 /// A lazy iterator over a cache's keys, one page per fetch.

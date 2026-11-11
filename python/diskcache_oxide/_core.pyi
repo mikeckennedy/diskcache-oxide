@@ -369,7 +369,8 @@ class Cache:
                 cache.delete(key)          # safe while iterating
             ```
         """
-    def pop(self, key: Key, default: Any = None, *, retry: bool = False) -> Any:
+    @overload
+    def pop(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False) -> Any:
         """Remove `key` and return its value, delivering it to exactly one caller.
 
         Reads and decodes the value first, as `get` does, then deletes exactly that stored version,
@@ -404,6 +405,10 @@ class Cache:
             token = cache.pop('reset-token:abc')   # None if it was missing or already used
             ```
         """
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None]: ...
     def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
         """Change the expiry of an existing entry without rewriting its value.
 
@@ -502,6 +507,24 @@ class Cache:
             cache.delete(episode.__cache_key__(42))  # forget one call
             ```
         """
+    @property
+    def durable(self) -> bool:
+        """True for a `durable=True` handle."""
+    def reset(self, key: str, value: Any = ..., update: bool = True) -> int:
+        """Read `size_limit` or `cull_limit` as stored now, or persist a new value and return it.
+
+        Args:
+            key: `'size_limit'` or `'cull_limit'`.
+            value: The new value, checked as the constructor checks it; leave it out (or pass
+                `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
+            update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
+
+        Raises:
+            ValueError: Another key, `update=False`, or a value the constructor would refuse.
+            TypeError: A value that isn't an `int`.
+        """
+    def __reversed__(self) -> Iterator[Key]:
+        """Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first)."""
     @overload
     def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]:
         """Iterate over keys in sorted order, optionally only those starting with `prefix`.
@@ -877,8 +900,13 @@ class FanoutCache:
         """As `Cache.add`, on the key's shard: atomic across threads and processes."""
     def delete(self, key: Key, *, retry: bool = False) -> bool:
         """As `Cache.delete`, on the key's shard."""
-    def pop(self, key: Key, default: Any = None, *, retry: bool = False) -> Any:
+    @overload
+    def pop(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False) -> Any:
         """As `Cache.pop`, on the key's shard."""
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None]: ...
     def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
         """As `Cache.touch`, on the key's shard."""
     def incr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
@@ -1003,6 +1031,24 @@ class FanoutCache:
             cache.delete(episode.__cache_key__(42))  # forget one call
             ```
         """
+    @property
+    def durable(self) -> bool:
+        """True for a `durable=True` handle."""
+    def reset(self, key: str, value: Any = ..., update: bool = True) -> int:
+        """Read `size_limit` or `cull_limit` as stored now, or persist a new value and return it.
+
+        Args:
+            key: `'size_limit'` or `'cull_limit'`.
+            value: The new value, checked as the constructor checks it; leave it out (or pass
+                `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
+            update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
+
+        Raises:
+            ValueError: Another key, `update=False`, or a value the constructor would refuse.
+            TypeError: A value that isn't an `int`.
+        """
+    def __reversed__(self) -> Iterator[Key]:
+        """Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first)."""
     @overload
     def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]:
         """Iterate over keys in sorted order, optionally only those starting with `prefix`.

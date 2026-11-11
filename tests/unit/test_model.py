@@ -186,6 +186,10 @@ class CacheModel(RuleBasedStateMachine):
         held = {k for k in self.model if matches(k)}
         assert live <= set(keys) <= held, (keys, live, held)
 
+    @rule()
+    def reversed_is_iteration_backwards(self) -> None:
+        assert list(reversed(self.cache)) == list(self.cache)[::-1]
+
     @rule(key=KEYS, value=VALUES, delta=st.integers(-5, 5), abort=st.booleans())
     def transact(self, key: Any, value: Any, delta: int, abort: bool) -> None:
         # One key, so a FanoutCache's one-shard transaction covers every call inside it.

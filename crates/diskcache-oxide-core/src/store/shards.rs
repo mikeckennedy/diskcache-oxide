@@ -126,7 +126,7 @@ pub(crate) fn split_connections(total: u64, shards: u32) -> Result<Vec<u64>> {
 /// Splits a total `size_limit` over `shards`, floored: each shard culls on its own, at its share.
 /// Each share must still reach [`MIN_SIZE_LIMIT`] (D-005), so the total must be at least `shards`
 /// MiB. `what` names the setting in the error.
-pub(crate) fn split_size_limit(what: &str, total: i64, shards: u32) -> Result<i64> {
+pub fn split_size_limit(what: &str, total: i64, shards: u32) -> Result<i64> {
     let share = total / i64::from(shards);
     if share < MIN_SIZE_LIMIT {
         return Err(Error::InvalidSetting(format!(

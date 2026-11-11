@@ -80,7 +80,15 @@ class CacheLike(Protocol):
     def delete(self, key: Key, *, retry: bool = False) -> bool:
         """Remove `key`. True if a live entry was removed."""
 
-    def pop(self, key: Key, default: Any = None, *, retry: bool = False) -> Any:
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False
+    ) -> Any: ...
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None]: ...
+    def pop(self, key: Key, default: Any = None, *, expire_time: bool = False, retry: bool = False) -> Any:
         """Remove `key` and return its value, or `default`."""
 
     def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
