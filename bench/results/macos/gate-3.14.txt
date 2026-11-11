@@ -1,1 +1,41 @@
 # Apple M5 Pro, 18 cores, macOS 27.2, AC power, nothing else heavy running. diskcache-oxide ce9a887 (Phase 6, all four releases of plan 24), 2026-11-11. Against the 0.1.0 run of 2026-11-08 the machine ran about 10% slower for both backends; every ratio to diskcache is unchanged or better.
+round 1/4: diskcache done
+round 1/4: oxide done
+round 2/4: diskcache done
+round 2/4: oxide done
+round 3/4: diskcache done
+round 3/4: oxide done
+round 4/4: diskcache done
+round 4/4: oxide done
+
+Python 3.14.10 (GIL), 4 interleaved rounds, tolerance 1.05x
+
+workload                     variant          p50 us / ops  vs diskcache  verdict
+get_hit_small                diskcache               2.118
+get_hit_small                oxide                   1.042         0.49x  pass (target <= 0.55x)
+get_miss                     diskcache               1.639
+get_miss                     oxide                   0.892         0.54x  pass
+get_hit_small_dict           diskcache               2.964
+get_hit_small_dict           oxide                   1.513         0.51x  pass
+set_small                    diskcache              29.289
+set_small                    oxide                  21.920         0.75x  pass (target <= 0.85x)
+get_random_wide              diskcache               3.690
+get_random_wide              oxide                   3.072         0.83x  pass
+threads_99to1 x1             diskcache         374,552.519
+threads_99to1 x1             oxide             588,824.151         1.57x  pass
+threads_99to1 x2             diskcache         176,736.567
+threads_99to1 x2             oxide             578,467.262         3.27x  pass
+threads_99to1 x4             diskcache          58,483.186
+threads_99to1 x4             oxide             580,434.235         9.92x  pass
+threads_99to1 x8             diskcache          14,815.147
+threads_99to1 x8             oxide             568,378.803        38.36x  pass
+threads_1000to1 x1           diskcache         410,484.227
+threads_1000to1 x1           oxide             655,343.258         1.60x  pass
+threads_1000to1 x2           diskcache         163,139.680
+threads_1000to1 x2           oxide             645,215.582         3.95x  pass
+threads_1000to1 x4           diskcache          54,631.106
+threads_1000to1 x4           oxide             655,079.854        11.99x  pass
+threads_1000to1 x8           diskcache          14,519.067
+threads_1000to1 x8           oxide             655,419.099        45.14x  pass
+
+oxide: GO
