@@ -5,10 +5,13 @@ Arguments after `prefix`/`side`/`last` are passed by keyword, as oxide requires 
 
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from tests.conformance.value_cases import HomepageSnapshot
 
 pytestmark = pytest.mark.requires('peek_pull_push')
 
@@ -142,3 +145,19 @@ def test_pull_and_peek_on_another_cache_dir_see_nothing(make_cache: Any, tmp_pat
     one.push('a')
     assert two.peek() == (None, None)
     assert two.pull() == (None, None)
+
+
+@pytest.mark.covers('D-056')
+@pytest.mark.backend_only('oxide')
+def test_a_pickled_head_stays_for_a_handle_that_can_read_it(make_cache: Any, cache_dir: Path, backend: Any) -> None:
+    writer = make_cache(cache_dir, pickle=True)
+    snapshot = HomepageSnapshot('Talk Python', [500, 501], dt.datetime(2026, 10, 27))
+    writer.push(snapshot)
+    writer.push('after')
+    reader = make_cache(cache_dir, pickle=False)
+    with pytest.raises(backend.unsafe_value_error):
+        reader.pull()
+    assert len(reader) == 2, 'the refused head was kept, and the queue behind it waits'
+    key, value = writer.pull()
+    assert key == START and value == snapshot
+    assert reader.pull() == (START + 1, 'after')
