@@ -14,10 +14,10 @@ use std::time::{Duration, Instant};
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::key::Key;
+use crate::key::{Key, OwnedKey};
 #[cfg(test)]
 use crate::rows::UPDATE_NUMBER_SQL;
-use crate::rows::{NewRow, Removed, RemovedBatch, RowWriter, Stored};
+use crate::rows::{NewRow, Removed, RemovedBatch, RowWriter, Stored, Tag};
 use crate::schema::{MODE_INT, MODE_REAL};
 use crate::spill::{self, PendingFile};
 use crate::store::{Changed, LockPriority, Store};
@@ -67,6 +67,8 @@ pub struct Popped {
     pub value: SqlValue,
     /// When the popped value would have expired, or `None` for never.
     pub expire_time: Option<f64>,
+    /// Its tag, or `None` if it had none.
+    pub tag: Option<OwnedKey>,
 }
 
 /// One stored version of a key: its row and its store sequence number (D-011, D-013). An overwrite
@@ -98,6 +100,9 @@ pub struct Hit<T> {
     pub expire_time: Option<f64>,
     /// The version that was decoded, for [`Store::delete_version_nowait`].
     pub version: Version,
+    /// The entry's tag, read with the version, when the caller asked for it ([`Store::get_tagged`]);
+    /// otherwise `None` whatever the tag.
+    pub tag: Option<OwnedKey>,
 }
 
 /// What [`Store::delete_version_nowait`] did.
@@ -183,11 +188,27 @@ impl Store {
         key: impl Into<Key<'k>>,
         now: f64,
         refuse: impl Fn(i64) -> bool,
+        decode: impl FnMut(i64, ValueRef<'_>) -> Result<T>,
+    ) -> Result<Option<Hit<T>>> {
+        self.get_tagged(timeout, key, now, false, refuse, decode)
+    }
+
+    /// [`Store::get_with`], with the entry's tag in [`Hit::tag`] when `with_tag`: read in the same
+    /// statement as the version on every path (the first read, a re-read, the locked fallback), so a
+    /// value is never paired with a concurrent overwrite's tag. Without it, the lookup statement is
+    /// the untagged one, unchanged.
+    pub fn get_tagged<'k, T>(
+        &self,
+        timeout: Duration,
+        key: impl Into<Key<'k>>,
+        now: f64,
+        with_tag: bool,
+        refuse: impl Fn(i64) -> bool,
         mut decode: impl FnMut(i64, ValueRef<'_>) -> Result<T>,
     ) -> Result<Option<Hit<T>>> {
         let key = key.into();
         let (mut row, taken) =
-            self.read_with_deadline(timeout, |conn| look_up(conn, key, now, timeout, &mut decode))?;
+            self.read_with_deadline(timeout, |conn| look_up(conn, key, now, with_tag, timeout, &mut decode))?;
         // One budget for every read and the fallback's write. The first read's deadline if its slow
         // path took one, else `now + timeout` at the first missing file, since the fast path has no
         // wait to charge. A hit never reads the clock.
@@ -222,7 +243,7 @@ impl Store {
             }
             // Missing or short: overwritten since the row was read, or truly gone.
             row = self
-                .read(left(&mut budget), |conn| look_up(conn, key, now, timeout, &mut decode))
+                .read(left(&mut budget), |conn| look_up(conn, key, now, with_tag, timeout, &mut decode))
                 .map_err(whole_timeout)?;
             if let Found::File(again) = &row
                 && again.version == file.version
@@ -247,7 +268,7 @@ impl Store {
         let locked = self
             .write(left(&mut budget), |_, conn| {
                 let mut copy = |mode: i64, value: ValueRef<'_>| Ok((mode, owned(value)));
-                Ok(match look_up(conn, key, now, timeout, &mut copy)? {
+                Ok(match look_up(conn, key, now, with_tag, timeout, &mut copy)? {
                     Found::Miss => Locked::Miss,
                     Found::Inline(hit) => Locked::Inline(hit),
                     // Replaced by a value of a refused mode while this reader retried: never read it.
@@ -261,9 +282,9 @@ impl Store {
             .map_err(whole_timeout)?;
         let (handle, path, file) = match locked {
             Locked::Miss => return Ok(None),
-            Locked::Inline(Hit { value: (mode, value), expire_time, version }) => {
+            Locked::Inline(Hit { value: (mode, value), expire_time, version, tag }) => {
                 let value = decode(mode, (&value).into())?;
-                return Ok(Some(Hit { value, expire_time, version }));
+                return Ok(Some(Hit { value, expire_time, version, tag }));
             }
             Locked::Refused(file) => return Ok(Some(file.hit(decode(file.mode, ValueRef::Null)?))),
             Locked::Lost(version) => {
@@ -343,7 +364,8 @@ impl Store {
         })
     }
 
-    /// Stores `value` under `key`, then culls. Always returns `Ok(true)` on success, like diskcache.
+    /// Stores `value` under `key`, untagged, then culls. Always returns `Ok(true)` on success, like
+    /// diskcache.
     pub fn set<'k>(
         &self,
         timeout: Duration,
@@ -352,12 +374,30 @@ impl Store {
         expire: Option<f64>,
         now: f64,
     ) -> Result<bool> {
+        self.set_tagged(timeout, key, value, expire, None, now)
+    }
+
+    /// [`Store::set`] with a tag (`None`: untagged; an overwrite replaces the old tag either way).
+    pub fn set_tagged<'k>(
+        &self,
+        timeout: Duration,
+        key: impl Into<Key<'k>>,
+        value: Value<'_>,
+        expire: Option<f64>,
+        tag: Option<Tag<'_>>,
+        now: f64,
+    ) -> Result<bool> {
         let key = key.into();
         let pending = self.spill_if_large(value)?;
         let result = self.write_files(timeout, LockPriority::Normal, |writer, tx| {
             let before = prelude(tx, key, now, timeout)?;
-            let (delta, mut removed) =
-                put_value(writer, key, value, pending.as_ref(), now, expire_time(now, expire), before.old())?;
+            let (delta, mut removed) = put_value(
+                writer,
+                Put { key, value, expire_time: expire_time(now, expire), tag },
+                pending.as_ref(),
+                now,
+                before.old(),
+            )?;
             removed.extend(cull(writer, tx, &before, delta, now, timeout)?);
             Ok(Changed::removing((), removed).creating(pending.as_ref().map(|p| p.relative.clone())))
         });
@@ -365,13 +405,26 @@ impl Store {
         Ok(true)
     }
 
-    /// Stores `value` only if `key` is missing or expired. Returns whether it stored.
+    /// Stores `value`, untagged, only if `key` is missing or expired. Returns whether it stored.
     pub fn add<'k>(
         &self,
         timeout: Duration,
         key: impl Into<Key<'k>>,
         value: Value<'_>,
         expire: Option<f64>,
+        now: f64,
+    ) -> Result<bool> {
+        self.add_tagged(timeout, key, value, expire, None, now)
+    }
+
+    /// [`Store::add`] with a tag. A live entry, and its tag, are left as they are.
+    pub fn add_tagged<'k>(
+        &self,
+        timeout: Duration,
+        key: impl Into<Key<'k>>,
+        value: Value<'_>,
+        expire: Option<f64>,
+        tag: Option<Tag<'_>>,
         now: f64,
     ) -> Result<bool> {
         let key = key.into();
@@ -381,8 +434,13 @@ impl Store {
             if before.live.is_some() {
                 return Ok(Changed::removing(false, []));
             }
-            let (delta, mut removed) =
-                put_value(writer, key, value, pending.as_ref(), now, expire_time(now, expire), before.old())?;
+            let (delta, mut removed) = put_value(
+                writer,
+                Put { key, value, expire_time: expire_time(now, expire), tag },
+                pending.as_ref(),
+                now,
+                before.old(),
+            )?;
             removed.extend(cull(writer, tx, &before, delta, now, timeout)?);
             Ok(Changed::removing(true, removed).creating(pending.as_ref().map(|p| p.relative.clone())))
         });
@@ -436,7 +494,7 @@ impl Store {
             let found = {
                 let mut stmt = tx
                     .prepare_cached(
-                        "SELECT mode, value, filename, size, expire_time FROM cache
+                        "SELECT mode, value, filename, size, expire_time, tag_type, tag FROM cache
                          WHERE key_type = ?1 AND key = ?2 AND (expire_time IS NULL OR expire_time > ?3)",
                     )
                     .map_err(|e| Error::from_sqlite(e, timeout))?;
@@ -448,6 +506,10 @@ impl Store {
                             return Ok(Changed::removing(Pop::Refused { mode }, []));
                         }
                         let expire_time: Option<f64> = row.get(4).map_err(|e| Error::from_sqlite(e, timeout))?;
+                        let tag = stored_tag(
+                            row.get(5).map_err(|e| Error::from_sqlite(e, timeout))?,
+                            row.get_ref(6).map_err(|e| Error::from_sqlite(e, timeout))?,
+                        )?;
                         let filename: Option<String> = row.get(2).map_err(|e| Error::from_sqlite(e, timeout))?;
                         if let Some(relative) = filename {
                             // Under the write lock nothing can replace the file, so read it here. A
@@ -457,10 +519,11 @@ impl Store {
                                 mode,
                                 value: SqlValue::Blob(bytes),
                                 expire_time,
+                                tag: tag.clone(),
                             })
                         } else {
                             let value = owned(row.get_ref(1).map_err(|e| Error::from_sqlite(e, timeout))?);
-                            Some(Popped { mode, value, expire_time })
+                            Some(Popped { mode, value, expire_time, tag })
                         }
                     }
                     None => None,
@@ -513,12 +576,20 @@ impl Store {
                 return Ok(Changed::unchanged(next));
             }
             let before = prelude(tx, key, now, timeout)?;
+            // A live row was updated in place above, keeping its tag; this insert stores none.
+            debug_assert!(before.live.is_none(), "a live number is updated in place");
             let (current, expire) = match &before.live {
                 Some(row) => (number_of(row)?, row.expire_time),
                 None => (default.ok_or(Error::KeyMissing)?, None),
             };
             let next = current.checked_add(delta)?;
-            let (delta_size, mut removed) = put_value(writer, key, next.value(), None, now, expire, before.old())?;
+            let (delta_size, mut removed) = put_value(
+                writer,
+                Put { key, value: next.value(), expire_time: expire, tag: None },
+                None,
+                now,
+                before.old(),
+            )?;
             removed.extend(cull(writer, tx, &before, delta_size, now, timeout)?);
             Ok(Changed::removing(next, removed))
         })
@@ -544,28 +615,42 @@ fn incr_row(tx: &Connection, key: Key<'_>, timeout: Duration) -> Result<Option<I
         .map_err(|e| Error::from_sqlite(e, timeout))
 }
 
-/// Stores `value` (pointing the row at `pending`'s value file if it was spilled), given the stored
+/// One entry for [`put_value`] to store: named fields, so an expiry and a tag can't be swapped.
+#[derive(Clone, Copy)]
+struct Put<'a> {
+    key: Key<'a>,
+    value: Value<'a>,
+    expire_time: Option<f64>,
+    tag: Option<Tag<'a>>,
+}
+
+/// Stores `put` (pointing the row at `pending`'s value file if it was spilled), given the stored
 /// version `old` read in this transaction. Returns the change in `totals.size` and the replaced
 /// version.
 fn put_value(
     writer: &RowWriter<'_>,
-    key: Key<'_>,
-    value: Value<'_>,
+    put: Put<'_>,
     pending: Option<&PendingFile>,
     now: f64,
-    expire_time: Option<f64>,
     old: Option<(i64, Option<String>)>,
 ) -> Result<(i64, Vec<Removed>)> {
+    let Put { key, value, expire_time, tag } = put;
     let old_size = old.as_ref().map_or(0, |(size, _)| *size);
     let row = match (pending, value) {
         (Some(file), Value::Bytes { mode, data }) => {
             file.commit_name()?;
             let size = i64::try_from(data.len()).unwrap_or(i64::MAX);
-            NewRow { key, mode, value: Stored::File(&file.relative), size, store_time: now, expire_time }
+            NewRow { key, mode, value: Stored::File(&file.relative), size, store_time: now, expire_time, tag }
         }
-        _ => {
-            NewRow { key, mode: value.mode(), value: value.stored(), size: value.size(), store_time: now, expire_time }
-        }
+        _ => NewRow {
+            key,
+            mode: value.mode(),
+            value: value.stored(),
+            size: value.size(),
+            store_time: now,
+            expire_time,
+            tag,
+        },
     };
     let (_seq, replaced) = writer.upsert_after(&row, old)?;
     Ok((row.size - old_size, replaced.into_iter().collect()))
@@ -596,36 +681,53 @@ struct FileRow {
     relative: String,
     size: i64,
     expire_time: Option<f64>,
+    tag: Option<OwnedKey>,
 }
 
 impl FileRow {
     fn hit<T>(&self, value: T) -> Hit<T> {
-        Hit { value, expire_time: self.expire_time, version: self.version }
+        Hit { value, expire_time: self.expire_time, version: self.version, tag: self.tag.clone() }
     }
 }
 
 const LOOKUP_SQL: &str = "SELECT mode, value, expire_time, filename, size, id, store_seq FROM cache
      WHERE key_type = ?1 AND key = ?2 AND (expire_time IS NULL OR expire_time > ?3)";
 
+/// [`LOOKUP_SQL`] with the tag, for a caller that asked for it: a statement of its own, so the plain
+/// lookup is unchanged.
+const LOOKUP_TAGGED_SQL: &str =
+    "SELECT mode, value, expire_time, filename, size, id, store_seq, tag_type, tag FROM cache
+     WHERE key_type = ?1 AND key = ?2 AND (expire_time IS NULL OR expire_time > ?3)";
+
+/// A row's tag from its `tag_type` and `tag` columns; a damaged one is [`Error::CorruptKey`].
+pub(crate) fn stored_tag(tag_type: i64, tag: ValueRef<'_>) -> Result<Option<OwnedKey>> {
+    if tag_type == crate::schema::TAG_TYPE_NONE {
+        return Ok(None);
+    }
+    OwnedKey::from_row(tag_type, tag).map(Some).map_err(Error::CorruptKey)
+}
+
 fn look_up<T>(
     conn: &Connection,
     key: Key<'_>,
     now: f64,
+    with_tag: bool,
     timeout: Duration,
     decode: &mut impl FnMut(i64, ValueRef<'_>) -> Result<T>,
 ) -> Result<Found<T>> {
     let sqlite = |e| Error::from_sqlite(e, timeout);
-    let mut stmt = conn.prepare_cached(LOOKUP_SQL).map_err(sqlite)?;
+    let mut stmt = conn.prepare_cached(if with_tag { LOOKUP_TAGGED_SQL } else { LOOKUP_SQL }).map_err(sqlite)?;
     let mut rows = stmt.query((key.key_type(), key, now)).map_err(sqlite)?;
     let Some(row) = rows.next().map_err(sqlite)? else { return Ok(Found::Miss) };
     let mode: i64 = row.get(0).map_err(sqlite)?;
     let expire_time: Option<f64> = row.get(2).map_err(sqlite)?;
     let version = Version { id: row.get(5).map_err(sqlite)?, store_seq: row.get(6).map_err(sqlite)? };
+    let tag = if with_tag { stored_tag(row.get(7).map_err(sqlite)?, row.get_ref(8).map_err(sqlite)?)? } else { None };
     if let Some(relative) = row.get::<_, Option<String>>(3).map_err(sqlite)? {
-        Ok(Found::File(FileRow { version, mode, relative, size: row.get(4).map_err(sqlite)?, expire_time }))
+        Ok(Found::File(FileRow { version, mode, relative, size: row.get(4).map_err(sqlite)?, expire_time, tag }))
     } else {
         let value = decode(mode, row.get_ref(1).map_err(sqlite)?)?;
-        Ok(Found::Inline(Hit { value, expire_time, version }))
+        Ok(Found::Inline(Hit { value, expire_time, version, tag }))
     }
 }
 
@@ -1070,6 +1172,104 @@ mod tests {
         VersionDelete::Skipped
     }
 
+    /// An overwrite with a spilled value whose tag names its byte, `t{byte}`.
+    fn set_big_tagged(s: &Store, byte: u8) {
+        let big = vec![byte; spill::THRESHOLD];
+        let tag = format!("t{byte}");
+        s.set_tagged(T, "k", Value::Bytes { mode: MODE_BYTES, data: &big }, None, Some(Tag(Key::Str(&tag))), NOW)
+            .unwrap();
+    }
+
+    fn typed_tag(n: i64) -> crate::key::TypedKey {
+        let mut encoder = crate::key::Encoder::new();
+        encoder.int(n);
+        encoder.finish().unwrap()
+    }
+
+    /// The tag `get_tagged` returns was read with the value's version on every path: a reader that
+    /// loses each optimistic read to a tagged overwrite, and then the locked fallback, never pairs
+    /// one version's value with another's tag.
+    #[test]
+    fn a_reader_racing_tagged_overwrites_gets_the_tag_of_the_value_it_read() {
+        for at_fallback in [false, true] {
+            let tmp = TempDir::new("ops-tag-race");
+            let s = store(tmp.path(), Requested::default());
+            set_big_tagged(&s, 0);
+            let calls = std::rc::Rc::new(std::cell::Cell::new(0_u8));
+            let counted = calls.clone();
+            let _optimistic = Hook::install(&BEFORE_OPTIMISTIC_READ, move |s| {
+                counted.set(counted.get() + 1);
+                set_big_tagged(s, counted.get());
+            });
+            let _fallback = at_fallback.then(|| Hook::install(&BEFORE_FALLBACK, |s| set_big_tagged(s, 0xfe)));
+            let hit = s
+                .get_tagged(T, "k", NOW, true, |_| false, |_, v| Ok(v.as_blob().map(|b| b[0]).unwrap_or_default()))
+                .unwrap()
+                .unwrap();
+            assert_eq!(hit.tag, Some(OwnedKey::Str(format!("t{}", hit.value))), "at_fallback={at_fallback}");
+            assert_eq!(usize::from(calls.get()), spill::OPTIMISTIC_ATTEMPTS);
+        }
+    }
+
+    #[test]
+    fn tags_are_stored_read_and_popped_and_kept_or_cleared_as_diskcache_does() {
+        let tmp = TempDir::new("ops-tags");
+        let s = store(tmp.path(), Requested::default());
+        let typed = typed_tag(7);
+        let tag_of = |key: &str| s.get_tagged(T, key, NOW, true, |_| false, |_, _| Ok(())).unwrap().map(|hit| hit.tag);
+        let big = vec![b'x'; spill::THRESHOLD];
+        s.set_tagged(T, "inline", text("v"), None, Some(Tag(Key::Str("users"))), NOW).unwrap();
+        s.set_tagged(T, "file", Value::Bytes { mode: MODE_BYTES, data: &big }, None, Some(Tag((&typed).into())), NOW)
+            .unwrap();
+        assert_eq!(tag_of("inline"), Some(Some(OwnedKey::Str("users".into()))));
+        assert_eq!(tag_of("file"), Some(Some(OwnedKey::Typed(typed.clone()))));
+        assert_eq!(tag_of("missing"), None);
+        // Not asked for: no tag, whatever is stored.
+        let untold = s.get_tagged(T, "inline", NOW, false, |_| false, |_, _| Ok(())).unwrap().unwrap();
+        assert_eq!(untold.tag, None);
+        // add on a live key keeps the entry and its tag; incr in place and touch keep it too.
+        assert!(!s.add_tagged(T, "inline", text("w"), None, Some(Tag(Key::Str("other"))), NOW).unwrap());
+        assert_eq!(tag_of("inline"), Some(Some(OwnedKey::Str("users".into()))));
+        s.set_tagged(T, "n", Value::Int(1), None, Some(Tag(Key::Str("c"))), NOW).unwrap();
+        s.incr(T, "n", Number::Int(1), Some(Number::Int(0)), NOW).unwrap();
+        assert!(s.touch(T, "n", Some(60.0), NOW).unwrap());
+        assert_eq!(tag_of("n"), Some(Some(OwnedKey::Str("c".into()))));
+        // An expired counter's incr is an insert, with no tag; so is a plain overwrite.
+        s.set_tagged(T, "e", Value::Int(1), Some(1.0), Some(Tag(Key::Str("c"))), NOW).unwrap();
+        s.incr(T, "e", Number::Int(1), Some(Number::Int(0)), NOW + 10.0).unwrap();
+        assert_eq!(s.get_tagged(T, "e", NOW + 10.0, true, |_| false, |_, _| Ok(())).unwrap().unwrap().tag, None);
+        s.set(T, "inline", text("x"), None, NOW).unwrap();
+        assert_eq!(tag_of("inline"), Some(None));
+        // pop, inline and from a file, carries the tag.
+        for (key, want) in [("n", OwnedKey::Str("c".into())), ("file", OwnedKey::Typed(typed))] {
+            let Pop::Removed(popped) = s.pop(T, key, NOW, |_| false).unwrap() else { panic!("{key} missing") };
+            assert_eq!(popped.tag, Some(want), "{key}");
+        }
+    }
+
+    #[test]
+    fn a_tag_is_stored_as_a_key_is_and_the_schema_keeps_tag_type_and_tag_together() {
+        let tmp = TempDir::new("ops-tag-schema");
+        let s = store(tmp.path(), Requested::default());
+        let typed = typed_tag(1);
+        s.set(T, "none", text("v"), None, NOW).unwrap();
+        s.set_tagged(T, "str", text("v"), None, Some(Tag(Key::Str("a"))), NOW).unwrap();
+        s.set_tagged(T, "typed", text("v"), None, Some(Tag((&typed).into())), NOW).unwrap();
+        let rows: Vec<(String, i64, String)> = s
+            .read(T, |c| {
+                let mut stmt = c.prepare("SELECT key, tag_type, typeof(tag) FROM cache ORDER BY key").unwrap();
+                Ok(stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect())
+            })
+            .unwrap();
+        assert_eq!(
+            rows,
+            [("none".into(), 0, "null".into()), ("str".into(), 1, "text".into()), ("typed".into(), 2, "blob".into())]
+        );
+        let broken = s
+            .read(T, |c| Ok(c.execute("UPDATE cache SET tag = NULL WHERE key = 'str'", []).map_err(|e| e.to_string())));
+        assert!(broken.unwrap().unwrap_err().contains("CHECK constraint failed"));
+    }
+
     fn store(dir: &Path, requested: Requested) -> Arc<Store> {
         Store::open(&OpenOptions {
             directory: dir.to_path_buf(),
@@ -1182,7 +1382,7 @@ mod tests {
         ] {
             assert_eq!(
                 s.pop(T, key, NOW, |_| false).unwrap(),
-                Pop::Removed(Popped { mode, value, expire_time: None }),
+                Pop::Removed(Popped { mode, value, expire_time: None, tag: None }),
                 "{key}"
             );
         }
@@ -1570,7 +1770,7 @@ mod tests {
     #[test]
     fn culling_shares_one_budget_and_evicts_least_recently_stored() {
         let tmp = TempDir::new("ops-cull");
-        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(3) });
+        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(3), eviction_policy: None });
         let blob = vec![0u8; 60_000];
         for i in 0..30 {
             s.set(T, &format!("k{i:02}"), Value::Bytes { mode: MODE_BYTES, data: &blob }, None, NOW + f64::from(i))
@@ -1631,7 +1831,8 @@ mod tests {
         ];
         for (name, write) in writes {
             let tmp = TempDir::new("ops-cull-sweep-room");
-            let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(10) });
+            let s =
+                store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(10), eviction_policy: None });
             five_live_and_nine_expiring(&s);
             write(&s, v);
             assert_eq!(keys(&s), ["k0", "k1", "k2", "k3", "k4", "new"], "{name}: every live row survives");
@@ -1644,7 +1845,7 @@ mod tests {
         // limit before the write: filled with culling off, then joined again with it on (joining a
         // live store updates its limits).
         let tmp = TempDir::new("ops-cull-sweep-incr");
-        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(0) });
+        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(0), eviction_policy: None });
         let (live, expiring) = (vec![0u8; 70_000], vec![0u8; 80_000]);
         for i in 0..5 {
             s.set(T, &format!("k{i}"), Value::Bytes { mode: MODE_BYTES, data: &live }, None, NOW + f64::from(i))
@@ -1657,7 +1858,7 @@ mod tests {
         }
         assert_eq!(len(&s), 14);
         assert!(s.volume(T).unwrap() >= 1 << 20, "over the limit before the incr");
-        let s = store(tmp.path(), Requested { size_limit: None, cull_limit: Some(10) });
+        let s = store(tmp.path(), Requested { size_limit: None, cull_limit: Some(10), eviction_policy: None });
         let one = s.incr(T, "new", Number::Int(1), Some(Number::Int(0)), NOW + 100.0).unwrap();
         assert_eq!(one, Number::Int(1));
         assert_eq!(keys(&s), ["k0", "k1", "k2", "k3", "k4", "new"], "every live row survives");
@@ -1668,7 +1869,7 @@ mod tests {
     #[test]
     fn a_sweep_of_spilled_values_that_is_not_enough_evicts_with_the_rest_of_the_budget() {
         let tmp = TempDir::new("ops-cull-sweep-short");
-        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(10) });
+        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(10), eviction_policy: None });
         let blob = vec![0u8; 70_000];
         let v = Value::Bytes { mode: MODE_BYTES, data: &blob };
         for i in 0..12 {
@@ -1687,7 +1888,7 @@ mod tests {
     #[test]
     fn a_sweep_inside_a_rolled_back_transaction_puts_everything_back() {
         let tmp = TempDir::new("ops-cull-sweep-held");
-        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(10) });
+        let s = store(tmp.path(), Requested { size_limit: Some(1 << 20), cull_limit: Some(10), eviction_policy: None });
         five_live_and_nine_expiring(&s);
         let (before, files, volume) = (keys(&s), value_files(tmp.path()), s.volume(T).unwrap());
         let blob = vec![0u8; 70_000];

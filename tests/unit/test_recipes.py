@@ -47,9 +47,9 @@ def test_coordination_refuses_a_durable_handle(tmp_path: Path, make: Any) -> Non
         make(cache)
 
 
-def test_tag_must_be_none_until_tags_arrive(tmp_path: Path) -> None:
-    with Cache(tmp_path) as cache, pytest.raises(TypeError, match='tag'):
-        Lock(cache, 'k', tag='t')  # ty: ignore[invalid-argument-type]
+def test_a_recipe_refuses_a_tag_that_is_not_a_key_type(tmp_path: Path) -> None:
+    with Cache(tmp_path) as cache, pytest.raises(TypeError, match='invalid tag'):
+        Lock(cache, 'k', tag=[1])  # ty: ignore[invalid-argument-type]
 
 
 def test_a_lock_that_would_wait_inside_its_caches_transaction_raises(tmp_path: Path) -> None:

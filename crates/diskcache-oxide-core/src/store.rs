@@ -183,6 +183,9 @@ pub struct Store {
     /// current values inside their transaction.
     size_limit: AtomicI64,
     cull_limit: AtomicI64,
+    /// The stored eviction policy's code, for the attribute only: write paths read it inside their
+    /// transaction (plan 24, release 3, H2).
+    eviction_policy: AtomicI64,
     /// A write transaction held across calls (`transact()`): its owner thread's operations run on
     /// the pinned connection. Locked only under
     /// the gate, and only for a moment: an operation borrows the connection (see
@@ -556,6 +559,7 @@ impl Store {
             deferred_releases: AtomicUsize::new(0),
             size_limit: AtomicI64::new(limits.size_limit),
             cull_limit: AtomicI64::new(limits.cull_limit),
+            eviction_policy: AtomicI64::new(limits.eviction_policy.code()),
             pinned: Mutex::new(PinnedSlot::Empty),
             pinned_active: AtomicBool::new(false),
             // `prepare` just checked the stamp against it.
@@ -734,11 +738,12 @@ impl Store {
             let wanted = Limits {
                 size_limit: requested.size_limit.unwrap_or(stored.size_limit),
                 cull_limit: requested.cull_limit.unwrap_or(stored.cull_limit),
+                eviction_policy: requested.eviction_policy.unwrap_or(stored.eviction_policy),
             };
             if wanted != stored {
                 tx.execute(
-                    "UPDATE totals SET size_limit = ?1, cull_limit = ?2 WHERE only = 1",
-                    (wanted.size_limit, wanted.cull_limit),
+                    "UPDATE totals SET size_limit = ?1, cull_limit = ?2, eviction_policy = ?3 WHERE only = 1",
+                    (wanted.size_limit, wanted.cull_limit, wanted.eviction_policy.code()),
                 )
                 .map_err(|e| Error::from_sqlite(e, timeout))?;
             }
@@ -937,12 +942,15 @@ impl Store {
         Limits {
             size_limit: self.size_limit.load(Ordering::Acquire),
             cull_limit: self.cull_limit.load(Ordering::Acquire),
+            eviction_policy: crate::schema::EvictionPolicy::try_from(self.eviction_policy.load(Ordering::Acquire))
+                .unwrap_or_default(),
         }
     }
 
     pub(crate) fn cache_limits(&self, limits: Limits) {
         self.size_limit.store(limits.size_limit, Ordering::Release);
         self.cull_limit.store(limits.cull_limit, Ordering::Release);
+        self.eviction_policy.store(limits.eviction_policy.code(), Ordering::Release);
     }
 
     /// Runs a read. `read` may run several times (each attempt starts from scratch), so it must
@@ -2164,6 +2172,7 @@ mod tests {
                     size: i64::try_from(value.len()).unwrap(),
                     store_time: 1.0,
                     expire_time: None,
+                    tag: None,
                 })
             })
             .unwrap();
@@ -2313,7 +2322,7 @@ mod tests {
     fn a_second_handle_applies_explicit_settings_only() {
         let tmp = TempDir::new("store-settings");
         let a = Store::open(&OpenOptions {
-            requested: Requested { size_limit: Some(5 << 20), cull_limit: None },
+            requested: Requested { size_limit: Some(5 << 20), cull_limit: None, eviction_policy: None },
             ..options(tmp.path())
         })
         .unwrap();
@@ -2321,7 +2330,7 @@ mod tests {
         let _b = Store::open(&options(tmp.path())).unwrap();
         assert_eq!(a.cached_limits().size_limit, 5 << 20, "an unspecified setting keeps the stored value");
         let _c = Store::open(&OpenOptions {
-            requested: Requested { size_limit: Some(7 << 20), cull_limit: None },
+            requested: Requested { size_limit: Some(7 << 20), cull_limit: None, eviction_policy: None },
             ..options(tmp.path())
         })
         .unwrap();
@@ -3042,6 +3051,7 @@ mod tests {
                     size: 1,
                     store_time: 1.0,
                     expire_time: None,
+                    tag: None,
                 })
             })
         };
@@ -3099,6 +3109,7 @@ mod tests {
                 size: 1,
                 store_time: f64::from(u32::try_from(i).unwrap()),
                 expire_time: None,
+                tag: None,
             };
             // It skips while another test's fork is pending.
             let wrote = (0..5_000).any(|_| {

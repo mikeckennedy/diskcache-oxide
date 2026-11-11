@@ -52,6 +52,7 @@ fn put(store: &Store, key: &str) {
                 size: 1,
                 store_time: 1.0,
                 expire_time: None,
+                tag: None,
             })
         })
         .unwrap();
@@ -285,7 +286,7 @@ fn row_5_a_failed_join_behind_a_fork_defers_its_release_and_adds_no_wait() {
     let store = open_store(tmp.path());
     let token = store.write_lock.try_lock().unwrap();
     let budget = Duration::from_millis(400);
-    let requested = Requested { size_limit: Some(7 << 20), cull_limit: None };
+    let requested = Requested { size_limit: Some(7 << 20), cull_limit: None, eviction_policy: None };
     let joiner = {
         let directory = tmp.path().to_path_buf();
         std::thread::spawn(move || {

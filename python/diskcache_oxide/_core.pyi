@@ -263,7 +263,15 @@ class Cache:
     def enabled(self) -> bool:
         """Always True for a real cache; False for a `NullCache`."""
     @overload
-    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False) -> Any:
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> Any:
         """Return the value stored for `key`, or `default` if it's missing or expired.
 
         Reads never write, so any number of threads and processes can read at once.
@@ -272,12 +280,15 @@ class Cache:
             key: The key to look up.
             default: Returned when the key is missing or expired.
             expire_time: Also return the entry's expiry time.
+            tag: Also return the entry's tag.
             retry: On a `Timeout`, try again until the call gets through, each round with the
                 whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             The value, or `default`. With `expire_time=True`, a `(value, expire_time)` tuple, where
             `expire_time` is a Unix timestamp, or None for an entry that never expires (or a miss).
+            With `tag=True`, `(value, tag)`, the tag None when untagged (or a miss); with both,
+            `(value, expire_time, tag)`.
 
         Raises:
             UnsafeValueError: The value was stored with pickle and this cache has `pickle=False`.
@@ -290,13 +301,34 @@ class Cache:
             user = cache.get('user:42')                     # None on a miss
             user = cache.get('user:42', default={})         # {} on a miss
             value, expires_at = cache.get('user:42', expire_time=True)
+            value, tag = cache.get('user:42', tag=True)
             ```
         """
     @overload
     def get(
-        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> tuple[Any, float | None]: ...
-    def set(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
+    @overload
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def set(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """Store `value` under `key`, replacing any existing value.
 
         Values of 64 KiB or more (after encoding) are stored in their own file.
@@ -306,6 +338,9 @@ class Cache:
             value: The value: `str`, `bytes`, numbers, `Decimal`, `bool`, `None`, and lists, tuples, dicts,
                 sets, frozensets, datetimes and dates of those, or anything picklable with `pickle=True`.
             expire: Seconds until the entry expires, or None for never.
+            tag: A label for the entry, which `evict(tag)` removes by: any value a key can be,
+                compared by exact type, so `1`, `1.0` and `True` are three tags. None for none. An
+                overwrite replaces the old tag, so an overwrite without one leaves the entry untagged.
             retry: On a `Timeout`, try again until the call gets through, each round with the
                 whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
@@ -314,16 +349,18 @@ class Cache:
             stored under `key` stays, and can be served stale.
 
         Raises:
-            TypeError: The value can't be stored exactly without pickle, or `expire` is a `bool`.
+            TypeError: The value can't be stored exactly without pickle, `expire` is a `bool`, or
+                `tag` isn't a valid key type.
             Timeout: Another process held the write lock for longer than `timeout`.
 
         Examples:
             ```python
             cache.set('episodes:popular', episodes, expire=300)   # expires in 5 minutes
+            cache.set('user:42:profile', profile, tag='user:42')  # evict('user:42') removes it
             cache.set('config', {'retries': 3})                   # never expires
             ```
         """
-    def add(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """Store `value` only if `key` is missing or expired.
 
         Atomic across threads and processes: when several callers race to add one key, exactly one
@@ -333,6 +370,7 @@ class Cache:
             key: The key.
             value: The value, as for `set()`.
             expire: Seconds until the entry expires, or None for never.
+            tag: The entry's tag, as for `set()`. A live entry keeps its own.
             retry: On a `Timeout`, try again until the call gets through, each round with the
                 whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
@@ -371,7 +409,15 @@ class Cache:
             ```
         """
     @overload
-    def pop(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False) -> Any:
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> Any:
         """Remove `key` and return its value, delivering it to exactly one caller.
 
         Reads and decodes the value first, as `get` does, then deletes exactly that stored version,
@@ -383,11 +429,14 @@ class Cache:
         Args:
             key: The key.
             default: Returned when the key is missing or expired, or its value file is missing.
+            expire_time: Also return the entry's expiry time.
+            tag: Also return the entry's tag.
             retry: On a `Timeout`, try again until the call gets through, each round with the
                 whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
-            The removed value, or `default`. With `durable=True`, a `pop` whose delete fails returns
+            The removed value, or `default`; with `expire_time` or `tag`, a tuple as `get` returns.
+            With `durable=True`, a `pop` whose delete fails returns
             `default`, never the value, which could otherwise be delivered twice. The row stays.
 
         Raises:
@@ -408,8 +457,28 @@ class Cache:
         """
     @overload
     def pop(
-        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> tuple[Any, float | None]: ...
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
     def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
         """Change the expiry of an existing entry without rewriting its value.
 
@@ -475,6 +544,7 @@ class Cache:
         name: str | None = None,
         typed: bool = False,
         expire: float | None = None,
+        tag: Key = None,
         ignore: Iterable[int | str] = (),
     ) -> Memoizer:
         """Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
@@ -492,11 +562,12 @@ class Cache:
                 `f(1.0)` are two entries.
             expire: Seconds until a stored result expires; `None` never. Zero or negative never
                 stores, as in diskcache.
+            tag: The tag every stored result gets, for `evict(tag)`: a key type, checked here.
             ignore: Positions and keyword names left out of the key.
 
         Raises:
-            TypeError: `name` is callable (the decorator was used without parentheses), the function
-                is `async def`, or, at a call, an argument isn't a key type (D-048).
+            TypeError: `name` is callable (the decorator was used without parentheses), `tag` isn't
+                a key type, the function is `async def`, or, at a call, an argument isn't a key type (D-048).
             ValueError: at a call, an argument is a NaN or a tuple nested too deep (D-048).
 
         Examples:
@@ -923,25 +994,81 @@ class FanoutCache:
             ```
         """
     @overload
-    def get(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False) -> Any:
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> Any:
         """As `Cache.get`, on the key's shard."""
     @overload
     def get(
-        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> tuple[Any, float | None]: ...
-    def set(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
+    @overload
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def set(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """As `Cache.set`, on the key's shard."""
-    def add(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """As `Cache.add`, on the key's shard: atomic across threads and processes."""
     def delete(self, key: Key, *, retry: bool = False) -> bool:
         """As `Cache.delete`, on the key's shard."""
     @overload
-    def pop(self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False) -> Any:
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> Any:
         """As `Cache.pop`, on the key's shard."""
     @overload
     def pop(
-        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> tuple[Any, float | None]: ...
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
     def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
         """As `Cache.touch`, on the key's shard."""
     def incr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
@@ -1033,6 +1160,7 @@ class FanoutCache:
         name: str | None = None,
         typed: bool = False,
         expire: float | None = None,
+        tag: Key = None,
         ignore: Iterable[int | str] = (),
     ) -> Memoizer:
         """Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
@@ -1050,11 +1178,12 @@ class FanoutCache:
                 `f(1.0)` are two entries.
             expire: Seconds until a stored result expires; `None` never. Zero or negative never
                 stores, as in diskcache.
+            tag: The tag every stored result gets, for `evict(tag)`: a key type, checked here.
             ignore: Positions and keyword names left out of the key.
 
         Raises:
-            TypeError: `name` is callable (the decorator was used without parentheses), the function
-                is `async def`, or, at a call, an argument isn't a key type (D-048).
+            TypeError: `name` is callable (the decorator was used without parentheses), `tag` isn't
+                a key type, the function is `async def`, or, at a call, an argument isn't a key type (D-048).
             ValueError: at a call, an argument is a NaN or a tuple nested too deep (D-048).
 
         Examples:

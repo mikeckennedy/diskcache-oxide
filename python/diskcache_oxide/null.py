@@ -73,6 +73,23 @@ def _check_key(key: object, depth: int = 0) -> None:
     raise TypeError(f'cache keys must be {_KEY_TYPES}, not {kind.__name__}')
 
 
+def _check_tag(tag: object) -> None:
+    """A tag is None or a valid key, raising as a real cache's `tag=` does."""
+    if tag is None:
+        return
+    try:
+        _check_key(tag)
+    except (TypeError, ValueError) as e:
+        raise type(e)(f'invalid tag: {e}') from None
+
+
+def _answer(default: Any, expire_time: bool, tag: bool) -> Any:
+    """A miss, shaped as `get` and `pop` return it."""
+    if expire_time and tag:
+        return (default, None, None)
+    return (default, None) if expire_time or tag else default
+
+
 _MIN_SIZE_LIMIT = 1 << 20
 
 
@@ -254,17 +271,46 @@ class NullCache:
 
     @overload
     def get(
-        self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> Any: ...
     @overload
     def get(
-        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> tuple[Any, float | None]: ...
-    def get(self, key: Key, default: Any = None, *, expire_time: bool = False, retry: bool = False) -> Any:
-        """Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`."""
+    @overload
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: bool = False, tag: bool = False, retry: bool = False
+    ) -> Any:
+        """Return `default`, as every entry has already expired. With `expire_time=True` or `tag=True`,
+        `(default, None)`; with both, `(default, None, None)`."""
         _check_retry(retry)
         _check_key(key)
-        return (default, None) if expire_time else default
+        return _answer(default, expire_time, tag)
 
     def __getitem__(self, key: Key, /) -> Any:
         """Always raises `KeyError`, as every entry has already expired."""
@@ -302,18 +348,19 @@ class NullCache:
 
     # -- writes: succeed, then expire instantly ---------------------------------------------------
 
-    def set(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
+    def set(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """Return True without storing anything: the write succeeds, then expires instantly."""
         _check_retry(retry)
         _check_key(key)
         _check_seconds('expire', expire)
+        _check_tag(tag)
         return True
 
     def __setitem__(self, key: Key, value: Any, /) -> None:
         """Store nothing, as `set()` does."""
         self.set(key, value)
 
-    def add(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """Return True without storing anything: the key is always absent, so the add succeeds.
 
         With caching off, every caller's `add()` succeeds, so don't rely on it for job claims or locks.
@@ -322,6 +369,7 @@ class NullCache:
         _check_retry(retry)
         _check_key(key)
         _check_seconds('expire', expire)
+        _check_tag(tag)
         return True
 
     def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
@@ -365,20 +413,48 @@ class NullCache:
 
     @overload
     def pop(
-        self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> Any: ...
     @overload
     def pop(
-        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> tuple[Any, float | None]: ...
-    def pop(self, key: Key, default: Any = None, *, expire_time: bool = False, retry: bool = False) -> Any:
-        """Return `default` (`(default, None)` with `expire_time=True`). With `invalidate=`, also delete
-        the key from that cache."""
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: bool = False, tag: bool = False, retry: bool = False
+    ) -> Any:
+        """Return `default`, shaped as `get()` returns it. With `invalidate=`, also delete the key from
+        that cache."""
         _check_retry(retry)
         _check_key(key)
         if self._invalidate is not None:
             self._invalidate.delete(key, retry=retry) if retry else self._invalidate.delete(key)
-        return (default, None) if expire_time else default
+        return _answer(default, expire_time, tag)
 
     def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count."""
@@ -399,13 +475,14 @@ class NullCache:
         name: str | None = None,
         typed: bool = False,
         expire: float | None = None,
+        tag: Key = None,
         ignore: Iterable[int | str] = (),
     ) -> Memoizer:
         """As `Cache.memoize`, but every call runs the function, as every entry has already expired. The
         arguments are still checked as keys, so a call that would fail on a real cache fails here."""
         from diskcache_oxide._memoize import memoize
 
-        return memoize(self, name, typed, expire, ignore)
+        return memoize(self, name, typed, expire, tag, ignore)
 
     @overload
     def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]: ...

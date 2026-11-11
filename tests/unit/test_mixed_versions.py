@@ -1,27 +1,32 @@
-"""0.1.2 and this build on one cache directory, as during a deploy (plan 24, release 1).
+"""0.1.2 and this build on one cache directory, as during a deploy (plan 24, release 3, decision 22).
 
-This build stores typed keys (D-004); 0.1.2 must never see them in a keyed call or an iteration,
-must keep working on the `str` keys both share, and must still count, expire, cull and clear the
-typed rows, with `totals` exact. The old side runs the shipped 0.1.2 wheel, in a Python of its own
-named by `DCO_OLD_PYTHON` (`scripts/mixed-version.sh` builds it); without it the test is skipped.
-Each side runs in its own process, and the `totals` check uses the stdlib's sqlite3 in a third.
+Format 3 is a version bump: a cache is deleted on upgrade, and neither version may ever write into the
+other's database. 0.1.2 refuses a format-3 cache at open, this build refuses 0.1.2's format-2 cache,
+and both leave the files byte for byte as they were. A 0.1.2 handle open across the deletion writes
+nothing into the new file either: its open connections still hold the deleted one, and once it opens
+the new file by path (here, a closed handle used again) its writes fail on `tag_type`'s `NOT NULL`
+(architect, M1).
+
+The old side runs the shipped 0.1.2 wheel, in a Python of its own named by `DCO_OLD_PYTHON`
+(`scripts/mixed-version.sh` builds it); without it the test is skipped. Each side runs in its own
+process, and the database is read with the stdlib's sqlite3 in a third.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from diskcache_oxide import Cache
+from diskcache_oxide import Cache, FormatMismatchError
 
 OLD_PYTHON = os.environ.get('DCO_OLD_PYTHON')
 pytestmark = pytest.mark.skipif(not OLD_PYTHON, reason='set DCO_OLD_PYTHON to a Python with diskcache-oxide 0.1.2')
-
-TYPED = [1, b'b', None, True, 2.5, ('m.f', 3, None)]
 
 OLD_SIDE = """
 import json, sys
@@ -30,28 +35,52 @@ from diskcache_oxide import Cache
 assert diskcache_oxide.__version__ == '0.1.2', diskcache_oxide.__version__
 step, directory = sys.argv[1], sys.argv[2]
 out = {}
-with Cache(directory) as c:
-    if step == 'read':
-        out['shared'] = c.get('shared')
-        out['keys'] = list(c.iterkeys())
-        out['iter'] = list(c)
-        out['len'] = len(c)
-        # Before any write: a write sweeps expired rows itself.
-        out['expired'] = c.expire()
-        out['len_after_expire'] = len(c)
-        c.set('from-old', 'old')
-    elif step == 'clear':
-        out['cleared'] = c.clear()
-        out['len'] = len(c)
+if step == 'create':
+    with Cache(directory) as c:
+        c.set('old', 'value')
+elif step == 'open':
+    try:
+        Cache(directory).close()
+        out['error'] = None
+    except Exception as e:
+        out['error'] = type(e).__name__
+        out['message'] = str(e)
 print(json.dumps(out))
 """
 
-TOTALS = """
+# Opens a cache, writes, then waits: the test deletes and recreates the directory, then says go. Then
+# 16 threads write (into the deleted file, through the connections the handle already holds), and the
+# handle is closed and used again, which opens the new file by path, where its write must fail.
+OLD_HELD = """
+import json, sys, threading
+from diskcache_oxide import Cache
+c = Cache(sys.argv[1])
+c.set('before', 1)
+print('ready', flush=True)
+sys.stdin.readline()
+errors = []
+def write(i):
+    try:
+        c.set(f'after-{i}', i)
+    except Exception as e:
+        errors.append(type(e).__name__)
+threads = [threading.Thread(target=write, args=(i,)) for i in range(16)]
+for t in threads: t.start()
+for t in threads: t.join()
+c.close()
+try:
+    c.set('reopened', 1)  # A closed handle used again reopens by path: the new file.
+    reopened = None
+except Exception as e:
+    reopened = f'{type(e).__name__}: {e}'
+print(json.dumps({'errors': errors, 'reopened': reopened}), flush=True)
+"""
+
+ROWS = """
 import json, sqlite3, sys
-db = sqlite3.connect(sys.argv[1] + '/diskcache-oxide.sqlite')
-rows = db.execute('SELECT COUNT(*), COALESCE(SUM(size), 0) FROM cache').fetchone()
-totals = db.execute('SELECT count, size FROM totals WHERE only = 1').fetchone()
-print(json.dumps({'rows': list(rows), 'totals': list(totals)}))
+db = sqlite3.connect(f'file:{sys.argv[1]}/diskcache-oxide.sqlite?mode=ro', uri=True)
+keys = [r[0] for r in db.execute('SELECT key FROM cache ORDER BY key')]
+print(json.dumps({'version': db.execute('PRAGMA user_version').fetchone()[0], 'keys': keys}))
 """
 
 
@@ -61,43 +90,67 @@ def run(python: str, script: str, *args: str) -> dict:
     return json.loads(proc.stdout)
 
 
-def totals_exact(directory: Path) -> None:
-    got = run(sys.executable, TOTALS, str(directory))
-    assert got['rows'] == got['totals'], got
+def fingerprint(directory: Path) -> dict[str, str]:
+    """Every file in the directory, by content."""
+    return {
+        str(p.relative_to(directory)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(directory.rglob('*'))
+        if p.is_file()
+    }
 
 
-def test_0_1_2_works_beside_typed_keys_and_still_maintains_them(tmp_path: Path) -> None:
+def test_0_1_2_refuses_a_format_3_cache_and_writes_nothing(tmp_path: Path) -> None:
     assert OLD_PYTHON is not None
     directory = tmp_path / 'c'
     with Cache(directory) as new:
-        new.set('shared', 'both')
-        for key in TYPED:
-            new.set(key, 'typed')
-        big = b'x' * 70_000
-        new.set((b'big',), big)  # A typed key with a value file, for 0.1.2's clear() to remove.
-        # Stored already expired, and last (a later write would sweep it), for 0.1.2's expire().
-        new.set(('expired', 1), 'gone', expire=-1)
-    totals_exact(directory)
+        new.set('k', 'v', tag='t')
+    before = fingerprint(directory)
+    got = run(OLD_PYTHON, OLD_SIDE, 'open', str(directory))
+    assert got['error'] == 'FormatMismatchError', got
+    assert '3' in got['message'], got
+    assert fingerprint(directory) == before
 
-    old = run(OLD_PYTHON, OLD_SIDE, 'read', str(directory))
-    assert old['shared'] == 'both'
-    assert old['keys'] == old['iter'] == ['shared'], 'typed keys are invisible to 0.1.2'
-    assert old['len'] == 1 + len(TYPED) + 2, 'but counted'
-    assert old['expired'] == 1, "0.1.2's expire() removes an expired typed row"
-    assert old['len_after_expire'] == old['len'] - 1
-    totals_exact(directory)
 
+def test_this_build_refuses_a_format_2_cache_and_writes_nothing(tmp_path: Path) -> None:
+    assert OLD_PYTHON is not None
+    directory = tmp_path / 'c'
+    run(OLD_PYTHON, OLD_SIDE, 'create', str(directory))
+    before = fingerprint(directory)
+    with pytest.raises(FormatMismatchError) as caught:
+        Cache(directory)
+    message = str(caught.value)
+    assert 'version 2' in message and 'older diskcache-oxide' in message, message
+    assert str(directory.resolve()) in message or str(directory) in message, message
+    assert fingerprint(directory) == before
+
+
+def test_a_0_1_2_handle_open_across_a_recreate_writes_nothing_into_the_new_file(tmp_path: Path) -> None:
+    assert OLD_PYTHON is not None
+    directory = tmp_path / 'c'
+    held = subprocess.Popen(
+        [OLD_PYTHON, '-c', OLD_HELD, str(directory)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd='/',
+    )
+    try:
+        assert held.stdout is not None and held.stdin is not None
+        assert held.stdout.readline().strip() == 'ready'
+        shutil.rmtree(directory)  # The upgrade: the cache deleted while a worker still has it open.
+        with Cache(directory) as new:
+            new.set('new', 1)
+        held.stdin.write('go\n')
+        held.stdin.flush()
+        out, err = held.communicate(timeout=60)
+        assert held.returncode == 0, err
+    finally:
+        held.kill()
+    # 0.1.2 doesn't check the format when a handle rejoins its store: the write itself is refused.
+    assert 'NOT NULL constraint failed: cache.tag_type' in json.loads(out)['reopened'], out
+    rows = run(sys.executable, ROWS, str(directory))
+    assert rows == {'version': 3, 'keys': ['new']}, (rows, out)
     with Cache(directory) as new:
-        assert new.get('from-old') == 'old'
-        for key in TYPED:
-            assert new.get(key) == 'typed', key
-        assert new.get((b'big',)) == big
-        assert ('expired', 1) not in new
-
-    old = run(OLD_PYTHON, OLD_SIDE, 'clear', str(directory))
-    assert old['cleared'] == 1 + 1 + len(TYPED) + 1
-    assert old['len'] == 0
-    totals_exact(directory)
-    assert not list(directory.rglob('*.val')), "0.1.2's clear() removes typed rows' value files"
-    with Cache(directory) as new:
-        assert list(new) == []
+        assert list(new) == ['new']
+        assert len(new) == 1

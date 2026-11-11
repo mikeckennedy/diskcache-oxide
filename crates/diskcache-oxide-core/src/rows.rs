@@ -48,6 +48,10 @@ pub(crate) const UPDATE_NUMBER_SQL: &str = "UPDATE cache SET mode = ?1, value = 
                          (SELECT next_seq FROM totals WHERE only = 1))
      WHERE id = ?4";
 
+/// An entry's tag: a key value (D-052), in its own type so it can't be passed where a key belongs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tag<'a>(pub Key<'a>);
+
 /// A row to store under `key`.
 #[derive(Debug, Clone, Copy)]
 pub struct NewRow<'a> {
@@ -59,6 +63,8 @@ pub struct NewRow<'a> {
     pub size: i64,
     pub store_time: f64,
     pub expire_time: Option<f64>,
+    /// The entry's tag; `None` stores it untagged (and an overwrite clears any tag it had).
+    pub tag: Option<Tag<'a>>,
 }
 
 /// The previous version of a row that a write replaced or deleted.
@@ -122,18 +128,35 @@ impl<'t> RowWriter<'t> {
         let seq: i64 = self
             .tx
             .prepare_cached(
-                "INSERT INTO cache (key_type, key, mode, value, filename, size, store_time, expire_time, store_seq)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                "INSERT INTO cache (key_type, key, mode, value, filename, size, store_time, expire_time, tag_type, tag,
+                                    store_seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
                          (SELECT MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1, next_seq) FROM totals WHERE only = 1))
                  ON CONFLICT (key_type, key) DO UPDATE SET
                      mode = excluded.mode, value = excluded.value, filename = excluded.filename,
                      size = excluded.size, store_time = excluded.store_time,
-                     expire_time = excluded.expire_time, store_seq = excluded.store_seq
+                     expire_time = excluded.expire_time, tag_type = excluded.tag_type, tag = excluded.tag,
+                     store_seq = excluded.store_seq
                  RETURNING store_seq",
             )
             .and_then(|mut stmt| {
+                let (tag_type, tag) = match row.tag {
+                    Some(Tag(tag)) => (tag.key_type(), Some(tag)),
+                    None => (crate::schema::TAG_TYPE_NONE, None),
+                };
                 stmt.query_row(
-                    (row.key.key_type(), row.key, row.mode, row.value, filename, row.size, row.store_time, row.expire_time),
+                    rusqlite::params![
+                        row.key.key_type(),
+                        row.key,
+                        row.mode,
+                        row.value,
+                        filename,
+                        row.size,
+                        row.store_time,
+                        row.expire_time,
+                        tag_type,
+                        tag
+                    ],
                     |r| r.get::<_, i64>(0),
                 )
             })
@@ -324,6 +347,7 @@ mod tests {
             size: i64::try_from(value.len()).unwrap(),
             store_time: 1.0,
             expire_time: None,
+            tag: None,
         }
     }
 
@@ -386,7 +410,7 @@ mod tests {
     fn file_rows_store_null_value_and_report_their_file_on_removal() {
         let tmp = TempDir::new("rows-file");
         let mut conn = new_db(&tmp);
-        let file_row = NewRow { value: Stored::File("aa/x.val"), size: 100_000, ..row("big", b"") };
+        let file_row = NewRow { value: Stored::File("aa/x.val"), size: 100_000, tag: None, ..row("big", b"") };
         write(&mut conn, |w| w.upsert(&file_row).unwrap());
         let is_null: bool =
             conn.query_row("SELECT value IS NULL FROM cache WHERE key = 'big'", [], |r| r.get(0)).unwrap();
@@ -416,7 +440,7 @@ mod tests {
             match next(10) {
                 0..=5 => write(&mut conn, |w| w.upsert(&row(key, &payload[..len])).map(|_| ()).unwrap()),
                 6 => {
-                    let file_row = NewRow { value: Stored::File("aa/f.val"), size: 70_000, ..row(key, b"") };
+                    let file_row = NewRow { value: Stored::File("aa/f.val"), size: 70_000, tag: None, ..row(key, b"") };
                     write(&mut conn, |w| w.upsert(&file_row).map(|_| ()).unwrap());
                 }
                 7 | 8 => write(&mut conn, |w| w.delete_key(key).map(|_| ()).unwrap()),

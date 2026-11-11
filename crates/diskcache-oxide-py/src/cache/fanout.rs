@@ -21,6 +21,7 @@ use diskcache_oxide_core::key::{Key, OwnedKey};
 use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, PAGE, Snapshot};
 use diskcache_oxide_core::open::{Requested, Role};
 use diskcache_oxide_core::ops::Number;
+use diskcache_oxide_core::rows::Tag;
 use diskcache_oxide_core::store::Store;
 use diskcache_oxide_core::{Error, lockwait};
 use pyo3::PyTraverseError;
@@ -31,7 +32,7 @@ use pyo3::types::PyTuple;
 
 use super::{
     DecodePolicy, Delta, HandleConfig, IncrDefault, Reduced, ReopenOptions, ResetLimit, Settings, StoreHandle,
-    Transaction, retrying, whole,
+    Transaction, Wants, retrying, whole,
 };
 use crate::codec::TypeRegistry;
 use crate::to_py_err;
@@ -237,6 +238,7 @@ impl FanoutCache {
                     diskcache_oxide_core::store::split_size_limit("size_limit", *total, count).map_err(to_py_err)?,
                 ),
                 cull_limit: None,
+                eviction_policy: None,
             },
             _ => which.requested(),
         };
@@ -254,19 +256,21 @@ impl FanoutCache {
 
     // -- routed to one shard -------------------------------------------------------------------
 
-    #[pyo3(signature = (key, default = None, *, expire_time = false, retry = false))]
+    #[pyo3(signature = (key, default = None, *, expire_time = false, tag = false, retry = false))]
     fn get(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         default: Option<Py<PyAny>>,
         expire_time: bool,
+        tag: bool,
         retry: bool,
     ) -> PyResult<Py<PyAny>> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
+        let wants = Wants { expire_time, tag };
         retrying(py, retry, || {
-            self.config.get(py, self.routed(name)?, name, default.as_ref().map(|d| d.clone_ref(py)), expire_time)
+            self.config.get(py, self.routed(name)?, name, default.as_ref().map(|d| d.clone_ref(py)), wants)
         })
     }
 
@@ -282,38 +286,44 @@ impl FanoutCache {
         retrying(py, false, || self.config.contains(py, self.routed(name)?, name))
     }
 
-    #[pyo3(signature = (key, value, expire = None, *, retry = false))]
+    #[pyo3(signature = (key, value, expire = None, *, tag = None, retry = false))]
     fn set(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
+        tag: Option<&Bound<'_, PyAny>>,
         retry: bool,
     ) -> PyResult<bool> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
+        let t = crate::codec::key::encode_tag(tag)?;
         let (encoded, expire) = self.config.encode_value(py, value, expire)?;
-        retrying(py, retry, || self.config.set(py, self.routed(name)?, name, &encoded, expire))
+        let tag = t.as_ref().map(|t| Tag(t.key()));
+        retrying(py, retry, || self.config.set(py, self.routed(name)?, name, &encoded, expire, tag))
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.set(py, key, value, None, false).map(|_| ())
+        self.set(py, key, value, None, None, false).map(|_| ())
     }
 
-    #[pyo3(signature = (key, value, expire = None, *, retry = false))]
+    #[pyo3(signature = (key, value, expire = None, *, tag = None, retry = false))]
     fn add(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
+        tag: Option<&Bound<'_, PyAny>>,
         retry: bool,
     ) -> PyResult<bool> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
+        let t = crate::codec::key::encode_tag(tag)?;
         let (encoded, expire) = self.config.encode_value(py, value, expire)?;
-        retrying(py, retry, || self.config.add(py, self.routed(name)?, name, &encoded, expire))
+        let tag = t.as_ref().map(|t| Tag(t.key()));
+        retrying(py, retry, || self.config.add(py, self.routed(name)?, name, &encoded, expire, tag))
     }
 
     #[pyo3(signature = (key, *, retry = false))]
@@ -327,19 +337,21 @@ impl FanoutCache {
         if self.delete(py, key, false)? { Ok(()) } else { Err(PyKeyError::new_err(key.clone().unbind())) }
     }
 
-    #[pyo3(signature = (key, default = None, *, expire_time = false, retry = false))]
+    #[pyo3(signature = (key, default = None, *, expire_time = false, tag = false, retry = false))]
     fn pop(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         default: Option<Py<PyAny>>,
         expire_time: bool,
+        tag: bool,
         retry: bool,
     ) -> PyResult<Py<PyAny>> {
         let encoded = crate::codec::key::encode_key(key)?;
         let name = encoded.key();
+        let wants = Wants { expire_time, tag };
         retrying(py, retry, || {
-            self.config.pop(py, self.routed(name)?, name, default.as_ref().map(|d| d.clone_ref(py)), expire_time)
+            self.config.pop(py, self.routed(name)?, name, default.as_ref().map(|d| d.clone_ref(py)), wants)
         })
     }
 
@@ -386,18 +398,19 @@ impl FanoutCache {
 
     /// As `Cache.memoize`: a decorator caching a function's results in this cache.
     #[pyo3(
-        signature = (name = None, typed = false, expire = None, ignore = None),
-        text_signature = "($self, name=None, typed=False, expire=None, ignore=())"
+        signature = (name = None, typed = false, expire = None, tag = None, ignore = None),
+        text_signature = "($self, name=None, typed=False, expire=None, tag=None, ignore=())"
     )]
     fn memoize(
         slf: &Bound<'_, Self>,
         name: Option<&Bound<'_, PyAny>>,
         typed: bool,
         expire: Option<&Bound<'_, PyAny>>,
+        tag: Option<&Bound<'_, PyAny>>,
         ignore: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let durable = slf.get().config.failures.is_some();
-        super::memoize_on(slf.as_any(), name, typed, expire, ignore, durable)
+        super::memoize_on(slf.as_any(), name, typed, expire, tag, ignore, durable)
     }
 
     // -- over every shard, under one deadline ---------------------------------------------------

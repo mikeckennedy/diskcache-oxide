@@ -228,16 +228,26 @@ mod tests {
         let tmp = TempDir::new("shards-explicit");
         let options = OpenOptions {
             max_connections: 10,
-            requested: Requested { size_limit: Some(80 << 20), cull_limit: Some(3) },
+            requested: Requested { size_limit: Some(80 << 20), cull_limit: Some(3), eviction_policy: None },
             ..base(tmp.path())
         };
         let stores = open(&options, Some(8)).unwrap();
         let caps: Vec<u64> = stores.iter().map(|s| s.max_connections.load(Ordering::Acquire)).collect();
         assert_eq!(caps, [2, 2, 1, 1, 1, 1, 1, 1]);
-        assert!(stores.iter().all(|s| s.cached_limits() == Limits { size_limit: 10 << 20, cull_limit: 3 }));
+        assert!(stores.iter().all(|s| s.cached_limits()
+            == Limits {
+                size_limit: 10 << 20,
+                cull_limit: 3,
+                eviction_policy: crate::schema::EvictionPolicy::LeastRecentlyStored
+            }));
         close(&stores);
         let reopened = open(&base(tmp.path()), None).unwrap();
-        assert!(reopened.iter().all(|s| s.cached_limits() == Limits { size_limit: 10 << 20, cull_limit: 3 }));
+        assert!(reopened.iter().all(|s| s.cached_limits()
+            == Limits {
+                size_limit: 10 << 20,
+                cull_limit: 3,
+                eviction_policy: crate::schema::EvictionPolicy::LeastRecentlyStored
+            }));
         close(&reopened);
     }
 
@@ -246,8 +256,10 @@ mod tests {
         let tmp = TempDir::new("shards-short");
         let too_few = OpenOptions { max_connections: 7, ..base(tmp.path()) };
         assert!(matches!(open(&too_few, Some(8)), Err(Error::InvalidSetting(_))));
-        let too_small =
-            OpenOptions { requested: Requested { size_limit: Some(7 << 20), cull_limit: None }, ..base(tmp.path()) };
+        let too_small = OpenOptions {
+            requested: Requested { size_limit: Some(7 << 20), cull_limit: None, eviction_policy: None },
+            ..base(tmp.path())
+        };
         assert!(matches!(open(&too_small, Some(8)), Err(Error::InvalidSetting(_))));
         assert!(!tmp.path().join("000").exists(), "no shard was created");
     }
@@ -260,8 +272,10 @@ mod tests {
             matches!(Store::check_shard_settings(&too_few, 8), Err(Error::InvalidSetting(m)) if m.contains("max_connections"))
         );
         assert!(Store::check_shard_settings(&too_few, 7).is_ok());
-        let small =
-            OpenOptions { requested: Requested { size_limit: Some(4 << 20), cull_limit: None }, ..base(tmp.path()) };
+        let small = OpenOptions {
+            requested: Requested { size_limit: Some(4 << 20), cull_limit: None, eviction_policy: None },
+            ..base(tmp.path())
+        };
         assert!(Store::check_shard_settings(&small, 4).is_ok());
         assert!(
             matches!(Store::check_shard_settings(&small, 8), Err(Error::InvalidSetting(m)) if m.contains("size_limit"))

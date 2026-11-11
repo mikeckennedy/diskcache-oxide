@@ -53,6 +53,27 @@ pub fn encode_key<'a>(obj: &'a Bound<'_, PyAny>) -> PyResult<EncodedKey<'a>> {
     encoder.finish().map(EncodedKey::Typed).map_err(|e| key_error(&e))
 }
 
+/// Encodes a `tag=` argument: `None` is no tag; anything else must be a valid key (D-004), and a
+/// bad one's error says it was the tag.
+///
+/// # Errors
+///
+/// As [`encode_key`], with the message prefixed by "invalid tag".
+pub fn encode_tag<'a>(obj: Option<&'a Bound<'_, PyAny>>) -> PyResult<Option<EncodedKey<'a>>> {
+    let Some(obj) = obj.filter(|o| !o.is_none()) else { return Ok(None) };
+    encode_key(obj).map(Some).map_err(|e| {
+        let py = obj.py();
+        let message = format!("invalid tag: {}", e.value(py));
+        if e.get_type(py).is(py.get_type::<PyTypeError>()) {
+            PyTypeError::new_err(message)
+        } else if e.get_type(py).is(py.get_type::<PyValueError>()) {
+            PyValueError::new_err(message)
+        } else {
+            e
+        }
+    })
+}
+
 fn key_error(e: &KeyError) -> PyErr {
     match e {
         KeyError::NaN | KeyError::TooDeep => PyValueError::new_err(e.to_string()),

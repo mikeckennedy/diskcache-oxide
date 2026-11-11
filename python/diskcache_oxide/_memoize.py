@@ -73,6 +73,7 @@ def memoize(
     name: str | None = None,
     typed: bool = False,
     expire: float | None = None,
+    tag: Key = None,
     ignore: Iterable[int | str] = (),
     retry: bool = True,
 ) -> Callable[[Callable[..., Any]], Any]:
@@ -80,9 +81,10 @@ def memoize(
     except on a durable handle, where an outage should run the function rather than wait."""
     if callable(name):
         raise TypeError('name cannot be callable')
-    from diskcache_oxide.null import _check_seconds
+    from diskcache_oxide.null import _check_seconds, _check_tag
 
     _check_seconds('expire', expire)
+    _check_tag(tag)
     if type(typed) is not bool:
         raise TypeError(f'typed must be a bool, not {type(typed).__name__}')
     if name is not None:
@@ -113,7 +115,7 @@ def memoize(
             if result is _MISS:
                 result = func(*args, **kwargs)
                 if stores:
-                    cache.set(key, result, expire, retry=retry)
+                    cache.set(key, result, expire, tag=tag, retry=retry)
             return result
 
         wrapper.__cache_key__ = __cache_key__  # ty: ignore[unresolved-attribute]

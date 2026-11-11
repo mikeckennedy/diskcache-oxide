@@ -63,19 +63,47 @@ class CacheLike(Protocol):
 
     @overload
     def get(
-        self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> Any: ...
     @overload
     def get(
-        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> tuple[Any, float | None]: ...
-    def get(self, key: Key, default: Any = None, *, expire_time: bool = False, retry: bool = False) -> Any:
+    @overload
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: bool = False, tag: bool = False, retry: bool = False
+    ) -> Any:
         """Return the value for `key`, or `default` if it's missing or expired."""
 
-    def set(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
+    def set(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """Store `value` under `key`, with an optional expiry in seconds."""
 
-    def add(self, key: Key, value: Any, expire: float | None = None, *, retry: bool = False) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """Store `value` only if `key` is missing or expired. True if it was stored."""
 
     def delete(self, key: Key, *, retry: bool = False) -> bool:
@@ -83,13 +111,41 @@ class CacheLike(Protocol):
 
     @overload
     def pop(
-        self, key: Key, default: Any = None, *, expire_time: Literal[False] = False, retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> Any: ...
     @overload
     def pop(
-        self, key: Key, default: Any = None, *, expire_time: Literal[True], retry: bool = False
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
     ) -> tuple[Any, float | None]: ...
-    def pop(self, key: Key, default: Any = None, *, expire_time: bool = False, retry: bool = False) -> Any:
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: bool = False, tag: bool = False, retry: bool = False
+    ) -> Any:
         """Remove `key` and return its value, or `default`."""
 
     def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
@@ -122,6 +178,7 @@ class CacheLike(Protocol):
         name: str | None = None,
         typed: bool = False,
         expire: float | None = None,
+        tag: Key = None,
         ignore: Iterable[int | str] = (),
     ) -> Memoizer:
         """A decorator caching a function's results in this cache (diskcache's `memoize`)."""

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs tests/unit/test_mixed_versions.py: 0.1.2 beside this build on one cache directory.
+# Runs tests/unit/test_mixed_versions.py: 0.1.2 and this build refusing each other's cache formats.
 #
 # Usage: scripts/mixed-version.sh [wheel-or-requirement]
 #   default: the shipped wheel in dist/0.1.2/ for this platform and 3.14, else `diskcache-oxide==0.1.2`

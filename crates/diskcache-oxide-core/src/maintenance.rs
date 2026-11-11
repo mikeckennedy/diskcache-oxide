@@ -727,12 +727,12 @@ mod tests {
         };
         // A later build's key type: invisible, as typed keys are to 0.1.2.
         raw(
-            "INSERT INTO cache (key_type, key, mode, value, size, store_time, store_seq) VALUES (3, x'01', 1, 'v', 0, 0, 99)",
+            "INSERT INTO cache (key_type, key, mode, value, size, store_time, store_seq, tag_type) VALUES (3, x'01', 1, 'v', 0, 0, 99, 0)",
         );
         assert_eq!(walk(&s, Order::Inserted, 512), [OwnedKey::Str("a".into())]);
         assert_eq!(walk(&s, Order::Key { reverse: false }, 512), [OwnedKey::Str("a".into())]);
         raw(
-            "INSERT INTO cache (key_type, key, mode, value, size, store_time, store_seq) VALUES (2, x'11', 1, 'v', 0, 0, 100)",
+            "INSERT INTO cache (key_type, key, mode, value, size, store_time, store_seq, tag_type) VALUES (2, x'11', 1, 'v', 0, 0, 100, 0)",
         );
         for order in [Order::Inserted, Order::Key { reverse: false }, Order::Key { reverse: true }] {
             let got = s.keys_page(T, order, None, &Cursor::Start);
@@ -1057,7 +1057,7 @@ mod tests {
         let s = Store::open(&OpenOptions {
             directory: tmp.path().to_path_buf(),
             timeout: T,
-            requested: Requested { size_limit: Some(1 << 20), cull_limit: Some(0) },
+            requested: Requested { size_limit: Some(1 << 20), cull_limit: Some(0), eviction_policy: None },
             max_connections: DEFAULT_MAX_CONNECTIONS,
             cache_pages: DEFAULT_CACHE_PAGES,
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,

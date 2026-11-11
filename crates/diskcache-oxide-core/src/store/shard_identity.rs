@@ -61,7 +61,7 @@ fn a_plain_cache_on_a_live_shard_is_refused_through_the_fast_path() {
     // Explicit settings take join's writing branch; the check comes before it.
     refused(
         Store::open(&OpenOptions {
-            requested: Requested { size_limit: Some(9 << 20), cull_limit: None },
+            requested: Requested { size_limit: Some(9 << 20), cull_limit: None, eviction_policy: None },
             max_connections: 64,
             ..options(&dir, Role::Plain)
         }),

@@ -46,7 +46,7 @@ pub enum Error {
     /// The database was written by a format version this build doesn't know.
     /// `path` names the file that declared it when that isn't the database itself (a `FanoutCache`
     /// manifest).
-    #[error("cache format version {found} is not supported (this build uses version {expected}){}", path_note(.path.as_ref()))]
+    #[error("{}", format_mismatch(*.found, *.expected, .path.as_ref()))]
     FormatMismatch { found: i64, expected: i64, path: Option<PathBuf> },
 
     /// A `FanoutCache` root's manifest isn't the exact bytes this build writes (plan 13, section 1):
@@ -151,8 +151,16 @@ pub enum Error {
 }
 
 /// The " (in <path>)" suffix of a [`Error::FormatMismatch`] that came from a file other than the database.
-fn path_note(path: Option<&PathBuf>) -> String {
-    path.map_or_else(String::new, |p| format!(" (in {})", p.display()))
+/// [`Error::FormatMismatch`]'s message: what was found, and what to do, by direction.
+fn format_mismatch(found: i64, expected: i64, path: Option<&PathBuf>) -> String {
+    let note = path.map_or_else(String::new, |p| format!(" (in {})", p.display()));
+    let remedy = if found < expected {
+        "it was made by an older diskcache-oxide: delete the cache's directory (a FanoutCache's whole root) \
+         with every process using it stopped, and it will be recreated empty"
+    } else {
+        "it was made by a newer diskcache-oxide: upgrade this process"
+    };
+    format!("cache format version {found} is not supported (this build uses version {expected}){note}: {remedy}")
 }
 
 impl Error {

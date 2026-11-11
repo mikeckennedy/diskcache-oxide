@@ -15,8 +15,8 @@ diskcache's signatures and behavior, and these differences:
 - **`throttle`** treats a missing bucket (after an idle gap longer than `expire`, a `clear()` or a
   cull) as full instead of raising `TypeError`, and adds its bucket at decoration rather than
   resetting it, so every worker that imports the module doesn't refill it.
-- **`tag=`** is accepted (so positional calls written for diskcache still line up) but must be None
-  until tags arrive.
+- **`tag=`** is any key type, as for `set()`, compared by exact type (D-052). `barrier` passes it on
+  to the lock factory only when it isn't None, so a factory written without a `tag` parameter works.
 
 Coordination keys can be culled like any other (least-recently-stored culls the oldest first, and a
 long-held lock is old), and `clear()` releases them: keep them in a cache of their own.
@@ -70,9 +70,10 @@ def _coordinating(cache: Any, what: str) -> None:
         )
 
 
-def _no_tag(tag: object) -> None:
-    if tag is not None:
-        raise TypeError('tag= is not supported yet: tags arrive in a later release')
+def _check_tag(tag: object) -> None:
+    from diskcache_oxide.null import _check_tag as check
+
+    check(tag)
 
 
 def _transact(cache: Any, key: Key) -> Any:
@@ -101,9 +102,10 @@ class Averager:
     to it agrees. `None` while nothing has been added.
     """
 
-    def __init__(self, cache: Any, key: Key, expire: float | None = None, tag: None = None) -> None:
+    def __init__(self, cache: Any, key: Key, expire: float | None = None, tag: Key = None) -> None:
         _coordinating(cache, 'Averager')
-        _no_tag(tag)
+        _check_tag(tag)
+        self._tag = tag
         self._cache = cache
         self._key = key
         self._expire = expire
@@ -112,7 +114,7 @@ class Averager:
         """Add `value` to the average."""
         with _transact(self._cache, self._key):
             total, count = self._cache.get(self._key, default=(0.0, 0))
-            self._cache.set(self._key, (total + value, count + 1), expire=self._expire)
+            self._cache.set(self._key, (total + value, count + 1), expire=self._expire, tag=self._tag)
 
     def get(self) -> float | None:
         """The current average, or None if nothing has been added."""
@@ -133,16 +135,17 @@ class Lock:
     dies without releasing doesn't keep it forever.
     """
 
-    def __init__(self, cache: Any, key: Key, expire: float | None = None, tag: None = None) -> None:
+    def __init__(self, cache: Any, key: Key, expire: float | None = None, tag: Key = None) -> None:
         _coordinating(cache, 'Lock')
-        _no_tag(tag)
+        _check_tag(tag)
+        self._tag = tag
         self._cache = cache
         self._key = key
         self._expire = expire
 
     def acquire(self) -> None:
         """Wait for the lock and take it."""
-        while not self._cache.add(self._key, None, expire=self._expire, retry=True):
+        while not self._cache.add(self._key, None, expire=self._expire, tag=self._tag, retry=True):
             _before_waiting(self._cache, 'Lock.acquire()')
             time.sleep(_POLL)
 
@@ -165,9 +168,10 @@ class RLock:
     """A reentrant lock shared by every thread and process on the cache: the thread holding it may
     take it again, and must release it as many times. Another thread or process waits."""
 
-    def __init__(self, cache: Any, key: Key, expire: float | None = None, tag: None = None) -> None:
+    def __init__(self, cache: Any, key: Key, expire: float | None = None, tag: Key = None) -> None:
         _coordinating(cache, 'RLock')
-        _no_tag(tag)
+        _check_tag(tag)
+        self._tag = tag
         self._cache = cache
         self._key = key
         self._expire = expire
@@ -183,7 +187,7 @@ class RLock:
             with _transact(self._cache, self._key):
                 holder, count = self._cache.get(self._key, default=(None, 0))
                 if holder == owner or count == 0:
-                    self._cache.set(self._key, (owner, count + 1), expire=self._expire)
+                    self._cache.set(self._key, (owner, count + 1), expire=self._expire, tag=self._tag)
                     return
             _before_waiting(self._cache, 'RLock.acquire()')
             time.sleep(_POLL)
@@ -195,7 +199,7 @@ class RLock:
             holder, count = self._cache.get(self._key, default=(None, 0))
             if holder != owner or count <= 0:
                 raise AssertionError('cannot release un-acquired lock')
-            self._cache.set(self._key, (holder, count - 1), expire=self._expire)
+            self._cache.set(self._key, (holder, count - 1), expire=self._expire, tag=self._tag)
 
     def __enter__(self) -> None:
         self.acquire()
@@ -208,9 +212,10 @@ class BoundedSemaphore:
     """A semaphore shared by every thread and process on the cache: at most `value` holders at once.
     Releasing more than were acquired raises `AssertionError`."""
 
-    def __init__(self, cache: Any, key: Key, value: int = 1, expire: float | None = None, tag: None = None) -> None:
+    def __init__(self, cache: Any, key: Key, value: int = 1, expire: float | None = None, tag: Key = None) -> None:
         _coordinating(cache, 'BoundedSemaphore')
-        _no_tag(tag)
+        _check_tag(tag)
+        self._tag = tag
         self._cache = cache
         self._key = key
         self._value = value
@@ -222,7 +227,7 @@ class BoundedSemaphore:
             with _transact(self._cache, self._key):
                 free = self._cache.get(self._key, default=self._value)
                 if free > 0:
-                    self._cache.set(self._key, free - 1, expire=self._expire)
+                    self._cache.set(self._key, free - 1, expire=self._expire, tag=self._tag)
                     return
             _before_waiting(self._cache, 'BoundedSemaphore.acquire()')
             time.sleep(_POLL)
@@ -233,7 +238,7 @@ class BoundedSemaphore:
             free = self._cache.get(self._key, default=self._value)
             if not self._value > free:
                 raise AssertionError('cannot release un-acquired semaphore')
-            self._cache.set(self._key, free + 1, expire=self._expire)
+            self._cache.set(self._key, free + 1, expire=self._expire, tag=self._tag)
 
     def __enter__(self) -> None:
         self.acquire()
@@ -248,7 +253,7 @@ def throttle(
     seconds: float,
     name: str | None = None,
     expire: float | None = None,
-    tag: None = None,
+    tag: Key = None,
     time_func: Callable[[], float] = time.time,
     sleep_func: Callable[[float], object] = time.sleep,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -256,13 +261,13 @@ def throttle(
     the cache: a token bucket stored under `name` (the function's qualified name by default). A call
     with no token waits (`sleep_func`) until one is due."""
     _coordinating(cache, 'throttle')
-    _no_tag(tag)
+    _check_tag(tag)
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         rate = count / float(seconds)
         key = _full_name(func) if name is None else name
         # Added, not set: every worker importing this module mustn't refill the shared bucket.
-        cache.add(key, (time_func(), count), expire=expire, retry=True)
+        cache.add(key, (time_func(), count), expire=expire, tag=tag, retry=True)
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -274,9 +279,9 @@ def throttle(
                     tally += (now - last) * rate
                     delay = 0.0
                     if tally > count:
-                        cache.set(key, (now, count - 1), expire)
+                        cache.set(key, (now, count - 1), expire, tag=tag)
                     elif tally >= 1:
-                        cache.set(key, (now, tally - 1), expire)
+                        cache.set(key, (now, tally - 1), expire, tag=tag)
                     else:
                         delay = (1 - tally) / rate
                 if not delay:
@@ -295,15 +300,17 @@ def barrier(
     lock_factory: Callable[..., Any],
     name: str | None = None,
     expire: float | None = None,
-    tag: None = None,
+    tag: Key = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """A decorator running the function under a lock made by `lock_factory(cache, key, expire=...)`
     (`Lock`, `RLock`, `BoundedSemaphore`, or one of your own): one caller at a time, everywhere."""
-    _no_tag(tag)
+    _check_tag(tag)
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         key = _full_name(func) if name is None else name
-        lock = lock_factory(cache, key, expire=expire)
+        lock = (
+            lock_factory(cache, key, expire=expire) if tag is None else lock_factory(cache, key, expire=expire, tag=tag)
+        )
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -320,7 +327,7 @@ def memoize_stampede(
     expire: float,
     name: str | None = None,
     typed: bool = False,
-    tag: None = None,
+    tag: Key = None,
     beta: float = 1,
     ignore: Any = (),
 ) -> Callable[[Callable[..., Any]], Any]:
@@ -335,7 +342,7 @@ def memoize_stampede(
     """
     if callable(name):
         raise TypeError('name cannot be callable')
-    _no_tag(tag)
+    _check_tag(tag)
     skip = frozenset(ignore)
     retry = not getattr(cache, 'durable', False)
 
@@ -373,12 +380,12 @@ def memoize_stampede(
 
                     def recompute() -> None:
                         # No `with cache:`: that closes the handle here (D-018).
-                        cache.set(key, timer(*args, **kwargs), expire=expire, retry=retry)
+                        cache.set(key, timer(*args, **kwargs), expire=expire, tag=tag, retry=retry)
 
                     threading.Thread(target=recompute, daemon=True).start()
                 return result
             pair = timer(*args, **kwargs)
-            cache.set(key, pair, expire=expire, retry=retry)
+            cache.set(key, pair, expire=expire, tag=tag, retry=retry)
             return pair[0]
 
         wrapper.__cache_key__ = __cache_key__  # ty: ignore[unresolved-attribute]
