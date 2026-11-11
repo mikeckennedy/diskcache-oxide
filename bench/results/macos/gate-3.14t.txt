@@ -1,0 +1,1 @@
+# Apple M5 Pro, 18 cores, macOS 27.2, AC power, nothing else heavy running. diskcache-oxide ce9a887 (Phase 6, all four releases of plan 24), 2026-11-11. Against the 0.1.0 run of 2026-11-08 the machine ran about 10% slower for both backends; every ratio to diskcache is unchanged or better.
