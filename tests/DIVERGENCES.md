@@ -437,6 +437,38 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: `cull()`'s count is documented as what it removed.
 - Tests: `tests/conformance/test_tags.py`, `tests/unit/test_eviction_policy.py`
 
+## D-054 A queue's keys are exactly its own
+
+- Kind: test-visible
+- diskcache: `push`, `pull` and `peek` find a queue's end by range alone. With `prefix=None` the range is numeric, so a float or bool key in it counts (with `5.5` stored, `push()` returns `6.5`); with a prefix it is every string between `'{prefix}-000000000000000'` and `'{prefix}-999999999999999'`, so an ordinary key `'user-9'` makes `push(x, prefix='user')` return `'user-000000000000010'` (and the next push raises `IntegrityError`), and `pull(prefix='q')` takes `'q-1-500000000000000'`, an item of queue `'q-1'` (upstream bugs 17 and 18).
+- oxide: a queue's keys are `int` keys, by exact type, with `prefix=None`, or `str` keys of exactly `'{prefix}-'` and 15 digits with a prefix; any other key in the range is ignored by every queue call, so nested and shared prefixes never cross. Ignored keys in the range still cost a scan, so use a prefix no other key starts with.
+- Why: a queue must never hand out, renumber or crash on a key that isn't one of its items.
+- Tests: `tests/conformance/test_queue.py`, `tests/unit/test_queue.py`
+
+## D-055 peek and peekitem never write, and never spin
+
+- Kind: test-visible
+- diskcache: `peek` and `peekitem` take the write lock and delete the expired entries they pass, and both loop forever when the head's value file is missing, since that row is never deleted (upstream bug 16).
+- oxide: they take no write lock: the head is the first live entry, and expired ones are left to `expire()` and the next write's sweep. A head whose value file is gone is removed without waiting, as `get` removes one (D-013), and the call goes on to the next item.
+- Why: reads never write (D-019), so any number of processes can peek at once.
+- Tests: `tests/conformance/test_queue.py`, `tests/unit/test_queue.py`
+
+## D-056 pull decodes before it deletes
+
+- Kind: test-visible
+- diskcache: `pull` deletes the head in its transaction and decodes it afterwards, so an item it can't decode is lost.
+- oxide: `pull` reads and decodes the head first and then deletes exactly that version, as `pop` does (D-026), falling back to a locked removal after losing the head to other pullers 3 times. An item this process can't read stays at the head: a pickled one under `pickle=False` raises `UnsafeValueError`, and a foreign one (a newer deploy's type) raises or, under `on_decode_error='miss'`, makes `pull` return the default. One that no build could read is removed and reported, and `pull` goes on to the next item rather than returning the default, so a worker draining the queue doesn't stop early.
+- Why: a queue's producer and consumer are often different services, upgraded at different times (Michael, decision 23).
+- Tests: `tests/unit/test_queue.py`
+
+## D-057 push raises past its range, and a bad side is a ValueError
+
+- Kind: test-visible
+- diskcache: a push past either end of the range leaves it (after `cache[1] = ...`, `push(side='front')` stores key `0`), and the next push raises `sqlite3.IntegrityError`. A `side` other than `'front'` or `'back'` raises `KeyError`.
+- oxide: a push whose number would leave the range raises `OverflowError`, and a push never overwrites an existing key. A bad `side` raises `ValueError`, a non-`str` prefix `TypeError`.
+- Why: a queue must never overwrite one of the caller's own keys (Michael, decision 24); `ValueError` is the error for a bad argument value.
+- Tests: `tests/conformance/test_queue.py`, `tests/unit/test_queue.py`
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.

@@ -90,3 +90,15 @@ At decoration `throttle` runs `cache.set(key, (now, count))`, resetting the buck
 ## 15. cull() under eviction_policy='none' reports 0 after removing expired entries
 
 `cull()` begins with `count = self.expire(now)`, then, when the policy selects nothing to evict, `return 0` (core.py, `cull`). The expired entries it just removed are gone, but the count says none were. Found by the architect's review of plan 24's release 3 (2026-11-10). **Impact:** a maintenance job that logs or alerts on `cull()`'s count sees nothing happen on a `'none'` cache.
+
+## 16. peek() and peekitem() loop forever when the head's value file is missing
+
+Both read the head in a loop: if the value file can't be read they `continue`, but only expired rows are deleted, so the same row comes back and the call never returns (core.py, `peek` and `peekitem`). `pull` doesn't hang only because it deletes the row first. Found by the architect's review of plan 24's release 4 (2026-11-11); repro: `repros/peek_spins_on_a_missing_file.py`. **Impact:** a value file lost to a crash or a cleanup hangs every consumer that peeks at the queue.
+
+## 17. An ordinary key that shares a queue's prefix sets the queue's next number
+
+`push(prefix='user')` takes the largest string between `'user-000000000000000'` and `'user-999999999999999'` and parses the digits after its last `-`. An ordinary key `'user-9'` is in that range, so the first push returns `'user-000000000000010'`, and because `'user-9'` still sorts last, the second push computes the same key and raises `sqlite3.IntegrityError`. Found with bug 16; repro: `repros/queue_shared_prefix.py`. **Impact:** a queue named after a key family (`user`, `job`) breaks on its second push.
+
+## 18. Nested queue prefixes cross
+
+`'q-1-500000000000000'`, an item of the queue `'q-1'`, lies between `'q-000000000000000'` and `'q-999999999999999'`, so `pull(prefix='q')` takes it. Found with bug 16; repro: `repros/queue_nested_prefixes_cross.py`. **Impact:** consumers of one queue silently take another queue's items.
