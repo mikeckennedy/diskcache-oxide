@@ -68,7 +68,7 @@ A running average whose total and count are updated together in one transaction,
 
 ## memoize_stampede
 
-`memoize_stampede(cache, expire)` is `memoize` with stampede protection: a result close to expiring is recomputed early, in a background thread, by one caller, while everyone else keeps getting the cached value. It's a cache, not a lock, so it works on a `NullCache` and a `durable=True` cache as `memoize` does. See [Caching expensive calls](../recipes/caching-expensive-calls.qmd).
+`memoize_stampede(cache, expire)` is `memoize` with stampede protection: a result close to expiring is recomputed early, in a background thread, by one caller, while everyone else keeps getting the cached value. It's a cache, not a lock, so it works on a `NullCache` and a `durable=True` cache as `memoize` does. See [Caching expensive calls](../recipes/caching-expensive-calls.qmd#thundering-herds).
 
 ## Things to know
 

@@ -73,7 +73,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../recipes/web-workers.html" rel="next">
+<link href="../recipes/upgrading.html" rel="next">
 <link href="../recipes/stale-while-revalidate.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
@@ -571,6 +571,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Rate limiting</span></a>
   </div>
@@ -603,6 +609,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../recipes/testing.html" class="sidebar-item-text sidebar-link active">
  <span class="menu-text">Testing code that uses a cache</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
   </div>
 </li>
         <li class="sidebar-item">
@@ -688,7 +700,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="testing-expiry-without-sleeping" class="level1">
 <h1>Testing expiry without sleeping</h1>
 <p>diskcache-oxide reads the clock natively in Rust, so patching <code>time.time</code> doesn’t affect it on its own. Pass <code>clock=</code> instead. A small fake clock lets a test jump forward in time:</p>
-<div id="b44322bd" class="cell" data-execution_count="1">
+<div id="7563f8a1" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -1172,8 +1184,8 @@ after 31 s: None</code></pre>
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../recipes/web-workers.html" class="pagination-link" aria-label="Sharing a cache across web workers">
-        <span class="nav-page-text">Sharing a cache across web workers</span> <i class="bi bi-arrow-right-short"></i>
+      <a href="../recipes/upgrading.html" class="pagination-link" aria-label="Upgrading across a format change">
+        <span class="nav-page-text">Upgrading across a format change</span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

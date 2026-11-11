@@ -19,6 +19,8 @@ episode:512:transcript
 
 Everything about user 42 now shares the prefix `user:42:`. Note the trailing colon: without it, `user:4` would also match `user:42`.
 
+Keys can also be tuples, like `('user', 42, 'profile')`, which saves formatting strings and leaves no separator to get wrong. A tuple key has no prefix to scan, though, so a group of tuple keys is invalidated with tags (option 2) or generation numbers (option 3). The keys `memoize` builds are tuples too.
+
 ## Option 1: delete by prefix
 
 `iterkeys(prefix=...)` is an indexed range scan, so finding a user's keys costs time in proportion to how many there are, not the size of the cache. It fetches keys a page at a time with no lock held in between, so deleting while iterating is safe.
@@ -43,6 +45,14 @@ print(sorted(cache))
 ```
 
 This is simple and frees the space right away. It costs one small write per key, so it's best when a group has tens or hundreds of keys, not hundreds of thousands.
+
+A prefix matches `str` keys only. `iterkeys(prefix='user:42:')` skips a `bytes` key `b'user:42:x'` and every tuple key, and a tuple as the prefix raises `TypeError`:
+
+```{python}
+cache.set(('user', 42, 'orders'), [1, 2], expire=3600)
+cache.set('user:42:profile', '...', expire=3600)
+print(list(cache.iterkeys(prefix='user:42:')))
+```
 
 ## Option 2: tags
 
@@ -94,8 +104,8 @@ The generations are timestamps rather than a counter starting at 0 for a reason.
 
 ## Which to use
 
-- **Prefix deletes** when groups are small and you want the space back immediately.
-- **Tags** when a group's keys don't share a prefix, or come from code (like `memoize`) whose keys you don't choose.
+- **Prefix deletes** when groups are small, the keys are strings, and you want the space back immediately.
+- **Tags** when a group's keys don't share a prefix, are tuples, or come from code (like `memoize`) whose keys you don't choose.
 - **Generation numbers** when groups are large, or invalidation is frequent, or many workers might invalidate the same group at the same time.
 
 ## While caching is switched off

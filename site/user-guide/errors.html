@@ -862,7 +862,7 @@ CorruptValueError: ...</code></pre>
 </section>
 <section id="log-lines-when-the-library-was-told-not-to-raise" class="level1">
 <h1>Log lines, when the library was told not to raise</h1>
-<p>Three settings turn failures into log lines on the <code>diskcache_oxide</code> logger instead of exceptions. Make sure that logger reaches your logging setup, since the line is then the only signal.</p>
+<p>These settings turn failures into log lines on the <code>diskcache_oxide</code> logger instead of exceptions. Make sure that logger reaches your logging setup, since the line is then the only signal.</p>
 <ul>
 <li><strong><code>on_decode_error='miss'</code></strong> logs a warning for each stored version it couldn’t read, once per cache handle, and deletes the row if no build could read it.</li>
 <li><strong><code>durable=True</code></strong> counts every swallowed failure in one of three groups and logs each group’s first failure at once, then at most once a minute per cache handle, with counts by operation since its last line (<code>get: 1204, set: 37</code>). Busy (a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>) logs at <code>WARNING</code>, failing (a full disk, an I/O error, a damaged database) at <code>ERROR</code>, and lost invalidations (any failed <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, whose entry can now be served stale) at <code>ERROR</code>. An outage that ends within the minute shows only its first failure until the next line, so each line says more may follow. <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> logs what’s left.</li>

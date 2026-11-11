@@ -571,6 +571,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Rate limiting</span></a>
   </div>
@@ -607,6 +613,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/web-workers.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Sharing a cache across web workers</span></a>
   </div>
@@ -631,6 +643,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#enums" id="toc-enums" class="nav-link" data-scroll-target="#enums">Enums</a></li>
   <li><a href="#dataclasses" id="toc-dataclasses" class="nav-link" data-scroll-target="#dataclasses">Dataclasses</a></li>
   <li><a href="#pydantic-models" id="toc-pydantic-models" class="nav-link" data-scroll-target="#pydantic-models">Pydantic models</a></li>
+  <li><a href="#values-only-never-keys" id="toc-values-only-never-keys" class="nav-link" data-scroll-target="#values-only-never-keys">Values only, never keys</a></li>
   <li><a href="#where-the-registrations-live" id="toc-where-the-registrations-live" class="nav-link" data-scroll-target="#where-the-registrations-live">Where the registrations live</a></li>
   <li><a href="#when-the-shape-changes" id="toc-when-the-shape-changes" class="nav-link" data-scroll-target="#when-the-shape-changes">When the shape changes</a></li>
   </ul>
@@ -667,7 +680,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="the-standard-librarys-types" class="level1">
 <h1>The standard library’s types</h1>
 <p><code>uuid.UUID</code>, <code>datetime.timedelta</code> and <code>pathlib.Path</code> aren’t built-in types to the codec. Each needs an <code>encode</code> that turns an instance into something storable and a <code>decode</code> that turns it back:</p>
-<div id="582f8291" class="cell" data-execution_count="1">
+<div id="b4e273f7" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> datetime</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pathlib</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
@@ -692,7 +705,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="enums" class="level1">
 <h1>Enums</h1>
 <p>Store the value, and let the enum class turn it back into a member. A <code>StrEnum</code> or <code>IntEnum</code> is a subclass of <code>str</code> or <code>int</code>, and a subclass is never stored as its base, so it needs this too:</p>
-<div id="72438d8c" class="cell" data-execution_count="2">
+<div id="84048767" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> enum</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Plan(enum.StrEnum):</span>
@@ -711,7 +724,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="dataclasses" class="level1">
 <h1>Dataclasses</h1>
 <p>A dataclass needs only a name. Its fields are stored and it’s rebuilt with <code>cls(**fields)</code>, so defaults and <code>__post_init__</code> run. Fields can hold other registered types, nested as deep as you like:</p>
-<div id="93e256ef" class="cell" data-execution_count="3">
+<div id="c6af1313" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> dataclasses</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclasses.dataclass</span></span>
@@ -743,17 +756,39 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(User, name<span class="op">=</span><span class="st">'app.User'</span>, encode<span class="op">=</span><span class="kw">lambda</span> u: u.model_dump(mode<span class="op">=</span><span class="st">'json'</span>), decode<span class="op">=</span>User.model_validate)</span></code></pre></div>
 <p>attrs classes and msgspec structs follow the same pattern with <code>attrs.asdict()</code> and <code>msgspec.to_builtins()</code>, and the class as the decoder.</p>
 </section>
+<section id="values-only-never-keys" class="level1">
+<h1>Values only, never keys</h1>
+<p>A registration teaches the codec to store a type as a value. Keys, tags and the arguments of a <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>d function are a separate, fixed set of types (<code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code> and tuples of those), compared by exact type, and registering a class doesn’t add it to that set. A <code>UUID</code>, a <code>Plan</code> member (even though it’s a <code>StrEnum</code>) or an <code>Invoice</code> as a key raises <code>TypeError</code>. Convert at the edge, to the identifier the key needs:</p>
+<div id="e49ac2df" class="cell" data-execution_count="4">
+<div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>invoice <span class="op">=</span> cache.get(<span class="st">'invoice:latest'</span>)</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span>:</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(invoice.<span class="bu">id</span>, invoice)</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="cf">except</span> <span class="pp">TypeError</span> <span class="im">as</span> error:</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(error)</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>((<span class="st">'invoice'</span>, <span class="bu">str</span>(invoice.<span class="bu">id</span>)), invoice)             <span class="co"># a UUID key, as a str</span></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>((<span class="st">'plan-limits'</span>, Plan.PRO.value), {<span class="st">'seats'</span>: <span class="dv">25</span>})    <span class="co"># an enum key, by its value</span></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache.get((<span class="st">'invoice'</span>, <span class="bu">str</span>(invoice.<span class="bu">id</span>))).plan)</span></code></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>cache keys must be str, bytes, int, float, bool, None, or a tuple of those, not UUID
+pro</code></pre>
+</div>
+</div>
+<p>A memoized function can return a registered type, so <code>@cache.memoize()</code> on a loader that returns an <code>Invoice</code> works once <code>Invoice</code> is registered. Its arguments still have to be key types, so take <code>invoice_id: str</code> rather than a <code>UUID</code>.</p>
+</section>
 <section id="where-the-registrations-live" class="level1">
 <h1>Where the registrations live</h1>
 <p>Registrations are process-wide and must exist in every process that opens the directory: the web workers, the Celery workers, the management command that warms the cache. A row written with a tag the reading process doesn’t know is a <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>, and the row is left for a process that does. Put them in one module and import it early:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># myapp/cache_types.py: imported from myapp/__init__.py, so every entry point gets it</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> diskcache_oxide</span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> myapp.models <span class="im">import</span> Invoice, Plan, User</span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(Plan, name<span class="op">=</span><span class="st">'app.Plan'</span>, encode<span class="op">=</span><span class="kw">lambda</span> p: p.value, decode<span class="op">=</span>Plan)</span>
-<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(Invoice, name<span class="op">=</span><span class="st">'app.Invoice'</span>)</span>
-<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(User, name<span class="op">=</span><span class="st">'app.User'</span>, encode<span class="op">=</span><span class="kw">lambda</span> u: u.model_dump(mode<span class="op">=</span><span class="st">'json'</span>), decode<span class="op">=</span>User.model_validate)</span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># myapp/cache_types.py: imported from myapp/__init__.py, so every entry point gets it</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> diskcache_oxide</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> myapp.models <span class="im">import</span> Invoice, Plan, User</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(Plan, name<span class="op">=</span><span class="st">'app.Plan'</span>, encode<span class="op">=</span><span class="kw">lambda</span> p: p.value, decode<span class="op">=</span>Plan)</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(Invoice, name<span class="op">=</span><span class="st">'app.Invoice'</span>)</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(User, name<span class="op">=</span><span class="st">'app.User'</span>, encode<span class="op">=</span><span class="kw">lambda</span> u: u.model_dump(mode<span class="op">=</span><span class="st">'json'</span>), decode<span class="op">=</span>User.model_validate)</span></code></pre></div>
+<p>A cache that needs its own encoding of a type can take a <code>diskcache_oxide.TypeRegistry</code> as <code>types=</code>, which it consults before the process-wide registry. The same rule applies: every process that opens that directory needs the same registrations.</p>
 </section>
 <section id="when-the-shape-changes" class="level1">
 <h1>When the shape changes</h1>

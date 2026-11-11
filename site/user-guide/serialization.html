@@ -7,7 +7,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
-<meta name="description" content="msgpack and JSON with exact type tags, registering your own types, and why pickle is off by default.">
+<meta name="description" content="msgpack and JSON with exact type tags, registering your own types, why pickle is off by default, and how keys and tags are stored.">
 
 <title>Serialization – diskcache-oxide | diskcache-oxide</title>
 <style>
@@ -450,13 +450,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
   <meta property="og:type" content="website">
   <meta property="og:title" content="Serialization – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="msgpack and JSON with exact type tags, registering your own types, and why pickle is off by default.">
+  <meta property="og:description" content="msgpack and JSON with exact type tags, registering your own types, why pickle is off by default, and how keys and tags are stored.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Serialization – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="msgpack and JSON with exact type tags, registering your own types, and why pickle is off by default.">
+  <meta name="twitter:description" content="msgpack and JSON with exact type tags, registering your own types, why pickle is off by default, and how keys and tags are stored.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -658,6 +658,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#why-pickle-is-off-by-default" id="toc-why-pickle-is-off-by-default" class="nav-link" data-scroll-target="#why-pickle-is-off-by-default">Why pickle is off by default</a></li>
   <li><a href="#opting-in-to-pickle" id="toc-opting-in-to-pickle" class="nav-link" data-scroll-target="#opting-in-to-pickle">Opting in to pickle</a></li>
   <li><a href="#reading-safely-unsafevalueerror" id="toc-reading-safely-unsafevalueerror" class="nav-link" data-scroll-target="#reading-safely-unsafevalueerror">Reading safely: <code>UnsafeValueError</code></a></li>
+  <li><a href="#keys-and-tags" id="toc-keys-and-tags" class="nav-link" data-scroll-target="#keys-and-tags">Keys and tags</a></li>
   </ul>
 </nav>
     </div>
@@ -671,7 +672,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 <div>
   <div class="description">
-    msgpack and JSON with exact type tags, registering your own types, and why pickle is off by default.
+    msgpack and JSON with exact type tags, registering your own types, why pickle is off by default, and how keys and tags are stored.
   </div>
 </div>
 
@@ -696,9 +697,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>readable <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-json'</span>, serializer<span class="op">=</span><span class="st">'json'</span>)</span></code></pre></div>
 <ul>
 <li><strong>msgpack</strong> (the default) is compact and fast. On a 450 KB page-cache entry it’s about 25× faster than tagged JSON, and it stores nested <code>bytes</code> without base64.</li>
-<li><strong>json</strong> is human-readable: open <code>diskcache-oxide.sqlite</code> in any SQLite browser and read your values. It uses <code>serde_json</code> with exact float round-tripping.</li>
+<li><strong>json</strong> is human-readable: open <code>diskcache-oxide.sqlite</code> in any SQLite browser and read your values. It uses <code>serde_json</code> with exact float round-tripping. Keys aren’t JSON: <code>str</code> keys show as text, and keys of other types as a short binary encoding (see <a href="#keys-and-tags">Keys and tags</a>).</li>
 </ul>
 <p>Plain <code>str</code> and <code>bytes</code> values skip both and are stored raw. Every row records how it was encoded, so if you change a cache’s <code>serializer</code>, existing entries stay readable.</p>
+<p>Everything stored as a value goes through the same encoder: what you pass to <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>, <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> and <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push()</a>, and what a <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>d function returns.</p>
 </section>
 <section id="exact-types" class="level1">
 <h1>Exact types</h1>
@@ -775,6 +777,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'service'</span>, MyService())</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="co"># TypeError: values of type MyService can't be stored without pickle (only exact built-in types round-trip)</span></span></code></pre></div>
 <p>Only exact built-in types count. A subclass of <code>dict</code> or <code>str</code> isn’t stored as its base type, because it wouldn’t come back as the class you stored. Failing at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> time means you find out where the value was created, not three requests later when something reads it. For a type of your own, or one from a library, <a href="#your-own-types">register it</a>.</p>
+<p>A <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>d function that returns such a value raises the same <code>TypeError</code>, after the function has run, when the result is stored. Nothing is cached, so the next call runs it again and raises again. Register the type, or have the function return something storable.</p>
 </section>
 <section id="your-own-types" class="level1">
 <h1>Your own types</h1>
@@ -830,6 +833,24 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Reading safely: <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a></h1>
 <p>Several processes can open one directory with different settings. A handle opened without <code>pickle=True</code> never unpickles. If it reads a value that a <code>pickle=True</code> handle stored, it raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">diskcache_oxide.UnsafeValueError</a> (a <code>TypeError</code> subclass) and leaves the row in place, so the <code>pickle=True</code> handle can still read it.</p>
 <p>A value whose stored bytes can’t be decoded at all raises <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> (a <code>ValueError</code> subclass).</p>
+</section>
+<section id="keys-and-tags" class="level1">
+<h1>Keys and tags</h1>
+<p>Keys follow stricter rules than values, because a key has to be compared, sorted and found as well as read back. They never go through <code>serializer=</code>, <code>pickle=</code> or the type registry. A key can be:</p>
+<ul>
+<li><code>str</code>, <code>bytes</code>, <code>bool</code> or <code>None</code></li>
+<li>an <code>int</code> that fits in 64 bits</li>
+<li>a <code>float</code>, except NaN, which raises <code>ValueError</code> because it isn’t equal to itself</li>
+<li>a <code>tuple</code> of any of these, nested up to 32 deep</li>
+</ul>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>((<span class="st">'episode'</span>, <span class="dv">491</span>, <span class="st">'transcript'</span>), text)</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">b'</span><span class="ch">\x9f\x02</span><span class="st">'</span>, blob)</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="dv">42</span>, <span class="st">'the answer'</span>)</span></code></pre></div>
+<p>Anything else raises <code>TypeError</code>, even on a <code>pickle=True</code> cache: a <code>list</code>, a <code>dict</code>, a <code>bytearray</code>, an object, a registered type, and subclasses such as an <code>IntEnum</code>, a <code>StrEnum</code> or a namedtuple. If your key is an enum member, use its <code>.value</code>; if it’s a namedtuple, pass <code>tuple(point)</code>.</p>
+<p>Keys compare by exact type, so <code>1</code>, <code>1.0</code> and <code>True</code> are three different keys. Python’s <code>==</code> says they’re equal, and diskcache treats <code>1</code> and <code>1.0</code> as one key, so code that mixes them finds nothing where it expected a hit. The exception is <code>-0.0</code>, which is the same key as <code>0.0</code>, as it is in a dict.</p>
+<p>A <code>str</code> key is stored as plain text. Every other key is stored in a compact binary encoding that sorts the way the values do, which is why <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> can walk them in order: every <code>str</code> key first, then <code>None</code>, the bools, ints, floats, bytes and tuples, each group sorted. <code>iterkeys(prefix=...)</code> matches <code>str</code> keys only, so if you plan to list or delete a group of keys by prefix, make them strings (<code>'user:42:profile'</code>, not <code>('user', 42, 'profile')</code>).</p>
+<p>A <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>d function’s key is a tuple built from its name and its arguments, so every argument it’s called with must be one of these types. A call with a list or an object raises <code>TypeError</code> before the function runs. Leave arguments like a database connection out of the key with <code>ignore=</code>.</p>
+<p>Tags, from <code>set(..., tag=...)</code> and <code>memoize(tag=...)</code>, follow the same rules as keys and are stored the same way. <code>evict(1)</code> removes entries tagged <code>1</code> and leaves the ones tagged <code>1.0</code> or <code>True</code>.</p>
 
 
 </section>

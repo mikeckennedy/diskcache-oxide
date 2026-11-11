@@ -269,14 +269,14 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 
 #### Core Features
 
-- [Serialization](https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html): msgpack and JSON with exact type tags, registering your own types, and why pickle is off by default
+- [Serialization](https://mkennedy.codes/docs/diskcache-oxide/user-guide/serialization.html): msgpack and JSON with exact type tags, registering your own types, why pickle is off by default, and how keys and tags are stored
 - [NullCache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html): Caching switched off without changing call sites: NullCache, the CacheLike protocol, and keeping invalidations flowing while it's off
 - [Caches: named caches](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html): A registry of named caches under one base directory: each opens on first use, a NullCache stands in while one can't open, any can be switched off by name, and an admin page gets counts and sizes
 - [FanoutCache: sharded caches](https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html): A cache sharded over several SQLite databases, so many writing processes stop queueing on one write lock, and when a plain Cache is the better choice
 - [Transactions](https://mkennedy.codes/docs/diskcache-oxide/user-guide/transactions.html): transact(): several writes that commit together or not at all, with TransactionBusy, TransactionAborted and retry
 - [Coordination: locks, semaphores and throttles](https://mkennedy.codes/docs/diskcache-oxide/user-guide/coordination.html): Locks, re-entrant locks, semaphores, rate limits and running averages that hold across every thread and process sharing a cache directory
 - [Concurrency and forks](https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html): Threads, worker processes, pre-forking servers and free-threaded Python sharing one cache, and the fork barrier that keeps a child from inheriting half a transaction
-- [Storage and WAL](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html): What's in the cache directory, how memory and disk stay bounded, and the write-ahead log and checkpoint()
+- [Storage and WAL](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html): What's in the cache directory, the on-disk format, how memory and disk stay bounded, eviction policies, tags, and the write-ahead log and checkpoint()
 
 #### Background & Reference
 
@@ -291,12 +291,14 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Counting things](https://mkennedy.codes/docs/diskcache-oxide/recipes/counters.html): View counts, download totals and usage quotas with incr() and decr(), shared by every worker and flushed to the database without losing a count
 - [Storing your own types](https://mkennedy.codes/docs/diskcache-oxide/recipes/custom-types.html): UUIDs, enums, timedeltas, Paths, Pydantic models and dataclasses in the cache with register_type(), and no pickle
 - [Invalidating groups of keys](https://mkennedy.codes/docs/diskcache-oxide/recipes/invalidating-groups.html): Clear everything cached for one user or one object: by key prefix, by tag, or by generation number
+- [Watching a cache in production](https://mkennedy.codes/docs/diskcache-oxide/recipes/monitoring.html): A health check and an admin endpoint for a cache: entries, bytes on disk, hit ratio, the size limit, the write-ahead log, check() for damage, and the log lines worth alerting on
 - [Rate limiting](https://mkennedy.codes/docs/diskcache-oxide/recipes/rate-limiting.html): Fixed-window request limits shared by every worker on the machine, with add() and incr()
 - [Running a job once across workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/run-once.html): Use add() to make sure only one worker process runs a scheduled job
 - [Server-side sessions](https://mkennedy.codes/docs/diskcache-oxide/recipes/sessions.html): Sessions every worker can read, with a sliding idle timeout from touch(), an absolute lifetime, and log-out-everywhere by key prefix
 - [Single-use keys](https://mkennedy.codes/docs/diskcache-oxide/recipes/single-use-keys.html): One-time codes, reset links and idempotency keys: pop() hands a value to exactly one caller, and add() accepts a key exactly once
 - [Serving stale values while refreshing](https://mkennedy.codes/docs/diskcache-oxide/recipes/stale-while-revalidate.html): Give an entry a freshness deadline shorter than its expiry, so readers never wait for a recompute and only one worker does it
 - [Testing code that uses a cache](https://mkennedy.codes/docs/diskcache-oxide/recipes/testing.html): pytest fixtures for a real cache, a NullCache, and a fake clock for testing expiry
+- [Upgrading across a format change](https://mkennedy.codes/docs/diskcache-oxide/recipes/upgrading.html): What to do when a release changes the on-disk format: delete the cache with every worker stopped, or give each format its own directory for a rolling deploy, and what happens to sessions, counters and queues
 - [Sharing a cache across web workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/web-workers.html): Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI, Flask, Django and Celery
 - [Work queues](https://mkennedy.codes/docs/diskcache-oxide/recipes/work-queues.html): A queue every worker on the machine shares: push() at one end, pull() from the other, each item delivered to exactly one worker, with no Redis
 

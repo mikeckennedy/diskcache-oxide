@@ -42,9 +42,13 @@ For locks, semaphores and a throttle that hold across every process, see the [Co
 
 **[Using the cache from asyncio](asyncio.md).** Read inline, write off the loop, and keep transactions on one thread, in FastAPI, Starlette or aiohttp.
 
+**[Watching a cache in production](monitoring.md).** A health check and an admin endpoint: entries, bytes on disk, hit ratio across workers, the size limit, the write-ahead log, [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check) for damage, and the log lines worth alerting on.
+
+**[Upgrading across a format change](upgrading.md).** When a release changes the on-disk format: stop, delete and start, or give each format its own directory for a rolling deploy, and what to do first about queues, counters and sessions.
+
 **[Testing code that uses a cache](testing.md).** pytest fixtures for a real cache in a temporary directory, a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) for tests that shouldn't cache at all, and a fake clock for testing expiry without sleeping.
 
 
 # In the user guide
 
-Some features have more to them than a recipe can hold, so they have guide pages of their own: [Coordination](../user-guide/coordination.md) (locks, semaphores, `throttle`, `barrier`, `Averager` and the stampede-proof `memoize_stampede`), [`FanoutCache`](../user-guide/fanoutcache.md) for many writing processes, and [Transactions](../user-guide/transactions.md). What's coming next is on the [roadmap](../user-guide/roadmap.md).
+Some features have more to them than a recipe can hold, so they have guide pages of their own: [Coordination](../user-guide/coordination.md) (locks, semaphores, `throttle`, `barrier`, `Averager` and `memoize_stampede`, which refreshes a hot value before it expires), [`FanoutCache`](../user-guide/fanoutcache.md) for many writing processes, and [Transactions](../user-guide/transactions.md). What's coming next is on the [roadmap](../user-guide/roadmap.md).

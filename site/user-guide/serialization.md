@@ -13,9 +13,11 @@ readable = Cache('/var/cache/my-app-json', serializer='json')
 ```
 
 - **msgpack** (the default) is compact and fast. On a 450 KB page-cache entry it's about 25× faster than tagged JSON, and it stores nested `bytes` without base64.
-- **json** is human-readable: open `diskcache-oxide.sqlite` in any SQLite browser and read your values. It uses `serde_json` with exact float round-tripping.
+- **json** is human-readable: open `diskcache-oxide.sqlite` in any SQLite browser and read your values. It uses `serde_json` with exact float round-tripping. Keys aren't JSON: `str` keys show as text, and keys of other types as a short binary encoding (see [Keys and tags](#keys-and-tags)).
 
 Plain `str` and `bytes` values skip both and are stored raw. Every row records how it was encoded, so if you change a cache's `serializer`, existing entries stay readable.
+
+Everything stored as a value goes through the same encoder: what you pass to [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set), [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) and [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push), and what a [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize)d function returns.
 
 
 # Exact types
@@ -66,6 +68,8 @@ cache.set('service', MyService())
 ```
 
 Only exact built-in types count. A subclass of `dict` or `str` isn't stored as its base type, because it wouldn't come back as the class you stored. Failing at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) time means you find out where the value was created, not three requests later when something reads it. For a type of your own, or one from a library, [register it](#your-own-types).
+
+A [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize)d function that returns such a value raises the same `TypeError`, after the function has run, when the result is stored. Nothing is cached, so the next call runs it again and raises again. Register the type, or have the function return something storable.
 
 
 # Your own types
@@ -142,3 +146,29 @@ A good habit is to give pickled values their own cache directory, and keep every
 Several processes can open one directory with different settings. A handle opened without `pickle=True` never unpickles. If it reads a value that a `pickle=True` handle stored, it raises [diskcache_oxide.UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) (a `TypeError` subclass) and leaves the row in place, so the `pickle=True` handle can still read it.
 
 A value whose stored bytes can't be decoded at all raises [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) (a `ValueError` subclass).
+
+
+# Keys and tags
+
+Keys follow stricter rules than values, because a key has to be compared, sorted and found as well as read back. They never go through `serializer=`, `pickle=` or the type registry. A key can be:
+
+- `str`, `bytes`, `bool` or `None`
+- an `int` that fits in 64 bits
+- a `float`, except NaN, which raises `ValueError` because it isn't equal to itself
+- a `tuple` of any of these, nested up to 32 deep
+
+``` python
+cache.set(('episode', 491, 'transcript'), text)
+cache.set(b'\x9f\x02', blob)
+cache.set(42, 'the answer')
+```
+
+Anything else raises `TypeError`, even on a `pickle=True` cache: a `list`, a `dict`, a `bytearray`, an object, a registered type, and subclasses such as an `IntEnum`, a `StrEnum` or a namedtuple. If your key is an enum member, use its `.value`; if it's a namedtuple, pass `tuple(point)`.
+
+Keys compare by exact type, so `1`, `1.0` and `True` are three different keys. Python's `==` says they're equal, and diskcache treats `1` and `1.0` as one key, so code that mixes them finds nothing where it expected a hit. The exception is `-0.0`, which is the same key as `0.0`, as it is in a dict.
+
+A `str` key is stored as plain text. Every other key is stored in a compact binary encoding that sorts the way the values do, which is why [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) can walk them in order: every `str` key first, then `None`, the bools, ints, floats, bytes and tuples, each group sorted. `iterkeys(prefix=...)` matches `str` keys only, so if you plan to list or delete a group of keys by prefix, make them strings (`'user:42:profile'`, not `('user', 42, 'profile')`).
+
+A [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize)d function's key is a tuple built from its name and its arguments, so every argument it's called with must be one of these types. A call with a list or an object raises `TypeError` before the function runs. Leave arguments like a database connection out of the key with `ignore=`.
+
+Tags, from `set(..., tag=...)` and `memoize(tag=...)`, follow the same rules as keys and are stored the same way. `evict(1)` removes entries tagged `1` and leaves the ones tagged `1.0` or `True`.

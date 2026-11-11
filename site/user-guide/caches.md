@@ -35,7 +35,7 @@ caches['genral']  # ty: invalid argument
 
 # When a cache can't open
 
-A cache can fail to open: a permissions problem, a disk that went away, a database written by a newer version, or another process holding the lock for longer than [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout). A lookup then returns a [NullCache](null-cache.md) instead of raising, so the request carries on without the cache. The error goes to `on_open_error(name, exc)`, which logs it at `ERROR` on the `diskcache_oxide` logger by default. Pass your own function to send it to Sentry or your logging setup.
+A cache can fail to open: a permissions problem, a disk that went away, a database in an on-disk format this version can't read (made by an older or a newer release), or another process holding the lock for longer than [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout). A lookup then returns a [NullCache](null-cache.md) instead of raising, so the request carries on without the cache. The error goes to `on_open_error(name, exc)`, which logs it at `ERROR` on the `diskcache_oxide` logger by default. Pass your own function to send it to Sentry or your logging setup.
 
 The failure is remembered for `retry_open_after` seconds (10 by default), so a broken cache costs one failed open every 10 seconds, not one per request, and the lookup after that tries again. A cache that recovers is picked up without a restart. Under load, several threads may make that retry at the same moment, and each one that fails reports it.
 
@@ -44,6 +44,13 @@ The failure is remembered for `retry_open_after` seconds (10 by default), so a b
 A [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) at open means busy, not broken: another process holding the lock, or a first lookup that collided with a fork. It's remembered for at most 1 second, and the default report is a `WARNING` with no traceback. A custom `on_open_error` still gets the exception. Lookups of a cache that's already open never touch any of this.
 
 A bad *setting* (`size_limit=True`, `serializer='yaml'`) is a bug, not an outage, so it raises on lookup instead. What each open error means, and the fix, is in [Errors and what to do about them](errors.md).
+
+
+## After an upgrade that changes the format
+
+0.2.3 changes the on-disk format, so every cache made by 0.1.2 fails to open with [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) once a worker runs the new version. In a registry that's an ordinary open failure. Each lookup gets a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), the error is logged at `ERROR` (or passed to your `on_open_error`) each time the open is retried, and requests keep working without that cache. The message names the directory to delete.
+
+It stays that way until the old directory is gone. Delete it, and the next retry, within `retry_open_after` seconds, creates the cache empty and hands out the real one again, with no restart. The clean way is to do it during the deploy: stop every worker, delete the cache directories (a sharded cache's whole folder, never one shard inside it), then start the new version. Workers still running 0.1.2 can't use a cache the new version created either, so don't leave old and new workers running side by side on the same caches. [Upgrading diskcache-oxide](switching-from-diskcache.md#upgrading-diskcache-oxide) has the details.
 
 
 # Sharded caches
@@ -84,6 +91,48 @@ def cache_for(purpose: str) -> CacheLike:
 Build the wrapper on each call rather than memoizing it: `caches[...]` is already cheap, and a memoized `NullCache(invalidate=...)` wrapped around a cache that had failed to open would never pick up its recovery.
 
 
+# [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) on a registered cache
+
+`@caches['episodes'].memoize()` does the lookup once, when the module is imported, and the decorated function keeps whatever came back. If the cache couldn't open at that moment, the function holds a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and runs uncached until the process restarts, even after the cache recovers. `disable('episodes')` never reaches it either, because switches only change later lookups.
+
+If that matters to you, look the cache up on each call instead. A small decorator does it:
+
+``` python
+import functools
+
+def memoized(name: str, **options):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return caches[name].memoize(**options)(func)(*args, **kwargs)
+        return wrapper
+    return decorator
+
+@memoized('episodes', expire=600)
+def episode(number: int) -> dict:
+    return load_episode(number)
+```
+
+It stores under the same keys as `@caches['episodes'].memoize(expire=600)` would, and it follows recovery and the switches. Building the wrapper on every call added about 2 µs per call when we measured it. To forget one result, build the key the same way: `caches['episodes'].delete(caches['episodes'].memoize()(episode.__wrapped__).__cache_key__(42))`.
+
+
+# Locks, claims and queues
+
+Give coordination its own registered cache, with settings that suit it:
+
+``` python
+caches = Caches('/var/cache/my-app', timeout=1.0, durable=True)
+caches.register('pages')
+caches.register('locks', durable=False, eviction_policy='none')
+```
+
+The [coordination recipes](coordination.md) (`Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, `Averager`) raise `TypeError` on a `durable=True` cache, since a dropped [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) would leave a lock held, so a registry whose defaults include `durable=True` needs `durable=False` on this one. `eviction_policy='none'` stops a size-limit eviction from removing a lock or a claim that's still live. Give those entries an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) instead.
+
+The recipes also raise `TypeError` on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), so while `locks` is disabled or can't open, `Lock(caches['locks'], ...)` raises where it would otherwise have taken the lock. That's on purpose: a lock that every caller holds at once is worse than an error. Catch it where losing the lock means skipping the work. The decorators `@throttle(...)` and `@barrier(...)` check their cache when they decorate, so one applied to `caches['locks']` at import time raises at import if that cache can't open.
+
+The [queue calls](../recipes/work-queues.md) ([push](../reference/Cache.push.md#diskcache_oxide.Cache.push), [pull](../reference/Cache.pull.md#diskcache_oxide.Cache.pull), [peek](../reference/Cache.peek.md#diskcache_oxide.Cache.peek), [peekitem](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem)) are on `caches[name]`, so register a queue's cache without `shards=`: a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) has no queue calls. While that cache is disabled or can't open, [push](../reference/Cache.push.md#diskcache_oxide.Cache.push) returns a key and stores nothing, and the job is gone. If a lost job matters, check `caches['jobs'].enabled` before you push, or open the queue's cache with `Cache(...)` directly so that a failure raises.
+
+
 # Admin and shutdown
 
 ``` python
@@ -94,6 +143,7 @@ caches.close_all()                  # at shutdown; `with Caches(...) as caches:`
 ```
 
 - [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) opens every registered cache and never raises: a cache that can't be read has its `error` set.
+- Hit and miss counts come from each cache's own [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats): `caches['pages'].stats()` turns counting on for this process, and later calls return `(hits, misses)` for this process's lookups. A disabled cache, or one that couldn't open, returns `(0, 0)`.
 - `clear(name)` raises if the cache can't be opened, so an admin page doesn't report "0 cleared" for a failure.
 - [expire_all()](../reference/Caches.expire_all.md#diskcache_oxide.Caches.expire_all) runs every cache, logging and reporting `None` for one that fails. Run it from a scheduled job rather than inside a request: a large expire takes seconds.
 - Maintenance calls hold the write lock once per chunk, so give them a longer `timeout=` than the request path's.

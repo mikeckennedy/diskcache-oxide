@@ -402,7 +402,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Kind: test-visible
 - diskcache: hits and misses are stored in the database's `Settings` table, shared by every process and kept across restarts; with statistics on, every `get` becomes a write transaction to count it.
 - oxide: counted in memory, per process: every handle on a directory in one process shares the counts, they survive closing the last handle, a forked child and a restarted process start at zero, and other processes' lookups aren't included. Counted by `get` and `cache[key]` only (as diskcache); a durable outage answered as a miss counts as nothing. A `FanoutCache` sums its shards. `statistics=` isn't a constructor setting; `stats(enable=...)` turns counting on and off.
-- Why: a `get` that writes would queue every reader behind the write lock, and reads that never write are what let many processes read at once (Michael's decision 7, plan 24). Sum the workers' counts yourself, or through `Caches`.
+- Why: a `get` that writes would queue every reader behind the write lock, and reads that never write are what let many processes read at once (Michael's decision 7, plan 24). Sum the workers' counts yourself (the monitoring recipe shows one way). `Caches.stats()` reports counts and sizes, not hits and misses.
 - Tests: `tests/conformance/test_parity.py`, `tests/unit/test_stats.py`
 
 ## D-050 `check()` doesn't report empty value folders, and keeps young files

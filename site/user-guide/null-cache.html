@@ -654,6 +654,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#one-rule" id="toc-one-rule" class="nav-link active" data-scroll-target="#one-rule">One rule</a>
   <ul class="collapse">
   <li><a href="#watch-add" id="toc-watch-add" class="nav-link" data-scroll-target="#watch-add">Watch <code>add()</code></a></li>
+  <li><a href="#watch-the-queue-calls" id="toc-watch-the-queue-calls" class="nav-link" data-scroll-target="#watch-the-queue-calls">Watch the queue calls</a></li>
   </ul></li>
   <li><a href="#if-cache-means-caching-is-on" id="toc-if-cache-means-caching-is-on" class="nav-link" data-scroll-target="#if-cache-means-caching-is-on"><code>if cache:</code> means “caching is on”</a></li>
   <li><a href="#keep-invalidating-while-caching-is-off-invalidate" id="toc-keep-invalidating-while-caching-is-off-invalidate" class="nav-link" data-scroll-target="#keep-invalidating-while-caching-is-off-invalidate">Keep invalidating while caching is off: <code>invalidate=</code></a></li>
@@ -718,14 +719,24 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>the entry already expired</td>
 </tr>
 <tr class="even">
+<td><code>get(key, tag=True)</code></td>
+<td><code>(default, None)</code></td>
+<td>the entry and its tag already expired</td>
+</tr>
+<tr class="odd">
 <td><code>cache[key]</code></td>
 <td>raises <code>KeyError</code></td>
 <td>the entry already expired</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>set(...)</code></td>
 <td><code>True</code></td>
 <td>the write succeeded, then expired</td>
+</tr>
+<tr class="odd">
+<td>a <code>@cache.memoize()</code> function</td>
+<td>runs on every call</td>
+<td>every stored result already expired</td>
 </tr>
 <tr class="even">
 <td><code>add(...)</code></td>
@@ -773,22 +784,32 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>nothing to remove</td>
 </tr>
 <tr class="odd">
-<td>iteration, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a></td>
+<td>iteration, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>, <code>reversed(cache)</code></td>
 <td>nothing</td>
 <td>it’s empty</td>
 </tr>
 <tr class="even">
+<td><a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a></td>
+<td><code>(0, 0)</code>, <code>[]</code></td>
+<td>nothing is looked up or stored</td>
+</tr>
+<tr class="odd">
 <td><code>bool(cache)</code>, <code>cache.enabled</code></td>
 <td><code>False</code></td>
 <td>caching is off</td>
 </tr>
 </tbody>
 </table>
-<p>The constructor accepts the same arguments as <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and ignores them, and the directory is optional. Bad argument <em>types</em> still raise as they would on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (a list as a key or a tag, <code>expire=True</code>), so code that passes with a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> in tests also works with a real one.</p>
+<p>The constructor accepts the same arguments as <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and ignores them, and the directory is optional. Bad arguments still raise as they would on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (a list as a key or a tag, <code>expire=True</code>, <code>side='middle'</code> on a queue call), and a memoized function’s arguments are still checked as keys, so a call that would raise on a real cache raises here too. Values are the exception. A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> never encodes them, so <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> accepts a value a real cache would refuse with <code>TypeError</code> (see <a href="../user-guide/serialization.html#what-isnt-stored">Serialization</a>), and so does a memoized function that returns one. A test suite that runs only against a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> won’t catch those.</p>
 <section id="watch-add" class="level2">
 <h2 class="anchored" data-anchor-id="watch-add">Watch <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a></h2>
 <p>The rule means <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> always succeeds on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. If you use <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> to claim a job so only one worker runs it, then with caching off every worker’s claim succeeds and the job runs once per worker. That’s harmless for idempotent work and wrong for work with side effects, like sending email. Keep claims like that on a cache that’s never switched off.</p>
 <p><code>Cache(durable=True)</code> goes the other way: its <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> returns <code>False</code> when a write fails, so a claim fails closed there and open here. Keep claims on a handle that isn’t durable and handle its exceptions. See <a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">A cache that can’t take a request down</a>.</p>
+<p>The <a href="../user-guide/coordination.html">coordination recipes</a> won’t run on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> at all. <code>Lock</code>, <code>RLock</code>, <code>BoundedSemaphore</code>, <code>Averager</code>, <code>throttle</code> and <code>barrier</code> raise <code>TypeError</code>, because a lock that every caller holds at once is worse than no lock. <code>memoize_stampede</code> is a cache rather than a lock, so it runs on one the way <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> does, calling the function every time.</p>
+</section>
+<section id="watch-the-queue-calls" class="level2">
+<h2 class="anchored" data-anchor-id="watch-the-queue-calls">Watch the queue calls</h2>
+<p>A queue on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> is always empty. <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push()</a> returns the key an empty queue’s first item would get and stores nothing, so with caching off every job you push is lost, and <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> on the other side never sees it. Keep a <a href="../recipes/work-queues.html">work queue</a> on a cache that’s never switched off, as you would a claim.</p>
 </section>
 </section>
 <section id="if-cache-means-caching-is-on" class="level1">
@@ -811,7 +832,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>cache.clear()                    <span class="co"># clears the real cache</span></span>
 <span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>cache.evict(<span class="st">'user:42'</span>)           <span class="co"># evicts the tag from the real cache</span></span>
 <span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>cache.iterkeys(prefix<span class="op">=</span><span class="st">'user:'</span>)   <span class="co"># the real cache's keys, so list-then-delete still works</span></span></code></pre></div>
-<p>When caching comes back on, nothing you invalidated by removing it is waiting.</p>
+<p>When caching comes back on, nothing you invalidated by removing it is waiting. That covers a memoized function too: <code>cache.delete(f.__cache_key__(42))</code> reaches the real cache, and so does <code>evict(tag)</code> for results stored with <code>memoize(tag=...)</code>.</p>
+<p>The queue calls are never forwarded. <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> and <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek()</a> on a <code>NullCache(invalidate=real)</code> return the default and leave the real cache’s queue alone, because a cache that’s switched off must not consume real jobs.</p>
 <p>Only removals are forwarded, so invalidating by <em>writing</em> is lost while caching is off. Overwriting the stale value with a fresh <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, or bumping a version key with <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> so readers build a new key, does nothing, and the old value is served once caching is back on:</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> NullCache(invalidate<span class="op">=</span>real)   <span class="co"># real holds 'user:42' = old_profile, and 'users:version' = 3</span></span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
@@ -830,13 +852,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    user <span class="op">=</span> db.load_user(user_id)</span>
 <span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="ss">f'user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">'</span>, user, expire<span class="op">=</span><span class="dv">300</span>)</span>
 <span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> user</span></code></pre></div>
-<p>A test in diskcache-oxide’s own suite checks that <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> keep identical public signatures, so they can’t drift apart.</p>
+<p>It covers everything the two share: the reads and writes with their <code>tag=</code> and <code>retry=</code> options, <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, <a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict</a>, the maintenance calls, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check</a> and <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset</a>, iteration, and the <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a> and <a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="gdls-link gdls-code">eviction_policy</a> attributes. A test in diskcache-oxide’s own suite checks that <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> keep identical public signatures, so they can’t drift apart.</p>
 </section>
 <section id="transact-and-transactionalcachelike" class="level1">
 <h1><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> and <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a></h1>
 <p><a href="../reference/NullCache.transact.html#diskcache_oxide.NullCache.transact" class="gdls-link gdls-code">NullCache.transact()</a> is a no-op context manager that yields the <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, so code written as <code>with cache.transact() as tx:</code> runs unchanged with caching off. There’s nothing to commit or roll back. It accepts <code>retry=</code> as <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">Cache.transact()</a> does, and a keyword-only <code>key=</code>, which it ignores.</p>
 <p>With <code>invalidate=</code>, it never opens a transaction on the real cache: a switched-off cache must never take a write lock or raise <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>. So removals forwarded inside the block land at once, and an exception in the block doesn’t undo them.</p>
-<p><a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> has no <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>. To accept either class and call it, annotate with <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a>, which adds it. See <a href="../user-guide/transactions.html#typing-transactionalcachelike">Transactions</a>. A <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a>’s <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact</a> takes a key, so for code that accepts a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> or a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> use <a href="../reference/ShardedCacheLike.html#diskcache_oxide.ShardedCacheLike" class="gdls-link gdls-code">ShardedCacheLike</a> instead (see <a href="../user-guide/fanoutcache.html#typing">Typing</a>); the <code>key=</code> a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> ignores is what lets it satisfy both.</p>
+<p><a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> leaves out <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> and the queue calls, because a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> satisfies it too: its <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact</a> takes a key, and it has no queue calls. To accept a <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> or a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and call <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>, <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push</a>, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull</a>, <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a> or <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem</a>, annotate with <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a>, which adds them. See <a href="../user-guide/transactions.html#typing-transactionalcachelike">Transactions</a>. A <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a>’s <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact</a> takes a key, so for code that accepts a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> or a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> use <a href="../reference/ShardedCacheLike.html#diskcache_oxide.ShardedCacheLike" class="gdls-link gdls-code">ShardedCacheLike</a> instead (see <a href="../user-guide/fanoutcache.html#typing">Typing</a>); the <code>key=</code> a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> ignores is what lets it satisfy both.</p>
 
 
 </section>

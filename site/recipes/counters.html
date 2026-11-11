@@ -571,6 +571,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Rate limiting</span></a>
   </div>
@@ -603,6 +609,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../recipes/testing.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Testing code that uses a cache</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
   </div>
 </li>
         <li class="sidebar-item">
@@ -666,13 +678,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>A download counter is the simplest feature on the site, and the first one to start lying once there’s more than one worker: each process counts what it saw, and the number on the page depends on which worker rendered it. Moving the count to the database fixes the lie and makes every download a write to your busiest table. A cache counter sits in between: <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> is atomic across every thread and process on the machine, costs tens of microseconds, and the totals can be moved to the database on a schedule, by one worker, without losing a single count on the way.</p>
 <section id="count-from-every-worker" class="level1">
 <h1>Count from every worker</h1>
-<div id="825443ec" class="cell" data-execution_count="1">
+<div id="d6a3f315" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
 <span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tempfile.mkdtemp())</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tempfile.mkdtemp(), eviction_policy<span class="op">=</span><span class="st">'none'</span>)   <span class="co"># counts are data: never evict them for size</span></span>
 <span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> record_view(episode_id: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
 <span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    cache.incr(<span class="ss">f'views:episode:</span><span class="sc">{</span>episode_id<span class="sc">}</span><span class="ss">'</span>)</span>
@@ -692,17 +704,17 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <pre><code>2000 views, none lost</code></pre>
 </div>
 </div>
-<p><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> starts a missing counter at <code>default</code> (0) and adds <code>delta</code> (1), so there’s no setup step. Processes behave exactly like the threads here.</p>
+<p><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> starts a missing counter at <code>default</code> (0) and adds <code>delta</code> (1), so there’s no setup step. Processes behave exactly like the threads here. The cache is opened with <code>eviction_policy='none'</code>, for the reason under <a href="#things-to-know">Things to know</a>.</p>
 </section>
 <section id="flush-the-counts-to-the-database" class="level1">
 <h1>Flush the counts to the database</h1>
 <p>Totals belong in the database eventually: for reports, and so they survive a cleared cache. <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> reads a counter and removes it in one atomic step, so a view recorded while the flush runs lands in a fresh counter and is picked up next time. Nothing is counted twice or lost.</p>
-<div id="f0c5453f" class="cell" data-execution_count="2">
+<div id="d984826c" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>database: <span class="bu">dict</span>[<span class="bu">int</span>, <span class="bu">int</span>] <span class="op">=</span> {}   <span class="co"># stands in for UPDATE episodes SET views = views + ? WHERE id = ?</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> flush_views() <span class="op">-&gt;</span> <span class="va">None</span>:</span>
 <span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> key <span class="kw">in</span> cache.iterkeys(prefix<span class="op">=</span><span class="st">'views:episode:'</span>):</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>        pending <span class="op">=</span> cache.pop(key, <span class="dv">0</span>)</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>        pending <span class="op">=</span> cache.pop(key, <span class="dv">0</span>, retry<span class="op">=</span><span class="va">True</span>)   <span class="co"># a background job can wait out a busy moment</span></span>
 <span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> pending:</span>
 <span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>            episode_id <span class="op">=</span> <span class="bu">int</span>(key.rsplit(<span class="st">':'</span>, <span class="dv">1</span>)[<span class="dv">1</span>])</span>
 <span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>            database[episode_id] <span class="op">=</span> database.get(episode_id, <span class="dv">0</span>) <span class="op">+</span> pending</span>
@@ -715,11 +727,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 </div>
 <p>Run the flush from one place, a scheduled job that <a href="../recipes/run-once.html">one worker claims</a>, every minute or so. To show a live total, add the pending count to the stored one: <code>database[id] + cache.get(key, 0)</code>.</p>
+<p>The flush finds its counters by prefix, so their keys have to be strings. A tuple such as <code>('views', 512)</code> is a valid key, and <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> counts under it just as well, but <code>iterkeys(prefix=...)</code> matches <code>str</code> keys only and would never find it.</p>
 </section>
 <section id="counters-that-clean-themselves-up" class="level1">
 <h1>Counters that clean themselves up</h1>
 <p>For per-day or per-month figures, put the period in the key and give each counter an expiry. Create it with <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> first: <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> keeps whatever expiry the key already has, and on a key it has to create, it sets none.</p>
-<div id="eac60d33" class="cell" data-execution_count="3">
+<div id="fac3e8a0" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> datetime</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> record_download(file_id: <span class="bu">str</span>, day: datetime.date) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
@@ -739,7 +752,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="quotas-with-decr" class="level1">
 <h1>Quotas with <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr()</a></h1>
 <p>A quota is a counter that starts at the allowance and counts down:</p>
-<div id="852d7150" class="cell" data-execution_count="4">
+<div id="7b38d28c" class="cell" data-execution_count="4">
 <div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> consume_quota(user_id: <span class="bu">int</span>, units: <span class="bu">int</span> <span class="op">=</span> <span class="dv">1</span>, allowance: <span class="bu">int</span> <span class="op">=</span> <span class="dv">1000</span>) <span class="op">-&gt;</span> <span class="bu">bool</span>:</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    key <span class="op">=</span> <span class="ss">f'quota:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">:2026-11'</span>                       <span class="co"># the billing period, in a real app from the date</span></span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    cache.add(key, allowance, expire<span class="op">=</span><span class="dv">40</span> <span class="op">*</span> <span class="dv">24</span> <span class="op">*</span> <span class="dv">3600</span>)      <span class="co"># the first call this period sets the allowance</span></span>
@@ -755,13 +768,28 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="several-counters-at-once" class="level1">
 <h1>Several counters at once</h1>
 <p>Counting a request under several keys (total, per path, per status) is three <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> calls, and a reader can see the first land before the third. If that matters, put them in one <a href="../user-guide/transactions.html">transaction</a>: the block commits all of them together.</p>
+<div id="fe0a5968" class="cell" data-execution_count="5">
+<div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> record_request(path: <span class="bu">str</span>, status: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">with</span> cache.transact():</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>        cache.incr(<span class="st">'requests:total'</span>)</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>        cache.incr(<span class="ss">f'requests:path:</span><span class="sc">{</span>path<span class="sc">}</span><span class="ss">'</span>)</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>        cache.incr(<span class="ss">f'requests:status:</span><span class="sc">{</span>status<span class="sc">}</span><span class="ss">'</span>)</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>record_request(<span class="st">'/episodes/512'</span>, <span class="dv">200</span>)</span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache.get(<span class="st">'requests:total'</span>), cache.get(<span class="st">'requests:status:200'</span>))</span></code></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>1 1</code></pre>
+</div>
+</div>
+<p>On a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> a transaction covers one shard, chosen by <code>transact(key=...)</code>, and an <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> inside it on a key in another shard raises <code>ValueError</code>. Keep counters that must change together in a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</p>
 </section>
 <section id="things-to-know" class="level1">
 <h1>Things to know</h1>
 <ul>
+<li><strong>Don’t let counts be evicted.</strong> A cache at its <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> evicts the least recently stored entries first. Each <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> counts as a store, so a busy counter is safe, but a quiet one is the oldest thing in the cache: an episode’s views waiting for the next flush, a quota halfway through its period, last month’s downloads. An evicted quota comes back as a fresh allowance. Open the counters’ cache with <code>eviction_policy='none'</code>, as the examples do, and let expiry do the cleaning.</li>
 <li><strong>A missing counter reads as <code>default</code>.</strong> When a missing counter is a bug rather than a zero, pass <code>default=None</code> and <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> raises <code>KeyError</code> instead.</li>
 <li><strong>Counters need a real cache.</strong> A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> has nothing to count in: its <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> returns <code>default + delta</code> every time, so every view would be the first. Keep counters in a cache that’s never switched off, which <a href="../user-guide/caches.html"><code>Caches</code></a> lets you do per name.</li>
-<li><strong><code>durable=True</code> drops counts silently.</strong> A failed <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> returns <code>default + delta</code> so a rate limiter fails open, but for a quota or a view count that’s a lost increment with only a log line to show for it. Let these raise, and catch <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> where you call them.</li>
+<li><strong><code>durable=True</code> drops counts silently.</strong> A failed <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> returns <code>default + delta</code> so a rate limiter fails open, but for a quota or a view count that’s a lost increment with only a log line to show for it. Let these raise, and catch <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> where you call them, or pass <code>retry=True</code> where waiting is fine, as the flush does.</li>
 <li><strong>Not an id generator.</strong> Two callers can get the same number back under <code>durable=True</code>, and a cleared cache restarts at zero. Ids come from the database.</li>
 <li><strong>One machine.</strong> Every worker on a host shares the counts; two hosts behind a load balancer each have their own, so flush each host’s counts to the database and sum there.</li>
 </ul>

@@ -15,6 +15,8 @@ Put the thing a key depends on at the front of the key, from the general to the 
 
 Everything about user 42 now shares the prefix `user:42:`. Note the trailing colon: without it, `user:4` would also match `user:42`.
 
+Keys can also be tuples, like `('user', 42, 'profile')`, which saves formatting strings and leaves no separator to get wrong. A tuple key has no prefix to scan, though, so a group of tuple keys is invalidated with tags (option 2) or generation numbers (option 3). The keys [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) builds are tuples too.
+
 
 # Option 1: delete by prefix
 
@@ -47,6 +49,18 @@ print(sorted(cache))
 
 This is simple and frees the space right away. It costs one small write per key, so it's best when a group has tens or hundreds of keys, not hundreds of thousands.
 
+A prefix matches `str` keys only. `iterkeys(prefix='user:42:')` skips a `bytes` key `b'user:42:x'` and every tuple key, and a tuple as the prefix raises `TypeError`:
+
+
+``` python
+cache.set(('user', 42, 'orders'), [1, 2], expire=3600)
+cache.set('user:42:profile', '...', expire=3600)
+print(list(cache.iterkeys(prefix='user:42:')))
+```
+
+
+    ['user:42:profile']
+
 
 # Option 2: tags
 
@@ -66,7 +80,7 @@ print(sorted(cache, key=repr))
 
     user:7
     2 removed
-    ['episode:512:page', 'page:/about', 'user:420:profile']
+    ['episode:512:page', 'page:/about', 'user:420:profile', 'user:42:profile', ('user', 42, 'orders')]
 
 
 [evict](../reference/Cache.evict.md#diskcache_oxide.Cache.evict) works in chunks over an index, like [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), letting other writers in between, and removes only entries stored before it started, so a fresh entry written for the user while it runs survives. A tag is any key type and is compared by exact type, so `tag=7` and `tag='7'` are different tags. An overwrite replaces the tag, and one without `tag=` leaves the entry untagged, so tag every write in the group. `memoize(tag=...)` tags every result it stores. Like prefix deletes, it frees the space at once, one row per entry.
@@ -113,8 +127,8 @@ The generations are timestamps rather than a counter starting at 0 for a reason.
 
 # Which to use
 
-- **Prefix deletes** when groups are small and you want the space back immediately.
-- **Tags** when a group's keys don't share a prefix, or come from code (like [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize)) whose keys you don't choose.
+- **Prefix deletes** when groups are small, the keys are strings, and you want the space back immediately.
+- **Tags** when a group's keys don't share a prefix, are tuples, or come from code (like [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize)) whose keys you don't choose.
 - **Generation numbers** when groups are large, or invalidation is frequent, or many workers might invalidate the same group at the same time.
 
 

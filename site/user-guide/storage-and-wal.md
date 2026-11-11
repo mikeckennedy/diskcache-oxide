@@ -8,13 +8,17 @@ Nobody restarts a cache. It sits inside a worker process for weeks, and whatever
 Open the directory and this is what you find:
 
     /var/cache/my-app/
-    ├── diskcache-oxide.sqlite        # keys, metadata and small values
+    ├── diskcache-oxide.sqlite        # keys, tags, settings and small values
     ├── diskcache-oxide.sqlite-wal    # SQLite's write-ahead log
     ├── diskcache-oxide.sqlite-shm    # SQLite's shared-memory index for the log
     └── 3f/
         └── 3fa2…c91e.val             # one large value
 
-The database file carries a format version, and a build that can't read it raises [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) rather than guessing. During 0.x, a release that changes the format bumps the minor version and says so first in its changelog entry; existing caches are deleted on that upgrade, not migrated (see [Upgrading](switching-from-diskcache.md#upgrading-diskcache-oxide)).
+A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) directory holds a small manifest file, `diskcache-oxide-fanout`, and one numbered folder per shard (`000`, `001`, …), each laid out like the directory above.
+
+The database file carries a format version, and a build that can't read it raises [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) rather than guessing. Nothing in the directory is read or changed when that happens. During 0.x, a release that changes the format bumps the minor version and says so first in its changelog entry, and existing caches are deleted on that upgrade, not migrated.
+
+0.2.3 writes format 3, which added tags and the eviction policy. Caches made by 0.1.2 are format 2, so after the upgrade, opening one raises [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) naming the file. Stop every process using the cache, delete its directory (for a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache), the whole root, never one shard), and the next open creates it empty. Don't delete only the `.sqlite` file, since its value files would be left behind. 0.1.2 refuses a format-3 cache the same way. See [Upgrading diskcache-oxide](switching-from-diskcache.md#upgrading-diskcache-oxide).
 
 
 # Small values inline, large values in files
@@ -36,10 +40,33 @@ cache = Cache('/var/cache/my-app', size_limit=500 * 1024 * 1024, cull_limit=10)
 ```
 
 - [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) is the cache's disk budget in bytes: the database plus value files. The default is 1 GiB and the minimum is 1 MiB.
-- When a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) finds the cache over its limit, it evicts up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of the least recently stored entries (default 10). [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) evicts down to the limit on demand. Under `eviction_policy='none'` neither evicts: only expired entries are removed, and the cache can grow past its limit.
+- When a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) finds the cache over its limit, it evicts up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of the least recently stored entries (default 10). [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) evicts down to the limit on demand.
 - [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) reports the current size.
 
-Least-recently-stored eviction means a [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU aren't supported, because they make every [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) a write (D-022, and see the [roadmap](roadmap.md)).
+Least-recently-stored eviction means a [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) never has to write anything, which keeps reads fast and lets any number of processes read in parallel. LRU and LFU aren't supported, because they make every [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) a write: `'least-recently-used'` and `'least-frequently-used'` raise `ValueError` (D-022, and see the [roadmap](roadmap.md)). The hit and miss counts from [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) follow the same rule. They're kept in memory, per process, and never written to the database.
+
+
+## `eviction_policy='none'`
+
+Some entries mustn't disappear just because the cache got full: a lock, a job claim, the items in a work queue. For a cache that holds those, turn eviction off:
+
+``` python
+locks = Cache('/var/cache/my-app-locks', eviction_policy='none')
+```
+
+Under `'none'`, no write and no [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) evicts for size. Expired entries are still removed: each write sweeps up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of them, [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) and [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) remove the rest, and [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) returns how many it removed. The cache can grow past [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), so give the entries an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) and keep them apart from your general-purpose cache, which should go on evicting.
+
+The policy and both limits are stored in the cache, so every process shares them. Each write reads the policy afresh, so a change made from one process applies to every other at its next write, and a handle opened with `eviction_policy=None` (the default) keeps whatever is stored. [reset()](../reference/Cache.reset.md#diskcache_oxide.Cache.reset) reads or changes one of them without reopening:
+
+``` python
+cache.reset('eviction_policy')            # 'least-recently-stored'
+cache.reset('size_limit', 2 * 2**30)      # stored, and returned
+```
+
+
+# Tags
+
+A tag from `set(..., tag=...)` is stored in the entry's own row. A partial index covers only the rows that have one, so untagged entries cost nothing extra, and `evict(tag)` finds a tag's entries through the index instead of scanning the cache. Like [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), it works in chunks and removes the entries that had the tag when it started, leaving ones written while it runs.
 
 
 # Memory: `max_connections` and `sqlite_cache_size`
@@ -110,3 +137,6 @@ All of these work in chunks, release the database between chunks so other writer
 - [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) removes every expired entry and its value file.
 - [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) removes every entry that existed when it started, and keeps writes that land while it runs.
 - [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) removes expired entries, then evicts down to [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) (nothing under `eviction_policy='none'`).
+- `evict(tag)` removes every entry that had the tag when it started.
+
+[check()](../reference/Cache.check.md#diskcache_oxide.Cache.check) compares the database with the value files and returns what doesn't match, as a list of `warnings.WarningMessage`: SQLite's integrity check, entries whose value file is missing or the wrong size, files older than an hour that no entry names, and stored totals that don't add up. It runs in short steps, apart from SQLite's integrity check. `check(fix=True)` also repairs what it found: it removes the broken entries and the unknown files in value folders, sweeps empty value folders, corrects the totals, then runs `VACUUM`. `VACUUM` rewrites the whole database, needs room for a temporary copy of it in `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`, and makes writers and forks wait while it runs, so run `fix=True` in a maintenance window, not from a request.

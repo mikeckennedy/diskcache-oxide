@@ -570,6 +570,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Rate limiting</span></a>
   </div>
@@ -606,6 +612,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/web-workers.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Sharing a cache across web workers</span></a>
   </div>
@@ -628,6 +640,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <ul class="collapse">
   <li><a href="#how-it-works" id="toc-how-it-works" class="nav-link active" data-scroll-target="#how-it-works">How it works</a></li>
   <li><a href="#a-worker-loop" id="toc-a-worker-loop" class="nav-link" data-scroll-target="#a-worker-loop">A worker loop</a></li>
+  <li><a href="#jobs-that-must-survive-a-crash" id="toc-jobs-that-must-survive-a-crash" class="nav-link" data-scroll-target="#jobs-that-must-survive-a-crash">Jobs that must survive a crash</a></li>
+  <li><a href="#several-queues-and-priorities" id="toc-several-queues-and-priorities" class="nav-link" data-scroll-target="#several-queues-and-priorities">Several queues, and priorities</a></li>
+  <li><a href="#cancelling-and-expiring-jobs" id="toc-cancelling-and-expiring-jobs" class="nav-link" data-scroll-target="#cancelling-and-expiring-jobs">Cancelling and expiring jobs</a></li>
+  <li><a href="#in-an-app-that-uses-fanoutcache" id="toc-in-an-app-that-uses-fanoutcache" class="nav-link" data-scroll-target="#in-an-app-that-uses-fanoutcache">In an app that uses <code>FanoutCache</code></a></li>
   <li><a href="#things-to-know" id="toc-things-to-know" class="nav-link" data-scroll-target="#things-to-know">Things to know</a></li>
   </ul>
 </nav>
@@ -660,7 +676,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 
 <p>A web request needs a thumbnail rendered, an email sent or a transcript cleaned up, and none of it should make the user wait. The usual answer is a queue and a worker, and the usual queue is Redis. On one machine a cache directory does the job: <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push()</a> adds an item at one end, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> takes one from the other, and every process that opens the directory shares the queue.</p>
-<div id="3c6251e2" class="cell" data-execution_count="1">
+<div id="5c8763d0" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -681,13 +697,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <ul>
 <li><strong>A queue is a range of keys.</strong> <code>push(value, prefix='transcode')</code> stores the item under <code>'transcode-500000000000000'</code>, then <code>...001</code>, and so on; with no prefix the keys are ints. <code>side='front'</code> pushes to the other end, and <code>pull(side='back')</code> takes the newest item, so the same calls make a stack or a deque.</li>
 <li><strong>Each item goes to exactly one worker.</strong> <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> reads the front item, then deletes exactly the version it read; a worker that loses that race to another reads the new front, and since every lost race is another worker’s progress, the queue always drains. Run as many workers, in as many processes, as you like.</li>
-<li><strong>Nothing is lost to a reader that can’t read it.</strong> An item this process can’t decode, a pickled value on a <code>pickle=False</code> cache or a value of a type a newer deploy registered, stays at the front for a worker that can, and <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> raises (or, with <code>on_decode_error='miss'</code>, returns the default). An item no build could read (damaged bytes) is removed: by default <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> then raises <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a>, and with <code>on_decode_error='miss'</code> it logs the item and moves on to the next one.</li>
-<li><strong><a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek()</a> looks without taking.</strong> It takes no lock in the normal case, so any number of processes can watch a queue at once. <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem()</a> gives the newest or oldest entry of the whole cache.</li>
+<li><strong>Nothing is lost to a reader that can’t read it.</strong> An item this process can’t decode stays at the front for a worker that can. A pickled item on a <code>pickle=False</code> cache raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>. A value of a type only a newer deploy has registered raises too, or with <code>on_decode_error='miss'</code>, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> returns the default. Either way this worker can take nothing behind that item until a worker that can read it pulls it. An item no build could read (damaged bytes) is removed: by default <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> then raises <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a>, and with <code>on_decode_error='miss'</code> it logs the item and moves on to the next one.</li>
+<li><strong><a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek()</a> looks without taking.</strong> It takes no lock in the normal case, so any number of processes can watch a queue at once. <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem()</a> gives the newest or oldest entry of the whole cache, queue or not.</li>
 </ul>
-<div id="7cbad427" class="cell" data-execution_count="2">
+<div id="d527c7c4" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(jobs.peek(prefix<span class="op">=</span><span class="st">'transcode'</span>))                <span class="co"># the next item, left in place</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(jobs.peek(prefix<span class="op">=</span><span class="st">'transcode'</span>, side<span class="op">=</span><span class="st">'back'</span>))   <span class="co"># the newest</span></span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="bu">len</span>(jobs))</span></code></pre></div>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="bu">len</span>(jobs))                                    <span class="co"># every entry in the cache</span></span></code></pre></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>('transcode-500000000000001', {'episode': 511, 'step': 'transcode'})
 ('transcode-500000000000002', {'episode': 512, 'step': 'transcode'})
@@ -698,7 +714,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-worker-loop" class="level1">
 <h1>A worker loop</h1>
 <p><a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> returns <code>(None, None)</code> when the queue is empty, or the <code>default</code> you pass.</p>
-<div id="2b5f351a" class="cell" data-execution_count="3">
+<div id="e8964df8" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> work(job: <span class="bu">dict</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
@@ -721,42 +737,117 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 transcoding 512</code></pre>
 </div>
 </div>
+<p>A real worker runs with no idle limit and sleeps between empty pulls; there’s no blocking pull to wait on.</p>
+</section>
+<section id="jobs-that-must-survive-a-crash" class="level1">
+<h1>Jobs that must survive a crash</h1>
 <p>A pulled item is gone as soon as <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> returns, so a worker that crashes halfway through <code>work()</code> loses it. If a job must survive that, give each job an id of its own and move it to a running record in the same transaction as the pull, so no crash can fall between the two. Delete the record when the work is done, and have a sweeper push back any record older than its lease:</p>
-<div id="4e194152" class="cell" data-execution_count="4">
+<div id="03db74c4" class="cell" data-execution_count="4">
 <div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> uuid</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>jobs.push({<span class="st">'id'</span>: uuid.uuid4().<span class="bu">hex</span>, <span class="st">'episode'</span>: <span class="dv">513</span>, <span class="st">'step'</span>: <span class="st">'transcode'</span>}, prefix<span class="op">=</span><span class="st">'transcode'</span>)</span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> jobs.transact():</span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>    key, job <span class="op">=</span> jobs.pull(prefix<span class="op">=</span><span class="st">'transcode'</span>)</span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> key <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>        jobs.<span class="bu">set</span>(<span class="ss">f"running:</span><span class="sc">{</span>job[<span class="st">'id'</span>]<span class="sc">}</span><span class="ss">"</span>, (time.time(), job))   <span class="co"># no expire: the sweeper decides</span></span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>work(job)</span>
-<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>jobs.delete(<span class="ss">f"running:</span><span class="sc">{</span>job[<span class="st">'id'</span>]<span class="sc">}</span><span class="ss">"</span>)</span>
-<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> requeue_stale(cache: Cache, lease: <span class="bu">float</span> <span class="op">=</span> <span class="dv">600</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
-<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> record <span class="kw">in</span> cache.iterkeys(prefix<span class="op">=</span><span class="st">'running:'</span>):</span>
-<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a>        started, stale <span class="op">=</span> cache.get(record, (<span class="va">None</span>, <span class="va">None</span>))</span>
-<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> started <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span> <span class="kw">and</span> time.time() <span class="op">-</span> started <span class="op">&gt;</span> lease:</span>
-<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a>            <span class="cf">with</span> cache.transact():</span>
-<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a>                cache.push(stale, prefix<span class="op">=</span><span class="st">'transcode'</span>, side<span class="op">=</span><span class="st">'front'</span>)</span>
-<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a>                cache.delete(record)</span></code></pre></div>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> enqueue(cache: Cache, episode: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>    cache.push({<span class="st">'id'</span>: uuid.uuid4().<span class="bu">hex</span>, <span class="st">'episode'</span>: episode, <span class="st">'step'</span>: <span class="st">'transcode'</span>}, prefix<span class="op">=</span><span class="st">'transcode'</span>)</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> take(cache: Cache) <span class="op">-&gt;</span> <span class="bu">dict</span> <span class="op">|</span> <span class="va">None</span>:</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""The next job, recorded as running in the same transaction; None if the queue is empty."""</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">with</span> cache.transact():</span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>        key, job <span class="op">=</span> cache.pull(prefix<span class="op">=</span><span class="st">'transcode'</span>)</span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> key <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> <span class="va">None</span></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a>        cache.<span class="bu">set</span>(<span class="ss">f"running:</span><span class="sc">{</span>job[<span class="st">'id'</span>]<span class="sc">}</span><span class="ss">"</span>, (time.time(), job))   <span class="co"># no expire: the sweeper decides</span></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> job</span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> finish(cache: Cache, job: <span class="bu">dict</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a>    cache.delete(<span class="ss">f"running:</span><span class="sc">{</span>job[<span class="st">'id'</span>]<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> requeue_stale(cache: Cache, lease: <span class="bu">float</span> <span class="op">=</span> <span class="dv">600</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
+<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a>    requeued <span class="op">=</span> <span class="dv">0</span></span>
+<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> record <span class="kw">in</span> cache.iterkeys(prefix<span class="op">=</span><span class="st">'running:'</span>):   <span class="co"># deleting while iterating is safe</span></span>
+<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a>        <span class="cf">with</span> cache.transact():</span>
+<span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a>            started, job <span class="op">=</span> cache.get(record, (<span class="va">None</span>, <span class="va">None</span>))   <span class="co"># read again: the worker may have finished</span></span>
+<span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> started <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span> <span class="kw">and</span> time.time() <span class="op">-</span> started <span class="op">&gt;</span> lease:</span>
+<span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a>                cache.push(job, prefix<span class="op">=</span><span class="st">'transcode'</span>, side<span class="op">=</span><span class="st">'front'</span>)</span>
+<span id="cb7-25"><a href="#cb7-25" aria-hidden="true" tabindex="-1"></a>                cache.delete(record)</span>
+<span id="cb7-26"><a href="#cb7-26" aria-hidden="true" tabindex="-1"></a>                requeued <span class="op">+=</span> <span class="dv">1</span></span>
+<span id="cb7-27"><a href="#cb7-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> requeued</span>
+<span id="cb7-28"><a href="#cb7-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-29"><a href="#cb7-29" aria-hidden="true" tabindex="-1"></a>enqueue(jobs, <span class="dv">513</span>)</span>
+<span id="cb7-30"><a href="#cb7-30" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> (job <span class="op">:=</span> take(jobs)) <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb7-31"><a href="#cb7-31" aria-hidden="true" tabindex="-1"></a>    work(job)</span>
+<span id="cb7-32"><a href="#cb7-32" aria-hidden="true" tabindex="-1"></a>    finish(jobs, job)</span>
+<span id="cb7-33"><a href="#cb7-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-34"><a href="#cb7-34" aria-hidden="true" tabindex="-1"></a>enqueue(jobs, <span class="dv">514</span>)</span>
+<span id="cb7-35"><a href="#cb7-35" aria-hidden="true" tabindex="-1"></a>job <span class="op">=</span> take(jobs)                          <span class="co"># this worker dies before it calls finish()</span></span>
+<span id="cb7-36"><a href="#cb7-36" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(requeue_stale(jobs, lease<span class="op">=</span><span class="dv">0</span>), <span class="st">'requeued:'</span>, jobs.peek(prefix<span class="op">=</span><span class="st">'transcode'</span>))</span>
+<span id="cb7-37"><a href="#cb7-37" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-38"><a href="#cb7-38" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> (job <span class="op">:=</span> take(jobs)) <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:       <span class="co"># another worker picks it up</span></span>
+<span id="cb7-39"><a href="#cb7-39" aria-hidden="true" tabindex="-1"></a>    work(job)</span>
+<span id="cb7-40"><a href="#cb7-40" aria-hidden="true" tabindex="-1"></a>    finish(jobs, job)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>transcoding 513</code></pre>
+<pre><code>transcoding 513
+1 requeued: ('transcode-500000000000000', {'id': 'fdcf9268462947d39ad31c9a3425744a', 'episode': 514, 'step': 'transcode'})
+transcoding 514</code></pre>
 </div>
 </div>
-<p>The key isn’t a lasting id (see below), which is why the job carries its own.</p>
+<p>The sweeper reads each record again inside its transaction, so a job that finished while the sweeper was looking isn’t pushed back. One that is still running past its lease is, and then runs twice: make the lease longer than your slowest job, and make the work safe to repeat. Run the sweeper from one place, a scheduled job that <a href="../recipes/run-once.html">one worker claims</a>. The item’s key isn’t a lasting id (see below), which is why the job carries its own.</p>
+</section>
+<section id="several-queues-and-priorities" class="level1">
+<h1>Several queues, and priorities</h1>
+<p>Each prefix is its own queue, in the same directory. A worker that serves more than one, or serves urgent work first, tries them in order:</p>
+<div id="5a306b4a" class="cell" data-execution_count="5">
+<div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>jobs.push({<span class="st">'to'</span>: <span class="st">'sam@example.com'</span>, <span class="st">'template'</span>: <span class="st">'welcome'</span>}, prefix<span class="op">=</span><span class="st">'email'</span>)</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>jobs.push({<span class="st">'episode'</span>: <span class="dv">515</span>, <span class="st">'step'</span>: <span class="st">'transcode'</span>}, prefix<span class="op">=</span><span class="st">'transcode'</span>)</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>jobs.push({<span class="st">'episode'</span>: <span class="dv">516</span>, <span class="st">'step'</span>: <span class="st">'transcode'</span>}, prefix<span class="op">=</span><span class="st">'urgent'</span>)</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> next_job(cache: Cache, queues: <span class="bu">tuple</span>[<span class="bu">str</span>, ...] <span class="op">=</span> (<span class="st">'urgent'</span>, <span class="st">'transcode'</span>, <span class="st">'email'</span>)) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">dict</span>] <span class="op">|</span> <span class="va">None</span>:</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> queue <span class="kw">in</span> queues:</span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>        key, job <span class="op">=</span> cache.pull(prefix<span class="op">=</span>queue)</span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> key <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> queue, job</span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="va">None</span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a><span class="cf">while</span> (taken <span class="op">:=</span> next_job(jobs)) <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(taken)</span></code></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>('urgent', {'episode': 516, 'step': 'transcode'})
+('transcode', {'episode': 515, 'step': 'transcode'})
+('email', {'to': 'sam@example.com', 'template': 'welcome'})</code></pre>
+</div>
+</div>
+<p>While the urgent queue keeps filling, the others wait. To count what’s waiting, iterate the queue’s keys: <code>iterkeys(prefix='transcode-')</code> is an indexed range scan over that queue alone. Items that expired but haven’t been removed yet are counted too, as are any other keys that start with <code>'transcode-'</code>.</p>
+</section>
+<section id="cancelling-and-expiring-jobs" class="level1">
+<h1>Cancelling and expiring jobs</h1>
+<p>A job pushed with <code>tag=</code> can be cancelled with the rest of its group, wherever they are in the queue, by <code>evict(tag)</code>. A job that’s pointless after a deadline, a “your export is ready” email, say, can be pushed with <code>expire=</code>, and <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> passes over it once it has expired.</p>
+<div id="aa147d56" class="cell" data-execution_count="6">
+<div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> episode <span class="kw">in</span> (<span class="dv">520</span>, <span class="dv">521</span>):</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>    jobs.push({<span class="st">'episode'</span>: episode, <span class="st">'step'</span>: <span class="st">'transcode'</span>}, prefix<span class="op">=</span><span class="st">'transcode'</span>, tag<span class="op">=</span><span class="st">'upload:batch-7'</span>)</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>jobs.push({<span class="st">'episode'</span>: <span class="dv">522</span>, <span class="st">'step'</span>: <span class="st">'transcode'</span>}, prefix<span class="op">=</span><span class="st">'transcode'</span>)</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(jobs.evict(<span class="st">'upload:batch-7'</span>), <span class="st">'cancelled; next:'</span>, jobs.pull(prefix<span class="op">=</span><span class="st">'transcode'</span>))</span></code></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>2 cancelled; next: ('transcode-500000000000002', {'episode': 522, 'step': 'transcode'})</code></pre>
+</div>
+</div>
+<p><code>pull(tag=True)</code> and <code>pull(expire_time=True)</code> return the item’s tag and expiry beside it, as <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get()</a> does: <code>((key, value), expire_time, tag)</code>.</p>
+</section>
+<section id="in-an-app-that-uses-fanoutcache" class="level1">
+<h1>In an app that uses <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a></h1>
+<p>The queue calls are on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> only: a queue spread over shards would have no order. If your app’s main cache is a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, open the queue as a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> in a directory of its own. A <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> opened on the <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s directory raises <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a>.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> FanoutCache(<span class="st">'/var/cache/my-app'</span>, shards<span class="op">=</span><span class="dv">8</span>)</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>jobs <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-jobs'</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span></code></pre></div>
+<p>A separate directory is a good idea in any app: the queue gets its own eviction policy, and switching the main cache off can’t touch it.</p>
 </section>
 <section id="things-to-know" class="level1">
 <h1>Things to know</h1>
 <ul>
 <li><strong>Open the queue’s cache with <code>eviction_policy='none'</code>.</strong> Least-recently-stored eviction removes the oldest entries first, and the oldest entry in a queue is the next one to be pulled: a full cache would silently drop the front of the queue. Under <code>'none'</code> nothing is evicted for size; only items you gave an <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> ever vanish.</li>
-<li><strong>Use a prefix no other key starts with.</strong> Only keys of exactly the queue’s shape (<code>'{prefix}-'</code> and 15 digits) belong to it, so an ordinary key like <code>'transcode-settings'</code>, or another queue’s <code>'transcode-hd-...'</code>, is never pulled or numbered as one of its items (D-054). But such keys still sit inside the queue’s range, and each call steps past them.</li>
-<li><strong>Expired items are passed over.</strong> An item pushed with <code>expire=</code> is never pulled or peeked after it expires, and <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or a later write removes it.</li>
+<li><strong>Use a prefix no other key starts with.</strong> Only keys of exactly the queue’s shape (<code>'{prefix}-'</code> and 15 digits) belong to it, so an ordinary key like <code>'transcode-settings'</code> or <code>'transcode-512'</code>, or an item of another queue named <code>'transcode-hd'</code>, is never pulled or numbered as one of its items (D-054). Keys whose next character after the dash is a digit, like <code>'transcode-512'</code>, do sort inside the queue’s range, though, and every queue call has to step past them.</li>
+<li><strong>Expired items are passed over.</strong> An item pushed with <code>expire=</code> is never pulled or peeked after it expires. It stays on disk, and keeps its number, until <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or the cleanup that later writes do removes it.</li>
 <li><strong>Keys are reused.</strong> After the front item is pulled, a push to the front takes its number again, so don’t use an item’s key as a lasting id.</li>
 <li><strong>Inside a transaction,</strong> <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push()</a> and <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> join it, and a rollback puts a pulled item back, after your code has already seen it.</li>
-<li><strong>Not on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>.</strong> A queue spread over shards would have no order, so the queue calls are on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> only (and on <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, where a queue is always empty and pushes store nothing).</li>
+<li><strong>Keep the queue out of <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>’s reach.</strong> A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> has the queue calls, but its queue is always empty and its pushes store nothing, so a setting that switches caching off would drop every job. Don’t register the queue’s cache where it can be switched off.</li>
+<li><strong><code>durable=True</code> can drop a push.</strong> On a durable handle a <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push()</a> that fails returns <code>None</code>, and the job was never stored. Check the return value, or open the queue’s cache without <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a>.</li>
 <li><strong>Past the end,</strong> after 500 trillion pushes to one side, <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push()</a> raises <code>OverflowError</code> rather than overwrite anything (D-057).</li>
 </ul>
 

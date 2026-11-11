@@ -71,7 +71,7 @@ A running average whose total and count are updated together in one transaction,
 
 # memoize_stampede
 
-`memoize_stampede(cache, expire)` is [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) with stampede protection: a result close to expiring is recomputed early, in a background thread, by one caller, while everyone else keeps getting the cached value. It's a cache, not a lock, so it works on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and a `durable=True` cache as [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) does. See [Caching expensive calls](../recipes/caching-expensive-calls.md).
+`memoize_stampede(cache, expire)` is [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) with stampede protection: a result close to expiring is recomputed early, in a background thread, by one caller, while everyone else keeps getting the cached value. It's a cache, not a lock, so it works on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and a `durable=True` cache as [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) does. See [Caching expensive calls](../recipes/caching-expensive-calls.md#thundering-herds).
 
 
 # Things to know

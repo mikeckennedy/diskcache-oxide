@@ -535,6 +535,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Rate limiting</span></a>
   </div>
@@ -567,6 +573,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../recipes/testing.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Testing code that uses a cache</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
   </div>
 </li>
         <li class="sidebar-item">
@@ -647,11 +659,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Deployment and testing</h1>
 <p><strong><a href="../recipes/web-workers.html">Sharing a cache across web workers</a>.</strong> Where to put the cache directory, when to open it with gunicorn, uvicorn, FastAPI, Flask, Django and Celery, how to keep a busy cache from slowing requests, and what to do at shutdown.</p>
 <p><strong><a href="../recipes/asyncio.html">Using the cache from asyncio</a>.</strong> Read inline, write off the loop, and keep transactions on one thread, in FastAPI, Starlette or aiohttp.</p>
+<p><strong><a href="../recipes/monitoring.html">Watching a cache in production</a>.</strong> A health check and an admin endpoint: entries, bytes on disk, hit ratio across workers, the size limit, the write-ahead log, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> for damage, and the log lines worth alerting on.</p>
+<p><strong><a href="../recipes/upgrading.html">Upgrading across a format change</a>.</strong> When a release changes the on-disk format: stop, delete and start, or give each format its own directory for a rolling deploy, and what to do first about queues, counters and sessions.</p>
 <p><strong><a href="../recipes/testing.html">Testing code that uses a cache</a>.</strong> pytest fixtures for a real cache in a temporary directory, a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> for tests that shouldn’t cache at all, and a fake clock for testing expiry without sleeping.</p>
 </section>
 <section id="in-the-user-guide" class="level1">
 <h1>In the user guide</h1>
-<p>Some features have more to them than a recipe can hold, so they have guide pages of their own: <a href="../user-guide/coordination.html">Coordination</a> (locks, semaphores, <code>throttle</code>, <code>barrier</code>, <code>Averager</code> and the stampede-proof <code>memoize_stampede</code>), <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> for many writing processes, and <a href="../user-guide/transactions.html">Transactions</a>. What’s coming next is on the <a href="../user-guide/roadmap.html">roadmap</a>.</p>
+<p>Some features have more to them than a recipe can hold, so they have guide pages of their own: <a href="../user-guide/coordination.html">Coordination</a> (locks, semaphores, <code>throttle</code>, <code>barrier</code>, <code>Averager</code> and <code>memoize_stampede</code>, which refreshes a hot value before it expires), <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> for many writing processes, and <a href="../user-guide/transactions.html">Transactions</a>. What’s coming next is on the <a href="../user-guide/roadmap.html">roadmap</a>.</p>
 
 
 </section>

@@ -732,7 +732,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="memoize_stampede" class="level1">
 <h1>memoize_stampede</h1>
-<p><code>memoize_stampede(cache, expire)</code> is <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> with stampede protection: a result close to expiring is recomputed early, in a background thread, by one caller, while everyone else keeps getting the cached value. It’s a cache, not a lock, so it works on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and a <code>durable=True</code> cache as <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> does. See <a href="../recipes/caching-expensive-calls.html">Caching expensive calls</a>.</p>
+<p><code>memoize_stampede(cache, expire)</code> is <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> with stampede protection: a result close to expiring is recomputed early, in a background thread, by one caller, while everyone else keeps getting the cached value. It’s a cache, not a lock, so it works on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and a <code>durable=True</code> cache as <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> does. See <a href="../recipes/caching-expensive-calls.html#thundering-herds">Caching expensive calls</a>.</p>
 </section>
 <section id="things-to-know" class="level1">
 <h1>Things to know</h1>

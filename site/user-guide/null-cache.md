@@ -23,8 +23,10 @@ Every row of this table follows from that sentence, so you never have to guess, 
 | Call | Result | Because |
 |----|----|----|
 | `get(key, default)` | `default` | the entry already expired |
+| `get(key, tag=True)` | `(default, None)` | the entry and its tag already expired |
 | `cache[key]` | raises `KeyError` | the entry already expired |
 | `set(...)` | `True` | the write succeeded, then expired |
+| a `@cache.memoize()` function | runs on every call | every stored result already expired |
 | `add(...)` | `True` | the key was absent, so the add succeeded |
 | `incr(key, delta, default)` | `default + delta` | it starts from the default each time; `KeyError` if `default=None` |
 | [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete), [touch](../reference/Cache.touch.md#diskcache_oxide.Cache.touch), `key in cache` | `False` | there's nothing there |
@@ -34,10 +36,11 @@ Every row of this table follows from that sentence, so you never have to guess, 
 | [peekitem()](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem) | raises `KeyError` | it's empty |
 | `len(cache)`, `cache.volume()` | `0` | it's empty and uses no disk |
 | [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull), `evict(tag)` | `0` | nothing to remove |
-| iteration, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) | nothing | it's empty |
+| iteration, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys), `reversed(cache)` | nothing | it's empty |
+| [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats), [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check) | `(0, 0)`, `[]` | nothing is looked up or stored |
 | `bool(cache)`, `cache.enabled` | `False` | caching is off |
 
-The constructor accepts the same arguments as [Cache](../reference/Cache.md#diskcache_oxide.Cache) and ignores them, and the directory is optional. Bad argument *types* still raise as they would on [Cache](../reference/Cache.md#diskcache_oxide.Cache) (a list as a key or a tag, `expire=True`), so code that passes with a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) in tests also works with a real one.
+The constructor accepts the same arguments as [Cache](../reference/Cache.md#diskcache_oxide.Cache) and ignores them, and the directory is optional. Bad arguments still raise as they would on [Cache](../reference/Cache.md#diskcache_oxide.Cache) (a list as a key or a tag, `expire=True`, `side='middle'` on a queue call), and a memoized function's arguments are still checked as keys, so a call that would raise on a real cache raises here too. Values are the exception. A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) never encodes them, so [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) accepts a value a real cache would refuse with `TypeError` (see [Serialization](serialization.md#what-isnt-stored)), and so does a memoized function that returns one. A test suite that runs only against a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) won't catch those.
 
 
 ## Watch [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add)
@@ -45,6 +48,13 @@ The constructor accepts the same arguments as [Cache](../reference/Cache.md#disk
 The rule means [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) always succeeds on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache). If you use [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) to claim a job so only one worker runs it, then with caching off every worker's claim succeeds and the job runs once per worker. That's harmless for idempotent work and wrong for work with side effects, like sending email. Keep claims like that on a cache that's never switched off.
 
 `Cache(durable=True)` goes the other way: its [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) returns `False` when a write fails, so a claim fails closed there and open here. Keep claims on a handle that isn't durable and handle its exceptions. See [A cache that can't take a request down](getting-started.md#a-cache-that-cant-take-a-request-down).
+
+The [coordination recipes](coordination.md) won't run on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) at all. `Lock`, `RLock`, `BoundedSemaphore`, `Averager`, `throttle` and `barrier` raise `TypeError`, because a lock that every caller holds at once is worse than no lock. `memoize_stampede` is a cache rather than a lock, so it runs on one the way [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) does, calling the function every time.
+
+
+## Watch the queue calls
+
+A queue on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) is always empty. [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push) returns the key an empty queue's first item would get and stores nothing, so with caching off every job you push is lost, and [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) on the other side never sees it. Keep a [work queue](../recipes/work-queues.md) on a cache that's never switched off, as you would a claim.
 
 
 # `if cache:` means "caching is on"
@@ -76,7 +86,9 @@ cache.evict('user:42')           # evicts the tag from the real cache
 cache.iterkeys(prefix='user:')   # the real cache's keys, so list-then-delete still works
 ```
 
-When caching comes back on, nothing you invalidated by removing it is waiting.
+When caching comes back on, nothing you invalidated by removing it is waiting. That covers a memoized function too: `cache.delete(f.__cache_key__(42))` reaches the real cache, and so does `evict(tag)` for results stored with `memoize(tag=...)`.
+
+The queue calls are never forwarded. [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) and [peek()](../reference/Cache.peek.md#diskcache_oxide.Cache.peek) on a `NullCache(invalidate=real)` return the default and leave the real cache's queue alone, because a cache that's switched off must not consume real jobs.
 
 Only removals are forwarded, so invalidating by *writing* is lost while caching is off. Overwriting the stale value with a fresh [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), or bumping a version key with [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) so readers build a new key, does nothing, and the old value is served once caching is back on:
 
@@ -105,7 +117,7 @@ def load_user(user_id: str, cache: CacheLike) -> dict:
     return user
 ```
 
-A test in diskcache-oxide's own suite checks that [Cache](../reference/Cache.md#diskcache_oxide.Cache), [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) keep identical public signatures, so they can't drift apart.
+It covers everything the two share: the reads and writes with their `tag=` and `retry=` options, [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), [evict](../reference/Cache.evict.md#diskcache_oxide.Cache.evict), the maintenance calls, [stats](../reference/Cache.stats.md#diskcache_oxide.Cache.stats), [check](../reference/Cache.check.md#diskcache_oxide.Cache.check) and [reset](../reference/Cache.reset.md#diskcache_oxide.Cache.reset), iteration, and the [durable](../reference/Cache.durable.md#diskcache_oxide.Cache.durable) and [eviction_policy](../reference/Cache.eviction_policy.md#diskcache_oxide.Cache.eviction_policy) attributes. A test in diskcache-oxide's own suite checks that [Cache](../reference/Cache.md#diskcache_oxide.Cache), [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) keep identical public signatures, so they can't drift apart.
 
 
 # [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) and [TransactionalCacheLike](../reference/TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike)
@@ -114,4 +126,4 @@ A test in diskcache-oxide's own suite checks that [Cache](../reference/Cache.md#
 
 With `invalidate=`, it never opens a transaction on the real cache: a switched-off cache must never take a write lock or raise [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout). So removals forwarded inside the block land at once, and an exception in the block doesn't undo them.
 
-[CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) has no [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact). To accept either class and call it, annotate with [TransactionalCacheLike](../reference/TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike), which adds it. See [Transactions](transactions.md#typing-transactionalcachelike). A [`FanoutCache`](fanoutcache.md)'s [transact](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) takes a key, so for code that accepts a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) or a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) use [ShardedCacheLike](../reference/ShardedCacheLike.md#diskcache_oxide.ShardedCacheLike) instead (see [Typing](fanoutcache.md#typing)); the `key=` a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) ignores is what lets it satisfy both.
+[CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) leaves out [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) and the queue calls, because a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) satisfies it too: its [transact](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) takes a key, and it has no queue calls. To accept a [Cache](../reference/Cache.md#diskcache_oxide.Cache) or a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and call [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact), [push](../reference/Cache.push.md#diskcache_oxide.Cache.push), [pull](../reference/Cache.pull.md#diskcache_oxide.Cache.pull), [peek](../reference/Cache.peek.md#diskcache_oxide.Cache.peek) or [peekitem](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem), annotate with [TransactionalCacheLike](../reference/TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike), which adds them. See [Transactions](transactions.md#typing-transactionalcachelike). A [`FanoutCache`](fanoutcache.md)'s [transact](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) takes a key, so for code that accepts a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) or a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) use [ShardedCacheLike](../reference/ShardedCacheLike.md#diskcache_oxide.ShardedCacheLike) instead (see [Typing](fanoutcache.md#typing)); the `key=` a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) ignores is what lets it satisfy both.

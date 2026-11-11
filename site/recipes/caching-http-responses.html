@@ -571,6 +571,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Rate limiting</span></a>
   </div>
@@ -607,6 +613,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/web-workers.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Sharing a cache across web workers</span></a>
   </div>
@@ -628,6 +640,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
    
   <ul class="collapse">
   <li><a href="#a-cached-fetch" id="toc-a-cached-fetch" class="nav-link active" data-scroll-target="#a-cached-fetch">A cached fetch</a></li>
+  <li><a href="#dropping-one-services-responses" id="toc-dropping-one-services-responses" class="nav-link" data-scroll-target="#dropping-one-services-responses">Dropping one service’s responses</a></li>
   <li><a href="#variations" id="toc-variations" class="nav-link" data-scroll-target="#variations">Variations</a></li>
   </ul>
 </nav>
@@ -663,51 +676,53 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-cached-fetch" class="level1">
 <h1>A cached fetch</h1>
 <p>The entry holds the response body, its <code>ETag</code> and a freshness deadline taken from the upstream’s <code>Cache-Control: max-age</code>, with a default when there isn’t one. A fresh entry is returned without a request. A stale one is revalidated with <code>If-None-Match</code>, so an unchanged resource costs a <code>304</code> with no body. And if the request fails while there’s a stale entry, the stale entry is the answer.</p>
-<div id="32445a1b" class="cell" data-execution_count="1">
+<div id="21614829" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> json</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> re</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> httpx</span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>now <span class="op">=</span> [<span class="fl">1_000_000.0</span>]                                   <span class="co"># a fake clock; in a real app use time.time()</span></span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tempfile.mkdtemp(), clock<span class="op">=</span><span class="kw">lambda</span>: now[<span class="dv">0</span>])</span>
-<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> max_age(response: httpx.Response) <span class="op">-&gt;</span> <span class="bu">float</span> <span class="op">|</span> <span class="va">None</span>:</span>
-<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>    m <span class="op">=</span> re.search(<span class="vs">r'max-age=</span><span class="kw">(</span><span class="dv">\d</span><span class="op">+</span><span class="kw">)</span><span class="vs">'</span>, response.headers.get(<span class="st">'cache-control'</span>, <span class="st">''</span>))</span>
-<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">float</span>(m.group(<span class="dv">1</span>)) <span class="cf">if</span> m <span class="cf">else</span> <span class="va">None</span></span>
-<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> fetch_json(client: httpx.Client, url: <span class="bu">str</span>, <span class="op">*</span>, default_ttl: <span class="bu">float</span> <span class="op">=</span> <span class="dv">300</span>, keep: <span class="bu">float</span> <span class="op">=</span> <span class="dv">24</span> <span class="op">*</span> <span class="dv">3600</span>) <span class="op">-&gt;</span> <span class="bu">object</span>:</span>
-<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    key <span class="op">=</span> <span class="ss">f'http:GET:</span><span class="sc">{</span>url<span class="sc">}</span><span class="ss">'</span></span>
-<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    entry <span class="op">=</span> cache.get(key)</span>
-<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> entry <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span> <span class="kw">and</span> now[<span class="dv">0</span>] <span class="op">&lt;</span> entry[<span class="st">'fresh_until'</span>]:</span>
-<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> json.loads(entry[<span class="st">'body'</span>])              <span class="co"># fresh: no request at all</span></span>
-<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>    headers <span class="op">=</span> {<span class="st">'If-None-Match'</span>: entry[<span class="st">'etag'</span>]} <span class="cf">if</span> entry <span class="kw">and</span> entry[<span class="st">'etag'</span>] <span class="cf">else</span> {}</span>
-<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">try</span>:</span>
-<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>        response <span class="op">=</span> client.get(url, headers<span class="op">=</span>headers)</span>
-<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> response.status_code <span class="op">!=</span> <span class="dv">304</span>:</span>
-<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>            response.raise_for_status()</span>
-<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">except</span> httpx.HTTPError:</span>
-<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> entry <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
-<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> json.loads(entry[<span class="st">'body'</span>])          <span class="co"># upstream trouble: the last good answer</span></span>
-<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span></span>
-<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> response.status_code <span class="op">==</span> <span class="dv">304</span>:                   <span class="co"># unchanged: keep the body, extend its freshness</span></span>
-<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a>        entry[<span class="st">'fresh_until'</span>] <span class="op">=</span> now[<span class="dv">0</span>] <span class="op">+</span> (max_age(response) <span class="kw">or</span> default_ttl)</span>
-<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>    <span class="cf">else</span>:</span>
-<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>        entry <span class="op">=</span> {</span>
-<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>            <span class="st">'body'</span>: response.content,</span>
-<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a>            <span class="st">'etag'</span>: response.headers.get(<span class="st">'etag'</span>),</span>
-<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a>            <span class="st">'fresh_until'</span>: now[<span class="dv">0</span>] <span class="op">+</span> (max_age(response) <span class="kw">or</span> default_ttl),</span>
-<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a>        }</span>
-<span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(key, entry, expire<span class="op">=</span>keep)</span>
-<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> json.loads(entry[<span class="st">'body'</span>])</span></code></pre></div>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> urllib.parse <span class="im">import</span> urlsplit</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> httpx</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>now <span class="op">=</span> [<span class="fl">1_000_000.0</span>]                                   <span class="co"># a fake clock; in a real app use time.time()</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tempfile.mkdtemp(), clock<span class="op">=</span><span class="kw">lambda</span>: now[<span class="dv">0</span>])</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> max_age(response: httpx.Response) <span class="op">-&gt;</span> <span class="bu">float</span> <span class="op">|</span> <span class="va">None</span>:</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    m <span class="op">=</span> re.search(<span class="vs">r'max-age=</span><span class="kw">(</span><span class="dv">\d</span><span class="op">+</span><span class="kw">)</span><span class="vs">'</span>, response.headers.get(<span class="st">'cache-control'</span>, <span class="st">''</span>))</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">float</span>(m.group(<span class="dv">1</span>)) <span class="cf">if</span> m <span class="cf">else</span> <span class="va">None</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> fetch_json(client: httpx.Client, url: <span class="bu">str</span>, <span class="op">*</span>, default_ttl: <span class="bu">float</span> <span class="op">=</span> <span class="dv">300</span>, keep: <span class="bu">float</span> <span class="op">=</span> <span class="dv">24</span> <span class="op">*</span> <span class="dv">3600</span>) <span class="op">-&gt;</span> <span class="bu">object</span>:</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    key <span class="op">=</span> (<span class="st">'http'</span>, <span class="st">'GET'</span>, url)</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    host <span class="op">=</span> urlsplit(url).netloc                       <span class="co"># the tag, to drop one service's responses at once</span></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>    entry <span class="op">=</span> cache.get(key)</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> entry <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span> <span class="kw">and</span> now[<span class="dv">0</span>] <span class="op">&lt;</span> entry[<span class="st">'fresh_until'</span>]:</span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> json.loads(entry[<span class="st">'body'</span>])              <span class="co"># fresh: no request at all</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>    headers <span class="op">=</span> {<span class="st">'If-None-Match'</span>: entry[<span class="st">'etag'</span>]} <span class="cf">if</span> entry <span class="kw">and</span> entry[<span class="st">'etag'</span>] <span class="cf">else</span> {}</span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">try</span>:</span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>        response <span class="op">=</span> client.get(url, headers<span class="op">=</span>headers)</span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> response.status_code <span class="op">!=</span> <span class="dv">304</span>:</span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>            response.raise_for_status()</span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>    <span class="cf">except</span> httpx.HTTPError:</span>
+<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> entry <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> json.loads(entry[<span class="st">'body'</span>])          <span class="co"># upstream trouble: the last good answer</span></span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span></span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> response.status_code <span class="op">==</span> <span class="dv">304</span>:                   <span class="co"># unchanged: keep the body, extend its freshness</span></span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>        entry[<span class="st">'fresh_until'</span>] <span class="op">=</span> now[<span class="dv">0</span>] <span class="op">+</span> (max_age(response) <span class="kw">or</span> default_ttl)</span>
+<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>    <span class="cf">else</span>:</span>
+<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a>        entry <span class="op">=</span> {</span>
+<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a>            <span class="st">'body'</span>: response.content,</span>
+<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a>            <span class="st">'etag'</span>: response.headers.get(<span class="st">'etag'</span>),</span>
+<span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a>            <span class="st">'fresh_until'</span>: now[<span class="dv">0</span>] <span class="op">+</span> (max_age(response) <span class="kw">or</span> default_ttl),</span>
+<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a>        }</span>
+<span id="cb1-42"><a href="#cb1-42" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(key, entry, expire<span class="op">=</span>keep, tag<span class="op">=</span>host)</span>
+<span id="cb1-43"><a href="#cb1-43" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> json.loads(entry[<span class="st">'body'</span>])</span></code></pre></div>
 </div>
 <p>Here it runs against a mock upstream that counts its requests:</p>
-<div id="a3d33115" class="cell" data-execution_count="2">
+<div id="97e0c603" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>seen: <span class="bu">list</span>[<span class="bu">str</span> <span class="op">|</span> <span class="va">None</span>] <span class="op">=</span> []</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> upstream(request: httpx.Request) <span class="op">-&gt;</span> httpx.Response:</span>
@@ -733,8 +748,21 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <ul>
 <li><strong>Freshness lives in the value, not in <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>.</strong> The entry’s <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> (<code>keep</code>) is how long a stale copy is worth holding on to for revalidation and outages. If freshness were the expiry, a stale entry would vanish just when it’s useful.</li>
 <li><strong><code>304</code> costs one small write.</strong> The body is kept and only <code>fresh_until</code> changes. A <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> is needed because the deadline is inside the value; <a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch()</a> only moves the entry’s expiry.</li>
-<li><strong>The key names the request.</strong> Method and URL here. If the response depends on who’s asking (an <code>Authorization</code> header, a tenant), put that identity in the key too, or one user’s data will be served to another.</li>
+<li><strong>The key names the request.</strong> It’s a tuple of method and URL, so no string formatting is needed and a URL can’t run into the next field. If the response depends on who’s asking (an <code>Authorization</code> header, a tenant), add that identity to the tuple, <code>('http', 'GET', url, tenant_id)</code>, or one user’s data will be served to another.</li>
+<li><strong>Every <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> passes the tag.</strong> An overwrite without <code>tag=</code> leaves the entry untagged, so the <code>304</code> path tags its write too.</li>
 </ul>
+</section>
+<section id="dropping-one-services-responses" class="level1">
+<h1>Dropping one service’s responses</h1>
+<p>Each entry is tagged with its upstream’s host, so when a service tells you its data changed (a CMS publish webhook, a deploy of your own microservice), <a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict</a> drops everything cached from it in one call, whatever the URLs were:</p>
+<div id="f634a834" class="cell" data-execution_count="3">
+<div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>fetch_json(client, <span class="st">'https://api.example.com/episodes/512'</span>)</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache.evict(<span class="st">'api.example.com'</span>), <span class="st">'responses removed'</span>)</span></code></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>2 responses removed</code></pre>
+</div>
+</div>
+<p>A tuple key has no string prefix, so <code>iterkeys(prefix=...)</code> can’t find these entries; the tag is how you reach them as a group. See <a href="../recipes/invalidating-groups.html">Invalidating groups of keys</a>.</p>
 </section>
 <section id="variations" class="level1">
 <h1>Variations</h1>

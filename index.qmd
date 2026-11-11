@@ -118,5 +118,5 @@ Read them in order for the whole story, or jump straight to the one that bit you
 - [Storage and WAL](user-guide/storage-and-wal.qmd): what's on disk, memory bounds, and the write-ahead log.
 - [Performance](user-guide/performance.qmd): the measured numbers, and where the next speedups come from.
 - [Divergences](user-guide/divergences.qmd): every deliberate difference from diskcache, with the reason.
-- [Recipes](recipes/index.qmd): caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidation by prefix or tag, your own types, job claims, rate limiting, counters, work queues, single-use keys, sessions, web workers, asyncio and testing.
+- [Recipes](recipes/index.qmd): caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidation by prefix or tag, your own types, job claims, rate limiting, counters, work queues, single-use keys, sessions, web workers, asyncio, monitoring, upgrading across a format change, and testing.
 - [Agent skill](skills.qmd): a cheat sheet for AI coding agents, with [llms.txt](llms.txt) and [llms-full.txt](llms-full.txt) alongside.
