@@ -688,7 +688,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="testing-expiry-without-sleeping" class="level1">
 <h1>Testing expiry without sleeping</h1>
 <p>diskcache-oxide reads the clock natively in Rust, so patching <code>time.time</code> doesn’t affect it on its own. Pass <code>clock=</code> instead. A small fake clock lets a test jump forward in time:</p>
-<div id="3eec02e9" class="cell" data-execution_count="1">
+<div id="2415e264" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -745,6 +745,7 @@ after 31 s: None</code></pre>
 <span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">with</span> multiprocessing.Pool(<span class="dv">8</span>) <span class="im">as</span> pool:</span>
 <span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>        results <span class="op">=</span> pool.<span class="bu">map</span>(claim, [<span class="bu">str</span>(tmp_path)] <span class="op">*</span> <span class="dv">8</span>)</span>
 <span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>    <span class="cf">assert</span> results.count(<span class="va">True</span>) <span class="op">==</span> <span class="dv">1</span></span></code></pre></div>
+<p>A <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> also pickles: the copy a <code>multiprocessing</code> worker receives reopens the same directory with the same options, so you can pass the cache itself instead of its path.</p>
 
 
 </section>

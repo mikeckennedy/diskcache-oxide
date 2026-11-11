@@ -10,9 +10,10 @@ Sooner or later a traceback ends in `diskcache_oxide`, and the question is wheth
 | [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) | `TypeError` | reading a pickled value without `pickle=True` |
 | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | `ValueError` | reading a value no build could decode |
 | [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError) | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | reading a value another version or host could decode |
+| `CorruptKeyError` | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | iterating over a stored key that can't be read |
 | [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) | `RuntimeError` | opening a database or manifest this version can't read |
 | [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) | [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError), `ValueError` | opening a directory as the wrong kind of cache |
-| `TypeError`, `ValueError`, `KeyError`, `RuntimeError`, `OSError`, `MemoryError` | built-in | described below |
+| `TypeError`, `ValueError`, `KeyError`, `RuntimeError`, `OSError`, `OverflowError`, `AssertionError`, `MemoryError` | built-in | described below |
 
 
 # `TypeError` at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set): a value that can't be stored
@@ -21,7 +22,7 @@ Sooner or later a traceback ends in `diskcache_oxide`, and the question is wheth
 TypeError: values of type Episode can't be stored without pickle (only exact built-in types round-trip)
 ```
 
-The value isn't one the msgpack or JSON format can represent exactly, so it's refused where it was created rather than three requests later when something reads it. Only exact built-in types round-trip: `str`, `bytes`, `int`, `float`, `bool`, `None`, and `list`, `tuple`, `dict`, [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) and `datetime` made of those. A dataclass, an ORM row, a `dict` subclass or a class of your own doesn't.
+The value isn't one the msgpack or JSON format can represent exactly, so it's refused where it was created rather than three requests later when something reads it. Only exact built-in types round-trip: `str`, `bytes`, `int`, `float`, `bool`, `None`, `Decimal`, and `list`, `tuple`, `dict`, [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), `frozenset`, `datetime` and `date` made of those. A dataclass, an ORM row, a `dict` subclass or a class of your own doesn't.
 
 Fix it in this order:
 
@@ -125,6 +126,8 @@ By default a read raises these, as diskcache does. A cache holds copies, so most
 
 The full table of what each policy does with each failure is in [Values that can't be read](getting-started.md#values-that-cant-be-read).
 
+`CorruptKeyError`, another subclass, comes from iterating a cache (`for key in cache`, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)) when a stored key's bytes are damaged, which takes a damaged database page or file. Iteration raises rather than skip the key. Run `cache.check()` to see what else is damaged, or delete the directory: a cache can always start cold.
+
 
 # [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError): a database this version can't read
 
@@ -178,6 +181,15 @@ SQLite refused write-ahead logging, which diskcache-oxide requires for readers a
 - `cache[key]` and `del cache[key]` for a missing or expired key, as with a dict. Use [get()](../reference/Cache.get.md#diskcache_oxide.Cache.get) and [delete()](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) for the "might not be there" cases.
 - `incr(key, default=None)` and `decr(key, default=None)` on a missing key. With the default `default=0`, a missing key starts counting from 0 instead.
 - Every `NullCache[key]`, since nothing is ever present.
+
+
+# From the coordination recipes and the queue calls
+
+- `TypeError: Lock needs a real cache`: `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier` and `Averager` refuse a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and a `durable=True` cache, since with caching off every caller would hold the lock at once, and a durable cache could drop the write that releases it. Give them a cache of their own, opened without [durable](../reference/Cache.durable.md#diskcache_oxide.Cache.durable) (see [Coordination](coordination.md)).
+- `RuntimeError: Lock.acquire() would wait inside this thread's transaction`: a recipe that would have to wait while you hold a [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) block on its own cache. Waiting there holds the write lock, so no other process could ever release what you're waiting for. Take the lock before the block.
+- `AssertionError` from `release()` on an `RLock` you don't hold, or a `BoundedSemaphore` released more often than it was acquired. It's raised explicitly, so `python -O` doesn't strip it.
+- `OverflowError` from [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push) after 500 trillion pushes to one end of a queue: it refuses rather than overwrite a key. A bad `side` raises `ValueError`.
+- [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError), [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError) or [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) from [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull). An item this process can't read stays at the front of the queue for one that can, and one that no build could read is removed; see [Work queues](../recipes/work-queues.md).
 
 
 # `MemoryError`

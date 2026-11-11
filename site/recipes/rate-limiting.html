@@ -664,7 +664,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-fixed-window-limiter" class="level1">
 <h1>A fixed-window limiter</h1>
 <p>Each client gets a counter for the current window, with the window’s number in the key. When the window ends, requests move on to a new key and the old one simply expires.</p>
-<div id="a679a0d9" class="cell" data-execution_count="1">
+<div id="1afc3eba" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -711,7 +711,7 @@ True</code></pre>
 <h1>Things to know</h1>
 <ul>
 <li><strong>Fixed windows allow short bursts at the boundary.</strong> A client can make 100 requests at the end of one minute and 100 more at the start of the next. For most APIs that’s fine. If it isn’t, check both the current and the previous window and weight the previous one by how much of it overlaps the last 60 seconds (a sliding-window estimate).</li>
-<li><strong>It’s per machine.</strong> Every worker on one machine shares the count, but two machines behind a load balancer each have their own. The planned network server will share one cache across machines.</li>
+<li><strong>It’s per machine.</strong> Every worker on one machine shares the count, but two machines behind a load balancer each have their own. Sharing one cache across machines would take the network server on the <a href="../user-guide/roadmap.html">roadmap</a>, which is still speculative.</li>
 <li><strong>Fail open on a busy cache.</strong> If you set a short <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> on the cache so that requests never wait long, catch <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> and allow the request rather than failing it:</li>
 </ul>
 <div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Timeout</span>
@@ -723,7 +723,7 @@ True</code></pre>
 <ul>
 <li><strong>Don’t rate limit with a cache that might be a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>.</strong> Its <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> always returns <code>default + delta</code>, so every request would be allowed. That’s often what you want with caching switched off, but make it a deliberate choice.</li>
 </ul>
-<p>A ready-made <code>throttle</code> recipe is planned (see the <a href="../user-guide/roadmap.html">roadmap</a>).</p>
+<p>When the caller should wait for its turn instead of getting a 429, as for outgoing webhooks or calls to a partner API, use <code>throttle</code> from <a href="../user-guide/coordination.html#throttle">Coordination</a>: a decorator that holds a function to <code>count</code> calls every <code>seconds</code>, across every process.</p>
 
 
 </section>

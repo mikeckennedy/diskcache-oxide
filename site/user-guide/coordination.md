@@ -8,6 +8,8 @@ from diskcache_oxide import Cache, Lock, RLock, BoundedSemaphore, Averager, thro
 locks = Cache('/var/cache/my-app/locks', eviction_policy='none')
 ```
 
+Two common jobs don't need a lock at all. When only one worker should run a job and the others should skip it, an [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) claim is simpler: see [Running a job once across workers](../recipes/run-once.md). To hand work items to whichever worker is free, use a queue: see [Work queues](../recipes/work-queues.md).
+
 
 # Lock
 

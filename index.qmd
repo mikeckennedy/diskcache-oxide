@@ -7,9 +7,9 @@ pagetitle: "diskcache-oxide"
 
 Every Python web app arrives at the same crossroads. A query that was fine at launch is now the slowest thing on the page, so you cache its result in a dict, and for one afternoon you're a hero. Then the app goes under gunicorn with four workers, and there are four dicts, each warming up alone and each forgetting everything the moment its worker is recycled. So you reach for Redis, and now there's a server to deploy, secure, monitor and pay for, whose entire job is to remember the answer to one query.
 
-[python-diskcache](https://github.com/grantjenks/python-diskcache) showed there was a third road: a cache that is just a directory. Every thread and every process on the machine opens the same path and sees the same entries, and the entries are still there tomorrow, because a directory doesn't restart. No daemon, no network hop, no second system to keep alive. It's the kind of idea that sounds too simple to be fast, and for years that was the catch.
+[python-diskcache](https://github.com/grantjenks/python-diskcache) showed there was a third road: a cache that is just a directory. Every thread and every process on the machine opens the same path and sees the same entries, and the entries are still there tomorrow, because a directory doesn't restart. No daemon, no network hop, no second system to keep alive. It's the kind of idea that sounds too simple to be fast, and for years that was the catch. diskcache itself has had no commits since 2023, and its issues and pull requests go unanswered.
 
-diskcache-oxide removes the catch. It keeps the diskcache API you already know and rebuilds everything beneath it for where Python is going: many cores, many worker processes, free-threaded CPython, and async frameworks that can't afford a slow call on the event loop. The engine is Rust. The storage is SQLite. The Python layer is as thin as it can be. One thread gets more than 600,000 cache operations a second out of a `Cache`, eight threads sharing it still get that rate while the defunct python-diskcache's falls below 20,000, nothing on your disk is a pickle unless you asked for one, and memory and disk use stay where you set them.
+diskcache-oxide removes the catch. It keeps the diskcache API you already know and rebuilds everything beneath it for where Python is going: many cores, many worker processes, free-threaded CPython, and async frameworks that can't afford a slow call on the event loop. The engine is Rust. The storage is SQLite. The Python layer is as thin as it can be. One thread gets nearly 600,000 cache operations a second out of a `Cache`, and eight threads sharing it still get that rate while python-diskcache's falls below 20,000. Nothing on your disk is a pickle unless you asked for one, and memory and disk use stay where you set them.
 
 **Source on GitHub: <https://github.com/mikeckennedy/diskcache-oxide>** · [Issues](https://github.com/mikeckennedy/diskcache-oxide/issues)
 
@@ -37,31 +37,32 @@ if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
 
 And here is what it does under load. Every thread shares one cache, the x axis adds threads, and the two libraries go in opposite directions:
 
-::: {.dco-chart data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: the defunct diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Pro, Python 3.14 with the GIL, four interleaved rounds, the release code (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers."}
-| Mix | diskcache-oxide | Defunct diskcache 5.6.3 |
+::: {.dco-chart data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Pro, Python 3.14 with the GIL, four interleaved rounds, the 0.2.0 code (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers."}
+| Mix | diskcache-oxide | diskcache 5.6.3 |
 |---|---|---|
-| 99 reads to 1 write | 646k / 633k / 637k / 648k | 406k / 235k / 76k / 19k |
-| 1,000 reads to 1 write | 760k / 751k / 739k / 733k | 434k / 200k / 67k / 18k |
+| 99 reads to 1 write | 589k / 578k / 580k / 568k | 375k / 177k / 58k / 15k |
+| 1,000 reads to 1 write | 655k / 645k / 655k / 655k | 410k / 163k / 55k / 15k |
 :::
 
 ## Where this is going
 
-diskcache-oxide is being built in three stages. The first is the one you can use today.
+diskcache-oxide is being built in three stages. The first is done and the second is mostly done.
 
-1. **A better diskcache.** The `Cache` you already know, rebuilt in Rust: about half the read latency, many times the threaded throughput, safe across `fork()`, safe on free-threaded Python, and no pickle by default. *This is the core that exists now.*
-2. **The complete local caching toolkit.** `memoize` and keys of every native type, tags, the coordination recipes (locks, semaphores, throttles, stampede protection) that make a shared cache useful as more than a cache, a Django cache backend, and a native `AsyncCache` for FastAPI, Litestar and friends. Two pieces of this stage arrived early: [`FanoutCache`](user-guide/fanoutcache.qmd) sharding for apps with many writing processes, and [`transact()`](user-guide/transactions.qmd).
+1. **A better diskcache.** The `Cache` and [`FanoutCache`](user-guide/fanoutcache.qmd) you already know, rebuilt in Rust: about half the read latency, many times the threaded throughput, safe across `fork()`, safe on free-threaded Python, and no pickle by default.
+2. **The complete local caching toolkit.** Keys of every native type, `memoize`, [tags](recipes/invalidating-groups.qmd), [work queues](recipes/work-queues.qmd), [`transact()`](user-guide/transactions.qmd) and the [coordination recipes](user-guide/coordination.qmd) (locks, semaphores, throttles, stampede protection) are all here. Still to come in this stage are a Django cache backend, free-threaded scaling, and a native `AsyncCache` for FastAPI, Litestar and friends.
 3. **A cache server.** The same Rust engine served over the network: a Redis-style central cache for a fleet of machines, with SQLite underneath instead of RAM. As the only owner of its files, the server can use SQLite's exclusive locking mode, which already measures about 40% faster reads than the shared-directory library.
 
 See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
 
 ## Why diskcache-oxide
 
-- **[Fast where web apps spend their time.](user-guide/performance.qmd)** At a 99:1 read/write mix, one thread gets about 650,000 operations a second from a `Cache`, 1.6× the defunct diskcache's rate and cheap enough to call straight from the event loop. Add threads and the gap opens: at 8 threads on a GIL build, diskcache's per-thread connections pile into each other and its throughput falls to 19,000 a second, while oxide's stays at 650,000, 34× ahead (the chart above).
+- **[Fast where web apps spend their time.](user-guide/performance.qmd)** At a 99:1 read/write mix, one thread gets about 590,000 operations a second from a `Cache`, 1.6× diskcache's rate and cheap enough to call straight from the event loop. Add threads and the gap opens: at 8 threads on a GIL build, diskcache's per-thread connections pile into each other and its throughput falls to 15,000 a second, while oxide's stays near 570,000, 38× ahead (the chart above).
 - **[Built for free-threaded Python.](user-guide/concurrency-and-forks.qmd)** The extension is compiled with `gil_used = false` and never leans on the GIL for correctness, which matters on a build where there's no GIL to lean on. Every change is tested on 3.14, 3.14t, 3.15 and 3.15t.
 - **[Safe across `fork()`.](user-guide/concurrency-and-forks.qmd)** gunicorn, Celery's prefork pool and `multiprocessing` create workers by copying the parent, and the copy includes whatever SQLite lock a thread was holding at that instant. A process-wide fork barrier makes sure no child is ever born holding half a transaction.
 - **[No pickle on your disk.](user-guide/serialization.qmd)** Values are msgpack (or JSON) with exact type tags, so tuples, sets, datetimes, dates, Decimals, big ints and NaN come back as what you stored, not as whatever the format could manage. Your own types are registered once and read back only where the name is registered. Pickle is opt-in, and a cache that didn't opt in refuses to unpickle anything it finds, however it got there.
 - **[Predictable memory and disk.](user-guide/storage-and-wal.qmd)** A bounded connection pool, a 1 MiB page cache per connection, a write-ahead log that trims itself back down, and a `checkpoint()` for when you want it empty now.
-- **[Correct under pressure.](user-guide/divergences.qmd)** `clear()` never deletes writes that landed while it ran, `expire()` removes every expired entry, and a reader racing an overwrite gets the old value or the new one, never a spurious miss. Each of these is a bug in diskcache, found by running the same test suite against both libraries, with a reproduction in the repo.
+- **[Correct under pressure.](user-guide/divergences.qmd)** `clear()` never deletes writes that landed while it ran, a reader racing an overwrite gets the old value or the new one, never a spurious miss, and a queue never hands a worker another queue's items or loses one it couldn't read. Running the same test suite against both libraries turned up 18 bugs in diskcache, each with a reproduction in the repo, and each fixed here.
+- **[More than get and set.](user-guide/coordination.qmd)** `memoize` caches a function's results by its arguments. Tags group entries so `evict(tag)` removes a user's or a page's in one call. `push` and `pull` make a [work queue](recipes/work-queues.qmd) every worker shares, handing each item to exactly one of them. Locks, semaphores and rate limits hold across every process on the machine, with no Redis.
 - **[A real off switch.](user-guide/null-cache.qmd)** `NullCache` turns caching off without a single `if cache is not None:` in your code, and can keep forwarding invalidations to the real cache while it's off, so nothing stale is waiting when you turn it back on.
 - **[Named caches with an off switch.](user-guide/caches.qmd)** `Caches` registers an app's caches once, opens each on first use, hands out a `NullCache` while one can't open, and gives an admin page its counts and sizes.
 - **[Errors you can act on.](user-guide/errors.qmd)** Every exception says what went wrong, in words, and the errors page says what to do about it. Nothing is swallowed unless you turned on the setting that swallows it.
@@ -70,9 +71,9 @@ See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
 ## Status
 
 ::: {.callout-note}
-**0.1.2, the first release.** The core `Cache`, `FanoutCache`, `transact()`, `NullCache` and `Caches` are complete. Before it shipped, the code ran three gauntlets. A conformance suite runs the same tests against real diskcache 5.6.3, so every difference is a decision written down in [Divergences](user-guide/divergences.qmd), never an accident. A sanitizer pass put the whole codebase, bundled SQLite included, under Miri, ThreadSanitizer (with a free-threaded CPython built under it too), AddressSanitizer and LeakSanitizer. And a 24-hour soak threw processes, threads, forks, `SIGKILL` and `clear()` under load at one directory for a day, then checked it for corruption, lost writes and leaks. It's on its way into production at [Talk Python](https://talkpython.fm).
+diskcache-oxide runs in production at [Talk Python](https://talkpython.fm), [Python Bytes](https://pythonbytes.fm) and [Talk Python Training](https://training.talkpython.fm). Every release runs three gauntlets first. A conformance suite runs the same tests against diskcache 5.6.3 itself, and every place the two differ is a deliberate decision, written down with its reason in [Divergences](user-guide/divergences.qmd). A sanitizer pass puts the whole codebase, bundled SQLite included, under Miri, ThreadSanitizer (with a free-threaded CPython built under it too), AddressSanitizer and LeakSanitizer. And a 24-hour soak throws processes, threads, forks, `SIGKILL` and `clear()` under load at one directory for a day, then checks it for corruption, lost writes and leaks.
 
-Keys can be `str`, `bytes`, `int`, `float`, `bool`, `None` or tuples of those, and `memoize`, `retry=`, `stats()`, `check()`, tags with `evict(tag)`, `eviction_policy='none'`, the queue calls `push`/`pull`/`peek` and the coordination recipes work as in diskcache. Not here yet: `AsyncCache`, and `Deque` and `Index`. Custom `disk=` classes and least-recently-used eviction aren't coming. See [Vision and roadmap](user-guide/roadmap.qmd).
+Most of diskcache's API is here: `Cache` and `FanoutCache`, keys of every native type, `memoize`, tags and `evict()`, `transact()`, the queue calls `push`, `pull` and `peek`, `retry=`, `stats()`, `check()`, `eviction_policy='none'`, and the coordination recipes. Still to come: `Deque` and `Index`, reading a large value as a file (`read=`), `AsyncCache`, a Django cache backend, and Windows. Custom `disk=` classes and least-recently-used eviction aren't coming; [Vision and roadmap](user-guide/roadmap.qmd) says why.
 :::
 
 ## Install
@@ -83,7 +84,7 @@ pip install diskcache-oxide
 
 It supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t and 3.15t), on macOS and Linux. Wheels cover macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64 for all four Pythons, with the compiled engine and a bundled SQLite inside, so there's nothing else to install. Anywhere else pip builds from source, which needs the latest stable Rust toolchain. Windows support is planned.
 
-During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry: delete existing caches when you upgrade to it. Until you do, opening one raises `FormatMismatchError`. It's a cache, so the cost is a cold start.
+Before 1.0, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry: delete your caches when you upgrade to it. Until you do, opening one raises `FormatMismatchError`, which names the file. It's a cache, so the cost is a cold start.
 
 ## Coming from diskcache?
 
@@ -112,9 +113,10 @@ Read them in order for the whole story, or jump straight to the one that bit you
 - [Caches](user-guide/caches.qmd): a registry of named caches for an app with several.
 - [FanoutCache](user-guide/fanoutcache.qmd): sharding for many processes that write.
 - [Transactions](user-guide/transactions.qmd): several writes that land together.
+- [Coordination](user-guide/coordination.qmd): locks, semaphores, throttles and running averages that hold across every process.
 - [Concurrency and forks](user-guide/concurrency-and-forks.qmd): threads, processes, free-threading and the fork barrier.
 - [Storage and WAL](user-guide/storage-and-wal.qmd): what's on disk, memory bounds, and the write-ahead log.
 - [Performance](user-guide/performance.qmd): the measured numbers, and where the next speedups come from.
 - [Divergences](user-guide/divergences.qmd): every deliberate difference from diskcache, with the reason.
-- [Recipes](recipes/index.qmd): caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidation, your own types, job claims, rate limiting, counters, single-use keys, sessions, web workers, asyncio and testing.
+- [Recipes](recipes/index.qmd): caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidation by prefix or tag, your own types, job claims, rate limiting, counters, work queues, single-use keys, sessions, web workers, asyncio and testing.
 - [Agent skill](skills.qmd): a cheat sheet for AI coding agents, with [llms.txt](llms.txt) and [llms-full.txt](llms-full.txt) alongside.

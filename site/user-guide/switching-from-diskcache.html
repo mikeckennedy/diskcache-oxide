@@ -663,6 +663,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#truthiness" id="toc-truthiness" class="nav-link" data-scroll-target="#truthiness">Truthiness</a></li>
   <li><a href="#tests-that-patch-time.time" id="toc-tests-that-patch-time.time" class="nav-link" data-scroll-target="#tests-that-patch-time.time">Tests that patch <code>time.time</code></a></li>
   <li><a href="#things-that-just-get-better" id="toc-things-that-just-get-better" class="nav-link" data-scroll-target="#things-that-just-get-better">Things that just get better</a></li>
+  <li><a href="#what-diskcache-doesnt-have" id="toc-what-diskcache-doesnt-have" class="nav-link" data-scroll-target="#what-diskcache-doesnt-have">What diskcache doesn’t have</a></li>
   </ul>
 </nav>
     </div>
@@ -693,7 +694,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </header>
 
 
-<p>If you’re here, the question is a practical one: what breaks? Very little, and on purpose. diskcache-oxide is <strong>API compatible</strong> with <a href="https://github.com/grantjenks/python-diskcache">python-diskcache</a> 5.6.3’s <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, and deliberately <strong>not data compatible</strong>. Keeping diskcache’s API makes switching a one-line change. Not keeping its on-disk format is what made it possible to fix the design instead of inheriting it, pickle and all. So the switch itself is small, and the rest of this page is about what you’ll notice afterwards, which is mostly things getting better and now and then things getting stricter.</p>
+<p>If you’re here, the question is a practical one: what breaks? Very little, and on purpose. diskcache-oxide is API compatible with <a href="https://github.com/grantjenks/python-diskcache">python-diskcache</a> 5.6.3’s <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, and it is not data compatible. Keeping diskcache’s API makes switching a one-line change. Leaving its on-disk format behind is what made it possible to fix the design underneath, pickle included. So the switch itself is small, and the rest of this page is about what you’ll notice afterwards: mostly fixes, and now and then something stricter.</p>
+<p>diskcache is also unmaintained. Its last release, 5.6.3, came out in August 2023, the repository has had no commits since 2023, and its open issues and pull requests go unanswered. The bugs this page mentions were found by running diskcache-oxide’s test suite against it, and each one has a standalone reproduction in the repository’s <code>upstream/</code> folder.</p>
 <p>For most apps, switching looks like this:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># from diskcache import Cache, Timeout</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, Timeout</span>
@@ -704,7 +706,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>diskcache-oxide stores its data in <code>diskcache-oxide.sqlite</code>, not diskcache’s <code>cache.db</code>, and never opens or converts a diskcache database. The two can even share a directory without seeing each other’s data. Your cache starts cold after the switch, which for a cache is usually fine. The cleanest switch gives diskcache-oxide a new directory and deletes the old one once every worker has moved. If the two share a directory, diskcache’s files are <code>cache.db*</code> and its value folders, which nest two levels deep (<code>3f/a2/….val</code>); diskcache-oxide’s folders are one level deep and hold <code>.val</code> files directly, so a two-hex-digit folder that contains folders is diskcache’s.</p>
 <section id="upgrading-diskcache-oxide" class="level2">
 <h2 class="anchored" data-anchor-id="upgrading-diskcache-oxide">Upgrading diskcache-oxide</h2>
-<p>During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. Delete existing caches when you upgrade to it, with every worker stopped. Until you do, opening one raises <a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>, which a <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry reports and answers with a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. A release that keeps the format needs nothing.</p>
+<p>During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. 0.2.0 is one of them: it adds tags and the eviction policy to the format, so caches made by 0.1.2 have to be deleted when you upgrade. Stop every worker, delete the cache’s directory (a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s whole root, never one shard), and it’s recreated empty on the next open. Until you do, opening an old cache raises <a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>, which a <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry reports and answers with a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. 0.1.2 refuses a 0.2.0 cache the same way, so old and new workers can’t share a cache during a rolling deploy. A release that keeps the format needs nothing.</p>
 </section>
 </section>
 <section id="what-you-might-notice" class="level1">
@@ -730,99 +732,94 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td><code>TypeError</code> at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>, unless <code>pickle=True</code></td>
 </tr>
 <tr class="odd">
-<td>Keys</td>
-<td>Anything picklable</td>
-<td><code>str</code> only for now</td>
-</tr>
-<tr class="even">
 <td><code>bool(cache)</code></td>
 <td>False when empty</td>
 <td>Always True; <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> is False</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
 <td>Subclasses <code>Exception</code></td>
 <td>Subclasses <code>TimeoutError</code></td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a></td>
 <td>Optional (makes a temp dir)</td>
 <td>Required</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Clock</td>
 <td>Reads <code>time.time()</code></td>
 <td>Reads the clock in Rust; pass <code>clock=</code> to control it</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a></td>
 <td>Anything (tiny values silently empty the cache)</td>
 <td>At least 1 MiB</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>expire=True</code> / <code>timeout=True</code></td>
 <td>Treated as <code>1</code></td>
 <td><code>TypeError</code></td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><code>disk=</code>, <code>eviction_policy=</code></td>
 <td>Supported</td>
 <td>No <code>disk=</code>; <code>eviction_policy=</code> is <code>'least-recently-stored'</code> or <code>'none'</code>, and LRU and LFU raise <code>ValueError</code></td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Queues (<a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push</a>, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull</a>, <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a>, <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem</a>)</td>
 <td>Any key in the range is an item; <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a> writes</td>
 <td>Only keys of the queue’s exact shape; <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a> never writes; <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull</a> decodes first; <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> only</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Tags</td>
 <td>Compared numerically (<code>1</code>, <code>1.0</code> and <code>True</code> are one tag); <code>tag</code> positional</td>
 <td>Any key type, compared by exact type; <code>tag=</code> keyword-only on <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> and <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a></td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a></td>
 <td><code>tx</code> is <code>None</code></td>
 <td><code>tx</code> is the cache; see <a href="#transact"><code>transact()</code></a> below</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a></td>
 <td>Supported</td>
 <td>Supported, with differences; see <a href="#fanoutcache"><code>FanoutCache</code></a> below</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Keys</td>
 <td>Anything picklable</td>
 <td><code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code> and tuples of those; see <a href="#keys">Keys</a> below</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a></td>
 <td>Supported</td>
 <td>Supported, with the same keys; see <a href="#keys">Keys</a> below</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>retry=</code></td>
 <td>Positional; <code>cache[k]</code> retries forever</td>
 <td>Keyword-only; <code>cache[k]</code> raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a></td>
 <td>Persisted, shared by every process</td>
 <td>Per process, in memory (D-049)</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a></td>
 <td>Supported</td>
 <td>Supported, with differences (D-050)</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Locks, semaphores, <code>throttle</code>, <code>barrier</code>, <code>Averager</code>, <code>memoize_stampede</code></td>
 <td>Supported</td>
 <td>Supported, with differences; see <a href="../user-guide/coordination.html">Coordination</a></td>
 </tr>
-<tr class="odd">
-<td>Tags</td>
+<tr class="even">
+<td><code>Deque</code>, <code>Index</code>, <code>DjangoCache</code>, <code>disk=</code>, <code>read=</code></td>
 <td>Supported</td>
-<td>Planned</td>
+<td>Not available</td>
 </tr>
 </tbody>
 </table>
@@ -864,13 +861,14 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong><a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> is keyword-only</strong> (<code>FanoutCache(path, shards=4)</code>). <code>FanoutCache(path, 4)</code> is a four-second <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> here. The constructor is <code>FanoutCache(directory, timeout=None, *, shards=None, ...)</code>, and <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a> is required (D-039).</li>
 <li><strong>The shard count is recorded</strong>, and a different <code>shards=</code> raises <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> instead of silently sending keys to other shards. <code>shards=None</code> uses the stored count, or creates 8 (D-032).</li>
 <li><strong>A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> refuse each other’s directories</strong> with <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a>, and nothing is created by the refused open (D-038).</li>
-<li><strong>Shards are chosen by XXH3, not adler32</strong>, so which shard a key lands in differs from diskcache’s, and <code>shard_of(key)</code> tells you. Iteration goes shard by shard, and <code>iterkeys(prefix=, reverse=)</code> gives the merged sorted order. There’s no <code>reversed()</code> yet (D-033).</li>
+<li><strong>Shards are chosen by XXH3, not adler32</strong>, so which shard a key lands in differs from diskcache’s, and <code>shard_of(key)</code> tells you. Iteration goes shard by shard, and <code>iterkeys(prefix=, reverse=)</code> gives the merged sorted order (D-033).</li>
 <li><strong>A busy shard raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a></strong> after <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> (60 seconds by default) instead of silently giving False or the default after 10 ms. <code>durable=True</code> gives the miss answers, and logs them (D-034).</li>
 <li><strong>Maintenance shares one <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a></strong> across the shards, doesn’t retry forever, and reports partial progress: a failure raises with <code>failed_shards</code> and <code>removed</code> (D-035).</li>
 <li><strong><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> is a total</strong>, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0’s share (D-036).</li>
 <li><strong><code>max_connections</code> is a total</strong> across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> (D-037).</li>
 <li><strong><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> takes a key</strong> and covers one shard: <code>with cache.transact(key=k):</code> where diskcache’s <code>with cache.transact():</code> locks every shard. Calls for keys on other shards inside the block raise <code>ValueError</code>, reads included. A ported bare <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> raises <code>TypeError</code> (D-040).</li>
-<li><strong>Not there yet:</strong> <code>cache()</code>, <code>deque()</code> and <code>index()</code>, and <code>read()</code> and <code>read=</code> (D-039). <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, <code>retry=</code>, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a>, <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset()</a>, <code>reversed()</code>, pickling, tags with <a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict()</a>, <code>eviction_policy=</code> and settings as attributes are there, as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</li>
+<li><strong>No queue calls.</strong> <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push</a>, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull</a>, <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a> and <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem</a> are on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> only, since a queue spread over shards would have no order. Use a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> for a queue.</li>
+<li><strong>Not there:</strong> <code>cache()</code>, <code>deque()</code> and <code>index()</code>, and <code>read()</code> and <code>read=</code> (D-039). <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, <code>retry=</code>, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a>, <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset()</a>, <code>reversed()</code>, pickling, tags with <a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict()</a>, <code>eviction_policy=</code> and settings as attributes all work as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</li>
 </ul>
 </section>
 <section id="truthiness" class="level1">
@@ -896,6 +894,17 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> keeps writes that land while it runs, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes every expired entry, and a read during an overwrite never misses.</li>
 <li>File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> bounds them for the whole root, not per shard.</li>
 <li>Opening a cache and reading from it never writes to the database.</li>
+</ul>
+</section>
+<section id="what-diskcache-doesnt-have" class="level1">
+<h1>What diskcache doesn’t have</h1>
+<p>Once you’ve switched, a few things are there that diskcache never offered:</p>
+<ul>
+<li><a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down"><code>durable=True</code></a> answers a busy lock or a full disk as a miss on single-key calls and logs it once a minute, so a cache outage costs speed instead of failed requests.</li>
+<li><a href="../user-guide/null-cache.html"><code>NullCache</code></a> switches caching off without touching call sites, and <a href="../user-guide/caches.html"><code>Caches</code></a> names an app’s caches, opens each on first use and hands out a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> while one can’t open.</li>
+<li><a href="../user-guide/serialization.html#your-own-types"><code>register_type()</code></a> stores your own classes, dataclasses and library types without pickle.</li>
+<li>A <a href="../user-guide/fanoutcache.html#shard_of-and-transactkey"><code>FanoutCache</code> transaction</a> locks one shard instead of all of them.</li>
+<li>Free-threaded Python (3.14t and 3.15t) is supported and tested on every change.</li>
 </ul>
 
 

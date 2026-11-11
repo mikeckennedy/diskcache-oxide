@@ -719,7 +719,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="django" class="level2">
 <h2 class="anchored" data-anchor-id="django">Django</h2>
-<p>diskcache-oxide isn’t a Django cache backend (<code>DjangoCache</code> is a <a href="../user-guide/roadmap.html#non-goals">non-goal</a>), so <code>django.core.cache</code> keeps whatever it has. Open the shared cache in a module of its own and import it where it’s needed; the settings module says where it lives.</p>
+<p>diskcache-oxide doesn’t ship a Django cache backend yet. One is next on the <a href="../user-guide/roadmap.html#next">roadmap</a>; until then, <code>django.core.cache</code> keeps whatever it has. Open the shared cache in a module of its own and import it where it’s needed; the settings module says where it lives.</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># myapp/caching.py</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> django.conf <span class="im">import</span> settings</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>

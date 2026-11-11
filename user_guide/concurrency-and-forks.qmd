@@ -27,7 +27,7 @@ The pool never holds more than `max_connections` connections, so at most `2 × m
 
 ## Processes
 
-Any number of processes can open the same directory, each with its own `Cache`. That's the normal deployment: every gunicorn or uvicorn worker opens the cache at startup.
+Any number of processes can open the same directory, each with its own `Cache`. That's the normal deployment: every gunicorn or uvicorn worker opens the cache at startup. A `Cache` or `FanoutCache` also pickles, so you can pass one to a `multiprocessing` or `ProcessPoolExecutor` worker: the copy reopens the same directory with the options the handle was opened with.
 
 - **WAL mode, always.** SQLite runs in write-ahead-log mode, so readers never block writers and writers never block readers. One writer at a time commits to each database file. diskcache-oxide checks that WAL mode is really on when it opens a cache, and fails loudly if it isn't (on some network filesystems, for example).
 - **Atomic across processes.** `add()`, `incr()`, `decr()` and every other write is a single transaction. Two processes can't both win an `add()`, and two `incr()` calls never lose an update. `pop()` is a read and then a transaction that deletes exactly the version it read, so two processes can't both get the same value.
@@ -70,4 +70,4 @@ CPython won't let a library refuse a fork, so the barrier can't wait for a [tran
 
 ## Free-threaded performance today
 
-On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that's only about 1.6× its single-thread number, so threads don't scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is the next stage of the [roadmap](roadmap.qmd). A [`FanoutCache`](fanoutcache.qmd) doesn't remove it for threads sharing one handle either; that is being worked on. See [Performance](performance.qmd).
+On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 8 threads reach about 1.4 million operations per second. But that's only about 1.6× its single-thread number, so threads don't scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is on the [roadmap](roadmap.qmd), after the Django backend. A [`FanoutCache`](fanoutcache.qmd) doesn't remove it for threads sharing one handle either; that is being worked on. See [Performance](performance.qmd).

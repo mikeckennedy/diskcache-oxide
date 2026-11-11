@@ -17,17 +17,17 @@ cache.shard_of('ip:203.0.113.7')   # 0 to 7, the same in every process and every
 
 ## Should you use it?
 
-Use `FanoutCache` when **several processes write to the same cache**. Use a plain [`Cache`](getting-started.qmd) when they don't. The honest picture, from the benchmark in the repository (`bench/fanout.py`, release builds, a 99:1 get:set mix with 1 KB values on a Mac with 18 cores):
+Use `FanoutCache` when **several processes write to the same cache**. Use a plain [`Cache`](getting-started.qmd) when they don't. The numbers come from the benchmark in the repository (`bench/fanout.py`, release builds, a 99:1 get:set mix with 1 KB values on a Mac with 18 cores):
 
 ::: {.dco-chart data-type="lines" data-x="Processes" data-y="operations per second" data-title="Add writing processes and a plain Cache falls off; a FanoutCache holds its rate" data-note="bench/fanout.py: 99 reads to 1 write, 1 KB values, release builds, 18-core Mac. Higher is better. Hover for the numbers."}
-| Processes | Plain `Cache` | `FanoutCache(shards=8)` | Defunct diskcache `FanoutCache(8)` |
+| Processes | Plain `Cache` | `FanoutCache(shards=8)` | diskcache `FanoutCache(8)` |
 |---|---|---|---|
 | 1 | 660k ops/s | 714k | 396k |
 | 4 | 607k | 1,553k | 987k |
 | 8 | 262k | 1,496k | 1,238k |
 :::
 
-- **It removes the multi-process write-lock ceiling.** A plain `Cache` peaks at two processes and then falls, because the 1% of operations that are writes all queue on one database file's write lock. A `FanoutCache` keeps climbing and holds its rate: 5.7x a plain `Cache` at 8 processes, and 1.2x the defunct diskcache's `FanoutCache`. If your app runs a pre-forking server with a worker per core and writes often (counters, rate limits, job claims), this is the case it's for.
+- **It removes the multi-process write-lock ceiling.** A plain `Cache` peaks at two processes and then falls, because the 1% of operations that are writes all queue on one database file's write lock. A `FanoutCache` keeps climbing and holds its rate: 5.7x a plain `Cache` at 8 processes, and 1.2x diskcache's `FanoutCache`. If your app runs a pre-forking server with a worker per core and writes often (counters, rate limits, job claims), this is the case it's for.
 - **It does not yet make threads sharing one handle scale on free-threaded Python.** Four threads on one `FanoutCache` handle read no faster than, and on Linux slower than, four threads on a plain `Cache`, and well short of four separate handles. A larger `max_connections` helps but doesn't close the gap. This is a limit in what threads on one handle share, it's being worked on, and no numbers are promised here. If your concern is read throughput from many threads in one process, a `FanoutCache` doesn't fix it today.
 - **On GIL builds, threads are flat for every diskcache-oxide cache,** as the GIL says they must be, and a `FanoutCache` is about 10 to 15% ahead of a plain `Cache` on that mix at one thread. It's well ahead of stock diskcache, which collapses as threads are added.
 - **A single process with a few threads and few writes gains little.** You pay the cost of more files (below) for a benefit you won't see.
@@ -86,7 +86,7 @@ with cache.transact(key='totals:2026-11') as tx:
 - **Only that shard is locked.** Writes to other shards, from other threads and processes, carry on.
 - **`key` is required and keyword-only.** A ported `with cache.transact():` raises `TypeError`, and so does `transact('k')`, so a key can't be mistaken for `retry`.
 - **Other shards' keys are refused, reads included.** On the thread inside the block, a call for a key on any other shard raises `ValueError` naming both shards, through any handle on the same directory. Entering a second `transact` for a key on another shard is refused too. A nested `transact` for a key on the same shard joins the outer one. A read on another shard is refused because it would see a value the block's writes can't be atomic with, so a block that mixes shards is a mistake either way, and it's caught on the first call.
-- **Whole-cache calls are refused too.** `len()`, `volume()`, iteration (`iter()`, `iterkeys()`, and `next()` on an iterator made before the block), `clear()`, `expire()`, `cull()` and `checkpoint()` raise `ValueError` inside the block, since they would run inside the transaction on one shard and outside it on the rest. Inside the block, only keyed calls on the transaction's shard reach the cache. Call the others before or after it. `close()` isn't refused, since it never raises.
+- **Whole-cache calls are refused too.** `len()`, `volume()`, iteration (`iter()`, `iterkeys()`, and `next()` on an iterator made before the block), `clear()`, `expire()`, `cull()`, `evict()`, `check()`, `reset()` and `checkpoint()` raise `ValueError` inside the block, since they would run inside the transaction on one shard and outside it on the rest. Inside the block, only keyed calls on the transaction's shard reach the cache. Call the others before or after it. `close()` isn't refused, since it never raises.
 - Everything else is as in [Transactions](transactions.qmd): commit on exit, roll back on an exception, `retry=`, `TransactionBusy`, and `durable=True` still raising.
 
 If you need related keys in one transaction, give them a shared prefix scheme and check with `shard_of` that they land together, or keep them in one value. There is no transaction across shards.
@@ -111,11 +111,11 @@ except Timeout as exc:
 
 ## Timeouts on single keys
 
-On a `FanoutCache`, the defunct diskcache silently turns a busy shard into a dropped write: `set` gives False after 10 ms. diskcache-oxide behaves as `Cache` does: a busy shard raises `Timeout` after `timeout` (60 seconds by default), and so do `cache[k]`, `cache[k] = v` and `del cache[k]`. If you want a miss instead, say so with [`durable=True`](getting-started.qmd#a-cache-that-cant-take-a-request-down), which also logs and counts the failures, with one report for the whole `FanoutCache`.
+On a `FanoutCache`, diskcache silently turns a busy shard into a dropped write: `set` gives False after 10 ms. diskcache-oxide behaves as `Cache` does: a busy shard raises `Timeout` after `timeout` (60 seconds by default), and so do `cache[k]`, `cache[k] = v` and `del cache[k]`. If you want a miss instead, say so with [`durable=True`](getting-started.qmd#a-cache-that-cant-take-a-request-down), which also logs and counts the failures, with one report for the whole `FanoutCache`.
 
 ## Iteration order
 
-`iter(cache)` yields every key once, shard 0 to the last, each shard in its insertion order. That is not the cache's insertion order, and not stock's, since the shards hold different keys. `iterkeys(prefix=, reverse=)` merges the shards into one sorted order, the same order a plain `Cache` gives, and holds no connection between yields. Neither is a snapshot: a concurrent write may or may not be seen, never twice. There's no `reversed()` yet.
+`iter(cache)` yields every key once, shard 0 to the last, each shard in its insertion order. That is not the cache's insertion order, and not stock's, since the shards hold different keys. `iterkeys(prefix=, reverse=)` merges the shards into one sorted order, the same order a plain `Cache` gives, and holds no connection between yields. `reversed(cache)` walks the shards from the last to shard 0, each newest first. Neither is a snapshot: a concurrent write may or may not be seen, never twice.
 
 ## In a `Caches` registry
 
@@ -144,8 +144,8 @@ def bump(cache: ShardedCacheLike, key: str) -> None:
         tx.set(key, tx.get(key, 0) + 1)
 ```
 
-## What `FanoutCache` doesn't have yet
+## What `FanoutCache` doesn't have
 
-`stats()`, `check()`, `reset()`, `reversed()`, pickling, `retry=`, tags and `evict(tag)` (which removes the tag from every shard) and `eviction_policy=` (every shard's) work as on `Cache`. Stock's `cache()`, `deque()` and `index()` sub-collections and `read()`/`read=` don't exist yet; they come with their features (see the [roadmap](roadmap.qmd)), each designed across shards rather than copied. `directory` is required and there's no `disk=`, as for `Cache`.
+`memoize`, `stats()`, `check()`, `reset()`, `reversed()`, pickling, `retry=`, tags and `evict(tag)` (which removes the tag from every shard) and `eviction_policy=` (every shard's) work as on `Cache`. The queue calls `push`, `pull`, `peek` and `peekitem` are on `Cache` only, because a queue spread over shards would have no order; keep a [work queue](../recipes/work-queues.qmd) in a plain `Cache`. diskcache's `cache()`, `deque()` and `index()` sub-collections and `read()`/`read=` aren't here either (see the [roadmap](roadmap.qmd)). `directory` is required and there's no `disk=`, as for `Cache`.
 
 The constructor takes `shards` as a keyword: stock's `FanoutCache(path, 4)` means four shards, but here the second argument is `timeout`, so write `shards=4`.

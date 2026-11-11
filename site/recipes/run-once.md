@@ -90,4 +90,4 @@ A separate cache directory just for coordination, which is never swapped for a [
 coordination = Cache('/var/cache/my-app-coordination', eviction_policy='none')
 ```
 
-Proper cross-process `Lock` and `BoundedSemaphore` recipes are planned (see the [roadmap](../user-guide/roadmap.md)).
+A claim is the right tool when a worker that loses should skip the job. When it should wait its turn instead, use a `Lock` or a `BoundedSemaphore` from [Coordination](../user-guide/coordination.md), on the same coordination cache.

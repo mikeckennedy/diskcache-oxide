@@ -79,7 +79,7 @@ On a [`durable=True`](getting-started.md#a-cache-that-cant-take-a-request-down) 
 
 # A transaction belongs to a thread, not a task
 
-The calls that join a transaction are the ones made on the thread that entered the block. In asyncio, every task on a loop runs on that same thread. So if you `await` inside the block, another coroutine that runs meanwhile and writes to the same cache joins your transaction, and rolls back with it if your block raises. Don't `await` inside a [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) block. An `async with cache.transact_async()` form is planned for `AsyncCache` (see the [roadmap](roadmap.md)), where waiting for the write lock won't block the event loop.
+The calls that join a transaction are the ones made on the thread that entered the block. In asyncio, every task on a loop runs on that same thread. So if you `await` inside the block, another coroutine that runs meanwhile and writes to the same cache joins your transaction, and rolls back with it if your block raises. Don't `await` inside a [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) block. An `async with cache.transact_async()` form, where waiting for the write lock wouldn't block the event loop, is part of the planned `AsyncCache` experiment (see the [roadmap](roadmap.md)).
 
 
 # Transactions and forks

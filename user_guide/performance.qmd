@@ -1,15 +1,15 @@
 ---
 title: "Performance"
-description: "The measured numbers against the defunct python-diskcache, where the speed comes from, the known slow spots and what's next."
+description: "The measured numbers against python-diskcache 5.6.3, where the speed comes from, the known slow spots and what's next."
 ---
 
 A microsecond is nothing until you multiply it. Web apps call their cache on almost every request, often straight from the asyncio event loop, where every microsecond the cache spends is a microsecond every other request on that loop waits. So diskcache-oxide's performance work starts with read latency, then throughput under many threads, then predictable resource use. Correctness always comes first: every speedup has to keep the conformance suite green, or it doesn't ship. The numbers below are the ones that survived.
 
 ## The numbers
 
-Measured with `bench/gate.py`, which runs the defunct python-diskcache (5.6.3, its last release, from August 2023) and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from Linux (Ubuntu 26.04 LTS) in a container on an Apple Silicon Mac. Both libraries ran in the same container, so the ratios compare like with like, but the absolute numbers on an x86-64 server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
+Measured with `bench/gate.py`, which runs python-diskcache 5.6.3 (its last release, from August 2023; the project has had no commits since) and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from Linux (Ubuntu 26.04 LTS) in a container on an Apple Silicon Mac. Both libraries ran in the same container, so the ratios compare like with like, but the absolute numbers on an x86-64 server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
 
-::: {.dco-chart data-type="hbars" data-y="p50 latency, µs" data-title="A cached read in under a microsecond, on the GIL build and the free-threaded one" data-note="p50 latency of diskcache-oxide; the ratio in the table is oxide's time over the defunct diskcache's, so 0.42× means less than half. Lower is better."}
+::: {.dco-chart data-type="hbars" data-y="p50 latency, µs" data-title="A cached read in under a microsecond, on the GIL build and the free-threaded one" data-note="p50 latency of diskcache-oxide; the ratio in the table is oxide's time over diskcache's, so 0.42× means less than half. Lower is better."}
 | Workload | 3.14 | 3.14t (free-threaded) |
 |---|---|---|
 | `get`, small value, hit | **0.76 µs** (0.42×) | **0.75 µs** (0.46×) |
@@ -21,7 +21,7 @@ Measured with `bench/gate.py`, which runs the defunct python-diskcache (5.6.3, i
 
 Threaded throughput, every thread sharing one `Cache`, in operations per second at 1/2/4/8 threads (ratios are oxide's throughput over diskcache's, so higher is better):
 
-::: {.dco-chart data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Throughput that stays flat as threads are added, where the defunct diskcache's falls to a trickle" data-note="Operations per second with every thread sharing one Cache, at 1, 2, 4 and 8 threads. The ratios in the table are oxide over the defunct diskcache at each thread count. Higher is better."}
+::: {.dco-chart data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Throughput that stays flat as threads are added, where diskcache's falls to a trickle" data-note="Operations per second with every thread sharing one Cache, at 1, 2, 4 and 8 threads. The ratios in the table are oxide over diskcache at each thread count. Higher is better."}
 | Mix | 3.14 | 3.14t (free-threaded) |
 |---|---|---|
 | 99:1 reads to writes | **750k / 745k / 723k / 723k** (2.0-16.5×) | **701k / 639k / 680k / 729k** (1.7-1.8×) |
@@ -31,7 +31,7 @@ Threaded throughput, every thread sharing one `Cache`, in operations per second 
 Two things stand out:
 
 - **On GIL builds, diskcache collapses as threads are added and oxide doesn't.** At 99:1, diskcache drops from about 375k to 44k operations per second going from 1 to 8 threads; oxide stays flat around 720-750k. diskcache's per-thread connections end up fighting over the GIL and SQLite's locks.
-- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That's the next target, below.
+- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That's what the free-threaded work below is for.
 
 Run them yourself with `python -m bench.gate`. Numbers vary by machine; the ratios are what the gate enforces.
 
@@ -62,11 +62,11 @@ Two oversubscribed cases measure slower than before the SQLite mutex spin and th
 
 ## Next: free-threaded scaling
 
-Profiling a cached `get` shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The next stage goes after it, along with:
+Profiling a cached `get` shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The free-threaded phase on the [roadmap](roadmap.qmd), after the Django backend, goes after it, along with:
 
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;
 - cheaper reference counting on shared `Cache` objects in free-threaded builds;
-- Making threads that share one handle scale. [`FanoutCache`](fanoutcache.qmd) is built and removes the multi-process write-lock ceiling, but at its default settings it doesn't lift this read ceiling, so the shared per-handle path is being worked on.
+- making threads that share one handle scale. [`FanoutCache`](fanoutcache.qmd) is built and removes the multi-process write-lock ceiling, but at its default settings it doesn't lift this read ceiling, so the shared per-handle path is being worked on.
 
 Past that, the [network server](roadmap.qmd) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. Measured reads drop from 1.18 µs to 0.69 µs.

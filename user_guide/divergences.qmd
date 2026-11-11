@@ -49,7 +49,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-036 | `size_limit` | Divided as a float, no minimum; reads shard 0's share | Split as integers, 1 MiB per shard minimum; reads back as the total |
 | D-037 | `max_connections` | One connection per thread per shard (264 fds at 64 threads) | A total across the shards; fds within `2 × max_connections + 2 × shards` |
 | D-038 | `Cache` and `FanoutCache` on each other's directory | Quietly creates or reuses a database | `LayoutMismatchError`, creating nothing |
-| D-039 | `FanoutCache` constructor and features | `FanoutCache(path, 4)`; sub-collections, tags, `stats()`, `check()` and more | `shards` is keyword-only; those features aren't there yet |
+| D-039 | `FanoutCache` constructor and features | `FanoutCache(path, 4)`; `cache()`, `deque()` and `index()` sub-collections, `read()` | `shards` is keyword-only; no sub-collections or `read()`; tags, `stats()`, `check()` and the rest as on `Cache` |
 | D-040 | `FanoutCache.transact()` | Locks every shard; `tx` is `None` | `transact(*, key)` locks one shard and refuses other shards' keys |
 | D-041 | Your own types | A `Disk` subclass, or pickle | `register_type()` per type; stored tagged, read by an allowlist; never pickled |
 | D-042 | Large values' folders | Two levels (65,536 folders); a folder goes with its last file | One level (at most 256); empty ones go at the last close and in `clear()` |
@@ -153,7 +153,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 
 - **D-002:** the database file is `diskcache-oxide.sqlite`, so the two libraries never misread each other's files.
 - **D-003:** the clock is read natively; pass `clock=` to control it in tests.
-- **D-004:** keys are `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, or tuples of those, nested up to 32 deep. Only those exact types: a subclass (`IntEnum`, `StrEnum`, a `namedtuple`), a `list`, a `frozenset` or an int past 64 bits raises `TypeError`, and a NaN raises `ValueError`. Keys are never pickled. A `str` key is stored as it always was and every other key in a byte format of its own, which 0.1.2 never reads, so 0.1.2 and 0.2.0 can share a cache during a deploy.
+- **D-004:** keys are `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, or tuples of those, nested up to 32 deep. Only those exact types: a subclass (`IntEnum`, `StrEnum`, a `namedtuple`), a `list`, a `frozenset` or an int past 64 bits raises `TypeError`, and a NaN raises `ValueError`. Keys are never pickled.
 - **D-005:** `size_limit` must be at least 1 MiB. In diskcache, a limit below the empty database's size silently evicts every value, including the one just stored.
 - **D-006:** an empty cache's `volume()` differs, so a `size_limit` leaves slightly different room.
 - **D-007:** `Timeout` subclasses `TimeoutError`, so `except TimeoutError` catches it too.
@@ -186,7 +186,7 @@ These are covered together in [FanoutCache: sharded caches](fanoutcache.qmd), an
 - **D-035:** a maintenance job must finish in bounded time, and when it can't, it must say what it did.
 - **D-036 and D-037:** budgets (size, connections, file descriptors) follow configuration, not the number of threads or shards.
 - **D-038:** a typo shouldn't leave a directory that neither kind of cache can open, or a shard written behind the `FanoutCache`'s back.
-- **D-039:** the missing stock features each need their own design across shards, so they arrive with those features on the [roadmap](roadmap.qmd) rather than as copies.
+- **D-039:** `shards` is keyword-only so that the second positional argument is `timeout`, as on `Cache`. The sub-collections and `read()` would each need their own design across shards, so they aren't copied from diskcache (see the [roadmap](roadmap.qmd)). Everything else on `Cache`, apart from the queue calls, works on a `FanoutCache` too.
 - **D-040:** holding every shard's lock would serialize the whole cache behind one transaction, which is what sharding exists to avoid.
 
 ## diskcache-community

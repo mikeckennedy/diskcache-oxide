@@ -1,6 +1,6 @@
 # Recipes
 
-A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you'd reach for one, then shows the pattern, then says where it stops working. The examples with output under them execute against diskcache-oxide every time these docs are built, so they're known to work, not merely believed to.
+A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you'd reach for one, then shows the pattern, then says where it stops working. The examples with output under them run against diskcache-oxide every time these docs are built.
 
 
 # Caching
@@ -11,12 +11,14 @@ A shared cache does more jobs in a real app than caching. It elects a worker, co
 
 **[Caching responses from other services](caching-http-responses.md).** Cache an upstream API's answers, honor its `max-age`, revalidate with ETags, and keep serving the last good answer when it's down.
 
-**[Invalidating groups of keys](invalidating-groups.md).** Clear everything cached for one user, one product or one page at once: delete by key prefix, or bump a generation number so stale entries are never read again.
+**[Invalidating groups of keys](invalidating-groups.md).** Clear everything cached for one user, one product or one page at once: delete by key prefix, drop every entry with a tag using `evict(tag)`, or bump a generation number so stale entries are never read again.
 
 **[Storing your own types](custom-types.md).** UUIDs, enums, timedeltas, Paths, dataclasses and Pydantic models in the cache with one registration each, and no pickle.
 
 
 # Coordinating workers
+
+For locks, semaphores and a throttle that hold across every process, see the [Coordination](../user-guide/coordination.md) guide page. The recipes here build on the same atomic calls.
 
 **[Running a job once across workers](run-once.md).** Eight gunicorn workers each schedule the same hourly job, and you want it to run once. [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) is atomic across processes, so exactly one of them claims it.
 
@@ -38,11 +40,11 @@ A shared cache does more jobs in a real app than caching. It elects a worker, co
 
 **[Sharing a cache across web workers](web-workers.md).** Where to put the cache directory, when to open it with gunicorn, uvicorn, FastAPI, Flask, Django and Celery, how to keep a busy cache from slowing requests, and what to do at shutdown.
 
-**[Using the cache from asyncio](asyncio.md).** Read inline, write off the loop, and keep transactions on one thread, in FastAPI, Starlette or aiohttp, until `AsyncCache` lands.
+**[Using the cache from asyncio](asyncio.md).** Read inline, write off the loop, and keep transactions on one thread, in FastAPI, Starlette or aiohttp.
 
 **[Testing code that uses a cache](testing.md).** pytest fixtures for a real cache in a temporary directory, a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) for tests that shouldn't cache at all, and a fake clock for testing expiry without sleeping.
 
 
-# Coming later
+# In the user guide
 
-More recipes will arrive with the features they need, such as `AsyncCache` for asyncio apps. Tags are in [Invalidating groups of keys](invalidating-groups.md). Locks, semaphores, throttles and a stampede-proof [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) are in [Coordination](../user-guide/coordination.md). [`FanoutCache`](../user-guide/fanoutcache.md) and [`transact()`](../user-guide/transactions.md) are here already and have their own guide pages. See the [roadmap](../user-guide/roadmap.md).
+Some features have more to them than a recipe can hold, so they have guide pages of their own: [Coordination](../user-guide/coordination.md) (locks, semaphores, `throttle`, `barrier`, `Averager` and the stampede-proof `memoize_stampede`), [`FanoutCache`](../user-guide/fanoutcache.md) for many writing processes, and [Transactions](../user-guide/transactions.md). What's coming next is on the [roadmap](../user-guide/roadmap.md).

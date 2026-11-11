@@ -681,7 +681,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="see-it-work" class="level1">
 <h1>See it work</h1>
 <p>Here eight threads race for the same claim. Processes behave the same way.</p>
-<div id="d893464a" class="cell" data-execution_count="1">
+<div id="509856ea" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -731,7 +731,7 @@ claim holds: 7</code></pre>
 </ul>
 <p>A separate cache directory just for coordination, which is never swapped for a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and never evicts (<code>eviction_policy='none'</code>, so only expired claims go), avoids both:</p>
 <div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>coordination <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-coordination'</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span></code></pre></div>
-<p>Proper cross-process <code>Lock</code> and <code>BoundedSemaphore</code> recipes are planned (see the <a href="../user-guide/roadmap.html">roadmap</a>).</p>
+<p>A claim is the right tool when a worker that loses should skip the job. When it should wait its turn instead, use a <code>Lock</code> or a <code>BoundedSemaphore</code> from <a href="../user-guide/coordination.html">Coordination</a>, on the same coordination cache.</p>
 
 
 </section>

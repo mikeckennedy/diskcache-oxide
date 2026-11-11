@@ -630,6 +630,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#oserror" id="toc-oserror" class="nav-link" data-scroll-target="#oserror"><code>OSError</code></a></li>
   <li><a href="#valueerror" id="toc-valueerror" class="nav-link" data-scroll-target="#valueerror"><code>ValueError</code></a></li>
   <li><a href="#keyerror" id="toc-keyerror" class="nav-link" data-scroll-target="#keyerror"><code>KeyError</code></a></li>
+  <li><a href="#from-the-coordination-recipes-and-the-queue-calls" id="toc-from-the-coordination-recipes-and-the-queue-calls" class="nav-link" data-scroll-target="#from-the-coordination-recipes-and-the-queue-calls">From the coordination recipes and the queue calls</a></li>
   <li><a href="#memoryerror" id="toc-memoryerror" class="nav-link" data-scroll-target="#memoryerror"><code>MemoryError</code></a></li>
   <li><a href="#log-lines-when-the-library-was-told-not-to-raise" id="toc-log-lines-when-the-library-was-told-not-to-raise" class="nav-link" data-scroll-target="#log-lines-when-the-library-was-told-not-to-raise">Log lines, when the library was told not to raise</a></li>
   <li><a href="#if-it-looks-like-a-bug-in-diskcache-oxide" id="toc-if-it-looks-like-a-bug-in-diskcache-oxide" class="nav-link" data-scroll-target="#if-it-looks-like-a-bug-in-diskcache-oxide">If it looks like a bug in diskcache-oxide</a></li>
@@ -704,17 +705,22 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>reading a value another version or host could decode</td>
 </tr>
 <tr class="odd">
+<td><code>CorruptKeyError</code></td>
+<td><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a></td>
+<td>iterating over a stored key that can’t be read</td>
+</tr>
+<tr class="even">
 <td><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a></td>
 <td><code>RuntimeError</code></td>
 <td>opening a database or manifest this version can’t read</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a></td>
 <td><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>, <code>ValueError</code></td>
 <td>opening a directory as the wrong kind of cache</td>
 </tr>
-<tr class="odd">
-<td><code>TypeError</code>, <code>ValueError</code>, <code>KeyError</code>, <code>RuntimeError</code>, <code>OSError</code>, <code>MemoryError</code></td>
+<tr class="even">
+<td><code>TypeError</code>, <code>ValueError</code>, <code>KeyError</code>, <code>RuntimeError</code>, <code>OSError</code>, <code>OverflowError</code>, <code>AssertionError</code>, <code>MemoryError</code></td>
 <td>built-in</td>
 <td>described below</td>
 </tr>
@@ -723,7 +729,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="typeerror-at-set-a-value-that-cant-be-stored" class="level1">
 <h1><code>TypeError</code> at <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>: a value that can’t be stored</h1>
 <pre class="text"><code>TypeError: values of type Episode can't be stored without pickle (only exact built-in types round-trip)</code></pre>
-<p>The value isn’t one the msgpack or JSON format can represent exactly, so it’s refused where it was created rather than three requests later when something reads it. Only exact built-in types round-trip: <code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code>, and <code>list</code>, <code>tuple</code>, <code>dict</code>, <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> and <code>datetime</code> made of those. A dataclass, an ORM row, a <code>dict</code> subclass or a class of your own doesn’t.</p>
+<p>The value isn’t one the msgpack or JSON format can represent exactly, so it’s refused where it was created rather than three requests later when something reads it. Only exact built-in types round-trip: <code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code>, <code>Decimal</code>, and <code>list</code>, <code>tuple</code>, <code>dict</code>, <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <code>frozenset</code>, <code>datetime</code> and <code>date</code> made of those. A dataclass, an ORM row, a <code>dict</code> subclass or a class of your own doesn’t.</p>
 <p>Fix it in this order:</p>
 <ol type="1">
 <li>Register the type: <code>diskcache_oxide.register_type(Episode, name='tp.Episode')</code> for a dataclass, or with <code>encode=</code> and <code>decode=</code> functions for anything else (an <code>ObjectId</code>, a namedtuple, a <code>str</code> subclass). The value is stored without pickle and comes back as the type you stored. See <a href="../user-guide/serialization.html#your-own-types">Your own types</a>.</li>
@@ -793,6 +799,7 @@ CorruptValueError: ...</code></pre>
 <li>For a <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a> that keeps coming back, upgrade the older readers to the version that wrote the value, or stop the newer writer from sharing the directory. For a missing time zone, install the host’s zone data.</li>
 </ul>
 <p>The full table of what each policy does with each failure is in <a href="../user-guide/getting-started.html#values-that-cant-be-read">Values that can’t be read</a>.</p>
+<p><code>CorruptKeyError</code>, another subclass, comes from iterating a cache (<code>for key in cache</code>, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>) when a stored key’s bytes are damaged, which takes a damaged database page or file. Iteration raises rather than skip the key. Run <code>cache.check()</code> to see what else is damaged, or delete the directory: a cache can always start cold.</p>
 </section>
 <section id="formatmismatcherror-a-database-this-version-cant-read" class="level1">
 <h1><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>: a database this version can’t read</h1>
@@ -837,6 +844,16 @@ CorruptValueError: ...</code></pre>
 <li><code>cache[key]</code> and <code>del cache[key]</code> for a missing or expired key, as with a dict. Use <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get()</a> and <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete()</a> for the “might not be there” cases.</li>
 <li><code>incr(key, default=None)</code> and <code>decr(key, default=None)</code> on a missing key. With the default <code>default=0</code>, a missing key starts counting from 0 instead.</li>
 <li>Every <code>NullCache[key]</code>, since nothing is ever present.</li>
+</ul>
+</section>
+<section id="from-the-coordination-recipes-and-the-queue-calls" class="level1">
+<h1>From the coordination recipes and the queue calls</h1>
+<ul>
+<li><code>TypeError: Lock needs a real cache</code>: <code>Lock</code>, <code>RLock</code>, <code>BoundedSemaphore</code>, <code>throttle</code>, <code>barrier</code> and <code>Averager</code> refuse a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and a <code>durable=True</code> cache, since with caching off every caller would hold the lock at once, and a durable cache could drop the write that releases it. Give them a cache of their own, opened without <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a> (see <a href="../user-guide/coordination.html">Coordination</a>).</li>
+<li><code>RuntimeError: Lock.acquire() would wait inside this thread's transaction</code>: a recipe that would have to wait while you hold a <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block on its own cache. Waiting there holds the write lock, so no other process could ever release what you’re waiting for. Take the lock before the block.</li>
+<li><code>AssertionError</code> from <code>release()</code> on an <code>RLock</code> you don’t hold, or a <code>BoundedSemaphore</code> released more often than it was acquired. It’s raised explicitly, so <code>python -O</code> doesn’t strip it.</li>
+<li><code>OverflowError</code> from <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push()</a> after 500 trillion pushes to one end of a queue: it refuses rather than overwrite a key. A bad <code>side</code> raises <code>ValueError</code>.</li>
+<li><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>, <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a> or <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> from <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a>. An item this process can’t read stays at the front of the queue for one that can, and one that no build could read is removed; see <a href="../recipes/work-queues.html">Work queues</a>.</li>
 </ul>
 </section>
 <section id="memoryerror" class="level1">

@@ -1,6 +1,6 @@
 ---
 title: "Getting started"
-description: "Install diskcache-oxide, open a cache, store and read values, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown."
+description: "Install diskcache-oxide, open a cache, store and read values, memoize, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown."
 ---
 
 A `Cache` is a directory. That's the whole mental model, and it carries further than it looks: open the same directory from any number of threads and processes and they all share one cache, nobody has to be told about anybody else, and the entries are still there after a restart, because a directory doesn't restart. Hold on to that sentence; most of what follows is a consequence of it. This page covers installing diskcache-oxide, the everyday operations, the handful of things that only start to matter once several processes are involved, and how to shut down cleanly.
@@ -69,6 +69,18 @@ cache.delete('user:42')             # True if it was there
 value = cache.pop('session:7')      # the value, or the default if it was missing
 ```
 
+### Cache a function's results
+
+`memoize` wraps the check-the-cache, compute-on-a-miss, store-the-result pattern in a decorator, keyed on the function's name and its arguments:
+
+```python
+@cache.memoize(expire=600)
+def episode_details(episode_id: int) -> dict:
+    return db.load_episode(episode_id)
+```
+
+It's diskcache's `memoize`, with the same keys. The arguments become part of the key, so they must be key types. [Caching expensive calls](../recipes/caching-expensive-calls.qmd) covers it in full.
+
 ## Atomic operations across processes
 
 Picture eight gunicorn workers, each with a scheduler that fires the same hourly job. You want it to run once. There's no leader, no Redis, and no way for the workers to talk to each other except through the cache. That turns out to be enough. Each call below is a single SQLite transaction, so it's atomic across every thread and process using the directory, and "store only if absent", done atomically, is a lock if you squint. These are what make a shared cache useful for coordination, not only for caching.
@@ -88,6 +100,8 @@ cache.decr('page_views', 2)       # 4
 
 To make several calls atomic together, group them with `with cache.transact() as tx:`. See [Transactions](transactions.qmd).
 
+The same atomic calls are the building blocks for more. [Coordination](coordination.qmd) has locks, semaphores and a throttle that hold across every process, and [Work queues](../recipes/work-queues.qmd) shows `push()` and `pull()`, a queue that hands each item to exactly one worker.
+
 ## List keys
 
 ```python
@@ -95,7 +109,7 @@ for key in cache.iterkeys(prefix='user:'):
     print(key)
 ```
 
-`iterkeys()` yields keys in sorted order (`reverse=True` for descending), and with `prefix=` it's an indexed range scan: 400,000 keys scan in about 10 ms, against about 25 seconds for diskcache. Iterating the cache itself (`for key in cache`) yields keys in insertion order.
+`iterkeys()` yields keys in sorted order (`reverse=True` for descending), and with `prefix=` it's an indexed range scan: 400,000 keys scan in about 10 ms, against about 25 seconds for diskcache. Iterating the cache itself (`for key in cache`) yields keys in insertion order, and `reversed(cache)` newest first.
 
 ## Size limits and eviction
 
@@ -114,7 +128,10 @@ Maintenance calls, all safe to run while other processes use the cache:
 - `cache.expire()` removes every expired entry and returns how many.
 - `cache.clear()` removes every entry that existed when it started, and keeps anything written while it runs.
 - `cache.cull()` removes expired entries, then evicts down to the size limit (unless the policy is `'none'`), and returns how many it removed.
-- `cache.evict(tag)` removes every entry stored with `tag=tag` (see [Invalidating groups of keys](../recipes/invalidating-groups.qmd)).
+- `cache.evict(tag)` removes every entry stored with `set(..., tag=...)`, so a group of entries under unrelated keys can be dropped at once (see [Invalidating groups of keys](../recipes/invalidating-groups.qmd#option-2-tags)).
+- `cache.check()` compares the database with the large-value files and reports what doesn't match; `check(fix=True)` repairs it.
+
+`cache.reset('size_limit', 2 * 2**30)` stores a new value for one of the settings kept in the cache (`size_limit`, `cull_limit` or `eviction_policy`), and `cache.reset('size_limit')` reads the stored one. `cache.stats()` turns on hit and miss counting for this process, and later calls return `(hits, misses)`. The counts live in memory, so other processes' lookups aren't included and counting never makes a read write.
 
 ## Timeouts
 
@@ -203,7 +220,7 @@ An operational failure is a `Timeout`, an `OSError` (disk full, I/O), a SQLite e
 
 These always raise:
 
-- **Bugs.** A non-`str` key, a value that can't be stored without pickle, a non-numeric `incr`, an `incr` past 64 bits, `UnsafeValueError`, and misusing a transaction.
+- **Bugs.** A key of a type that can't be a key, a value that can't be stored without pickle, a non-numeric `incr`, an `incr` past 64 bits, `UnsafeValueError`, and misusing a transaction.
 - **`MemoryError` and `KeyboardInterrupt`.** That includes SQLite running out of memory.
 - **Admin calls.** `clear`, `expire`, `cull`, `checkpoint`, `len`, `volume` and iteration, because their callers need the truth, and most have their own `timeout=`. `checkpoint` still returns `False` when it's only busy.
 - **The constructor, and starting a [transaction](transactions.qmd).** Use [`Caches`](caches.qmd) if opening shouldn't raise: it gives you a `NullCache` until the cache can open.

@@ -100,6 +100,8 @@ def test_only_one_worker_claims_the_job(tmp_path):
     assert results.count(True) == 1
 ```
 
+A `Cache` also pickles: the copy a `multiprocessing` worker receives reopens the same directory with the same options, so you can pass the cache itself instead of its path.
+
 ```{python}
 #| echo: false
 cache.close()

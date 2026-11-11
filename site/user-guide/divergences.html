@@ -928,8 +928,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <tr class="odd">
 <td>D-039</td>
 <td><a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> constructor and features</td>
-<td><code>FanoutCache(path, 4)</code>; sub-collections, tags, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> and more</td>
-<td><a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> is keyword-only; those features aren’t there yet</td>
+<td><code>FanoutCache(path, 4)</code>; <code>cache()</code>, <code>deque()</code> and <code>index()</code> sub-collections, <code>read()</code></td>
+<td><a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> is keyword-only; no sub-collections or <code>read()</code>; tags, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> and the rest as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></td>
 </tr>
 <tr class="even">
 <td>D-040</td>
@@ -1131,7 +1131,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <ul>
 <li><strong>D-002:</strong> the database file is <code>diskcache-oxide.sqlite</code>, so the two libraries never misread each other’s files.</li>
 <li><strong>D-003:</strong> the clock is read natively; pass <code>clock=</code> to control it in tests.</li>
-<li><strong>D-004:</strong> keys are <code>str</code>, <code>bytes</code>, <code>int</code> (64-bit), <code>float</code>, <code>bool</code>, <code>None</code>, or tuples of those, nested up to 32 deep. Only those exact types: a subclass (<code>IntEnum</code>, <code>StrEnum</code>, a <code>namedtuple</code>), a <code>list</code>, a <code>frozenset</code> or an int past 64 bits raises <code>TypeError</code>, and a NaN raises <code>ValueError</code>. Keys are never pickled. A <code>str</code> key is stored as it always was and every other key in a byte format of its own, which 0.1.2 never reads, so 0.1.2 and 0.2.0 can share a cache during a deploy.</li>
+<li><strong>D-004:</strong> keys are <code>str</code>, <code>bytes</code>, <code>int</code> (64-bit), <code>float</code>, <code>bool</code>, <code>None</code>, or tuples of those, nested up to 32 deep. Only those exact types: a subclass (<code>IntEnum</code>, <code>StrEnum</code>, a <code>namedtuple</code>), a <code>list</code>, a <code>frozenset</code> or an int past 64 bits raises <code>TypeError</code>, and a NaN raises <code>ValueError</code>. Keys are never pickled.</li>
 <li><strong>D-005:</strong> <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> must be at least 1 MiB. In diskcache, a limit below the empty database’s size silently evicts every value, including the one just stored.</li>
 <li><strong>D-006:</strong> an empty cache’s <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> differs, so a <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> leaves slightly different room.</li>
 <li><strong>D-007:</strong> <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> subclasses <code>TimeoutError</code>, so <code>except TimeoutError</code> catches it too.</li>
@@ -1164,7 +1164,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>D-035:</strong> a maintenance job must finish in bounded time, and when it can’t, it must say what it did.</li>
 <li><strong>D-036 and D-037:</strong> budgets (size, connections, file descriptors) follow configuration, not the number of threads or shards.</li>
 <li><strong>D-038:</strong> a typo shouldn’t leave a directory that neither kind of cache can open, or a shard written behind the <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s back.</li>
-<li><strong>D-039:</strong> the missing stock features each need their own design across shards, so they arrive with those features on the <a href="../user-guide/roadmap.html">roadmap</a> rather than as copies.</li>
+<li><strong>D-039:</strong> <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> is keyword-only so that the second positional argument is <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. The sub-collections and <code>read()</code> would each need their own design across shards, so they aren’t copied from diskcache (see the <a href="../user-guide/roadmap.html">roadmap</a>). Everything else on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, apart from the queue calls, works on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> too.</li>
 <li><strong>D-040:</strong> holding every shard’s lock would serialize the whole cache behind one transaction, which is what sharding exists to avoid.</li>
 </ul>
 </section>

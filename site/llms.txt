@@ -262,7 +262,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 #### Get started
 
 - [New to caching? Start here](https://mkennedy.codes/docs/diskcache-oxide/user-guide/new-to-caching.html): What a cache is, why it's worth it, the words people use, and the two famously hard problems: invalidation and naming things
-- [Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html): Install diskcache-oxide, open a cache, store and read values, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown
+- [Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html): Install diskcache-oxide, open a cache, store and read values, memoize, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown
 - [Switching from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/switching-from-diskcache.html): The one-line switch from python-diskcache, and everything you might notice afterwards
 - [Errors and what to do about them](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html): Every exception diskcache-oxide raises, what it means, and what to do about it
 - [Vision and roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html): The vision in three stages, what exists today, what's next, and the non-goals
@@ -280,12 +280,12 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 
 #### Background & Reference
 
-- [Performance](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html): The measured numbers against the defunct python-diskcache, where the speed comes from, the known slow spots and what's next
+- [Performance](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html): The measured numbers against python-diskcache 5.6.3, where the speed comes from, the known slow spots and what's next
 - [Divergences from python-diskcache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html): Every deliberate difference from python-diskcache 5.6.3, with the reason and the test that records it
 
 ### Recipes
 
-- [Using the cache from asyncio](https://mkennedy.codes/docs/diskcache-oxide/recipes/asyncio.html): Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends until AsyncCache lands
+- [Using the cache from asyncio](https://mkennedy.codes/docs/diskcache-oxide/recipes/asyncio.html): Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends
 - [Caching expensive calls](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-expensive-calls.html): The cache-aside pattern, and memoize, a decorator that caches a function's results
 - [Caching responses from other services](https://mkennedy.codes/docs/diskcache-oxide/recipes/caching-http-responses.html): Cache what an upstream API returns, honor its max-age, revalidate with ETags, and keep serving the last good answer when it's down
 - [Counting things](https://mkennedy.codes/docs/diskcache-oxide/recipes/counters.html): View counts, download totals and usage quotas with incr() and decr(), shared by every worker and flushed to the database without losing a count

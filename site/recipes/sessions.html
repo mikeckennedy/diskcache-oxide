@@ -663,14 +663,14 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>Every request arrives with a cookie and a question: who is this? A session is the one piece of per-user state almost every web app keeps server side to answer it: who’s logged in, since when, with which roles. Keeping it in a cache directory means every worker sees the same session the instant it’s written, a login on one worker is a login on all of them, and there’s no database row per request and no Redis to run. The cookie holds only a random id.</p>
 <section id="start-load-end" class="level1">
 <h1>Start, load, end</h1>
-<div id="5d128701" class="cell" data-execution_count="1">
+<div id="9bd0a3f7" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> secrets</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
 <span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>now <span class="op">=</span> [<span class="fl">1_000_000.0</span>]                                   <span class="co"># a fake clock; in a real app use time.time()</span></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>sessions <span class="op">=</span> Cache(tempfile.mkdtemp(), clock<span class="op">=</span><span class="kw">lambda</span>: now[<span class="dv">0</span>])</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>sessions <span class="op">=</span> Cache(tempfile.mkdtemp(), clock<span class="op">=</span><span class="kw">lambda</span>: now[<span class="dv">0</span>], eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
 <span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>IDLE <span class="op">=</span> <span class="dv">30</span> <span class="op">*</span> <span class="dv">60</span>          <span class="co"># a session ends after 30 minutes without a request</span></span>
 <span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>ABSOLUTE <span class="op">=</span> <span class="dv">12</span> <span class="op">*</span> <span class="dv">3600</span>    <span class="co"># and 12 hours after login, however active</span></span>
@@ -716,7 +716,7 @@ after 71 min: False</code></pre>
 <section id="log-out-everywhere" class="level1">
 <h1>Log out everywhere</h1>
 <p>A password change or a stolen laptop should end every session a user has. The second key written at login, <code>user-sessions:{user_id}:{sid}</code>, is an index for exactly this: a prefix scan finds them all.</p>
-<div id="bef4aad7" class="cell" data-execution_count="2">
+<div id="4413dd1b" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>other <span class="op">=</span> start_session(<span class="dv">42</span>, [<span class="st">'member'</span>])</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>sid <span class="op">=</span> start_session(<span class="dv">42</span>, [<span class="st">'member'</span>])</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -739,11 +739,11 @@ after 71 min: False</code></pre>
 <h1>Sessions are not cache entries</h1>
 <p>A lost session is a forced logout, so sessions get a cache of their own, configured unlike the one for page fragments:</p>
 <ul>
-<li><strong>A <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> it never reaches.</strong> Eviction removes the least recently stored entries, and a long-lived session is exactly that. Sessions are small (a few hundred bytes each), so even 1 GiB, the default, holds millions. Watch <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> if you store more per session.</li>
+<li><strong>Nothing evicted for size.</strong> Eviction removes the least recently stored entries, and a long-lived session is exactly that. Open the session cache with <code>eviction_policy='none'</code>, so a session goes only when it expires or ends. Sessions are small (a few hundred bytes each), so 1 GiB holds millions; watch <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> if you store more per session, since under <code>'none'</code> the cache can grow past <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>.</li>
 <li><strong>Never a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>.</strong> A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> stores nothing, so nobody could log in. If the app’s other caches can be switched off through <a href="../user-guide/caches.html"><code>Caches</code></a>, register the session cache by name and leave it enabled.</li>
 <li><strong>Not <code>durable=True</code>.</strong> A dropped write there means a login that silently didn’t happen. Let <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> raise and show the user an error.</li>
 <li><strong>Run <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> from a scheduled job</strong>, <a href="../recipes/run-once.html">claimed by one worker</a>, so ended sessions free their space. Expired sessions are already invisible to <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get()</a>; this is housekeeping.</li>
-<li><strong>One machine.</strong> Every worker on the host shares the sessions. Behind a load balancer, use sticky sessions or wait for the <a href="../user-guide/roadmap.html">network server</a>.</li>
+<li><strong>One machine.</strong> Every worker on the host shares the sessions. Behind a load balancer across several machines, use sticky sessions or a session store every machine can reach.</li>
 </ul>
 
 

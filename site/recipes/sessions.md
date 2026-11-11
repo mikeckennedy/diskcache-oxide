@@ -13,7 +13,7 @@ import tempfile
 from diskcache_oxide import Cache
 
 now = [1_000_000.0]                                   # a fake clock; in a real app use time.time()
-sessions = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+sessions = Cache(tempfile.mkdtemp(), clock=lambda: now[0], eviction_policy='none')
 
 IDLE = 30 * 60          # a session ends after 30 minutes without a request
 ABSOLUTE = 12 * 3600    # and 12 hours after login, however active
@@ -88,8 +88,8 @@ Index entries for sessions that idled out stay until their own `ABSOLUTE` expiry
 
 A lost session is a forced logout, so sessions get a cache of their own, configured unlike the one for page fragments:
 
-- **A [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) it never reaches.** Eviction removes the least recently stored entries, and a long-lived session is exactly that. Sessions are small (a few hundred bytes each), so even 1 GiB, the default, holds millions. Watch [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) if you store more per session.
+- **Nothing evicted for size.** Eviction removes the least recently stored entries, and a long-lived session is exactly that. Open the session cache with `eviction_policy='none'`, so a session goes only when it expires or ends. Sessions are small (a few hundred bytes each), so 1 GiB holds millions; watch [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) if you store more per session, since under `'none'` the cache can grow past [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit).
 - **Never a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache).** A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) stores nothing, so nobody could log in. If the app's other caches can be switched off through [`Caches`](../user-guide/caches.md), register the session cache by name and leave it enabled.
 - **Not `durable=True`.** A dropped write there means a login that silently didn't happen. Let [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) raise and show the user an error.
 - **Run [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) from a scheduled job**, [claimed by one worker](run-once.md), so ended sessions free their space. Expired sessions are already invisible to [get()](../reference/Cache.get.md#diskcache_oxide.Cache.get); this is housekeeping.
-- **One machine.** Every worker on the host shares the sessions. Behind a load balancer, use sticky sessions or wait for the [network server](../user-guide/roadmap.md).
+- **One machine.** Every worker on the host shares the sessions. Behind a load balancer across several machines, use sticky sessions or a session store every machine can reach.
