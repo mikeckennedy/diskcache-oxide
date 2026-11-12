@@ -2434,10 +2434,7 @@ mod tests {
     fn old_empty_dir(dir: &Path, name: &str) {
         let path = dir.join(name);
         std::fs::create_dir(&path).unwrap();
-        std::fs::File::open(&path)
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() - Duration::from_secs(120))
-            .unwrap();
+        crate::testutil::set_mtime(&path, std::time::SystemTime::now() - Duration::from_secs(120));
     }
 
     #[test]

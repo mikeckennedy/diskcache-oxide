@@ -330,18 +330,7 @@ fn create_manifest(root: &Path, manifest: Manifest) -> Result<Created> {
 /// The error for a failed `link`: a filesystem without hard links (FAT, exFAT, SMB, some FUSE) gets
 /// a message naming the limit, since there is no fallback.
 fn link_error(path: &Path, source: std::io::Error) -> Error {
-    // Unix: EPERM; on macOS also ENOTSUP (45), which Rust reports as uncategorized (only EOPNOTSUPP
-    // is `Unsupported`). Windows: FAT and exFAT answer ERROR_INVALID_FUNCTION (1), and some
-    // redirectors ERROR_NOT_SUPPORTED (50, which Rust already maps to `Unsupported`).
-    #[cfg(unix)]
-    let codes: &[i32] = if cfg!(target_os = "macos") { &[1, 45] } else { &[1] };
-    #[cfg(windows)]
-    let codes: &[i32] = &[1, 50];
-    #[cfg(not(any(unix, windows)))]
-    let codes: &[i32] = &[];
-    let unsupported =
-        source.kind() == ErrorKind::Unsupported || source.raw_os_error().is_some_and(|code| codes.contains(&code));
-    if unsupported {
+    if crate::os_error::is_link_unsupported(&source) {
         let source = std::io::Error::new(
             source.kind(),
             "this filesystem doesn't support hard links, which FanoutCache needs to create its manifest safely",
@@ -643,11 +632,8 @@ mod tests {
     #[test]
     fn missing_hard_links_get_a_clear_error() {
         let path = Path::new("/root/diskcache-oxide-fanout");
-        let mut sources = vec![std::io::Error::from(ErrorKind::Unsupported), std::io::Error::from_raw_os_error(1)];
-        if cfg!(target_os = "macos") {
-            sources.push(std::io::Error::from_raw_os_error(45));
-        }
-        for source in sources {
+        let codes = crate::os_error::LINK_UNSUPPORTED.iter().map(|&code| crate::os_error::from_code(code));
+        for source in std::iter::once(std::io::Error::from(ErrorKind::Unsupported)).chain(codes) {
             let err = link_error(path, source);
             assert!(err.to_string().contains("doesn't support hard links"), "{err}");
             assert!(matches!(err, Error::Io { .. }));

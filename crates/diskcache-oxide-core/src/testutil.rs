@@ -55,9 +55,30 @@ pub(crate) fn assert_dir_mode(path: &Path, mode: u32) {
     let _ = mode;
 }
 
+/// Sets the mtime of the file or directory at `path`. Windows needs a handle with write-attribute
+/// access (a read-only `File::open` is denied) and backup semantics to open a directory at all.
+pub(crate) fn set_mtime(path: &Path, at: std::time::SystemTime) {
+    #[cfg(unix)]
+    let file = std::fs::File::open(path).unwrap();
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        std::fs::OpenOptions::new()
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)
+            .unwrap()
+    };
+    file.set_modified(at).unwrap();
+}
+
 /// This process's open file descriptors on the file at `path`, pending ones SQLite hasn't closed
 /// yet included: `/proc/self/fd` on Linux, `lsof` on macOS (where `stat` of `/dev/fd/N` doesn't
 /// reach the file, and opening it to `fstat` would add a descriptor whose close drops SQLite's locks).
+/// Unix only: Windows has handles, not descriptors.
+#[cfg(unix)]
 pub(crate) fn fds_on(path: &Path) -> usize {
     let path = std::fs::canonicalize(path).unwrap();
     if cfg!(target_os = "linux") {

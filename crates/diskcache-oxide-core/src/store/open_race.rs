@@ -3,12 +3,18 @@
 //! is closed beside the winner's live pool (where SQLite's unix VFS would defer the close, D-017).
 //! A thread is parked at [`after_prepare`], between its `prepare_creating` and its first registry
 //! take, while another thread opens the directory.
+//!
+//! The descriptor counts are Unix-only: they check POSIX lock-drop deferral, and Windows has no
+//! descriptors to count (its locks belong to a handle). The joins and pools are checked everywhere.
 
 use std::sync::mpsc;
 
 use super::*;
+#[cfg(unix)]
 use crate::schema::DB_FILENAME;
-use crate::testutil::{TempDir, fds_on};
+use crate::testutil::TempDir;
+#[cfg(unix)]
+use crate::testutil::fds_on;
 
 const T: Duration = Duration::from_secs(5);
 
@@ -103,8 +109,12 @@ fn the_loser_joins_and_hands_over_its_connection(existing: bool) {
     assert_eq!(idle(&winner), 2, "the loser's connection wasn't added to the pool");
     assert_eq!(checked_out(&winner), 0);
     // The store's pin and two pooled connections: nothing pending beside the pool.
-    let db = tmp.path().join(DB_FILENAME);
-    assert_eq!(fds_on(&db), 3, "a descriptor was closed beside the live pool and left pending");
+    #[cfg(unix)]
+    assert_eq!(
+        fds_on(&tmp.path().join(DB_FILENAME)),
+        3,
+        "a descriptor was closed beside the live pool and left pending"
+    );
     release(&[&parked, &winner]);
 }
 
@@ -127,15 +137,18 @@ fn a_connection_handed_to_a_pool_at_its_idle_cap_is_closed_and_one_asking_for_mo
         let (parked, winner) = parked_open(tmp.path(), asks, || Store::open(&options(tmp.path(), 1)));
         let (parked, winner) = (parked.unwrap(), winner.unwrap());
         assert!(Arc::ptr_eq(&parked, &winner));
+        #[cfg(unix)]
         let db = tmp.path().join(DB_FILENAME);
         if kept {
             assert_eq!(idle(&winner), 2, "a handle asking for two connections lost its own");
             // The pin and two pooled connections.
+            #[cfg(unix)]
             assert_eq!(fds_on(&db), 3);
         } else {
             assert_eq!(idle(&winner), 1, "the pool grew past its idle cap");
             // The pin, the pooled connection, and the surplus one, whose close SQLite defers beside
             // the live pool (D-017's documented case).
+            #[cfg(unix)]
             assert_eq!(fds_on(&db), 3);
         }
         assert!(winner.write(T, |_, _| Ok(())).is_ok(), "the store doesn't work");
@@ -144,12 +157,15 @@ fn a_connection_handed_to_a_pool_at_its_idle_cap_is_closed_and_one_asking_for_mo
 }
 
 /// Renames a valid, prepared database over `dir`'s, as another program replacing the file would.
+#[cfg(unix)]
 fn replace_database(dir: &Path) {
     let other = TempDir::new("open-race-replacement");
     existing_database(other.path());
     std::fs::rename(other.path().join(DB_FILENAME), dir.join(DB_FILENAME)).unwrap();
 }
 
+// Unix only: Windows can't replace a database file that SQLite has open (no delete sharing).
+#[cfg(unix)]
 #[test]
 fn a_racing_open_whose_connection_is_on_a_replaced_file_joins_but_doesnt_hand_it_over() {
     let _forks = crate::testutil::one_global_fork_at_a_time();
@@ -166,6 +182,8 @@ fn a_racing_open_whose_connection_is_on_a_replaced_file_joins_but_doesnt_hand_it
     release(&[&parked, &winner]);
 }
 
+// Unix only, as above.
+#[cfg(unix)]
 #[test]
 fn an_open_whose_database_is_replaced_before_its_pin_fails_instead_of_seeding_from_the_old_file() {
     let _forks = crate::testutil::one_global_fork_at_a_time();
@@ -182,6 +200,7 @@ fn an_open_whose_database_is_replaced_before_its_pin_fails_instead_of_seeding_fr
     let live = registry(&gate).iter().filter_map(Weak::upgrade).filter(|s| s.directory == tmp.path()).count();
     drop(gate);
     assert_eq!(live, 0, "the failed open registered a store");
+    #[cfg(unix)]
     assert_eq!(fds_on(&tmp.path().join(DB_FILENAME)), 0, "the failed open left its pin open");
 }
 
@@ -201,6 +220,7 @@ fn a_racing_open_of_a_retired_store_joins_it_once_it_is_revived() {
     assert_eq!(first.settled_handles(), 2);
     // The revive's pin and the two openers' connections, both pooled: nothing pending.
     assert_eq!(idle(&first), 2);
+    #[cfg(unix)]
     assert_eq!(fds_on(&tmp.path().join(DB_FILENAME)), 3);
     release(&[&parked, &winner]);
 }

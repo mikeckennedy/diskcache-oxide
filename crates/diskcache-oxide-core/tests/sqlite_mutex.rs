@@ -23,7 +23,7 @@ use rusqlite::ffi;
 /// `PRAGMA compile_options` without `COMPILER=`, which names the host's C compiler. A change here is
 /// a change to the shipped SQLite, so it should be deliberate.
 const COMPILE_OPTIONS: &[&str] = &[
-    "ATOMIC_INTRINSICS=1",
+    ATOMIC_OPTION,
     "DEFAULT_AUTOVACUUM",
     "DEFAULT_CACHE_SIZE=-2000",
     "DEFAULT_FILE_FORMAT=4",
@@ -74,6 +74,13 @@ const COMPILE_OPTIONS: &[&str] = &[
     "THREADSAFE=1",
     "USE_URI",
 ];
+
+/// SQLite uses the compiler's `__atomic` builtins only under GCC and Clang; MSVC has none, so a
+/// Windows build has them off, as every MSVC build of SQLite does.
+#[cfg(unix)]
+const ATOMIC_OPTION: &str = "ATOMIC_INTRINSICS=1";
+#[cfg(windows)]
+const ATOMIC_OPTION: &str = "ATOMIC_INTRINSICS=0";
 
 /// SQLite's mutex implementation as built: pthreads on Unix (which ours replace), Win32 on Windows.
 #[cfg(unix)]

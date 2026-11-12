@@ -115,6 +115,19 @@ fn layout_mismatch(message: String) -> PyErr {
     })
 }
 
+/// The `OSError` for a raw OS error `code`, which Python turns into the matching subclass
+/// (`FileNotFoundError`, `PermissionError`, ...). On Unix the code is an errno: `OSError(errno,
+/// message)`. On Windows it's a Win32 error code, which as an errno would pick the wrong class
+/// (`ERROR_SHARING_VIOLATION`, 32, is `EPIPE`, so `BrokenPipeError`): `OSError(None, message, None,
+/// winerror)` has Python map it to an errno and the subclass, as it does for its own Win32 errors
+/// (plan 25, R-M5).
+fn os_error(code: i32, message: String) -> PyErr {
+    #[cfg(windows)]
+    return PyOSError::new_err((None::<i32>, message, None::<String>, code));
+    #[cfg(not(windows))]
+    PyOSError::new_err((code, message))
+}
+
 /// Maps a core error to the Python exception the public API documents.
 pub(crate) fn to_py_err(error: Error) -> PyErr {
     let message = error.to_string();
@@ -124,10 +137,11 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
     match error {
         Error::Timeout { .. } => Timeout::new_err(message),
         Error::WriteLockBusyInTransaction => TransactionBusy::new_err(message),
+        // ENOSPC is 28 in the Windows C runtime too, which is what Python's `errno` follows there.
         Error::DiskFull { .. } => PyOSError::new_err((libc::ENOSPC, message)),
-        Error::SqliteIo { errno: Some(errno), .. } => PyOSError::new_err((errno, message)),
+        Error::SqliteIo { errno: Some(code), .. } => os_error(code, message),
         Error::Io { source, .. } => match source.raw_os_error() {
-            Some(errno) => PyOSError::new_err((errno, message)),
+            Some(code) => os_error(code, message),
             None => PyOSError::new_err(message),
         },
         Error::Unwritable
@@ -329,7 +343,8 @@ fn _write_coverage() -> i32 {
 }
 
 /// Test hook: whether SQLite runs on this crate's mutex methods, as `MutexStatus::as_str` names it
-/// (`"installed"`, `"too_late"`, `"raced"` or `"init_failed"`). Live: `init_failed` becomes
+/// (`"installed"`, `"too_late"`, `"raced"`, `"init_failed"`, or `"native"` on Windows, which
+/// installs nothing). Live: `init_failed` becomes
 /// `installed` once a later initialization ran them. Not part of the public API.
 #[pyfunction]
 fn _sqlite_mutex_status() -> &'static str {

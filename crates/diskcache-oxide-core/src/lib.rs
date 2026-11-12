@@ -16,6 +16,7 @@ pub mod lockwait;
 pub mod maintenance;
 pub mod open;
 pub mod ops;
+mod os_error;
 pub mod poison;
 pub mod pool;
 pub mod queue;

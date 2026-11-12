@@ -130,8 +130,8 @@ def _open_fanout_keeping_stored(
 def _held_stores() -> int:
     """Test hook: how many stores in this process have a held transaction, on any thread."""
 
-def _sqlite_mutex_status() -> Literal['installed', 'too_late', 'raced', 'init_failed', 'not_attempted']:
-    """Test hook: whether SQLite runs on the extension's own mutex methods (live)."""
+def _sqlite_mutex_status() -> Literal['installed', 'too_late', 'raced', 'init_failed', 'native', 'not_attempted']:
+    """Test hook: whether SQLite runs on the extension's own mutex methods (live); 'native' on Windows."""
 
 def _sqlite_error(code: int) -> BaseException:
     """Test hook: the exception a SQLite result code becomes, as a store call would raise it."""
