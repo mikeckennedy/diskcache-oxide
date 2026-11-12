@@ -605,7 +605,9 @@ section.level2:first-of-type > h2:first-child,
 <span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a><span class="co">## Only one worker in the whole fleet runs the hourly job: add() is atomic across processes.</span></span>
 <span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> cache.add(<span class="st">'job:refresh-feeds'</span>, os.getpid(), expire<span class="op">=</span><span class="dv">3600</span>):</span>
-<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    refresh_feeds()</span></code></pre></div>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    refresh_feeds()</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>cache.close()  <span class="co"># at shutdown</span></span></code></pre></div>
 <p>And here is what it does under load. Every thread shares one cache, the x axis adds threads, and the two libraries go in opposite directions:</p>
 <div class="dco-chart" data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Pro, Python 3.14 with the GIL, four interleaved rounds, the 0.2.3 code (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers.">
 <table class="caption-top table">

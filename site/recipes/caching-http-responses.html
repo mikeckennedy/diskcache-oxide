@@ -676,7 +676,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-cached-fetch" class="level1">
 <h1>A cached fetch</h1>
 <p>The entry holds the response body, its <code>ETag</code> and a freshness deadline taken from the upstream’s <code>Cache-Control: max-age</code>, with a default when there isn’t one. A fresh entry is returned without a request. A stale one is revalidated with <code>If-None-Match</code>, so an unchanged resource costs a <code>304</code> with no body. And if the request fails while there’s a stale entry, the stale entry is the answer.</p>
-<div id="706dad6c" class="cell" data-execution_count="1">
+<div id="b81b8ac7" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> json</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> re</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
@@ -722,7 +722,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-43"><a href="#cb1-43" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> json.loads(entry[<span class="st">'body'</span>])</span></code></pre></div>
 </div>
 <p>Here it runs against a mock upstream that counts its requests:</p>
-<div id="7ebcdf53" class="cell" data-execution_count="2">
+<div id="6663c9ed" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>seen: <span class="bu">list</span>[<span class="bu">str</span> <span class="op">|</span> <span class="va">None</span>] <span class="op">=</span> []</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> upstream(request: httpx.Request) <span class="op">-&gt;</span> httpx.Response:</span>
@@ -755,7 +755,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="dropping-one-services-responses" class="level1">
 <h1>Dropping one service’s responses</h1>
 <p>Each entry is tagged with its upstream’s host, so when a service tells you its data changed (a CMS publish webhook, a deploy of your own microservice), <a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict</a> drops everything cached from it in one call, whatever the URLs were:</p>
-<div id="0bf42db0" class="cell" data-execution_count="3">
+<div id="1a1aaba4" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>fetch_json(client, <span class="st">'https://api.example.com/episodes/512'</span>)</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache.evict(<span class="st">'api.example.com'</span>), <span class="st">'responses removed'</span>)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">

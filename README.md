@@ -26,6 +26,8 @@ if popular is None:
 if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
     print('this worker refreshes the feeds')
 
+cache.close()  # at shutdown
+
 @cache.memoize(expire=600)
 def episode(number: int) -> dict:
     return {'number': number}  # stand-in for a database read
@@ -119,7 +121,7 @@ Least-recently-used and least-frequently-used eviction aren't planned: diskcache
 
 ## Shutting down
 
-Call `cache.checkpoint()` at shutdown if you can, though it isn't required. After a burst of writes (a big fill, or a `clear()`), SQLite's write-ahead log can be much larger than the database while other processes keep reading, and `checkpoint()` copies it back and truncates it. `close()` does the same when the log is large, waiting at most a second. [Storage and WAL](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html) covers the options, including `wal_checkpoint="auto"` for long-running apps with heavy write bursts.
+Close every cache when the process shuts down, with `cache.close()` in your framework's shutdown hook ([Web workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/web-workers.html) shows FastAPI, Flask, Django and Celery). A process that dies without closing loses nothing, but closing releases the cache's SQLite connections and, when the write-ahead log is large, copies it back into the database and truncates it, waiting at most a second. After a burst of writes (a big fill, or a `clear()`) the log can be much larger than the database while other processes keep reading, so call `cache.checkpoint()` before `close()`: it waits briefly for in-flight reads, copies the log and truncates it, and returns `False` instead of raising if other processes keep it busy. [Storage and WAL](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html) covers the options, including `wal_checkpoint="auto"` for long-running apps with heavy write bursts.
 
 ## For AI coding agents
 

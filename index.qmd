@@ -33,6 +33,8 @@ def popular_episodes() -> list[dict]:
 # Only one worker in the whole fleet runs the hourly job: add() is atomic across processes.
 if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
     refresh_feeds()
+
+cache.close()  # at shutdown
 ```
 
 And here is what it does under load. Every thread shares one cache, the x axis adds threads, and the two libraries go in opposite directions:
