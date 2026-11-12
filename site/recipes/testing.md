@@ -106,3 +106,5 @@ def test_only_one_worker_claims_the_job(tmp_path):
         results = pool.map(claim, [str(tmp_path)] * 8)
     assert results.count(True) == 1
 ```
+
+A [Cache](../reference/Cache.md#diskcache_oxide.Cache) also pickles: the copy a `multiprocessing` worker receives reopens the same directory with the same options, so you can pass the cache itself instead of its path.

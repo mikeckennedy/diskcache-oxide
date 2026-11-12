@@ -12,6 +12,8 @@ Cache.get(
     default=None,
     *,
     expire_time=False,
+    tag=False,
+    retry=False,
 )
 ```
 
@@ -22,7 +24,7 @@ Reads never write, so any number of threads and processes can read at once.
 ## Parameters
 
 
-`key: str`  
+`key: Key`  
 The key to look up.
 
 `default: Any = None`  
@@ -31,14 +33,24 @@ Returned when the key is missing or expired.
 `expire_time: bool = ``False`  
 Also return the entry's expiry time.
 
+`tag: bool = ``False`  
+Also return the entry's tag.
+
+`retry: bool = ``False`  
+On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call gets through, each round with the whole [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), a `durable=True` handle included. Only [Timeout](Timeout.md#diskcache_oxide.Timeout) is retried.
+
 
 ## Returns
 
 
-`Any | tuple[Any, float | None]`  
+`Any | tuple[Any, float | None] | tuple[Any, Key] | tuple[Any, float | None, Key]`  
 The value, or `default`. With `expire_time=True`, a `(value, expire_time)` tuple, where
 
 `expire_time` is a Unix timestamp, or None for an entry that never expires (or a miss).
+
+With `tag=True`, `(value, tag)`, the tag None when untagged (or a miss); with both,
+
+`(value, expire_time, tag)`.
 
 
 ## Raises
@@ -60,4 +72,5 @@ Reading a large value kept losing to concurrent overwrites until [timeout](Cache
 user = cache.get('user:42')                     # None on a miss
 user = cache.get('user:42', default={})         # {} on a miss
 value, expires_at = cache.get('user:42', expire_time=True)
+value, tag = cache.get('user:42', tag=True)
 ```

@@ -1,6 +1,6 @@
 # Using the cache from asyncio
 
-An async framework makes one promise to every request it's serving: nothing blocks the loop. A synchronous cache call looks like a small risk to that promise, and whether it is depends entirely on which call. diskcache-oxide's API is synchronous. An `AsyncCache` is on the [roadmap](../user-guide/roadmap.md), but the sync cache already works well in an asyncio app, provided you know which calls can block the event loop and for how long. Here are the three rules.
+An async framework makes one promise to every request it's serving: nothing blocks the loop. A synchronous cache call looks like a small risk to that promise, and whether it is depends entirely on which call. diskcache-oxide's API is synchronous. An `AsyncCache` is planned as an experiment, to ship only if it earns its place (see the [roadmap](../user-guide/roadmap.md)), but the sync cache already works well in an asyncio app, provided you know which calls can block the event loop and for how long. Here are the three rules.
 
 
 # Reads: call them inline

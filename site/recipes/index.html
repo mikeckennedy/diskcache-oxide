@@ -436,7 +436,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.2</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.3</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -535,6 +535,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Rate limiting</span></a>
   </div>
@@ -571,8 +577,20 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/web-workers.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Sharing a cache across web workers</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/work-queues.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Work queues</span></a>
   </div>
 </li>
     </ul>
@@ -589,7 +607,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#coordinating-workers" id="toc-coordinating-workers" class="nav-link" data-scroll-target="#coordinating-workers">Coordinating workers</a></li>
   <li><a href="#state" id="toc-state" class="nav-link" data-scroll-target="#state">State</a></li>
   <li><a href="#deployment-and-testing" id="toc-deployment-and-testing" class="nav-link" data-scroll-target="#deployment-and-testing">Deployment and testing</a></li>
-  <li><a href="#coming-later" id="toc-coming-later" class="nav-link" data-scroll-target="#coming-later">Coming later</a></li>
+  <li><a href="#in-the-user-guide" id="toc-in-the-user-guide" class="nav-link" data-scroll-target="#in-the-user-guide">In the user guide</a></li>
   </ul>
 </nav>
     </div>
@@ -615,20 +633,22 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </header>
 
 
-<p>A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you’d reach for one, then shows the pattern, then says where it stops working. The examples with output under them execute against diskcache-oxide every time these docs are built, so they’re known to work, not merely believed to.</p>
+<p>A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you’d reach for one, then shows the pattern, then says where it stops working. The examples with output under them run against diskcache-oxide every time these docs are built.</p>
 <section id="caching" class="level1">
 <h1>Caching</h1>
-<p><strong><a href="../recipes/caching-expensive-calls.html">Caching expensive calls</a>.</strong> The cache-aside pattern, and a small decorator that turns any function into a cached one, with keys built safely from its arguments.</p>
+<p><strong><a href="../recipes/caching-expensive-calls.html">Caching expensive calls</a>.</strong> The cache-aside pattern, and <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, which turns a function into a cached one keyed on its arguments.</p>
 <p><strong><a href="../recipes/stale-while-revalidate.html">Serving stale values while refreshing</a>.</strong> Keep a slow page or report available while one worker rebuilds it in the background, or refresh the hot keys ahead of time from a job, so readers never wait and the thundering herd is one worker.</p>
 <p><strong><a href="../recipes/caching-http-responses.html">Caching responses from other services</a>.</strong> Cache an upstream API’s answers, honor its <code>max-age</code>, revalidate with ETags, and keep serving the last good answer when it’s down.</p>
-<p><strong><a href="../recipes/invalidating-groups.html">Invalidating groups of keys</a>.</strong> Clear everything cached for one user, one product or one page at once: delete by key prefix, or bump a generation number so stale entries are never read again.</p>
+<p><strong><a href="../recipes/invalidating-groups.html">Invalidating groups of keys</a>.</strong> Clear everything cached for one user, one product or one page at once: delete by key prefix, drop every entry with a tag using <code>evict(tag)</code>, or bump a generation number so stale entries are never read again.</p>
 <p><strong><a href="../recipes/custom-types.html">Storing your own types</a>.</strong> UUIDs, enums, timedeltas, Paths, dataclasses and Pydantic models in the cache with one registration each, and no pickle.</p>
 </section>
 <section id="coordinating-workers" class="level1">
 <h1>Coordinating workers</h1>
+<p>For locks, semaphores and a throttle that hold across every process, see the <a href="../user-guide/coordination.html">Coordination</a> guide page. The recipes here build on the same atomic calls.</p>
 <p><strong><a href="../recipes/run-once.html">Running a job once across workers</a>.</strong> Eight gunicorn workers each schedule the same hourly job, and you want it to run once. <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> is atomic across processes, so exactly one of them claims it.</p>
 <p><strong><a href="../recipes/rate-limiting.html">Rate limiting</a>.</strong> Count requests per client in fixed time windows with <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> and <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a>, shared by every worker on the machine, with no Redis.</p>
 <p><strong><a href="../recipes/counters.html">Counting things</a>.</strong> View counts, download totals and usage quotas with <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> and <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr()</a>, flushed to the database with <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> so no count is lost or doubled.</p>
+<p><strong><a href="../recipes/work-queues.html">Work queues</a>.</strong> A queue every worker on the machine shares: <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push()</a> at one end, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> from the other, each item delivered to exactly one worker.</p>
 <p><strong><a href="../recipes/single-use-keys.html">Single-use keys</a>.</strong> Reset links, verification codes and idempotency keys: <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> hands a value to exactly one caller, and <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> accepts a key exactly once.</p>
 </section>
 <section id="state" class="level1">
@@ -638,12 +658,14 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="deployment-and-testing" class="level1">
 <h1>Deployment and testing</h1>
 <p><strong><a href="../recipes/web-workers.html">Sharing a cache across web workers</a>.</strong> Where to put the cache directory, when to open it with gunicorn, uvicorn, FastAPI, Flask, Django and Celery, how to keep a busy cache from slowing requests, and what to do at shutdown.</p>
-<p><strong><a href="../recipes/asyncio.html">Using the cache from asyncio</a>.</strong> Read inline, write off the loop, and keep transactions on one thread, in FastAPI, Starlette or aiohttp, until <code>AsyncCache</code> lands.</p>
+<p><strong><a href="../recipes/asyncio.html">Using the cache from asyncio</a>.</strong> Read inline, write off the loop, and keep transactions on one thread, in FastAPI, Starlette or aiohttp.</p>
+<p><strong><a href="../recipes/monitoring.html">Watching a cache in production</a>.</strong> A health check and an admin endpoint: entries, bytes on disk, hit ratio across workers, the size limit, the write-ahead log, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> for damage, and the log lines worth alerting on.</p>
+<p><strong><a href="../recipes/upgrading.html">Upgrading across a format change</a>.</strong> When a release changes the on-disk format: stop, delete and start, or give each format its own directory for a rolling deploy, and what to do first about queues, counters and sessions.</p>
 <p><strong><a href="../recipes/testing.html">Testing code that uses a cache</a>.</strong> pytest fixtures for a real cache in a temporary directory, a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> for tests that shouldn’t cache at all, and a fake clock for testing expiry without sleeping.</p>
 </section>
-<section id="coming-later" class="level1">
-<h1>Coming later</h1>
-<p>More recipes will arrive with the features they need: <code>memoize</code> with stampede protection, tags, cross-process locks and throttles, and <code>AsyncCache</code> for asyncio apps. <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> and <a href="../user-guide/transactions.html"><code>transact()</code></a> are here already and have their own guide pages. See the <a href="../user-guide/roadmap.html">roadmap</a>.</p>
+<section id="in-the-user-guide" class="level1">
+<h1>In the user guide</h1>
+<p>Some features have more to them than a recipe can hold, so they have guide pages of their own: <a href="../user-guide/coordination.html">Coordination</a> (locks, semaphores, <code>throttle</code>, <code>barrier</code>, <code>Averager</code> and <code>memoize_stampede</code>, which refreshes a hot value before it expires), <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> for many writing processes, and <a href="../user-guide/transactions.html">Transactions</a>. What’s coming next is on the <a href="../user-guide/roadmap.html">roadmap</a>.</p>
 
 
 </section>

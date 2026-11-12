@@ -97,4 +97,7 @@ def refresh_hot_pages() -> None:                      # runs every 5 minutes, on
 
 Readers do a plain [get()](../reference/Cache.get.md#diskcache_oxide.Cache.get) and never miss; a missed run or two costs nothing because the entries outlive several intervals. The cost is that the job renders pages nobody may be asking for, which is fine for a handful of keys and wrong for a long tail. Stale-while-revalidate handles the tail, since it only refreshes what's being read.
 
-A `memoize` decorator with this built in is planned (see the [roadmap](../user-guide/roadmap.md)).
+
+# Or use `memoize_stampede`
+
+When the value comes from a function whose arguments are key types, [`memoize_stampede`](caching-expensive-calls.md#thundering-herds) does most of this for you: as a result nears its expiry, one caller recomputes it in a background thread while every caller keeps getting the cached one. Unlike the recipe above, it refreshes only before the entry expires and never serves a value past its expiry, so if no call arrives during the refresh window (a page read once an hour with a five-minute [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire)), the next call is a real miss and computes inline. The recipe above keeps serving the stale value for the whole `grace` period, which suits values that are read rarely but are slow to build.

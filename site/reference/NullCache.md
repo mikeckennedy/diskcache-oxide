@@ -13,6 +13,7 @@ NullCache(
     *,
     size_limit=None,
     cull_limit=None,
+    eviction_policy=None,
     serializer="msgpack",
     pickle=False,
     types=None,
@@ -38,7 +39,7 @@ It behaves like a real cache in which every entry expires the instant it's writt
 Accepted and ignored, like every other [Cache](Cache.md#diskcache_oxide.Cache) argument, so switching between the two is a one-line change.
 
 `invalidate: CacheLike | None = None`  
-A real cache to forward removals to ([delete](Cache.delete.md#diskcache_oxide.Cache.delete), [pop](Cache.pop.md#diskcache_oxide.Cache.pop), [clear](Cache.clear.md#diskcache_oxide.Cache.clear) and [iterkeys](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)), so invalidation by removal still lands while caching is off. Writes aren't forwarded: an overwriting [set](Cache.set.md#diskcache_oxide.Cache.set) or a version-bump [incr](Cache.incr.md#diskcache_oxide.Cache.incr) is dropped, and the old value is served once caching is back on.
+A real cache to forward removals to ([delete](Cache.delete.md#diskcache_oxide.Cache.delete), [pop](Cache.pop.md#diskcache_oxide.Cache.pop), [clear](Cache.clear.md#diskcache_oxide.Cache.clear), [evict](Cache.evict.md#diskcache_oxide.Cache.evict) and [iterkeys](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)), so invalidation by removal still lands while caching is off. Writes aren't forwarded: an overwriting [set](Cache.set.md#diskcache_oxide.Cache.set) or a version-bump [incr](Cache.incr.md#diskcache_oxide.Cache.incr) is dropped, and the old value is served once caching is back on.
 
 
 ## Examples

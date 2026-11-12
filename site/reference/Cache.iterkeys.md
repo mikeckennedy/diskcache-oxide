@@ -9,7 +9,7 @@ Usage
 ``` python
 Cache.iterkeys(
     *,
-    prefix=None,
+    prefix,
     reverse=False,
 )
 ```
@@ -21,7 +21,7 @@ A prefix is an indexed range scan, so it costs time in proportion to the matches
 ## Parameters
 
 
-`prefix: str | None = None`  
+`prefix: str`  
 Only yield keys that start with this string.
 
 `reverse: bool = ``False`  
@@ -31,7 +31,7 @@ Yield keys in descending order.
 ## Returns
 
 
-`Iterator[str]`  
+`Iterator[str] | Iterator[Key]`  
 An iterator of keys.
 
 

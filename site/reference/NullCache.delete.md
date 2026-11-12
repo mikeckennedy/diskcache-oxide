@@ -7,5 +7,9 @@ False, or with `invalidate=`, delete the key from that cache and return its resu
 Usage
 
 ``` python
-NullCache.delete(key)
+NullCache.delete(
+    key,
+    *,
+    retry=False,
+)
 ```

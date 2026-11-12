@@ -5,7 +5,7 @@ A microsecond is nothing until you multiply it. Web apps call their cache on alm
 
 # The numbers
 
-Measured with `bench/gate.py`, which runs the defunct python-diskcache (5.6.3, its last release, from August 2023) and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from Linux (Ubuntu 26.04 LTS) in a container on an Apple Silicon Mac. Both libraries ran in the same container, so the ratios compare like with like, but the absolute numbers on an x86-64 server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
+Measured with `bench/gate.py`, which runs python-diskcache 5.6.3 (its last release, from August 2023; the project has had no commits since) and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from Linux (Ubuntu 26.04 LTS) in a container on an Apple Silicon Mac. Both libraries ran in the same container, so the ratios compare like with like, but the absolute numbers on an x86-64 server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
 
 
 | Workload | 3.14 | 3.14t (free-threaded) |
@@ -29,7 +29,7 @@ Threaded throughput, every thread sharing one [Cache](../reference/Cache.md#disk
 Two things stand out:
 
 - **On GIL builds, diskcache collapses as threads are added and oxide doesn't.** At 99:1, diskcache drops from about 375k to 44k operations per second going from 1 to 8 threads; oxide stays flat around 720-750k. diskcache's per-thread connections end up fighting over the GIL and SQLite's locks.
-- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That's the next target, below.
+- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That's what the free-threaded work below is for.
 
 Run them yourself with `python -m bench.gate`. Numbers vary by machine; the ratios are what the gate enforces.
 
@@ -65,11 +65,11 @@ Two oversubscribed cases measure slower than before the SQLite mutex spin and th
 
 # Next: free-threaded scaling
 
-Profiling a cached [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The next stage goes after it, along with:
+Profiling a cached [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The free-threaded phase on the [roadmap](roadmap.md), after the Django backend, goes after it, along with:
 
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;
 - cheaper reference counting on shared [Cache](../reference/Cache.md#diskcache_oxide.Cache) objects in free-threaded builds;
-- Making threads that share one handle scale. [`FanoutCache`](fanoutcache.md) is built and removes the multi-process write-lock ceiling, but at its default settings it doesn't lift this read ceiling, so the shared per-handle path is being worked on.
+- making threads that share one handle scale. [`FanoutCache`](fanoutcache.md) is built and removes the multi-process write-lock ceiling, but at its default settings it doesn't lift this read ceiling, so the shared per-handle path is being worked on.
 
 Past that, the [network server](roadmap.md) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. Measured reads drop from 1.18 µs to 0.69 µs.

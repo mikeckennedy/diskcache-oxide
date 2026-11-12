@@ -7,7 +7,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
-<meta name="description" content="Install diskcache-oxide, open a cache, store and read values, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown.">
+<meta name="description" content="Install diskcache-oxide, open a cache, store and read values, memoize, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown.">
 
 <title>Getting started – diskcache-oxide | diskcache-oxide</title>
 <style>
@@ -450,13 +450,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
   <meta property="og:type" content="website">
   <meta property="og:title" content="Getting started – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="Install diskcache-oxide, open a cache, store and read values, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown.">
+  <meta property="og:description" content="Install diskcache-oxide, open a cache, store and read values, memoize, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Getting started – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="Install diskcache-oxide, open a cache, store and read values, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown.">
+  <meta name="twitter:description" content="Install diskcache-oxide, open a cache, store and read values, memoize, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -472,7 +472,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.2</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.3</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -603,6 +603,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/coordination.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Coordination: locks, semaphores and throttles</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Concurrency and forks</span></a>
   </div>
@@ -654,6 +660,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <ul class="collapse">
   <li><a href="#dictionary-syntax" id="toc-dictionary-syntax" class="nav-link" data-scroll-target="#dictionary-syntax">Dictionary syntax</a></li>
   <li><a href="#remove-values" id="toc-remove-values" class="nav-link" data-scroll-target="#remove-values">Remove values</a></li>
+  <li><a href="#cache-a-functions-results" id="toc-cache-a-functions-results" class="nav-link" data-scroll-target="#cache-a-functions-results">Cache a function’s results</a></li>
   </ul></li>
   <li><a href="#atomic-operations-across-processes" id="toc-atomic-operations-across-processes" class="nav-link" data-scroll-target="#atomic-operations-across-processes">Atomic operations across processes</a></li>
   <li><a href="#list-keys" id="toc-list-keys" class="nav-link" data-scroll-target="#list-keys">List keys</a></li>
@@ -682,7 +689,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 <div>
   <div class="description">
-    Install diskcache-oxide, open a cache, store and read values, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown.
+    Install diskcache-oxide, open a cache, store and read values, memoize, expiry, atomic counters and claims, eviction, timeouts, durable=True and a clean shutdown.
   </div>
 </div>
 
@@ -733,7 +740,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>value, expires_at <span class="op">=</span> cache.get(<span class="st">'user:42'</span>, expire_time<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
 <ul>
-<li>Keys are <code>str</code>. Other key types raise <code>TypeError</code> for now (they’re planned).</li>
+<li>Keys are <code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code>, or tuples of those, such as <code>('user', 42)</code>. They’re compared by exact type, so <code>1</code>, <code>1.0</code> and <code>True</code> are three keys. Anything else (a <code>list</code>, a <code>dict</code>, an object) raises <code>TypeError</code>; build a tuple or a string instead.</li>
 <li>Values can be <code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code>, <code>Decimal</code>, and lists, tuples, dicts, sets, frozensets, datetimes and dates made of those. They come back as the types you stored. See <a href="../user-guide/serialization.html">Serialization</a>.</li>
 <li><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> is in seconds. Leave it out for an entry that never expires. <code>touch(key, expire=...)</code> changes the expiry of an existing entry.</li>
 </ul>
@@ -749,62 +756,74 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>cache.delete(<span class="st">'user:42'</span>)             <span class="co"># True if it was there</span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>value <span class="op">=</span> cache.pop(<span class="st">'session:7'</span>)      <span class="co"># the value, or the default if it was missing</span></span></code></pre></div>
 </section>
+<section id="cache-a-functions-results" class="level2">
+<h2 class="anchored" data-anchor-id="cache-a-functions-results">Cache a function’s results</h2>
+<p><a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> wraps the check-the-cache, compute-on-a-miss, store-the-result pattern in a decorator, keyed on the function’s name and its arguments:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="at">@cache.memoize</span>(expire<span class="op">=</span><span class="dv">600</span>)</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> episode_details(episode_id: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>:</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> db.load_episode(episode_id)</span></code></pre></div>
+<p>It’s diskcache’s <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, with the same keys. The arguments become part of the key, so they must be key types. <a href="../recipes/caching-expensive-calls.html">Caching expensive calls</a> covers it in full.</p>
+</section>
 </section>
 <section id="atomic-operations-across-processes" class="level1">
 <h1>Atomic operations across processes</h1>
 <p>Picture eight gunicorn workers, each with a scheduler that fires the same hourly job. You want it to run once. There’s no leader, no Redis, and no way for the workers to talk to each other except through the cache. That turns out to be enough. Each call below is a single SQLite transaction, so it’s atomic across every thread and process using the directory, and “store only if absent”, done atomically, is a lock if you squint. These are what make a shared cache useful for coordination, not only for caching.</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Store only if the key is absent (or expired). Exactly one caller wins.</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> cache.add(<span class="st">'job:refresh-feeds'</span>, os.getpid(), expire<span class="op">=</span><span class="dv">3600</span>):</span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    refresh_feeds()</span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Counters. incr() keeps the entry's existing expiry.</span></span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>cache.incr(<span class="st">'page_views'</span>)          <span class="co"># 1</span></span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>cache.incr(<span class="st">'page_views'</span>, <span class="dv">5</span>)       <span class="co"># 6</span></span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>cache.decr(<span class="st">'page_views'</span>, <span class="dv">2</span>)       <span class="co"># 4</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Store only if the key is absent (or expired). Exactly one caller wins.</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> cache.add(<span class="st">'job:refresh-feeds'</span>, os.getpid(), expire<span class="op">=</span><span class="dv">3600</span>):</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    refresh_feeds()</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Counters. incr() keeps the entry's existing expiry.</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>cache.incr(<span class="st">'page_views'</span>)          <span class="co"># 1</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>cache.incr(<span class="st">'page_views'</span>, <span class="dv">5</span>)       <span class="co"># 6</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>cache.decr(<span class="st">'page_views'</span>, <span class="dv">2</span>)       <span class="co"># 4</span></span></code></pre></div>
 <p><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> on a missing key starts from <code>default</code> (0). Pass <code>default=None</code> to get a <code>KeyError</code> instead. A key holding a non-number raises <code>TypeError</code>.</p>
 <p>To make several calls atomic together, group them with <code>with cache.transact() as tx:</code>. See <a href="../user-guide/transactions.html">Transactions</a>.</p>
+<p>The same atomic calls are the building blocks for more. <a href="../user-guide/coordination.html">Coordination</a> has locks, semaphores and a throttle that hold across every process, and <a href="../recipes/work-queues.html">Work queues</a> shows <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push()</a> and <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a>, a queue that hands each item to exactly one worker.</p>
 </section>
 <section id="list-keys" class="level1">
 <h1>List keys</h1>
-<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> key <span class="kw">in</span> cache.iterkeys(prefix<span class="op">=</span><span class="st">'user:'</span>):</span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(key)</span></code></pre></div>
-<p><a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> yields keys in sorted order (<code>reverse=True</code> for descending), and with <code>prefix=</code> it’s an indexed range scan: 400,000 keys scan in about 10 ms, against about 25 seconds for diskcache. Iterating the cache itself (<code>for key in cache</code>) yields keys in insertion order.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> key <span class="kw">in</span> cache.iterkeys(prefix<span class="op">=</span><span class="st">'user:'</span>):</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(key)</span></code></pre></div>
+<p><a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> yields keys in sorted order (<code>reverse=True</code> for descending), and with <code>prefix=</code> it’s an indexed range scan: 400,000 keys scan in about 10 ms, against about 25 seconds for diskcache. Iterating the cache itself (<code>for key in cache</code>) yields keys in insertion order, and <code>reversed(cache)</code> newest first.</p>
 </section>
 <section id="size-limits-and-eviction" class="level1">
 <h1>Size limits and eviction</h1>
-<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(</span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">'/var/cache/my-app'</span>,</span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    size_limit<span class="op">=</span><span class="dv">500</span> <span class="op">*</span> <span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>,   <span class="co"># 500 MiB (default 1 GiB, minimum 1 MiB)</span></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    cull_limit<span class="op">=</span><span class="dv">10</span>,                  <span class="co"># entries evicted per set() when over the limit (default 10)</span></span>
-<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
-<p>When the cache’s on-disk volume goes over <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, each <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> evicts up to <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> of the least recently stored entries. <code>cache.volume()</code> reports the current size in bytes.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">'/var/cache/my-app'</span>,</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    size_limit<span class="op">=</span><span class="dv">500</span> <span class="op">*</span> <span class="dv">1024</span> <span class="op">*</span> <span class="dv">1024</span>,   <span class="co"># 500 MiB (default 1 GiB, minimum 1 MiB)</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>    cull_limit<span class="op">=</span><span class="dv">10</span>,                  <span class="co"># entries evicted per set() when over the limit (default 10)</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<p>When the cache’s on-disk volume goes over <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, each <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> evicts up to <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> of the least recently stored entries. <code>cache.volume()</code> reports the current size in bytes. For a cache that must never drop a live entry (job claims, locks, a queue), pass <code>eviction_policy='none'</code>: nothing is evicted for size, expired entries are still removed, and the cache can grow past <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>. Like the limits, the policy is stored in the cache, so every process shares it.</p>
 <p>Maintenance calls, all safe to run while other processes use the cache:</p>
 <ul>
 <li><code>cache.expire()</code> removes every expired entry and returns how many.</li>
 <li><code>cache.clear()</code> removes every entry that existed when it started, and keeps anything written while it runs.</li>
-<li><code>cache.cull()</code> evicts down to the size limit.</li>
+<li><code>cache.cull()</code> removes expired entries, then evicts down to the size limit (unless the policy is <code>'none'</code>), and returns how many it removed.</li>
+<li><code>cache.evict(tag)</code> removes every entry stored with <code>set(..., tag=...)</code>, so a group of entries under unrelated keys can be dropped at once (see <a href="../recipes/invalidating-groups.html#option-2-tags">Invalidating groups of keys</a>).</li>
+<li><code>cache.check()</code> compares the database with the large-value files and reports what doesn’t match; <code>check(fix=True)</code> repairs it.</li>
 </ul>
+<p><code>cache.reset('size_limit', 2 * 2**30)</code> stores a new value for one of the settings kept in the cache (<a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> or <a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="gdls-link gdls-code">eviction_policy</a>), and <code>cache.reset('size_limit')</code> reads the stored one. <code>cache.stats()</code> turns on hit and miss counting for this process, and later calls return <code>(hits, misses)</code>. The counts live in memory, so other processes’ lookups aren’t included and counting never makes a read write.</p>
 </section>
 <section id="timeouts" class="level1">
 <h1>Timeouts</h1>
 <p>One process at a time commits to a database file. When another one is in the middle of doing so, your write waits its turn, up to the cache’s <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> (60 seconds by default), then gives up and raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">diskcache_oxide.Timeout</a>, a subclass of the built-in <code>TimeoutError</code>:</p>
-<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, Timeout</span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)</span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span>:</span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'key'</span>, <span class="st">'value'</span>)</span>
-<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="cf">except</span> Timeout:</span>
-<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>    ...  <span class="co"># the cache was too busy; carry on without it</span></span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, Timeout</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span>:</span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'key'</span>, <span class="st">'value'</span>)</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="cf">except</span> Timeout:</span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>    ...  <span class="co"># the cache was too busy; carry on without it</span></span></code></pre></div>
 <p>Maintenance calls work in chunks, so they take the write lock many times. A request-sized timeout can cut an admin <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> off partway through, so <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> and <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> each take their own <code>timeout=</code> for that call. It bounds each chunk’s wait for the lock, not the whole call:</p>
-<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)  <span class="co"># for requests</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>cache.clear(timeout<span class="op">=</span><span class="fl">10.0</span>)                        <span class="co"># for the admin page</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)  <span class="co"># for requests</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>cache.clear(timeout<span class="op">=</span><span class="fl">10.0</span>)                        <span class="co"># for the admin page</span></span></code></pre></div>
 <p>What else <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> can mean, and what to do about every other exception the library raises, is in <a href="../user-guide/errors.html">Errors and what to do about them</a>.</p>
 </section>
 <section id="values-that-cant-be-read" class="level1">
 <h1>Values that can’t be read</h1>
 <p>A cache outlives the code that filled it. Deploy a rename of a class you pickled, or have a disk hand back damaged bytes, and a row that read fine yesterday raises today. By default <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> raises, as diskcache does. But a cache is only a copy of data you can rebuild, so most apps would rather treat that row as a miss and move on. <code>on_decode_error</code> does that:</p>
-<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, pickle<span class="op">=</span><span class="va">True</span>, on_decode_error<span class="op">=</span><span class="st">'miss'</span>)</span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>cache.get(<span class="st">'homepage'</span>)  <span class="co"># None if the stored value can't be decoded; the bad row is deleted</span></span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, pickle<span class="op">=</span><span class="va">True</span>, on_decode_error<span class="op">=</span><span class="st">'miss'</span>)</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>cache.get(<span class="st">'homepage'</span>)  <span class="co"># None if the stored value can't be decoded; the bad row is deleted</span></span></code></pre></div>
 <ul>
 <li><code>'miss'</code> returns the default, deletes the bad row, and logs a warning on the <code>diskcache_oxide</code> logger. Only that exact stored version is deleted, so a fresh value another process wrote in the meantime survives, and the read never waits for the write lock to do it. If the lock is busy, the row stays and a later read tries again.</li>
 <li>A value this version can’t read but another might, such as one written by a newer diskcache-oxide or one that needs a time zone this host lacks, is a miss too, but its row is kept. Reading it with the default <code>'raise'</code> raises <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>, a subclass of <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a>.</li>
@@ -884,8 +903,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-cache-that-cant-take-a-request-down" class="level1">
 <h1>A cache that can’t take a request down</h1>
 <p>It’s 3 a.m., the disk under <code>/var/cache</code> is full, and every request that writes to the cache is now a 500. Nothing the cache held was precious: it was all a copy of something the database still has. If every caller can fall back to its source of truth, an outage in the cache should cost you speed, not requests. <code>durable=True</code> makes that the rule for the calls a request makes:</p>
-<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>, durable<span class="op">=</span><span class="va">True</span>)</span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>page <span class="op">=</span> cache.get(<span class="st">'homepage'</span>)  <span class="co"># None if the cache is locked, full, broken or the disk failed</span></span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>, durable<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>page <span class="op">=</span> cache.get(<span class="st">'homepage'</span>)  <span class="co"># None if the cache is locked, full, broken or the disk failed</span></span></code></pre></div>
 <p>“Durable” here means the cache keeps your app running. It doesn’t mean what it means in a database, where a durable write survives a crash. This option does the opposite: it can drop writes. It’s off by default.</p>
 <p>An operational failure is a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, an <code>OSError</code> (disk full, I/O), a SQLite error including a damaged database, or a child forked inside a transaction that can’t write. On a single-key call it’s answered like this:</p>
 <table class="caption-top table">
@@ -932,7 +951,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </table>
 <p>These always raise:</p>
 <ul>
-<li><strong>Bugs.</strong> A non-<code>str</code> key, a value that can’t be stored without pickle, a non-numeric <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>, an <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> past 64 bits, <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>, and misusing a transaction.</li>
+<li><strong>Bugs.</strong> A key of a type that can’t be a key, a value that can’t be stored without pickle, a non-numeric <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>, an <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> past 64 bits, <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>, and misusing a transaction.</li>
 <li><strong><code>MemoryError</code> and <code>KeyboardInterrupt</code>.</strong> That includes SQLite running out of memory.</li>
 <li><strong>Admin calls.</strong> <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>, <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull</a>, <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint</a>, <code>len</code>, <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume</a> and iteration, because their callers need the truth, and most have their own <code>timeout=</code>. <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint</a> still returns <code>False</code> when it’s only busy.</li>
 <li><strong>The constructor, and starting a <a href="../user-guide/transactions.html">transaction</a>.</strong> Use <a href="../user-guide/caches.html"><code>Caches</code></a> if opening shouldn’t raise: it gives you a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> until the cache can open.</li>
@@ -947,7 +966,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>A dropped <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> or version-bump <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> serves stale data.</strong> The old entry stays. It’s served until it expires, and with no expiry that means forever, or until a later write replaces it. <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> returns <code>False</code>, the same as for a key that wasn’t there, so your code can’t tell. The log line is the only signal. If stale data would be a real problem, give those entries an expiry.</li>
 <li><strong>A <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> whose delete fails returns the default, not the value</strong>, since the row is still there and a later <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> could deliver the value a second time.</li>
 <li><strong>A fake <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> isn’t a count.</strong> It’s what a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> returns, so a rate limiter fails open. Don’t use one as an id: two callers can get the same number.</li>
-<li><strong><a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a> fails closed.</strong> It returns <code>False</code> under <code>durable=True</code>, but <code>True</code> on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, so <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> can give you either answer for one key. Use a separate handle without <code>durable</code> for claims and locks, and treat its exceptions as “not claimed”.</li>
+<li><strong><a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a> fails closed.</strong> It returns <code>False</code> under <code>durable=True</code>, but <code>True</code> on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, so <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> can give you either answer for one key. Use a separate handle without <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a> for claims and locks, and treat its exceptions as “not claimed”.</li>
 </ul>
 </section>
 <section id="it-doesnt-bound-time" class="level2">
@@ -1003,7 +1022,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a></strong> is a cache that’s switched off: every write succeeds and every read misses. Swap it in for tests or local development without touching call sites. See <a href="../user-guide/null-cache.html">NullCache</a>.</li>
 <li><strong><code>clock=</code></strong> controls the cache’s clock. diskcache-oxide reads time natively in Rust, so patching <code>time.time</code> doesn’t affect it on its own. Pass <code>clock=lambda: time.time()</code> and the cache follows your patched clock:</li>
 </ul>
-<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tmp_path, clock<span class="op">=</span><span class="kw">lambda</span>: time.time())</span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tmp_path, clock<span class="op">=</span><span class="kw">lambda</span>: time.time())</span></code></pre></div>
 
 
 </section>

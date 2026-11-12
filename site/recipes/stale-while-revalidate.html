@@ -472,7 +472,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.2</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.3</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -571,6 +571,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Rate limiting</span></a>
   </div>
@@ -607,8 +613,20 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/web-workers.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Sharing a cache across web workers</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/work-queues.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Work queues</span></a>
   </div>
 </li>
     </ul>
@@ -623,6 +641,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <ul class="collapse">
   <li><a href="#stale-while-revalidate" id="toc-stale-while-revalidate" class="nav-link active" data-scroll-target="#stale-while-revalidate">Stale-while-revalidate</a></li>
   <li><a href="#refreshing-ahead-from-a-job" id="toc-refreshing-ahead-from-a-job" class="nav-link" data-scroll-target="#refreshing-ahead-from-a-job">Refreshing ahead from a job</a></li>
+  <li><a href="#or-use-memoize_stampede" id="toc-or-use-memoize_stampede" class="nav-link" data-scroll-target="#or-use-memoize_stampede">Or use <code>memoize_stampede</code></a></li>
   </ul>
 </nav>
     </div>
@@ -657,7 +676,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="stale-while-revalidate" class="level1">
 <h1>Stale-while-revalidate</h1>
 <p>Store the value with its own freshness deadline inside, and give the entry a longer hard expiry. A reader that finds the entry fresh returns it. One that finds it stale returns it anyway, and the first of them to win a claim starts a refresh in the background. Readers never wait, and the herd is one worker.</p>
-<div id="63398fd2" class="cell" data-execution_count="1">
+<div id="4a5ea4e8" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
@@ -738,7 +757,10 @@ the next reader gets the fresh page from t=1000061</code></pre>
 <span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> name <span class="kw">in</span> HOT_PAGES:</span>
 <span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>        cache.<span class="bu">set</span>(<span class="ss">f'page:</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">'</span>, render_page(name), expire<span class="op">=</span><span class="dv">15</span> <span class="op">*</span> <span class="dv">60</span>)</span></code></pre></div>
 <p>Readers do a plain <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get()</a> and never miss; a missed run or two costs nothing because the entries outlive several intervals. The cost is that the job renders pages nobody may be asking for, which is fine for a handful of keys and wrong for a long tail. Stale-while-revalidate handles the tail, since it only refreshes what’s being read.</p>
-<p>A <code>memoize</code> decorator with this built in is planned (see the <a href="../user-guide/roadmap.html">roadmap</a>).</p>
+</section>
+<section id="or-use-memoize_stampede" class="level1">
+<h1>Or use <code>memoize_stampede</code></h1>
+<p>When the value comes from a function whose arguments are key types, <a href="../recipes/caching-expensive-calls.html#thundering-herds"><code>memoize_stampede</code></a> does most of this for you: as a result nears its expiry, one caller recomputes it in a background thread while every caller keeps getting the cached one. Unlike the recipe above, it refreshes only before the entry expires and never serves a value past its expiry, so if no call arrives during the refresh window (a page read once an hour with a five-minute <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>), the next call is a real miss and computes inline. The recipe above keeps serving the stale value for the whole <code>grace</code> period, which suits values that are read rarely but are slow to build.</p>
 
 
 </section>

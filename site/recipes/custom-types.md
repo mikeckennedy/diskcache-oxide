@@ -98,6 +98,32 @@ diskcache_oxide.register_type(User, name='app.User', encode=lambda u: u.model_du
 attrs classes and msgspec structs follow the same pattern with `attrs.asdict()` and `msgspec.to_builtins()`, and the class as the decoder.
 
 
+# Values only, never keys
+
+A registration teaches the codec to store a type as a value. Keys, tags and the arguments of a [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize)d function are a separate, fixed set of types (`str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those), compared by exact type, and registering a class doesn't add it to that set. A `UUID`, a `Plan` member (even though it's a `StrEnum`) or an `Invoice` as a key raises `TypeError`. Convert at the edge, to the identifier the key needs:
+
+
+``` python
+invoice = cache.get('invoice:latest')
+
+try:
+    cache.set(invoice.id, invoice)
+except TypeError as error:
+    print(error)
+
+cache.set(('invoice', str(invoice.id)), invoice)             # a UUID key, as a str
+cache.set(('plan-limits', Plan.PRO.value), {'seats': 25})    # an enum key, by its value
+print(cache.get(('invoice', str(invoice.id))).plan)
+```
+
+
+    cache keys must be str, bytes, int, float, bool, None, or a tuple of those, not UUID
+    pro
+
+
+A memoized function can return a registered type, so `@cache.memoize()` on a loader that returns an `Invoice` works once `Invoice` is registered. Its arguments still have to be key types, so take `invoice_id: str` rather than a `UUID`.
+
+
 # Where the registrations live
 
 Registrations are process-wide and must exist in every process that opens the directory: the web workers, the Celery workers, the management command that warms the cache. A row written with a tag the reading process doesn't know is a [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError), and the row is left for a process that does. Put them in one module and import it early:
@@ -112,6 +138,8 @@ diskcache_oxide.register_type(Plan, name='app.Plan', encode=lambda p: p.value, d
 diskcache_oxide.register_type(Invoice, name='app.Invoice')
 diskcache_oxide.register_type(User, name='app.User', encode=lambda u: u.model_dump(mode='json'), decode=User.model_validate)
 ```
+
+A cache that needs its own encoding of a type can take a `diskcache_oxide.TypeRegistry` as `types=`, which it consults before the process-wide registry. The same rule applies: every process that opens that directory needs the same registrations.
 
 
 # When the shape changes

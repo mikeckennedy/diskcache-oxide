@@ -24,12 +24,12 @@ It never opens a transaction on an `invalidate=` cache: removals forwarded insid
 `retry: bool = ``False`  
 Accepted for [Cache.transact()](Cache.transact.md#diskcache_oxide.Cache.transact)'s signature; it must be a `bool`.
 
-`key: str | None = None`  
-Accepted so a switched-off sharded cache's `transact(key=...)` works too; it must be a `str` or None.
+`key: Key | None = None`  
+Accepted so a switched-off sharded cache's `transact(key=...)` works too; it must be a key or None.
 
 
 ## Raises
 
 
 `TypeError`  
-`retry` isn't a `bool`, or `key` isn't a `str` or None.
+`retry` isn't a `bool`, or `key` isn't a key type.

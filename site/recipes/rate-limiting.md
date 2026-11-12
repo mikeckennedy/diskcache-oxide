@@ -60,7 +60,7 @@ def search(request: Request, q: str) -> dict:
 # Things to know
 
 - **Fixed windows allow short bursts at the boundary.** A client can make 100 requests at the end of one minute and 100 more at the start of the next. For most APIs that's fine. If it isn't, check both the current and the previous window and weight the previous one by how much of it overlaps the last 60 seconds (a sliding-window estimate).
-- **It's per machine.** Every worker on one machine shares the count, but two machines behind a load balancer each have their own. The planned network server will share one cache across machines.
+- **It's per machine.** Every worker on one machine shares the count, but two machines behind a load balancer each have their own. Sharing one cache across machines would take the network server on the [roadmap](../user-guide/roadmap.md), which is still speculative.
 - **Fail open on a busy cache.** If you set a short [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) on the cache so that requests never wait long, catch [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) and allow the request rather than failing it:
 
 ``` python
@@ -74,4 +74,4 @@ except Timeout:
 
 - **Don't rate limit with a cache that might be a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache).** Its [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) always returns `default + delta`, so every request would be allowed. That's often what you want with caching switched off, but make it a deliberate choice.
 
-A ready-made `throttle` recipe is planned (see the [roadmap](../user-guide/roadmap.md)).
+When the caller should wait for its turn instead of getting a 429, as for outgoing webhooks or calls to a partner API, use `throttle` from [Coordination](../user-guide/coordination.md#throttle): a decorator that holds a function to `count` calls every `seconds`, across every process.

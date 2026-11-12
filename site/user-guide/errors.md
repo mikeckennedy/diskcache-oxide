@@ -10,9 +10,10 @@ Sooner or later a traceback ends in `diskcache_oxide`, and the question is wheth
 | [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) | `TypeError` | reading a pickled value without `pickle=True` |
 | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | `ValueError` | reading a value no build could decode |
 | [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError) | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | reading a value another version or host could decode |
+| `CorruptKeyError` | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | iterating over a stored key that can't be read |
 | [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) | `RuntimeError` | opening a database or manifest this version can't read |
 | [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) | [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError), `ValueError` | opening a directory as the wrong kind of cache |
-| `TypeError`, `ValueError`, `KeyError`, `RuntimeError`, `OSError`, `MemoryError` | built-in | described below |
+| `TypeError`, `ValueError`, `KeyError`, `RuntimeError`, `OSError`, `OverflowError`, `AssertionError`, `MemoryError` | built-in | described below |
 
 
 # `TypeError` at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set): a value that can't be stored
@@ -21,7 +22,7 @@ Sooner or later a traceback ends in `diskcache_oxide`, and the question is wheth
 TypeError: values of type Episode can't be stored without pickle (only exact built-in types round-trip)
 ```
 
-The value isn't one the msgpack or JSON format can represent exactly, so it's refused where it was created rather than three requests later when something reads it. Only exact built-in types round-trip: `str`, `bytes`, `int`, `float`, `bool`, `None`, and `list`, `tuple`, `dict`, [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) and `datetime` made of those. A dataclass, an ORM row, a `dict` subclass or a class of your own doesn't.
+The value isn't one the msgpack or JSON format can represent exactly, so it's refused where it was created rather than three requests later when something reads it. Only exact built-in types round-trip: `str`, `bytes`, `int`, `float`, `bool`, `None`, `Decimal`, and `list`, `tuple`, `dict`, [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), `frozenset`, `datetime` and `date` made of those. A dataclass, an ORM row, a `dict` subclass or a class of your own doesn't.
 
 Fix it in this order:
 
@@ -35,11 +36,11 @@ A registered type that still raises here is one whose `encode` function raised, 
 # `TypeError` for keys and booleans
 
 ``` text
-TypeError: cache keys must be str, not int
+TypeError: cache keys must be str, bytes, int, float, bool, None, or a tuple of those, not list
 TypeError: expire must be a number of seconds or None, not bool
 ```
 
-Keys are `str` only for now; build them yourself (`f'user:{user_id}'`). Other key types are planned and won't need a format change. A `bool` where a number of seconds belongs (`expire=True`, `timeout=True`) is almost always an argument in the wrong position, so it's refused rather than treated as `1`, which is what diskcache does.
+Keys are `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, or tuples of those. Only the exact types: a subclass such as an `IntEnum` or a `namedtuple`, a `list` or an int past 64 bits raises `TypeError`, and a NaN key raises `ValueError`, since it isn't equal to itself. Pass a tuple where you'd use a list. A memoized function's arguments follow the same rules, and the error names the argument. A `bool` where a number of seconds belongs (`expire=True`, `timeout=True`) is almost always an argument in the wrong position, so it's refused rather than treated as `1`, which is what diskcache does.
 
 
 # [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout): a lock or a fork outlasted [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout)
@@ -125,14 +126,19 @@ By default a read raises these, as diskcache does. A cache holds copies, so most
 
 The full table of what each policy does with each failure is in [Values that can't be read](getting-started.md#values-that-cant-be-read).
 
+`CorruptKeyError`, another subclass, comes from iterating a cache (`for key in cache`, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)) when a stored key's bytes are damaged, which takes a damaged database page or file. Iteration raises rather than skip the key. Run `cache.check()` to see what else is damaged, or delete the directory: a cache can always start cold.
+
 
 # [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError): a database this version can't read
 
 ``` text
-FormatMismatchError: cache format version 3 is not supported (this build uses version 2) at /var/cache/my-app
+FormatMismatchError: cache format version 2 is not supported (this build uses version 3) (in /var/cache/my-app/diskcache-oxide.sqlite): it was made by an older diskcache-oxide: delete the cache's directory (a FanoutCache's whole root) with every process using it stopped, and it will be recreated empty
 ```
 
-The directory holds a database, or a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) manifest, written in a format this build doesn't know, usually by a newer diskcache-oxide. Nothing is read or changed. Upgrade this process to match the writer, or point it at a different directory. If the directory should be reset, stop every process using it and delete it; a cache starts cold without harm.
+The directory holds a database, or a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) manifest, written in a format this build doesn't know. Nothing is read or changed. The message says which way the versions differ:
+
+- **Made by an older diskcache-oxide**, as every cache made by 0.1.2 is after an upgrade to a release with format 3. Stop every process using the cache, delete the directory (for a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache), the whole root: one shard deleted alone would be recreated beside shards in the old format), and the next open creates it empty. A cache starts cold without harm. Don't delete only the `.sqlite` file: its value files would be left behind.
+- **Made by a newer diskcache-oxide:** upgrade this process to match the writer, or point it at a different directory.
 
 
 # [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError): the wrong kind of cache for the directory
@@ -177,6 +183,15 @@ SQLite refused write-ahead logging, which diskcache-oxide requires for readers a
 - Every `NullCache[key]`, since nothing is ever present.
 
 
+# From the coordination recipes and the queue calls
+
+- `TypeError: Lock needs a real cache`: `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier` and `Averager` refuse a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and a `durable=True` cache, since with caching off every caller would hold the lock at once, and a durable cache could drop the write that releases it. Give them a cache of their own, opened without [durable](../reference/Cache.durable.md#diskcache_oxide.Cache.durable) (see [Coordination](coordination.md)).
+- `RuntimeError: Lock.acquire() would wait inside this thread's transaction`: a recipe that would have to wait while you hold a [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) block on its own cache. Waiting there holds the write lock, so no other process could ever release what you're waiting for. Take the lock before the block.
+- `AssertionError` from `release()` on an `RLock` you don't hold, or a `BoundedSemaphore` released more often than it was acquired. It's raised explicitly, so `python -O` doesn't strip it.
+- `OverflowError` from [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push) after 500 trillion pushes to one end of a queue: it refuses rather than overwrite a key. A bad `side` raises `ValueError`.
+- [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError), [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError) or [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) from [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull). An item this process can't read stays at the front of the queue for one that can, and one that no build could read is removed; see [Work queues](../recipes/work-queues.md).
+
+
 # `MemoryError`
 
 It always raises, under `durable=True` too, including when SQLite runs out of memory. A [Caches](../reference/Caches.md#diskcache_oxide.Caches) lookup raises it as well, rather than handing out a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache).
@@ -184,7 +199,7 @@ It always raises, under `durable=True` too, including when SQLite runs out of me
 
 # Log lines, when the library was told not to raise
 
-Three settings turn failures into log lines on the `diskcache_oxide` logger instead of exceptions. Make sure that logger reaches your logging setup, since the line is then the only signal.
+These settings turn failures into log lines on the `diskcache_oxide` logger instead of exceptions. Make sure that logger reaches your logging setup, since the line is then the only signal.
 
 - **`on_decode_error='miss'`** logs a warning for each stored version it couldn't read, once per cache handle, and deletes the row if no build could read it.
 - **`durable=True`** counts every swallowed failure in one of three groups and logs each group's first failure at once, then at most once a minute per cache handle, with counts by operation since its last line (`get: 1204, set: 37`). Busy (a [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout)) logs at `WARNING`, failing (a full disk, an I/O error, a damaged database) at `ERROR`, and lost invalidations (any failed [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete), whose entry can now be served stale) at `ERROR`. An outage that ends within the minute shows only its first failure until the next line, so each line says more may follow. [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) logs what's left.

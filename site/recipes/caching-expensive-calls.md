@@ -36,8 +36,8 @@ print(f'cached:      {(time.perf_counter() - start) * 1000:.1f} µs per call')  
 ```
 
 
-    first call:  205.4 ms
-    cached:      1.1 µs per call
+    first call:  205.0 ms
+    cached:      1.2 µs per call
 
 
 Always give cached values an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire). It bounds how stale a value can get if an invalidation is ever missed.
@@ -57,43 +57,15 @@ if value is MISSING:
 ```
 
 
-# A caching decorator
+# A caching decorator: [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize)
 
-The same pattern wrapped up for reuse. The key is the function's full name plus its arguments, encoded as JSON so that different arguments always give different keys.
+The same pattern wrapped up for reuse. [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) keys each call on the function's full name and its arguments, and caches `None` results too.
 
 
 ``` python
-import functools
-import json
-from collections.abc import Callable
-from typing import Any
-
-from diskcache_oxide import CacheLike
-
-MISSING = object()
-
-def cached(cache: CacheLike, expire: float | None = None) -> Callable:
-    """Cache a function's results, keyed by its arguments."""
-
-    def decorator(func: Callable) -> Callable:
-        prefix = f'{func.__module__}.{func.__qualname__}:'
-
-        @functools.wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            key = prefix + json.dumps([args, kwargs], sort_keys=True, default=str)
-            value = cache.get(key, default=MISSING)
-            if value is MISSING:
-                value = func(*args, **kwargs)
-                cache.set(key, value, expire=expire)
-            return value
-
-        return wrapper
-
-    return decorator
-
 calls = 0
 
-@cached(cache, expire=600)
+@cache.memoize(expire=600)
 def episode_details(episode_id: int, *, include_transcript: bool = False) -> dict:
     global calls
     calls += 1
@@ -103,21 +75,68 @@ episode_details(512)
 episode_details(512)
 episode_details(512, include_transcript=True)
 print(f'{calls} real calls for 3 lookups')
+
+# The key a call uses, to forget one result:
+print(episode_details.__cache_key__(512))
+cache.delete(episode_details.__cache_key__(512))
 ```
 
 
     2 real calls for 3 lookups
+    ('__main__.episode_details', 512, None)
 
+
+    True
+
+
+Call it with parentheses, `@cache.memoize()`, even with no options. It's diskcache's [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), with the same keys, so code written for diskcache keeps working.
 
 A few things to keep in mind:
 
-- **Arguments become part of the key**, so keep them simple: ids, strings, numbers. `default=str` covers values like dates, but two different objects with the same `str()` would share a key.
-- **Return values must be storable**, which means built-in types (dicts, lists, tuples, sets, datetimes and so on). A dataclass or ORM object raises `TypeError` at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set): return a dict instead, or use a cache opened with `pickle=True`. See [Serialization](../user-guide/serialization.md).
-- **Long keys are fine.** A key is just an indexed string.
+- **Arguments become part of the key**, so they must be key types: `str`, `bytes`, `int`, `float`, `bool`, `None`, or tuples of those. Anything else (a list, a date, a `UUID`, an enum member, an object) raises `TypeError` before the function runs, and registering a type with `register_type()` doesn't change that: registered types are for values. Pass `str(user_id)` for a UUID, `plan.value` for an enum, and a tuple instead of a list.
+- **Leave out arguments that don't change the answer**, like a database connection, with `ignore=`. It takes keyword names and positions: `ignore=('db',)` drops `db` when it's passed as `db=...`, and `ignore=(0,)` drops the first positional argument.
+- **Keyword and positional calls are different entries:** `f(1, 2)` and `f(1, b=2)` are cached separately, as in diskcache. Keys compare by exact type, so `f(1)`, `f(1.0)` and `f(True)` are three entries too.
+- **Return values must be storable**, which means built-in types (dicts, lists, tuples, sets, datetimes and so on). A dataclass or Pydantic model raises `TypeError` at [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) until you register it once with `register_type()` (see [Storing your own types](custom-types.md)); return a dict instead, or use a cache opened with `pickle=True`. See [Serialization](../user-guide/serialization.md).
+- **`async def` functions are refused** with `TypeError`, since the decorator would cache the coroutine object. Cache inside the coroutine with [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) and [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) instead, as [Using the cache from asyncio](asyncio.md) shows.
+- **`tag=` tags every result it stores**, so `cache.evict(tag)` forgets them all at once. See [Invalidating groups of keys](invalidating-groups.md#option-2-tags).
+- **Long keys are fine.** A key is just indexed bytes.
 
 
 # Thundering herds
 
-When a popular entry expires, every worker that asks for it in the next moment misses at the same time, and all of them recompute it. For most values that's harmless. If the computation is expensive enough that doing it eight times at once hurts, refresh it ahead of expiry from a background job (see [Running a job once across workers](run-once.md)), so readers never see it missing.
+When a popular entry expires, every worker that asks for it in the next moment misses at the same time, and all of them recompute it. For most values that's harmless. When the computation is expensive enough that doing it eight times at once hurts, `memoize_stampede` keeps the herd from forming. It's [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) with early recomputation: as a result gets close to its expiry, each call has a growing chance of recomputing it, and the first caller to do so starts the work in a background thread while every caller, that one included, keeps getting the cached result. The chance grows with how long the function took last time, so a slow function starts its refresh earlier.
 
-A `memoize` with built-in stampede protection is planned (see the [roadmap](../user-guide/roadmap.md)).
+
+``` python
+from diskcache_oxide import memoize_stampede
+
+renders = 0
+
+@memoize_stampede(cache, expire=300)
+def front_page(region: str) -> dict:
+    global renders
+    renders += 1
+    return {'region': region, 'episodes': [512, 513]}
+
+front_page('us')
+front_page('us')
+print(f'{renders} render for 2 calls')
+cache.delete(front_page.__cache_key__('us'))   # forget one result, as with memoize
+```
+
+
+    1 render for 2 calls
+
+
+    True
+
+
+What to know about it:
+
+- **It's a function that takes the cache first, and [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) is required:** `memoize_stampede(cache, expire=300)`. It also takes `name`, `typed`, `tag` and `ignore`, with [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize)'s meanings and argument rules, and `beta` (default 1), where a larger value starts refreshes earlier.
+- **It protects an entry that exists.** On a real miss (the first call, or after the entry was evicted or deleted), every caller that arrives before the first one finishes runs the function, as with [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize). If that first computation is the expensive part, warm the entry from a job at startup, or have callers compute it under a [`Lock`](../user-guide/coordination.md#lock).
+- **Results are stored as `(result, seconds it took)`.** Read them through the decorated function, not with `cache.get()`.
+- **"Close to expiry" is measured with `time.time()`**, as diskcache does, even on a cache opened with a `clock=`.
+- **It works on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache)** (every call runs the function) and on a `durable=True` cache, where an outage runs the function too.
+
+When the expensive keys are known in advance, a scheduled job that refreshes them ahead of expiry also works and keeps readers from ever seeing a miss; see [Running a job once across workers](run-once.md) and [Serving stale values while refreshing](stale-while-revalidate.md#refreshing-ahead-from-a-job).

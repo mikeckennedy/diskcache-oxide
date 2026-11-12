@@ -10,5 +10,6 @@ Usage
 NullCache.clear(
     *,
     timeout=None,
+    retry=False,
 )
 ```

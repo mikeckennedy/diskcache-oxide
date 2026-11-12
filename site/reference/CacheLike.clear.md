@@ -10,5 +10,6 @@ Usage
 CacheLike.clear(
     *,
     timeout=None,
+    retry=False,
 )
 ```

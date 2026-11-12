@@ -7,7 +7,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
-<meta name="description" content="Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends until AsyncCache lands.">
+<meta name="description" content="Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends.">
 
 <title>Using the cache from asyncio – diskcache-oxide | diskcache-oxide</title>
 <style>
@@ -450,13 +450,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
   <meta property="og:type" content="website">
   <meta property="og:title" content="Using the cache from asyncio – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends until AsyncCache lands.">
+  <meta property="og:description" content="Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/recipes/asyncio.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Using the cache from asyncio – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends until AsyncCache lands.">
+  <meta name="twitter:description" content="Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -472,7 +472,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.2</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.3</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -571,6 +571,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Rate limiting</span></a>
   </div>
@@ -607,8 +613,20 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/web-workers.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Sharing a cache across web workers</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/work-queues.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Work queues</span></a>
   </div>
 </li>
     </ul>
@@ -641,7 +659,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 <div>
   <div class="description">
-    Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends until AsyncCache lands.
+    Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends.
   </div>
 </div>
 
@@ -658,7 +676,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </header>
 
 
-<p>An async framework makes one promise to every request it’s serving: nothing blocks the loop. A synchronous cache call looks like a small risk to that promise, and whether it is depends entirely on which call. diskcache-oxide’s API is synchronous. An <code>AsyncCache</code> is on the <a href="../user-guide/roadmap.html">roadmap</a>, but the sync cache already works well in an asyncio app, provided you know which calls can block the event loop and for how long. Here are the three rules.</p>
+<p>An async framework makes one promise to every request it’s serving: nothing blocks the loop. A synchronous cache call looks like a small risk to that promise, and whether it is depends entirely on which call. diskcache-oxide’s API is synchronous. An <code>AsyncCache</code> is planned as an experiment, to ship only if it earns its place (see the <a href="../user-guide/roadmap.html">roadmap</a>), but the sync cache already works well in an asyncio app, provided you know which calls can block the event loop and for how long. Here are the three rules.</p>
 <section id="reads-call-them-inline" class="level1">
 <h1>Reads: call them inline</h1>
 <p>A cached read costs a few microseconds (the <a href="../user-guide/performance.html">performance</a> page has the measurements), less than the event loop spends scheduling a task. Reads never take the write lock and never wait for writers, so <code>cache.get()</code> on the loop is the right call, and <code>await asyncio.to_thread(cache.get, ...)</code> would cost more than the read it protects.</p>
@@ -671,7 +689,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>Run writes in a worker thread</strong> with <code>asyncio.to_thread()</code>. The thread does the waiting; the loop keeps serving. The thread hop costs tens of microseconds, which is fine for a write.</li>
 <li><strong>Or keep writes inline with a short <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> and <code>durable=True</code>.</strong> Then the worst case is a dropped cache write logged once a minute, not a stalled loop.</li>
 </ul>
-<div id="dc54d356" class="cell" data-execution_count="1">
+<div id="4dc1c76c" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> asyncio</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>

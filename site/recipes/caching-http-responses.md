@@ -12,6 +12,7 @@ The entry holds the response body, its `ETag` and a freshness deadline taken fro
 import json
 import re
 import tempfile
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -25,7 +26,8 @@ def max_age(response: httpx.Response) -> float | None:
     return float(m.group(1)) if m else None
 
 def fetch_json(client: httpx.Client, url: str, *, default_ttl: float = 300, keep: float = 24 * 3600) -> object:
-    key = f'http:GET:{url}'
+    key = ('http', 'GET', url)
+    host = urlsplit(url).netloc                       # the tag, to drop one service's responses at once
     entry = cache.get(key)
     if entry is not None and now[0] < entry['fresh_until']:
         return json.loads(entry['body'])              # fresh: no request at all
@@ -48,7 +50,7 @@ def fetch_json(client: httpx.Client, url: str, *, default_ttl: float = 300, keep
             'etag': response.headers.get('etag'),
             'fresh_until': now[0] + (max_age(response) or default_ttl),
         }
-    cache.set(key, entry, expire=keep)
+    cache.set(key, entry, expire=keep, tag=host)
     return json.loads(entry['body'])
 ```
 
@@ -84,7 +86,25 @@ Why it's shaped this way:
 
 - **Freshness lives in the value, not in [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire).** The entry's [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) (`keep`) is how long a stale copy is worth holding on to for revalidation and outages. If freshness were the expiry, a stale entry would vanish just when it's useful.
 - **`304` costs one small write.** The body is kept and only `fresh_until` changes. A [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) is needed because the deadline is inside the value; [touch()](../reference/Cache.touch.md#diskcache_oxide.Cache.touch) only moves the entry's expiry.
-- **The key names the request.** Method and URL here. If the response depends on who's asking (an `Authorization` header, a tenant), put that identity in the key too, or one user's data will be served to another.
+- **The key names the request.** It's a tuple of method and URL, so no string formatting is needed and a URL can't run into the next field. If the response depends on who's asking (an `Authorization` header, a tenant), add that identity to the tuple, `('http', 'GET', url, tenant_id)`, or one user's data will be served to another.
+- **Every [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) passes the tag.** An overwrite without `tag=` leaves the entry untagged, so the `304` path tags its write too.
+
+
+# Dropping one service's responses
+
+Each entry is tagged with its upstream's host, so when a service tells you its data changed (a CMS publish webhook, a deploy of your own microservice), [evict](../reference/Cache.evict.md#diskcache_oxide.Cache.evict) drops everything cached from it in one call, whatever the URLs were:
+
+
+``` python
+fetch_json(client, 'https://api.example.com/episodes/512')
+print(cache.evict('api.example.com'), 'responses removed')
+```
+
+
+    2 responses removed
+
+
+A tuple key has no string prefix, so `iterkeys(prefix=...)` can't find these entries; the tag is how you reach them as a group. See [Invalidating groups of keys](invalidating-groups.md).
 
 
 # Variations

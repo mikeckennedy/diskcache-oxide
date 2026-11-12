@@ -445,7 +445,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script src="../theme-init.js"></script>
 
 
-  <meta name="description" content="A CacheLike with transact(), which Cache and NullCache both have.">
+  <meta name="description" content="A CacheLike with transact() and the queue calls (push, pull, peek, peekitem), which">
   <script type="application/ld+json">
 [
   {
@@ -476,13 +476,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </script>
   <meta property="og:type" content="website">
   <meta property="og:title" content="TransactionalCacheLike – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A CacheLike with transact(), which Cache and NullCache both have.">
+  <meta property="og:description" content="A CacheLike with transact() and the queue calls (push, pull, peek, peekitem), which">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/reference/TransactionalCacheLike.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="TransactionalCacheLike – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A CacheLike with transact(), which Cache and NullCache both have.">
+  <meta name="twitter:description" content="A CacheLike with transact() and the queue calls (push, pull, peek, peekitem), which">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -498,7 +498,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.2</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.3</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -605,6 +605,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.eviction_policy.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">Cache.eviction_policy</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/Cache.enabled.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">Cache.enabled</span></span></a>
   </div>
@@ -629,12 +635,6 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../reference/Cache.pop.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.pop()</span></span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
   <a href="../reference/Cache.touch.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.touch()</span></span></a>
   </div>
@@ -653,8 +653,32 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../reference/Cache.iterkeys.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.iterkeys()</span></span></a>
+  <a href="../reference/Cache.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.memoize()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.check.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.check()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.stats()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.durable.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">Cache.durable</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.__reversed__.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.__reversed__()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -667,6 +691,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/Cache.clear.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.clear()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.evict.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.evict()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -691,6 +721,24 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/Cache.close.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.close()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.pull.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.pull()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.peek.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.peek()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.peekitem.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.peekitem()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -759,6 +807,30 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.get()</span></span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.pop.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.pop()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.reset.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.reset()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.iterkeys.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.iterkeys()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.push.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.push()</span></span></a>
+  </div>
+</li>
       </ul>
   </li>
         <li class="sidebar-item sidebar-item-section">
@@ -813,6 +885,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.eviction_policy.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">FanoutCache.eviction_policy</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/FanoutCache.enabled.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">FanoutCache.enabled</span></span></a>
   </div>
@@ -845,12 +923,6 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/FanoutCache.delete.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.delete()</span></span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../reference/FanoutCache.pop.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.pop()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -891,6 +963,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.evict.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.evict()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/FanoutCache.cull.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.cull()</span></span></a>
   </div>
@@ -903,8 +981,32 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../reference/FanoutCache.iterkeys.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.iterkeys()</span></span></a>
+  <a href="../reference/FanoutCache.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.memoize()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.check.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.check()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.stats()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.durable.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">FanoutCache.durable</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.__reversed__.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.__reversed__()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -971,6 +1073,24 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/FanoutCache.get.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.get()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.pop.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.pop()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.reset.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.reset()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.iterkeys.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.iterkeys()</span></span></a>
   </div>
 </li>
       </ul>
@@ -1045,8 +1165,38 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.eviction_policy.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">NullCache.eviction_policy</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/NullCache.enabled.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">NullCache.enabled</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.durable.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">NullCache.durable</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.check.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.check()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.stats()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.reset.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.reset()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1083,6 +1233,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/NullCache.__iter__.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.__iter__()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.__reversed__.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.__reversed__()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1153,8 +1309,44 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.push.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.push()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.pull.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.pull()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.peek.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.peek()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.peekitem.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.peekitem()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/NullCache.clear.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.clear()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.evict.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.evict()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.memoize()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1233,6 +1425,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.eviction_policy.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">CacheLike.eviction_policy</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/CacheLike.enabled.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">CacheLike.enabled</span></span></a>
   </div>
@@ -1287,6 +1485,42 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.durable.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">CacheLike.durable</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.check.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.check()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.stats()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.reset.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.reset()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.__reversed__.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.__reversed__()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.memoize()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/CacheLike.iterkeys.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.iterkeys()</span></span></a>
   </div>
@@ -1301,6 +1535,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/CacheLike.clear.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.clear()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.evict.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.evict()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1602,6 +1842,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#examples" id="toc-examples" class="nav-link active" data-scroll-target="#examples">Examples</a></li>
   <li><a href="#methods" id="toc-methods" class="nav-link" data-scroll-target="#methods">Methods</a>
   <ul class="collapse">
+  <li><a href="#peek" id="toc-peek" class="nav-link" data-scroll-target="#peek"><span class="doc-object-name doc-function doc-label doc-label-method">peek()</span></a></li>
+  <li><a href="#peekitem" id="toc-peekitem" class="nav-link" data-scroll-target="#peekitem"><span class="doc-object-name doc-function doc-label doc-label-method">peekitem()</span></a></li>
+  <li><a href="#pull" id="toc-pull" class="nav-link" data-scroll-target="#pull"><span class="doc-object-name doc-function doc-label doc-label-method">pull()</span></a></li>
+  <li><a href="#push" id="toc-push" class="nav-link" data-scroll-target="#push"><span class="doc-object-name doc-function doc-label doc-label-method">push()</span></a></li>
   <li><a href="#transact" id="toc-transact" class="nav-link" data-scroll-target="#transact"><span class="doc-object-name doc-function doc-label doc-label-method">transact()</span></a></li>
   </ul></li>
   </ul>
@@ -1630,16 +1874,17 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 
 <div class="doc-subject">
-<p>A <a href="CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> with <a href="Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>, which <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and <a href="NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> both have.</p>
+<p>A <a href="CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> with <a href="Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> and the queue calls (<a href="Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push</a>, <a href="Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull</a>, <a href="Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a>, <a href="Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem</a>), which</p>
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L144-L163" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L263-L355" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">TransactionalCacheLike</span>()</span></code></pre></div>
 </div>
 <div class="doc-text">
+<p><a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and <a href="NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> both have and <a href="FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> doesn’t.</p>
 <p>On a <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, <code>with cache.transact() as tx:</code> runs the block’s calls on this thread in one write transaction; <code>tx</code> is the cache. On a <a href="NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> it’s a no-op that yields the <a href="NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>.</p>
 </div>
 <section id="examples" class="level2 doc-examples">
@@ -1667,6 +1912,38 @@ Description
 <tbody>
 <tr>
 <td>
+<a href="#peek" class="doc-function doc-label doc-label-method">peek()</a>
+</td>
+<td>
+<code>(key, value)</code> at a queue’s end, or <code>default</code>, without removing it.
+</td>
+</tr>
+<tr>
+<td>
+<a href="#peekitem" class="doc-function doc-label doc-label-method">peekitem()</a>
+</td>
+<td>
+The newest (or oldest) <code>(key, value)</code> of any key, without removing it.
+</td>
+</tr>
+<tr>
+<td>
+<a href="#pull" class="doc-function doc-label doc-label-method">pull()</a>
+</td>
+<td>
+Remove and return <code>(key, value)</code> from a queue, or <code>default</code>.
+</td>
+</tr>
+<tr>
+<td>
+<a href="#push" class="doc-function doc-label doc-label-method">push()</a>
+</td>
+<td>
+Push <code>value</code> onto a queue and return its key (None on a durable outage).
+</td>
+</tr>
+<tr>
+<td>
 <a href="#transact" class="doc-function doc-label doc-label-method">transact()</a>
 </td>
 <td>
@@ -1676,6 +1953,80 @@ A context manager holding a write transaction for the block, yielding the cache.
 </tbody>
 </table>
 <hr style="border: none; border-top: 2px solid #c5c8cd; margin: 1.5rem 0 1rem 0;">
+<section id="peek" class="level3">
+<h4 class="anchored" data-anchor-id="peek"><span class="doc-object-name doc-function doc-label doc-label-method">peek()</span></h4>
+<div class="doc-subject">
+<p><code>(key, value)</code> at a queue’s end, or <code>default</code>, without removing it.</p>
+</div>
+<div class="doc-usage-source">
+<p>Usage</p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L342-L352" target="_blank" rel="noopener">Source</a></p>
+</div>
+<div class="doc-signature doc-Kind.FUNCTION">
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>peek(</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    prefix<span class="op">=</span><span class="va">None</span>,</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    default<span class="op">=</span>(<span class="va">None</span>, <span class="va">None</span>),</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    side<span class="op">=</span><span class="st">"front"</span>,</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>    <span class="op">*</span>,</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>    expire_time<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>    tag<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>    retry<span class="op">=</span><span class="va">False</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+</section>
+<hr style="border: none; border-top: 2px dotted #b0b4ba; margin: 1.5rem 0 1rem 0;">
+<section id="peekitem" class="level3">
+<h4 class="anchored" data-anchor-id="peekitem"><span class="doc-object-name doc-function doc-label doc-label-method">peekitem()</span></h4>
+<div class="doc-subject">
+<p>The newest (or oldest) <code>(key, value)</code> of any key, without removing it.</p>
+</div>
+<div class="doc-usage-source">
+<p>Usage</p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L354-L355" target="_blank" rel="noopener">Source</a></p>
+</div>
+<div class="doc-signature doc-Kind.FUNCTION">
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>peekitem(last<span class="op">=</span><span class="va">True</span>, <span class="op">*</span>, expire_time<span class="op">=</span><span class="va">False</span>, tag<span class="op">=</span><span class="va">False</span>, retry<span class="op">=</span><span class="va">False</span>)</span></code></pre></div>
+</div>
+</section>
+<hr style="border: none; border-top: 2px dotted #b0b4ba; margin: 1.5rem 0 1rem 0;">
+<section id="pull" class="level3">
+<h4 class="anchored" data-anchor-id="pull"><span class="doc-object-name doc-function doc-label doc-label-method">pull()</span></h4>
+<div class="doc-subject">
+<p>Remove and return <code>(key, value)</code> from a queue, or <code>default</code>.</p>
+</div>
+<div class="doc-usage-source">
+<p>Usage</p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L330-L340" target="_blank" rel="noopener">Source</a></p>
+</div>
+<div class="doc-signature doc-Kind.FUNCTION">
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>pull(</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>    prefix<span class="op">=</span><span class="va">None</span>,</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    default<span class="op">=</span>(<span class="va">None</span>, <span class="va">None</span>),</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    side<span class="op">=</span><span class="st">"front"</span>,</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    <span class="op">*</span>,</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    expire_time<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    tag<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    retry<span class="op">=</span><span class="va">False</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+</section>
+<hr style="border: none; border-top: 2px dotted #b0b4ba; margin: 1.5rem 0 1rem 0;">
+<section id="push" class="level3">
+<h4 class="anchored" data-anchor-id="push"><span class="doc-object-name doc-function doc-label doc-label-method">push()</span></h4>
+<div class="doc-subject">
+<p>Push <code>value</code> onto a queue and return its key (None on a durable outage).</p>
+</div>
+<div class="doc-usage-source">
+<p>Usage</p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L318-L328" target="_blank" rel="noopener">Source</a></p>
+</div>
+<div class="doc-signature doc-Kind.FUNCTION">
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>push(<span class="va">self</span>, value: Any, prefix: <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, side: Literal[<span class="st">'front'</span>, <span class="st">'back'</span>] <span class="op">=</span> <span class="st">'back'</span>, expire: <span class="bu">float</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, tag: Key <span class="op">=</span> <span class="va">None</span>, retry: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> <span class="bu">int</span> <span class="op">|</span> <span class="va">None</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>push(<span class="va">self</span>, value: Any, prefix: <span class="bu">str</span>, side: Literal[<span class="st">'front'</span>, <span class="st">'back'</span>] <span class="op">=</span> <span class="st">'back'</span>, expire: <span class="bu">float</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, tag: Key <span class="op">=</span> <span class="va">None</span>, retry: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>push(<span class="va">self</span>, value: Any, prefix: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, side: Literal[<span class="st">'front'</span>, <span class="st">'back'</span>] <span class="op">=</span> <span class="st">'back'</span>, expire: <span class="bu">float</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, tag: Key <span class="op">=</span> <span class="va">None</span>, retry: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> <span class="bu">int</span> <span class="op">|</span> <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span></span></code></pre></div>
+</div>
+</section>
+<hr style="border: none; border-top: 2px dotted #b0b4ba; margin: 1.5rem 0 1rem 0;">
 <section id="transact" class="level3">
 <h4 class="anchored" data-anchor-id="transact"><span class="doc-object-name doc-function doc-label doc-label-method">transact()</span></h4>
 <div class="doc-subject">
@@ -1683,10 +2034,10 @@ A context manager holding a write transaction for the block, yielding the cache.
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L162-L163" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/diskcache_oxide/protocol.py#L282-L283" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>transact(retry<span class="op">=</span><span class="va">False</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>transact(retry<span class="op">=</span><span class="va">False</span>)</span></code></pre></div>
 </div>
 
 

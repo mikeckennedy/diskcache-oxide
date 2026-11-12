@@ -27,11 +27,14 @@ As on [Cache](Cache.md#diskcache_oxide.Cache), a transaction belongs to a thread
 ## Parameters
 
 
-`key: str`  
+`key: Key`  
 Keyword-only. Any key on the shard to hold; it needn't exist.
 
 `retry: bool = ``False`  
 As for [Cache.transact()](Cache.transact.md#diskcache_oxide.Cache.transact).
+
+`retry: bool = ``False`  
+On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call gets through, each round with the whole [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), a `durable=True` handle included. Only [Timeout](Timeout.md#diskcache_oxide.Timeout) is retried.
 
 
 ## Raises

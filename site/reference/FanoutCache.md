@@ -14,6 +14,7 @@ FanoutCache(
     shards=None,
     size_limit=None,
     cull_limit=None,
+    eviction_policy=None,
     serializer="msgpack",
     pickle=False,
     types=None,
@@ -55,6 +56,9 @@ The disk budget in bytes for the whole cache, split evenly (floored) across the 
 
 `cull_limit: int | None = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache), per shard.
+
+`eviction_policy: Literal[``"least-recently-stored", `<span class="st">`"none"``] | None`</span>` = None`  
+As for [Cache](Cache.md#diskcache_oxide.Cache), on every shard.
 
 `serializer: str = ``"msgpack"`  
 As for [Cache](Cache.md#diskcache_oxide.Cache).

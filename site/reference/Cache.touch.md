@@ -10,6 +10,8 @@ Usage
 Cache.touch(
     key,
     expire=None,
+    *,
+    retry=False,
 )
 ```
 
@@ -17,11 +19,14 @@ Cache.touch(
 ## Parameters
 
 
-`key: str`  
+`key: Key`  
 The key.
 
 `expire: float | None = None`  
 Seconds from now until the entry expires, or None to make it never expire.
+
+`retry: bool = ``False`  
+On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call gets through, each round with the whole [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), a `durable=True` handle included. Only [Timeout](Timeout.md#diskcache_oxide.Timeout) is retried.
 
 
 ## Returns

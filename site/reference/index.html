@@ -451,7 +451,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-09">v0.1.2</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.3</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -558,6 +558,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.eviction_policy.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">Cache.eviction_policy</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/Cache.enabled.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">Cache.enabled</span></span></a>
   </div>
@@ -582,12 +588,6 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../reference/Cache.pop.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.pop()</span></span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
   <a href="../reference/Cache.touch.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.touch()</span></span></a>
   </div>
@@ -606,8 +606,32 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../reference/Cache.iterkeys.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.iterkeys()</span></span></a>
+  <a href="../reference/Cache.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.memoize()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.check.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.check()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.stats()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.durable.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">Cache.durable</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.__reversed__.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.__reversed__()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -620,6 +644,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/Cache.clear.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.clear()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.evict.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.evict()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -644,6 +674,24 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/Cache.close.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.close()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.pull.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.pull()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.peek.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.peek()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.peekitem.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.peekitem()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -712,6 +760,30 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.get()</span></span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.pop.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.pop()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.reset.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.reset()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.iterkeys.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.iterkeys()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.push.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">Cache.push()</span></span></a>
+  </div>
+</li>
       </ul>
   </li>
         <li class="sidebar-item sidebar-item-section">
@@ -766,6 +838,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.eviction_policy.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">FanoutCache.eviction_policy</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/FanoutCache.enabled.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">FanoutCache.enabled</span></span></a>
   </div>
@@ -798,12 +876,6 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/FanoutCache.delete.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.delete()</span></span></a>
-  </div>
-</li>
-          <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../reference/FanoutCache.pop.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.pop()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -844,6 +916,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.evict.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.evict()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/FanoutCache.cull.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.cull()</span></span></a>
   </div>
@@ -856,8 +934,32 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
-  <a href="../reference/FanoutCache.iterkeys.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.iterkeys()</span></span></a>
+  <a href="../reference/FanoutCache.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.memoize()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.check.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.check()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.stats()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.durable.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">FanoutCache.durable</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.__reversed__.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.__reversed__()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -924,6 +1026,24 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/FanoutCache.get.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.get()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.pop.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.pop()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.reset.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.reset()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.iterkeys.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">FanoutCache.iterkeys()</span></span></a>
   </div>
 </li>
       </ul>
@@ -998,8 +1118,38 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.eviction_policy.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">NullCache.eviction_policy</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/NullCache.enabled.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">NullCache.enabled</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.durable.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">NullCache.durable</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.check.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.check()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.stats()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.reset.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.reset()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1036,6 +1186,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/NullCache.__iter__.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.__iter__()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.__reversed__.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.__reversed__()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1106,8 +1262,44 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.push.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.push()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.pull.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.pull()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.peek.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.peek()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.peekitem.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.peekitem()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/NullCache.clear.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.clear()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.evict.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.evict()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">NullCache.memoize()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1186,6 +1378,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.eviction_policy.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">CacheLike.eviction_policy</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/CacheLike.enabled.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">CacheLike.enabled</span></span></a>
   </div>
@@ -1240,6 +1438,42 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.durable.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-attribute doc-label doc-label-property">CacheLike.durable</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.check.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.check()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.stats()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.reset.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.reset()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.__reversed__.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.__reversed__()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.memoize.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.memoize()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/CacheLike.iterkeys.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.iterkeys()</span></span></a>
   </div>
@@ -1254,6 +1488,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/CacheLike.clear.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.clear()</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.evict.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="doc-object-name doc-function doc-label doc-label-method">CacheLike.evict()</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1625,6 +1865,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>The most entries a single <code>set()</code> evicts when the cache is over <code>size_limit</code>.</p>
 </dd>
+<dt><a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="doc-attribute doc-label doc-label-property">Cache.eviction_policy</a></dt>
+<dd>
+<p><code>'least-recently-stored'</code> or <code>'none'</code>, as this handle last saw it stored (at open or its</p>
+</dd>
 <dt><a href="../reference/Cache.enabled.html#diskcache_oxide.Cache.enabled" class="doc-attribute doc-label doc-label-property">Cache.enabled</a></dt>
 <dd>
 <p>Always True for a real cache; False for a <code>NullCache</code>.</p>
@@ -1641,10 +1885,6 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Remove <code>key</code>.</p>
 </dd>
-<dt><a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="doc-function doc-label doc-label-method">Cache.pop()</a></dt>
-<dd>
-<p>Remove <code>key</code> and return its value, delivering it to exactly one caller.</p>
-</dd>
 <dt><a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="doc-function doc-label doc-label-method">Cache.touch()</a></dt>
 <dd>
 <p>Change the expiry of an existing entry without rewriting its value.</p>
@@ -1657,9 +1897,25 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Subtract <code>delta</code> from the number stored under <code>key</code>, atomically. See <code>incr()</code>.</p>
 </dd>
-<dt><a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="doc-function doc-label doc-label-method">Cache.iterkeys()</a></dt>
+<dt><a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="doc-function doc-label doc-label-method">Cache.memoize()</a></dt>
 <dd>
-<p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
+<p>Return a decorator that caches the function’s results in this cache, as diskcache’s <code>memoize</code>.</p>
+</dd>
+<dt><a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="doc-function doc-label doc-label-method">Cache.check()</a></dt>
+<dd>
+<p>Check the database and the value files against each other, as diskcache’s <code>check()</code>.</p>
+</dd>
+<dt><a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="doc-function doc-label doc-label-method">Cache.stats()</a></dt>
+<dd>
+<p><code>(hits, misses)</code> of <code>get</code> and <code>cache[key]</code> in this process, as diskcache’s <code>stats()</code>.</p>
+</dd>
+<dt><a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="doc-attribute doc-label doc-label-property">Cache.durable</a></dt>
+<dd>
+<p>True for a <code>durable=True</code> handle.</p>
+</dd>
+<dt><a href="../reference/Cache.__reversed__.html#diskcache_oxide.Cache.__reversed__" class="doc-function doc-label doc-label-method">Cache.__reversed__()</a></dt>
+<dd>
+<p>Keys in insertion order backwards, newest first (a <code>FanoutCache</code>: the last shard first).</p>
 </dd>
 <dt><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="doc-function doc-label doc-label-method">Cache.expire()</a></dt>
 <dd>
@@ -1668,6 +1924,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="doc-function doc-label doc-label-method">Cache.clear()</a></dt>
 <dd>
 <p>Remove every entry that existed when the call started.</p>
+</dd>
+<dt><a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="doc-function doc-label doc-label-method">Cache.evict()</a></dt>
+<dd>
+<p>Remove every entry tagged <code>tag</code> that existed when the call started.</p>
 </dd>
 <dt><a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="doc-function doc-label doc-label-method">Cache.cull()</a></dt>
 <dd>
@@ -1684,6 +1944,18 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="doc-function doc-label doc-label-method">Cache.close()</a></dt>
 <dd>
 <p>Close this handle and return its connections.</p>
+</dd>
+<dt><a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="doc-function doc-label doc-label-method">Cache.pull()</a></dt>
+<dd>
+<p>Remove and return the item at <code>side</code> of a queue, as diskcache’s <code>pull</code>.</p>
+</dd>
+<dt><a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="doc-function doc-label doc-label-method">Cache.peek()</a></dt>
+<dd>
+<p>The item at <code>side</code> of a queue, without removing it, as diskcache’s <code>peek</code>.</p>
+</dd>
+<dt><a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="doc-function doc-label doc-label-method">Cache.peekitem()</a></dt>
+<dd>
+<p>The newest entry (or with <code>last=False</code>, the oldest) of any key, without removing it, as</p>
 </dd>
 <dt><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="doc-function doc-label doc-label-method">Cache.transact()</a></dt>
 <dd>
@@ -1729,6 +2001,22 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Return the value stored for <code>key</code>, or <code>default</code> if it’s missing or expired.</p>
 </dd>
+<dt><a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="doc-function doc-label doc-label-method">Cache.pop()</a></dt>
+<dd>
+<p>Remove <code>key</code> and return its value, delivering it to exactly one caller.</p>
+</dd>
+<dt><a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="doc-function doc-label doc-label-method">Cache.reset()</a></dt>
+<dd>
+<p>Read <code>size_limit</code>, <code>cull_limit</code> or <code>eviction_policy</code> as stored now, or persist a new value and</p>
+</dd>
+<dt><a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="doc-function doc-label doc-label-method">Cache.iterkeys()</a></dt>
+<dd>
+<p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
+</dd>
+<dt><a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="doc-function doc-label doc-label-method">Cache.push()</a></dt>
+<dd>
+<p>Push <code>value</code> onto a queue and return its key, as diskcache’s <code>push</code>.</p>
+</dd>
 </dl>
 </section>
 <section id="fanoutcache" class="level2 doc-group">
@@ -1769,6 +2057,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>The most entries a single <code>set()</code> evicts from its shard when that shard is over its share.</p>
 </dd>
+<dt><a href="../reference/FanoutCache.eviction_policy.html#diskcache_oxide.FanoutCache.eviction_policy" class="doc-attribute doc-label doc-label-property">FanoutCache.eviction_policy</a></dt>
+<dd>
+<p>Shard 0’s eviction policy, as for <code>cull_limit</code>.</p>
+</dd>
 <dt><a href="../reference/FanoutCache.enabled.html#diskcache_oxide.FanoutCache.enabled" class="doc-attribute doc-label doc-label-property">FanoutCache.enabled</a></dt>
 <dd>
 <p>Always True for a real cache; False for a <code>NullCache</code>.</p>
@@ -1792,10 +2084,6 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/FanoutCache.delete.html#diskcache_oxide.FanoutCache.delete" class="doc-function doc-label doc-label-method">FanoutCache.delete()</a></dt>
 <dd>
 <p>As <code>Cache.delete</code>, on the key’s shard.</p>
-</dd>
-<dt><a href="../reference/FanoutCache.pop.html#diskcache_oxide.FanoutCache.pop" class="doc-function doc-label doc-label-method">FanoutCache.pop()</a></dt>
-<dd>
-<p>As <code>Cache.pop</code>, on the key’s shard.</p>
 </dd>
 <dt><a href="../reference/FanoutCache.touch.html#diskcache_oxide.FanoutCache.touch" class="doc-function doc-label doc-label-method">FanoutCache.touch()</a></dt>
 <dd>
@@ -1821,6 +2109,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Remove every entry that existed when the call started, from every shard.</p>
 </dd>
+<dt><a href="../reference/FanoutCache.evict.html#diskcache_oxide.FanoutCache.evict" class="doc-function doc-label doc-label-method">FanoutCache.evict()</a></dt>
+<dd>
+<p>Remove every entry tagged <code>tag</code> that existed when the call started, from every shard, as</p>
+</dd>
 <dt><a href="../reference/FanoutCache.cull.html#diskcache_oxide.FanoutCache.cull" class="doc-function doc-label doc-label-method">FanoutCache.cull()</a></dt>
 <dd>
 <p>Remove expired entries, then evict the least recently stored from each shard until it’s</p>
@@ -1829,9 +2121,25 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Checkpoint every shard’s write-ahead log and truncate it to zero, as <code>Cache.checkpoint</code> does.</p>
 </dd>
-<dt><a href="../reference/FanoutCache.iterkeys.html#diskcache_oxide.FanoutCache.iterkeys" class="doc-function doc-label doc-label-method">FanoutCache.iterkeys()</a></dt>
+<dt><a href="../reference/FanoutCache.memoize.html#diskcache_oxide.FanoutCache.memoize" class="doc-function doc-label doc-label-method">FanoutCache.memoize()</a></dt>
 <dd>
-<p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
+<p>Return a decorator that caches the function’s results in this cache, as diskcache’s <code>memoize</code>.</p>
+</dd>
+<dt><a href="../reference/FanoutCache.check.html#diskcache_oxide.FanoutCache.check" class="doc-function doc-label doc-label-method">FanoutCache.check()</a></dt>
+<dd>
+<p>Check the database and the value files against each other, as diskcache’s <code>check()</code>.</p>
+</dd>
+<dt><a href="../reference/FanoutCache.stats.html#diskcache_oxide.FanoutCache.stats" class="doc-function doc-label doc-label-method">FanoutCache.stats()</a></dt>
+<dd>
+<p><code>(hits, misses)</code> of <code>get</code> and <code>cache[key]</code> in this process, as diskcache’s <code>stats()</code>.</p>
+</dd>
+<dt><a href="../reference/FanoutCache.durable.html#diskcache_oxide.FanoutCache.durable" class="doc-attribute doc-label doc-label-property">FanoutCache.durable</a></dt>
+<dd>
+<p>True for a <code>durable=True</code> handle.</p>
+</dd>
+<dt><a href="../reference/FanoutCache.__reversed__.html#diskcache_oxide.FanoutCache.__reversed__" class="doc-function doc-label doc-label-method">FanoutCache.__reversed__()</a></dt>
+<dd>
+<p>Keys in insertion order backwards, newest first (a <code>FanoutCache</code>: the last shard first).</p>
 </dd>
 <dt><a href="../reference/FanoutCache.__iter__.html#diskcache_oxide.FanoutCache.__iter__" class="doc-function doc-label doc-label-method">FanoutCache.__iter__()</a></dt>
 <dd>
@@ -1877,6 +2185,18 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>As <code>Cache.get</code>, on the key’s shard.</p>
 </dd>
+<dt><a href="../reference/FanoutCache.pop.html#diskcache_oxide.FanoutCache.pop" class="doc-function doc-label doc-label-method">FanoutCache.pop()</a></dt>
+<dd>
+<p>As <code>Cache.pop</code>, on the key’s shard.</p>
+</dd>
+<dt><a href="../reference/FanoutCache.reset.html#diskcache_oxide.FanoutCache.reset" class="doc-function doc-label doc-label-method">FanoutCache.reset()</a></dt>
+<dd>
+<p>Read <code>size_limit</code>, <code>cull_limit</code> or <code>eviction_policy</code> as stored now, or persist a new value and</p>
+</dd>
+<dt><a href="../reference/FanoutCache.iterkeys.html#diskcache_oxide.FanoutCache.iterkeys" class="doc-function doc-label doc-label-method">FanoutCache.iterkeys()</a></dt>
+<dd>
+<p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
+</dd>
 </dl>
 </section>
 <section id="nullcache" class="level2 doc-group">
@@ -1895,7 +2215,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="doc-class doc-label doc-label-protocol">TransactionalCacheLike</a></dt>
 <dd>
-<p>A <code>CacheLike</code> with <code>transact()</code>, which <code>Cache</code> and <code>NullCache</code> both have.</p>
+<p>A <code>CacheLike</code> with <code>transact()</code> and the queue calls (<code>push</code>, <code>pull</code>, <code>peek</code>, <code>peekitem</code>), which</p>
 </dd>
 <dt><a href="../reference/ShardedCacheLike.html#diskcache_oxide.ShardedCacheLike" class="doc-class doc-label doc-label-protocol">ShardedCacheLike</a></dt>
 <dd>
@@ -1929,13 +2249,33 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>The cull limit passed to the constructor (default 10). Unused.</p>
 </dd>
+<dt><a href="../reference/NullCache.eviction_policy.html#diskcache_oxide.NullCache.eviction_policy" class="doc-attribute doc-label doc-label-property">NullCache.eviction_policy</a></dt>
+<dd>
+<p>The eviction policy passed to the constructor (default ‘least-recently-stored’). Unused.</p>
+</dd>
 <dt><a href="../reference/NullCache.enabled.html#diskcache_oxide.NullCache.enabled" class="doc-attribute doc-label doc-label-property">NullCache.enabled</a></dt>
 <dd>
 <p>Always False: caching is off.</p>
 </dd>
+<dt><a href="../reference/NullCache.durable.html#diskcache_oxide.NullCache.durable" class="doc-attribute doc-label doc-label-property">NullCache.durable</a></dt>
+<dd>
+<p>Always False: a <code>NullCache</code> has no outages to answer.</p>
+</dd>
+<dt><a href="../reference/NullCache.check.html#diskcache_oxide.NullCache.check" class="doc-function doc-label doc-label-method">NullCache.check()</a></dt>
+<dd>
+<p>Always <code>[]</code>: there is nothing to check.</p>
+</dd>
+<dt><a href="../reference/NullCache.stats.html#diskcache_oxide.NullCache.stats" class="doc-function doc-label doc-label-method">NullCache.stats()</a></dt>
+<dd>
+<p>Always <code>(0, 0)</code>: nothing is looked up.</p>
+</dd>
+<dt><a href="../reference/NullCache.reset.html#diskcache_oxide.NullCache.reset" class="doc-function doc-label doc-label-method">NullCache.reset()</a></dt>
+<dd>
+<p>Read <code>size_limit</code>, <code>cull_limit</code> or <code>eviction_policy</code>, or set it (checked as <code>Cache</code> checks it)</p>
+</dd>
 <dt><a href="../reference/NullCache.get.html#diskcache_oxide.NullCache.get" class="doc-function doc-label doc-label-method">NullCache.get()</a></dt>
 <dd>
-<p>Return <code>default</code>, as every entry has already expired. With <code>expire_time=True</code>, <code>(default, None)</code>.</p>
+<p>Return <code>default</code>, as every entry has already expired. With <code>expire_time=True</code> or <code>tag=True</code>,</p>
 </dd>
 <dt><a href="../reference/NullCache.__getitem__.html#diskcache_oxide.NullCache.__getitem__" class="doc-function doc-label doc-label-method">NullCache.__getitem__()</a></dt>
 <dd>
@@ -1954,6 +2294,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>Always False, so <code>if cache:</code> means “caching is on”.</p>
 </dd>
 <dt><a href="../reference/NullCache.__iter__.html#diskcache_oxide.NullCache.__iter__" class="doc-function doc-label doc-label-method">NullCache.__iter__()</a></dt>
+<dd>
+<p>Yields nothing.</p>
+</dd>
+<dt><a href="../reference/NullCache.__reversed__.html#diskcache_oxide.NullCache.__reversed__" class="doc-function doc-label doc-label-method">NullCache.__reversed__()</a></dt>
 <dd>
 <p>Yields nothing.</p>
 </dd>
@@ -1999,11 +2343,35 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><a href="../reference/NullCache.pop.html#diskcache_oxide.NullCache.pop" class="doc-function doc-label doc-label-method">NullCache.pop()</a></dt>
 <dd>
-<p>Return <code>default</code>. With <code>invalidate=</code>, also delete the key from that cache.</p>
+<p>Return <code>default</code>, shaped as <code>get()</code> returns it. With <code>invalidate=</code>, also delete the key from</p>
+</dd>
+<dt><a href="../reference/NullCache.push.html#diskcache_oxide.NullCache.push" class="doc-function doc-label doc-label-method">NullCache.push()</a></dt>
+<dd>
+<p>Store nothing and return the key an empty queue’s first item gets: the item expires the instant</p>
+</dd>
+<dt><a href="../reference/NullCache.pull.html#diskcache_oxide.NullCache.pull" class="doc-function doc-label doc-label-method">NullCache.pull()</a></dt>
+<dd>
+<p>Return <code>default</code> (widened as <code>Cache.pull</code> widens it): the queue is always empty. Never forwarded</p>
+</dd>
+<dt><a href="../reference/NullCache.peek.html#diskcache_oxide.NullCache.peek" class="doc-function doc-label doc-label-method">NullCache.peek()</a></dt>
+<dd>
+<p>Return <code>default</code>, as <code>pull</code> does.</p>
+</dd>
+<dt><a href="../reference/NullCache.peekitem.html#diskcache_oxide.NullCache.peekitem" class="doc-function doc-label doc-label-method">NullCache.peekitem()</a></dt>
+<dd>
+<p>Raise <code>KeyError</code>: the cache is always empty.</p>
 </dd>
 <dt><a href="../reference/NullCache.clear.html#diskcache_oxide.NullCache.clear" class="doc-function doc-label doc-label-method">NullCache.clear()</a></dt>
 <dd>
 <p>0, or with <code>invalidate=</code>, clear that cache (passing <code>timeout</code> on) and return its count.</p>
+</dd>
+<dt><a href="../reference/NullCache.evict.html#diskcache_oxide.NullCache.evict" class="doc-function doc-label doc-label-method">NullCache.evict()</a></dt>
+<dd>
+<p>0, or with <code>invalidate=</code>, evict <code>tag</code> from that cache (passing <code>timeout</code> on) and return its</p>
+</dd>
+<dt><a href="../reference/NullCache.memoize.html#diskcache_oxide.NullCache.memoize" class="doc-function doc-label doc-label-method">NullCache.memoize()</a></dt>
+<dd>
+<p>As <code>Cache.memoize</code>, but every call runs the function, as every entry has already expired. The</p>
 </dd>
 <dt><a href="../reference/NullCache.iterkeys.html#diskcache_oxide.NullCache.iterkeys" class="doc-function doc-label doc-label-method">NullCache.iterkeys()</a></dt>
 <dd>
@@ -2057,6 +2425,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>The most entries one <code>set()</code> evicts when over <code>size_limit</code>.</p>
 </dd>
+<dt><a href="../reference/CacheLike.eviction_policy.html#diskcache_oxide.CacheLike.eviction_policy" class="doc-attribute doc-label doc-label-property">CacheLike.eviction_policy</a></dt>
+<dd>
+<p><code>'least-recently-stored'</code> or <code>'none'</code>.</p>
+</dd>
 <dt><a href="../reference/CacheLike.enabled.html#diskcache_oxide.CacheLike.enabled" class="doc-attribute doc-label doc-label-property">CacheLike.enabled</a></dt>
 <dd>
 <p>True if caching is on (<code>Cache</code>), False if it’s off (<code>NullCache</code>).</p>
@@ -2093,6 +2465,30 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Subtract <code>delta</code> from the number under <code>key</code>, atomically, and return the result.</p>
 </dd>
+<dt><a href="../reference/CacheLike.durable.html#diskcache_oxide.CacheLike.durable" class="doc-attribute doc-label doc-label-property">CacheLike.durable</a></dt>
+<dd>
+<p>True for a <code>durable=True</code> handle (always False on a <code>NullCache</code>).</p>
+</dd>
+<dt><a href="../reference/CacheLike.check.html#diskcache_oxide.CacheLike.check" class="doc-function doc-label doc-label-method">CacheLike.check()</a></dt>
+<dd>
+<p>Check the database and value files against each other; <code>[]</code> on a <code>NullCache</code>.</p>
+</dd>
+<dt><a href="../reference/CacheLike.stats.html#diskcache_oxide.CacheLike.stats" class="doc-function doc-label doc-label-method">CacheLike.stats()</a></dt>
+<dd>
+<p><code>(hits, misses)</code> of <code>get</code> in this process; <code>(0, 0)</code> on a <code>NullCache</code>.</p>
+</dd>
+<dt><a href="../reference/CacheLike.reset.html#diskcache_oxide.CacheLike.reset" class="doc-function doc-label doc-label-method">CacheLike.reset()</a></dt>
+<dd>
+<p>Read or set <code>size_limit</code>, <code>cull_limit</code> or <code>eviction_policy</code>.</p>
+</dd>
+<dt><a href="../reference/CacheLike.__reversed__.html#diskcache_oxide.CacheLike.__reversed__" class="doc-function doc-label doc-label-method">CacheLike.__reversed__()</a></dt>
+<dd>
+<p>Keys in insertion order backwards, newest first.</p>
+</dd>
+<dt><a href="../reference/CacheLike.memoize.html#diskcache_oxide.CacheLike.memoize" class="doc-function doc-label doc-label-method">CacheLike.memoize()</a></dt>
+<dd>
+<p>A decorator caching a function’s results in this cache (diskcache’s <code>memoize</code>).</p>
+</dd>
 <dt><a href="../reference/CacheLike.iterkeys.html#diskcache_oxide.CacheLike.iterkeys" class="doc-function doc-label doc-label-method">CacheLike.iterkeys()</a></dt>
 <dd>
 <p>Iterate over keys in sorted order, optionally only those starting with <code>prefix</code>.</p>
@@ -2104,6 +2500,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/CacheLike.clear.html#diskcache_oxide.CacheLike.clear" class="doc-function doc-label doc-label-method">CacheLike.clear()</a></dt>
 <dd>
 <p>Remove every entry that existed when the call started. Returns how many.</p>
+</dd>
+<dt><a href="../reference/CacheLike.evict.html#diskcache_oxide.CacheLike.evict" class="doc-function doc-label doc-label-method">CacheLike.evict()</a></dt>
+<dd>
+<p>Remove every entry tagged <code>tag</code> that existed when the call started. Returns how many.</p>
 </dd>
 <dt><a href="../reference/CacheLike.cull.html#diskcache_oxide.CacheLike.cull" class="doc-function doc-label doc-label-method">CacheLike.cull()</a></dt>
 <dd>

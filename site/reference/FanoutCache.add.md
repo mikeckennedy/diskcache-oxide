@@ -11,5 +11,8 @@ FanoutCache.add(
     key,
     value,
     expire=None,
+    *,
+    tag=None,
+    retry=False,
 )
 ```

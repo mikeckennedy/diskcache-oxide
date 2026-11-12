@@ -21,7 +21,7 @@ On a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache), `with cache.tran
 ``` python
 from diskcache_oxide import ShardedCacheLike
 
-def bump(cache: ShardedCacheLike, key: str) -> None:
+def bump(cache: ShardedCacheLike, key: Key) -> None:
     with cache.transact(key=key) as tx:
         tx.set(key, tx.get(key, 0) + 1)
 ```

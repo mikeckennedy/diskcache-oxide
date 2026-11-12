@@ -32,6 +32,9 @@ The disk budget in bytes. A `set()` that finds the cache over it evicts entries.
 [Cache.cull_limit](Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit)  
 The most entries a single `set()` evicts when the cache is over `size_limit`.
 
+[Cache.eviction_policy](Cache.eviction_policy.md#diskcache_oxide.Cache.eviction_policy)  
+`'least-recently-stored'` or `'none'`, as this handle last saw it stored (at open or its
+
 [Cache.enabled](Cache.enabled.md#diskcache_oxide.Cache.enabled)  
 Always True for a real cache; False for a `NullCache`.
 
@@ -44,9 +47,6 @@ Store `value` only if `key` is missing or expired.
 [Cache.delete()](Cache.delete.md#diskcache_oxide.Cache.delete)  
 Remove `key`.
 
-[Cache.pop()](Cache.pop.md#diskcache_oxide.Cache.pop)  
-Remove `key` and return its value, delivering it to exactly one caller.
-
 [Cache.touch()](Cache.touch.md#diskcache_oxide.Cache.touch)  
 Change the expiry of an existing entry without rewriting its value.
 
@@ -56,14 +56,29 @@ Add `delta` to the number stored under `key`, atomically, and return the result.
 [Cache.decr()](Cache.decr.md#diskcache_oxide.Cache.decr)  
 Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 
-[Cache.iterkeys()](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)  
-Iterate over keys in sorted order, optionally only those starting with `prefix`.
+[Cache.memoize()](Cache.memoize.md#diskcache_oxide.Cache.memoize)  
+Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
+
+[Cache.check()](Cache.check.md#diskcache_oxide.Cache.check)  
+Check the database and the value files against each other, as diskcache's `check()`.
+
+[Cache.stats()](Cache.stats.md#diskcache_oxide.Cache.stats)  
+`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
+
+[Cache.durable](Cache.durable.md#diskcache_oxide.Cache.durable)  
+True for a `durable=True` handle.
+
+[Cache.__reversed__()](Cache.__reversed__.md#diskcache_oxide.Cache.__reversed__)  
+Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first).
 
 [Cache.expire()](Cache.expire.md#diskcache_oxide.Cache.expire)  
 Remove every expired entry, and its value file.
 
 [Cache.clear()](Cache.clear.md#diskcache_oxide.Cache.clear)  
 Remove every entry that existed when the call started.
+
+[Cache.evict()](Cache.evict.md#diskcache_oxide.Cache.evict)  
+Remove every entry tagged `tag` that existed when the call started.
 
 [Cache.cull()](Cache.cull.md#diskcache_oxide.Cache.cull)  
 Remove expired entries, then evict the least recently stored until under `size_limit`.
@@ -76,6 +91,15 @@ Copy the write-ahead log into the database and truncate it to zero.
 
 [Cache.close()](Cache.close.md#diskcache_oxide.Cache.close)  
 Close this handle and return its connections.
+
+[Cache.pull()](Cache.pull.md#diskcache_oxide.Cache.pull)  
+Remove and return the item at `side` of a queue, as diskcache's `pull`.
+
+[Cache.peek()](Cache.peek.md#diskcache_oxide.Cache.peek)  
+The item at `side` of a queue, without removing it, as diskcache's `peek`.
+
+[Cache.peekitem()](Cache.peekitem.md#diskcache_oxide.Cache.peekitem)  
+The newest entry (or with `last=False`, the oldest) of any key, without removing it, as
 
 [Cache.transact()](Cache.transact.md#diskcache_oxide.Cache.transact)  
 A write transaction, for `with cache.transact() as tx:`.
@@ -110,6 +134,18 @@ Close the cache, as `close()` does.
 [Cache.get()](Cache.get.md#diskcache_oxide.Cache.get)  
 Return the value stored for `key`, or `default` if it's missing or expired.
 
+[Cache.pop()](Cache.pop.md#diskcache_oxide.Cache.pop)  
+Remove `key` and return its value, delivering it to exactly one caller.
+
+[Cache.reset()](Cache.reset.md#diskcache_oxide.Cache.reset)  
+Read `size_limit`, `cull_limit` or `eviction_policy` as stored now, or persist a new value and
+
+[Cache.iterkeys()](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)  
+Iterate over keys in sorted order, optionally only those starting with `prefix`.
+
+[Cache.push()](Cache.push.md#diskcache_oxide.Cache.push)  
+Push `value` onto a queue and return its key, as diskcache's `push`.
+
 
 ## FanoutCache
 
@@ -142,6 +178,9 @@ The disk budget in bytes: the sum of every shard's.
 [FanoutCache.cull_limit](FanoutCache.cull_limit.md#diskcache_oxide.FanoutCache.cull_limit)  
 The most entries a single `set()` evicts from its shard when that shard is over its share.
 
+[FanoutCache.eviction_policy](FanoutCache.eviction_policy.md#diskcache_oxide.FanoutCache.eviction_policy)  
+Shard 0's eviction policy, as for `cull_limit`.
+
 [FanoutCache.enabled](FanoutCache.enabled.md#diskcache_oxide.FanoutCache.enabled)  
 Always True for a real cache; False for a `NullCache`.
 
@@ -159,9 +198,6 @@ As `Cache.add`, on the key's shard: atomic across threads and processes.
 
 [FanoutCache.delete()](FanoutCache.delete.md#diskcache_oxide.FanoutCache.delete)  
 As `Cache.delete`, on the key's shard.
-
-[FanoutCache.pop()](FanoutCache.pop.md#diskcache_oxide.FanoutCache.pop)  
-As `Cache.pop`, on the key's shard.
 
 [FanoutCache.touch()](FanoutCache.touch.md#diskcache_oxide.FanoutCache.touch)  
 As `Cache.touch`, on the key's shard.
@@ -181,14 +217,29 @@ Remove every expired entry from every shard, and its value file, as `Cache.expir
 [FanoutCache.clear()](FanoutCache.clear.md#diskcache_oxide.FanoutCache.clear)  
 Remove every entry that existed when the call started, from every shard.
 
+[FanoutCache.evict()](FanoutCache.evict.md#diskcache_oxide.FanoutCache.evict)  
+Remove every entry tagged `tag` that existed when the call started, from every shard, as
+
 [FanoutCache.cull()](FanoutCache.cull.md#diskcache_oxide.FanoutCache.cull)  
 Remove expired entries, then evict the least recently stored from each shard until it's
 
 [FanoutCache.checkpoint()](FanoutCache.checkpoint.md#diskcache_oxide.FanoutCache.checkpoint)  
 Checkpoint every shard's write-ahead log and truncate it to zero, as `Cache.checkpoint` does.
 
-[FanoutCache.iterkeys()](FanoutCache.iterkeys.md#diskcache_oxide.FanoutCache.iterkeys)  
-Iterate over keys in sorted order, optionally only those starting with `prefix`.
+[FanoutCache.memoize()](FanoutCache.memoize.md#diskcache_oxide.FanoutCache.memoize)  
+Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
+
+[FanoutCache.check()](FanoutCache.check.md#diskcache_oxide.FanoutCache.check)  
+Check the database and the value files against each other, as diskcache's `check()`.
+
+[FanoutCache.stats()](FanoutCache.stats.md#diskcache_oxide.FanoutCache.stats)  
+`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
+
+[FanoutCache.durable](FanoutCache.durable.md#diskcache_oxide.FanoutCache.durable)  
+True for a `durable=True` handle.
+
+[FanoutCache.__reversed__()](FanoutCache.__reversed__.md#diskcache_oxide.FanoutCache.__reversed__)  
+Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first).
 
 [FanoutCache.__iter__()](FanoutCache.__iter__.md#diskcache_oxide.FanoutCache.__iter__)  
 Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on.
@@ -223,6 +274,15 @@ Close the cache, as `close()` does.
 [FanoutCache.get()](FanoutCache.get.md#diskcache_oxide.FanoutCache.get)  
 As `Cache.get`, on the key's shard.
 
+[FanoutCache.pop()](FanoutCache.pop.md#diskcache_oxide.FanoutCache.pop)  
+As `Cache.pop`, on the key's shard.
+
+[FanoutCache.reset()](FanoutCache.reset.md#diskcache_oxide.FanoutCache.reset)  
+Read `size_limit`, `cull_limit` or `eviction_policy` as stored now, or persist a new value and
+
+[FanoutCache.iterkeys()](FanoutCache.iterkeys.md#diskcache_oxide.FanoutCache.iterkeys)  
+Iterate over keys in sorted order, optionally only those starting with `prefix`.
+
 
 ## NullCache
 
@@ -237,7 +297,7 @@ A switched-off cache, so app code needs no `if cache is None` checks.
 What application code can rely on from a `Cache`, a `FanoutCache` or a `NullCache`.
 
 [TransactionalCacheLike](TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike)  
-A `CacheLike` with `transact()`, which `Cache` and `NullCache` both have.
+A `CacheLike` with `transact()` and the queue calls (`push`, `pull`, `peek`, `peekitem`), which
 
 [ShardedCacheLike](ShardedCacheLike.md#diskcache_oxide.ShardedCacheLike)  
 A `CacheLike` with a sharded cache's `transact(*, key, retry=False)`, which `FanoutCache` and
@@ -264,11 +324,26 @@ The size limit passed to the constructor (default 1 GiB). Unused.
 [NullCache.cull_limit](NullCache.cull_limit.md#diskcache_oxide.NullCache.cull_limit)  
 The cull limit passed to the constructor (default 10). Unused.
 
+[NullCache.eviction_policy](NullCache.eviction_policy.md#diskcache_oxide.NullCache.eviction_policy)  
+The eviction policy passed to the constructor (default 'least-recently-stored'). Unused.
+
 [NullCache.enabled](NullCache.enabled.md#diskcache_oxide.NullCache.enabled)  
 Always False: caching is off.
 
+[NullCache.durable](NullCache.durable.md#diskcache_oxide.NullCache.durable)  
+Always False: a `NullCache` has no outages to answer.
+
+[NullCache.check()](NullCache.check.md#diskcache_oxide.NullCache.check)  
+Always `[]`: there is nothing to check.
+
+[NullCache.stats()](NullCache.stats.md#diskcache_oxide.NullCache.stats)  
+Always `(0, 0)`: nothing is looked up.
+
+[NullCache.reset()](NullCache.reset.md#diskcache_oxide.NullCache.reset)  
+Read `size_limit`, `cull_limit` or `eviction_policy`, or set it (checked as `Cache` checks it)
+
 [NullCache.get()](NullCache.get.md#diskcache_oxide.NullCache.get)  
-Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`.
+Return `default`, as every entry has already expired. With `expire_time=True` or `tag=True`,
 
 [NullCache.__getitem__()](NullCache.__getitem__.md#diskcache_oxide.NullCache.__getitem__)  
 Always raises `KeyError`, as every entry has already expired.
@@ -283,6 +358,9 @@ Always 0.
 Always False, so `if cache:` means "caching is on".
 
 [NullCache.__iter__()](NullCache.__iter__.md#diskcache_oxide.NullCache.__iter__)  
+Yields nothing.
+
+[NullCache.__reversed__()](NullCache.__reversed__.md#diskcache_oxide.NullCache.__reversed__)  
 Yields nothing.
 
 [NullCache.volume()](NullCache.volume.md#diskcache_oxide.NullCache.volume)  
@@ -316,10 +394,28 @@ False, or with `invalidate=`, delete the key from that cache and return its resu
 Raise `KeyError`, or with `invalidate=`, delete the key from that cache.
 
 [NullCache.pop()](NullCache.pop.md#diskcache_oxide.NullCache.pop)  
-Return `default`. With `invalidate=`, also delete the key from that cache.
+Return `default`, shaped as `get()` returns it. With `invalidate=`, also delete the key from
+
+[NullCache.push()](NullCache.push.md#diskcache_oxide.NullCache.push)  
+Store nothing and return the key an empty queue's first item gets: the item expires the instant
+
+[NullCache.pull()](NullCache.pull.md#diskcache_oxide.NullCache.pull)  
+Return `default` (widened as `Cache.pull` widens it): the queue is always empty. Never forwarded
+
+[NullCache.peek()](NullCache.peek.md#diskcache_oxide.NullCache.peek)  
+Return `default`, as `pull` does.
+
+[NullCache.peekitem()](NullCache.peekitem.md#diskcache_oxide.NullCache.peekitem)  
+Raise `KeyError`: the cache is always empty.
 
 [NullCache.clear()](NullCache.clear.md#diskcache_oxide.NullCache.clear)  
 0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count.
+
+[NullCache.evict()](NullCache.evict.md#diskcache_oxide.NullCache.evict)  
+0, or with `invalidate=`, evict `tag` from that cache (passing `timeout` on) and return its
+
+[NullCache.memoize()](NullCache.memoize.md#diskcache_oxide.NullCache.memoize)  
+As `Cache.memoize`, but every call runs the function, as every entry has already expired. The
 
 [NullCache.iterkeys()](NullCache.iterkeys.md#diskcache_oxide.NullCache.iterkeys)  
 Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works.
@@ -361,6 +457,9 @@ The disk budget in bytes.
 [CacheLike.cull_limit](CacheLike.cull_limit.md#diskcache_oxide.CacheLike.cull_limit)  
 The most entries one `set()` evicts when over `size_limit`.
 
+[CacheLike.eviction_policy](CacheLike.eviction_policy.md#diskcache_oxide.CacheLike.eviction_policy)  
+`'least-recently-stored'` or `'none'`.
+
 [CacheLike.enabled](CacheLike.enabled.md#diskcache_oxide.CacheLike.enabled)  
 True if caching is on (`Cache`), False if it's off (`NullCache`).
 
@@ -388,6 +487,24 @@ Add `delta` to the number under `key`, atomically, and return the result.
 [CacheLike.decr()](CacheLike.decr.md#diskcache_oxide.CacheLike.decr)  
 Subtract `delta` from the number under `key`, atomically, and return the result.
 
+[CacheLike.durable](CacheLike.durable.md#diskcache_oxide.CacheLike.durable)  
+True for a `durable=True` handle (always False on a `NullCache`).
+
+[CacheLike.check()](CacheLike.check.md#diskcache_oxide.CacheLike.check)  
+Check the database and value files against each other; `[]` on a `NullCache`.
+
+[CacheLike.stats()](CacheLike.stats.md#diskcache_oxide.CacheLike.stats)  
+`(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`.
+
+[CacheLike.reset()](CacheLike.reset.md#diskcache_oxide.CacheLike.reset)  
+Read or set `size_limit`, `cull_limit` or `eviction_policy`.
+
+[CacheLike.__reversed__()](CacheLike.__reversed__.md#diskcache_oxide.CacheLike.__reversed__)  
+Keys in insertion order backwards, newest first.
+
+[CacheLike.memoize()](CacheLike.memoize.md#diskcache_oxide.CacheLike.memoize)  
+A decorator caching a function's results in this cache (diskcache's `memoize`).
+
 [CacheLike.iterkeys()](CacheLike.iterkeys.md#diskcache_oxide.CacheLike.iterkeys)  
 Iterate over keys in sorted order, optionally only those starting with `prefix`.
 
@@ -396,6 +513,9 @@ Remove every expired entry. Returns how many were removed.
 
 [CacheLike.clear()](CacheLike.clear.md#diskcache_oxide.CacheLike.clear)  
 Remove every entry that existed when the call started. Returns how many.
+
+[CacheLike.evict()](CacheLike.evict.md#diskcache_oxide.CacheLike.evict)  
+Remove every entry tagged `tag` that existed when the call started. Returns how many.
 
 [CacheLike.cull()](CacheLike.cull.md#diskcache_oxide.CacheLike.cull)  
 Remove expired entries, then evict until under `size_limit`. Returns how many.

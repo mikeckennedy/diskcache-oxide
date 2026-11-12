@@ -50,7 +50,7 @@ missing = cache.get('user:99', default={})  # {}
 value, expires_at = cache.get('user:42', expire_time=True)
 ```
 
-- Keys are `str`. Other key types raise `TypeError` for now (they're planned).
+- Keys are `str`, `bytes`, `int`, `float`, `bool`, `None`, or tuples of those, such as `('user', 42)`. They're compared by exact type, so `1`, `1.0` and `True` are three keys. Anything else (a `list`, a `dict`, an object) raises `TypeError`; build a tuple or a string instead.
 - Values can be `str`, `bytes`, `int`, `float`, `bool`, `None`, `Decimal`, and lists, tuples, dicts, sets, frozensets, datetimes and dates made of those. They come back as the types you stored. See [Serialization](serialization.md).
 - [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) is in seconds. Leave it out for an entry that never expires. `touch(key, expire=...)` changes the expiry of an existing entry.
 
@@ -73,6 +73,19 @@ value = cache.pop('session:7')      # the value, or the default if it was missin
 ```
 
 
+## Cache a function's results
+
+[memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize) wraps the check-the-cache, compute-on-a-miss, store-the-result pattern in a decorator, keyed on the function's name and its arguments:
+
+``` python
+@cache.memoize(expire=600)
+def episode_details(episode_id: int) -> dict:
+    return db.load_episode(episode_id)
+```
+
+It's diskcache's [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), with the same keys. The arguments become part of the key, so they must be key types. [Caching expensive calls](../recipes/caching-expensive-calls.md) covers it in full.
+
+
 # Atomic operations across processes
 
 Picture eight gunicorn workers, each with a scheduler that fires the same hourly job. You want it to run once. There's no leader, no Redis, and no way for the workers to talk to each other except through the cache. That turns out to be enough. Each call below is a single SQLite transaction, so it's atomic across every thread and process using the directory, and "store only if absent", done atomically, is a lock if you squint. These are what make a shared cache useful for coordination, not only for caching.
@@ -92,6 +105,8 @@ cache.decr('page_views', 2)       # 4
 
 To make several calls atomic together, group them with `with cache.transact() as tx:`. See [Transactions](transactions.md).
 
+The same atomic calls are the building blocks for more. [Coordination](coordination.md) has locks, semaphores and a throttle that hold across every process, and [Work queues](../recipes/work-queues.md) shows [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push) and [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull), a queue that hands each item to exactly one worker.
+
 
 # List keys
 
@@ -100,7 +115,7 @@ for key in cache.iterkeys(prefix='user:'):
     print(key)
 ```
 
-[iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) yields keys in sorted order (`reverse=True` for descending), and with `prefix=` it's an indexed range scan: 400,000 keys scan in about 10 ms, against about 25 seconds for diskcache. Iterating the cache itself (`for key in cache`) yields keys in insertion order.
+[iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) yields keys in sorted order (`reverse=True` for descending), and with `prefix=` it's an indexed range scan: 400,000 keys scan in about 10 ms, against about 25 seconds for diskcache. Iterating the cache itself (`for key in cache`) yields keys in insertion order, and `reversed(cache)` newest first.
 
 
 # Size limits and eviction
@@ -113,13 +128,17 @@ cache = Cache(
 )
 ```
 
-When the cache's on-disk volume goes over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), each [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) evicts up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of the least recently stored entries. `cache.volume()` reports the current size in bytes.
+When the cache's on-disk volume goes over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), each [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) evicts up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of the least recently stored entries. `cache.volume()` reports the current size in bytes. For a cache that must never drop a live entry (job claims, locks, a queue), pass `eviction_policy='none'`: nothing is evicted for size, expired entries are still removed, and the cache can grow past [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit). Like the limits, the policy is stored in the cache, so every process shares it.
 
 Maintenance calls, all safe to run while other processes use the cache:
 
 - `cache.expire()` removes every expired entry and returns how many.
 - `cache.clear()` removes every entry that existed when it started, and keeps anything written while it runs.
-- `cache.cull()` evicts down to the size limit.
+- `cache.cull()` removes expired entries, then evicts down to the size limit (unless the policy is `'none'`), and returns how many it removed.
+- `cache.evict(tag)` removes every entry stored with `set(..., tag=...)`, so a group of entries under unrelated keys can be dropped at once (see [Invalidating groups of keys](../recipes/invalidating-groups.md#option-2-tags)).
+- `cache.check()` compares the database with the large-value files and reports what doesn't match; `check(fix=True)` repairs it.
+
+`cache.reset('size_limit', 2 * 2**30)` stores a new value for one of the settings kept in the cache ([size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) or [eviction_policy](../reference/Cache.eviction_policy.md#diskcache_oxide.Cache.eviction_policy)), and `cache.reset('size_limit')` reads the stored one. `cache.stats()` turns on hit and miss counting for this process, and later calls return `(hits, misses)`. The counts live in memory, so other processes' lookups aren't included and counting never makes a read write.
 
 
 # Timeouts
@@ -211,7 +230,7 @@ An operational failure is a [Timeout](../reference/Timeout.md#diskcache_oxide.Ti
 
 These always raise:
 
-- **Bugs.** A non-`str` key, a value that can't be stored without pickle, a non-numeric [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr), an [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) past 64 bits, [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError), and misusing a transaction.
+- **Bugs.** A key of a type that can't be a key, a value that can't be stored without pickle, a non-numeric [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr), an [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) past 64 bits, [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError), and misusing a transaction.
 - **`MemoryError` and `KeyboardInterrupt`.** That includes SQLite running out of memory.
 - **Admin calls.** [clear](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [cull](../reference/Cache.cull.md#diskcache_oxide.Cache.cull), [checkpoint](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint), `len`, [volume](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) and iteration, because their callers need the truth, and most have their own `timeout=`. [checkpoint](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) still returns `False` when it's only busy.
 - **The constructor, and starting a [transaction](transactions.md).** Use [`Caches`](caches.md) if opening shouldn't raise: it gives you a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) until the cache can open.
@@ -228,7 +247,7 @@ A failure reaches you as "wasn't there", so know what each one means before you 
 - **A dropped [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete), [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) or version-bump [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) serves stale data.** The old entry stays. It's served until it expires, and with no expiry that means forever, or until a later write replaces it. [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) returns `False`, the same as for a key that wasn't there, so your code can't tell. The log line is the only signal. If stale data would be a real problem, give those entries an expiry.
 - **A [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) whose delete fails returns the default, not the value**, since the row is still there and a later [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) could deliver the value a second time.
 - **A fake [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) isn't a count.** It's what a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) returns, so a rate limiter fails open. Don't use one as an id: two callers can get the same number.
-- **[add](../reference/Cache.add.md#diskcache_oxide.Cache.add) fails closed.** It returns `False` under `durable=True`, but `True` on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), so [Caches](../reference/Caches.md#diskcache_oxide.Caches) can give you either answer for one key. Use a separate handle without `durable` for claims and locks, and treat its exceptions as "not claimed".
+- **[add](../reference/Cache.add.md#diskcache_oxide.Cache.add) fails closed.** It returns `False` under `durable=True`, but `True` on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), so [Caches](../reference/Caches.md#diskcache_oxide.Caches) can give you either answer for one key. Use a separate handle without [durable](../reference/Cache.durable.md#diskcache_oxide.Cache.durable) for claims and locks, and treat its exceptions as "not claimed".
 
 
 ## It doesn't bound time

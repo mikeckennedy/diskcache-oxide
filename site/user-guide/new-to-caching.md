@@ -39,11 +39,11 @@ for attempt in ('first call', 'second call'):
 ```
 
 
-    first call: 55.40 ms
-    second call: 0.02 ms
+    first call: 53.78 ms
+    second call: 0.01 ms
 
 
-That shape, check the cache, do the work on a miss, store the result, is called **cache-aside**, and it's the one you'll use most. The [caching recipe](../recipes/caching-expensive-calls.md) turns it into a decorator.
+That shape, check the cache, do the work on a miss, store the result, is called **cache-aside**, and it's the one you'll use most. `@cache.memoize()` wraps it up as a decorator; the [caching recipe](../recipes/caching-expensive-calls.md) shows how.
 
 
 # Why bother
@@ -62,11 +62,11 @@ The flip side: a cache is a copy, and copies go out of date. Every design decisi
 | Word | What it means |
 |----|----|
 | **Hit / miss** | A lookup found a live entry, or didn't. The **hit rate** is the fraction of lookups that hit; a cache with a low hit rate is costing you writes for nothing. |
-| **Key** | The name an entry is stored under. In diskcache-oxide a key is a `str`, like `user:42:profile`. |
+| **Key** | The name an entry is stored under. In diskcache-oxide a key is usually a string like `user:42:profile`; numbers, bytes and tuples such as `('user', 42)` work too. |
 | **Expiry (TTL)** | How long an entry stays valid. After it, a lookup misses as if the entry were gone. `expire=300` means five minutes. |
 | **Stale** | Still cached, but no longer what the source would say. Expiry bounds how stale an entry can get. |
 | **Invalidation** | Removing or replacing an entry because its source changed, instead of waiting for it to expire. |
-| **Eviction** | The cache removing entries to stay under its size limit. diskcache-oxide evicts the least recently *stored* entries first. Eviction is why a cache can never be the only copy of something you need. |
+| **Eviction** | The cache removing entries to stay under its size limit. diskcache-oxide evicts the least recently *stored* entries first, or nothing at all under `eviction_policy='none'`. Eviction is why a cache can never be the only copy of something you need. |
 | **Cold / warm** | A cold cache is empty (just deployed, just cleared) and every lookup misses until it's warm. The first minutes after a deploy are the slow ones. |
 | **Stampede (thundering herd)** | A popular entry expires and every worker recomputes it at the same instant. See [Serving stale values while refreshing](../recipes/stale-while-revalidate.md). |
 | **Negative caching** | Caching "there's no such thing" so a missing record doesn't cost a database query every time someone asks. Use a short expiry. |
@@ -83,7 +83,7 @@ The flip side: a cache is a copy, and copies go out of date. Every design decisi
 Invalidation is hard because the cache can't know when the source changed. It has a copy of the answer; it has no idea the user just renamed themselves. Something has to tell it, and the three ways to do that are the whole of the art:
 
 1.  **Let it expire.** Give every entry an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), chosen by how stale you can stand: five minutes for a popular list, an hour for a rendered page, a day for a thumbnail. It's the simplest strategy, it needs no knowledge of where the data changes, and it's the one safety net that catches every mistake in the other two. **Always set an expiry, even when you also invalidate explicitly.** An invalidation you forgot is otherwise forever.
-2.  **Invalidate at the write.** When your code saves the user's new name, it also deletes `user:42:profile`. The next read misses and rebuilds. This gives exact freshness, at the cost of knowing every key the change affects, which is where naming (below) comes in. When many keys depend on one thing, delete them by prefix, or change a generation number so the old keys are never read again: [Invalidating groups of keys](../recipes/invalidating-groups.md).
+2.  **Invalidate at the write.** When your code saves the user's new name, it also deletes `user:42:profile`. The next read misses and rebuilds. This gives exact freshness, at the cost of knowing every key the change affects, which is where naming (below) comes in. When many keys depend on one thing, delete them by prefix, store them with a shared tag and drop them all with `evict(tag)`, or change a generation number so the old keys are never read again: [Invalidating groups of keys](../recipes/invalidating-groups.md).
 3.  **Put the version in the key.** If the key is `episode:512:v7:page`, then publishing revision 8 means readers ask for `episode:512:v8:page`, miss, and rebuild, and the old entry is simply never asked for again. Nothing is deleted; the stale copy expires on its own.
 
 Most apps use all three: an expiry on everything, a delete where the write is obvious, and versioned keys for things that have a natural version. Here's the expiry half, with a fake clock so it runs instantly:
@@ -128,7 +128,7 @@ Keys are names, and the two problems turn out to be the same problem: an invalid
 - **Stale data.** Shorter expiry, or an invalidation at the write. If you can't say which writes affect an entry, the expiry is your answer.
 - **A stampede after a deploy or an expiry.** Refresh hot entries ahead of time, or serve the stale copy while one worker rebuilds: [Serving stale values while refreshing](../recipes/stale-while-revalidate.md).
 - **Cached errors.** Don't cache the result of a failed call as if it were an answer. Cache "not found" briefly if you must; never cache a 500.
-- **Treating the cache as storage.** An entry can be evicted or expire at any moment, and a deploy can clear the whole directory. Anything you can't rebuild from somewhere else (a session, a one-time token, a counter you haven't flushed) belongs in a cache of its own, sized so it never evicts, and ideally also somewhere permanent. The [sessions](../recipes/sessions.md) and [counters](../recipes/counters.md) recipes show the pattern.
+- **Treating the cache as storage.** An entry can be evicted or expire at any moment, and a deploy can clear the whole directory. Anything you can't rebuild from somewhere else (a session, a one-time token, a counter you haven't flushed) belongs in a cache of its own, opened with `eviction_policy='none'` so nothing is evicted for size, and ideally also somewhere permanent. The [sessions](../recipes/sessions.md) and [counters](../recipes/counters.md) recipes show the pattern.
 - **A bug that might be the cache.** Turn caching off without touching the code that uses it, with [`NullCache`](null-cache.md), and see whether the bug survives.
 
 
@@ -143,4 +143,4 @@ There are three usual places to keep a cache, and the choice is about who can se
 | Cost of a lookup | Nanoseconds | About a microsecond | A network round trip |
 | Something extra to run | No | No | Yes, a server |
 
-The in-process dict is unbeatable for a single process and useless the moment you have four gunicorn workers. The server is the right answer when the cache has to be shared across machines. diskcache-oxide is the middle: a cache that's just a directory, shared by every thread and process on the machine, still there after a restart, and fast enough that you stop thinking about the lookup. [Getting started](getting-started.md) is the next page.
+The in-process dict is unbeatable for a single process and useless the moment you have four gunicorn workers. The server is the right answer when the cache has to be shared across machines. diskcache-oxide is the middle: a cache that's just a directory, shared by every thread and process on the machine, still there after a restart, and fast enough that you stop thinking about the lookup. Because every process sees the same directory, it also covers a few jobs people often run Redis for on a single machine: [locks and rate limits](coordination.md), [counters](../recipes/counters.md) and [work queues](../recipes/work-queues.md). [Getting started](getting-started.md) is the next page.

@@ -11,6 +11,8 @@ Cache.incr(
     key,
     delta=...,
     default=...,
+    *,
+    retry=False,
 )
 ```
 
@@ -21,7 +23,7 @@ Atomic across threads and processes, so concurrent increments are never lost. Th
 ## Parameters
 
 
-`key: str`  
+`key: Key`  
 The key.
 
 `delta: float = …`  
@@ -29,6 +31,9 @@ The amount to add (default 1).
 
 `default: float | None = …`  
 The starting value for a missing or expired key (default 0). Pass None to raise `KeyError` instead.
+
+`retry: bool = ``False`  
+On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call gets through, each round with the whole [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout), a `durable=True` handle included. Only [Timeout](Timeout.md#diskcache_oxide.Timeout) is retried.
 
 
 ## Returns
