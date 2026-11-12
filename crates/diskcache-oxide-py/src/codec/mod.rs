@@ -15,6 +15,7 @@
 
 mod common;
 mod json;
+pub mod key;
 mod msgpack;
 pub mod registry;
 

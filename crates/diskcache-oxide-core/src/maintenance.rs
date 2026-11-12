@@ -1,4 +1,4 @@
-//! `expire()`, `clear()`, `cull()` and key iteration (Phase 2 step 6; 04-design.md sections 6 and 9).
+//! `expire()`, `clear()`, `evict()`, `cull()` and key iteration (Phase 2 step 6; 04-design.md sections 6 and 9).
 //!
 //! Maintenance works in chunks of [`CHUNK`] rows, each its own write transaction, bounded by a
 //! `store_seq` snapshot taken when the call starts. So a call always finishes (D-011): rows stored
@@ -25,10 +25,12 @@
 use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
+use rusqlite::types::ValueRef;
 
 use crate::gate;
+use crate::key::{Key, OwnedKey};
 use crate::rows::{Removed, RowWriter};
-use crate::schema::KEY_TYPE_STR;
+use crate::schema::{EvictionPolicy, KEY_TYPE_STR, KEY_TYPE_TYPED};
 use crate::store::{Changed, LockPriority, Store};
 use crate::{Error, Result};
 
@@ -37,6 +39,16 @@ pub const CHUNK: i64 = 100;
 
 /// Keys per iteration page.
 pub const PAGE: i64 = 512;
+
+/// One chunk of `evict`: `?1` the tag's type, `?2` the tag, `?3` the snapshot, `?4` the chunk size. A
+/// covering range on `cache_tag (tag_type, tag, store_seq)`, already in `store_seq` order, so no chunk
+/// sorts or scans the tag's other rows (architect, H1). `tag IS NOT NULL` matches the partial index's
+/// `WHERE`, written out so the planner can use the index (see `open.rs` on the QPSG).
+pub(crate) const EVICT_SQL: &str = "DELETE FROM cache WHERE id IN (
+         SELECT id FROM cache
+         WHERE tag IS NOT NULL AND tag_type = ?1 AND tag = ?2 AND store_seq < ?3
+         ORDER BY store_seq LIMIT ?4)
+     RETURNING size, filename";
 
 /// The pause after a maintenance chunk while a same-process writer waits, with the interpreter
 /// released.
@@ -52,6 +64,8 @@ pub enum Order {
     Key { reverse: bool },
     /// Insertion order (`id`), which `__iter__` follows. An overwrite keeps its place.
     Inserted,
+    /// Insertion order backwards, newest first, which `__reversed__` follows.
+    InsertedReverse,
 }
 
 /// Where an iteration stopped: the last key returned (key order) or the last `id` (insertion order).
@@ -59,7 +73,7 @@ pub enum Order {
 pub enum Cursor {
     #[default]
     Start,
-    Key(String),
+    Key(OwnedKey),
     Id(i64),
 }
 
@@ -137,8 +151,18 @@ impl Store {
         self.clear_from(snapshot, Budget::Each(timeout)).map_err(|stopped| stopped.error)
     }
 
+    /// Removes every row tagged `tag` and stored before the call started, in chunks, as `clear` does
+    /// (D-011). Returns how many it removed. A tag compares by exact type, as a key does: `1`, `1.0`
+    /// and `True` are three tags (D-052). It takes a [`Key`], never an `Option`, so no call can mean
+    /// "every untagged row".
+    pub fn evict(&self, timeout: Duration, tag: Key<'_>) -> Result<u64> {
+        let snapshot = self.seq_snapshot(timeout)?;
+        self.evict_from(snapshot, tag, Budget::Each(timeout)).map_err(|stopped| stopped.error)
+    }
+
     /// Removes expired rows, then evicts least-recently-stored rows until the cache is under its
-    /// `size_limit`. Returns how many it removed in total.
+    /// `size_limit`, unless its `eviction_policy` is 'none'. Returns how many it removed in total,
+    /// the expired ones included (D-053).
     pub fn cull(&self, timeout: Duration, now: f64) -> Result<u64> {
         let snapshot = self.seq_snapshot(timeout)?;
         self.cull_from(snapshot, now, Budget::Each(timeout)).map_err(|stopped| stopped.error)
@@ -161,6 +185,11 @@ impl Store {
     /// [`Store::clear`] from `snapshot`, every wait ending by `deadline` (see the module docs).
     pub fn clear_until(&self, snapshot: Snapshot, deadline: Instant) -> Result<u64, Interrupted> {
         self.clear_from(self.seq_of(snapshot)?, Budget::Until(deadline))
+    }
+
+    /// [`Store::evict`] from `snapshot`, every wait ending by `deadline` (see the module docs).
+    pub fn evict_until(&self, snapshot: Snapshot, tag: Key<'_>, deadline: Instant) -> Result<u64, Interrupted> {
+        self.evict_from(self.seq_of(snapshot)?, tag, Budget::Until(deadline))
     }
 
     /// [`Store::cull`] from `snapshot` (its expire step), every wait ending by `deadline` (see the
@@ -218,20 +247,35 @@ impl Store {
         })
     }
 
+    /// Unlike `clear`, leaves emptied value directories to the usual sweeps: an `evict` can be
+    /// frequent (an invalidation per request), and a walk of every directory each time would not be.
+    fn evict_from(&self, snapshot: i64, tag: Key<'_>, budget: Budget) -> Result<u64, Interrupted> {
+        self.chunked(budget, |conn, timeout| {
+            conn.prepare_cached(EVICT_SQL)
+                .and_then(|mut stmt| {
+                    collect_removed(stmt.query_map((tag.key_type(), tag, snapshot, CHUNK), row_removed)?)
+                })
+                .map_err(|e| Error::from_sqlite(e, timeout))
+        })
+    }
+
     fn cull_from(&self, snapshot: i64, now: f64, budget: Budget) -> Result<u64, Interrupted> {
         let mut removed = self.expire_from(snapshot, now, budget)?;
         loop {
             let timeout = budget.left();
             let (over, batch) = self
                 .write_files(timeout, LockPriority::Normal, |writer, conn| {
-                    let (size_limit, size): (i64, i64) = conn
-                        .prepare_cached("SELECT size_limit, size FROM totals WHERE only = 1")
-                        .and_then(|mut stmt| stmt.query_row([], |r| Ok((r.get(0)?, r.get(1)?))))
+                    // The policy too, in this transaction: under 'none' only the expired go (H2).
+                    let (size_limit, size, policy): (i64, i64, i64) = conn
+                        .prepare_cached("SELECT size_limit, size, eviction_policy FROM state WHERE only = 1")
+                        .and_then(|mut stmt| stmt.query_row([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))))
                         .map_err(|e| Error::from_sqlite(e, timeout))?;
-                    if crate::ops::volume_in(conn, size, timeout)? < size_limit {
+                    if policy != EvictionPolicy::LeastRecentlyStored.code()
+                        || crate::ops::volume_in(conn, size, timeout)? < size_limit
+                    {
                         return Ok(Changed::removing((false, 0), []));
                     }
-                    // Its size isn't needed: the next pass reads `totals` again.
+                    // Its size isn't needed: the next pass reads `state` again.
                     let batch = writer.delete_oldest(CHUNK)?.rows;
                     Ok(Changed::removing((true, count(batch.len())), batch))
                 })
@@ -251,7 +295,7 @@ impl Store {
         order: Order,
         prefix: Option<&str>,
         cursor: &Cursor,
-    ) -> Result<(Vec<String>, Cursor)> {
+    ) -> Result<(Vec<OwnedKey>, Cursor)> {
         self.keys_page_of(PAGE, timeout, order, prefix, cursor)
     }
 
@@ -264,18 +308,18 @@ impl Store {
         order: Order,
         prefix: Option<&str>,
         cursor: &Cursor,
-    ) -> Result<(Vec<String>, Cursor)> {
+    ) -> Result<(Vec<OwnedKey>, Cursor)> {
         let size = size.max(1);
         let upper = prefix.and_then(prefix_upper);
-        let lower = prefix.unwrap_or("");
-        self.read(timeout, |conn| page(conn, timeout, order, lower, upper.as_deref(), cursor, size))
+        let range = prefix.map(|lower| (lower, upper.as_deref()));
+        self.read(timeout, |conn| page(conn, timeout, order, range, cursor, size))
     }
 
     /// The next `store_seq` to be handed out: every row stored before now has a smaller one.
     pub(crate) fn seq_snapshot(&self, timeout: Duration) -> Result<i64> {
         self.read(timeout, |conn| {
             conn.prepare_cached(
-                "SELECT MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1, next_seq) FROM totals WHERE only = 1",
+                "SELECT MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1, next_seq) FROM state WHERE only = 1",
             )
             .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
             .map_err(|e| Error::from_sqlite(e, timeout))
@@ -390,46 +434,134 @@ fn page(
     conn: &Connection,
     timeout: Duration,
     order: Order,
-    lower: &str,
-    upper: Option<&str>,
+    prefix: Option<(&str, Option<&str>)>,
     cursor: &Cursor,
     size: i64,
-) -> Result<(Vec<String>, Cursor)> {
+) -> Result<(Vec<OwnedKey>, Cursor)> {
     let sqlite = |e| Error::from_sqlite(e, timeout);
-    match order {
-        Order::Inserted => {
+    // A prefix's bounds: its start, and the first string past every one that starts with it.
+    let (lower, upper) = prefix.unwrap_or(("", None));
+    let keys = match order {
+        Order::Inserted | Order::InsertedReverse => {
+            let reverse = order == Order::InsertedReverse;
             let after = match cursor {
                 Cursor::Id(id) => *id,
+                // Backwards from the newest row.
+                _ if reverse => i64::MAX,
                 _ => 0,
             };
-            let rows: Vec<(i64, String)> = conn
-                .prepare_cached("SELECT id, key FROM cache WHERE key_type = ?1 AND id > ?2 ORDER BY id LIMIT ?3")
+            // Every key type this build knows; a later build's key types stay invisible, as typed keys
+            // are to 0.1.2.
+            let sql = if reverse {
+                "SELECT id, key_type, key FROM cache WHERE id < ?1 AND key_type IN (?2, ?3) ORDER BY id DESC LIMIT ?4"
+            } else {
+                "SELECT id, key_type, key FROM cache WHERE id > ?1 AND key_type IN (?2, ?3) ORDER BY id LIMIT ?4"
+            };
+            let rows: Vec<(i64, OwnedKey)> = conn
+                .prepare_cached(sql)
                 .and_then(|mut stmt| {
-                    stmt.query_map((KEY_TYPE_STR, after, size), |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+                    stmt.query_map((after, KEY_TYPE_STR, KEY_TYPE_TYPED, size), |r| {
+                        Ok((r.get(0)?, stored_key(r.get(1)?, r.get_ref(2)?)))
+                    })?
+                    .map(|row| row.map(|(id, key)| key.map(|k| (id, k))))
+                    .collect::<rusqlite::Result<Result<Vec<_>>>>()
                 })
-                .map_err(sqlite)?;
+                .map_err(sqlite)??;
             let next = rows.last().map_or_else(|| cursor.clone(), |(id, _)| Cursor::Id(*id));
-            Ok((rows.into_iter().map(|(_, key)| key).collect(), next))
+            return Ok((rows.into_iter().map(|(_, key)| key).collect(), next));
         }
         Order::Key { reverse } => {
             let after = match cursor {
-                Cursor::Key(key) => Some(key.as_str()),
+                Cursor::Key(key) => Some(key),
+                _ => None,
+            };
+            let str_after = match after {
+                Some(OwnedKey::Str(k)) => Some(k.as_str()),
                 _ => None,
             };
             // Forward, the cursor replaces the lower bound. In reverse, it replaces the upper one: it
             // came from this prefix, so it's under the prefix's end.
-            let (low, high) = match (reverse, after) {
-                (false, after) => (after.unwrap_or(lower), upper),
-                (true, after) => (lower, after.or(upper)),
+            let (low, high) = if reverse { (lower, str_after.or(upper)) } else { (str_after.unwrap_or(lower), upper) };
+            let str_page = |limit: i64| -> Result<Vec<OwnedKey>> {
+                let keys: Vec<Result<OwnedKey>> = conn
+                    .prepare_cached(key_page_sql(reverse, str_after.is_some(), upper.is_some()))
+                    .and_then(|mut stmt| {
+                        stmt.query_map((KEY_TYPE_STR, low, high, limit), |r| {
+                            Ok(stored_key(KEY_TYPE_STR, r.get_ref(0)?))
+                        })?
+                        .collect()
+                    })
+                    .map_err(sqlite)?;
+                keys.into_iter().collect()
             };
-            let keys: Vec<String> = conn
-                .prepare_cached(key_page_sql(reverse, after.is_some(), upper.is_some()))
-                .and_then(|mut stmt| stmt.query_map((KEY_TYPE_STR, low, high, size), |r| r.get(0))?.collect())
-                .map_err(sqlite)?;
-            let next = keys.last().map_or_else(|| cursor.clone(), |k| Cursor::Key(k.clone()));
-            Ok((keys, next))
+            if prefix.is_some() {
+                // A prefix: str keys only.
+                str_page(size)?
+            } else {
+                // Every str key, then every typed key (reversed: typed first). The typed phase starts at
+                // its own beginning or end unless the cursor is already inside it.
+                let typed_after = match after {
+                    Some(OwnedKey::Typed(k)) => Some(k.as_bytes()),
+                    _ => None,
+                };
+                let typed_page = |limit: i64| -> Result<Vec<OwnedKey>> {
+                    let (lo, hi): (&[u8], Option<&[u8]>) =
+                        if reverse { (&[], typed_after) } else { (typed_after.unwrap_or(&[]), None) };
+                    let sql = key_page_sql(reverse, typed_after.is_some(), typed_after.is_some() && reverse);
+                    let keys: Vec<Result<OwnedKey>> = conn
+                        .prepare_cached(sql)
+                        .and_then(|mut stmt| {
+                            stmt.query_map((KEY_TYPE_TYPED, lo, hi, limit), |r| {
+                                Ok(stored_key(KEY_TYPE_TYPED, r.get_ref(0)?))
+                            })?
+                            .collect()
+                        })
+                        .map_err(sqlite)?;
+                    keys.into_iter().collect()
+                };
+                let in_typed = typed_after.is_some();
+                match (reverse, in_typed) {
+                    (false, true) => typed_page(size)?,
+                    (false, false) => {
+                        let mut keys = str_page(size)?;
+                        let left = size - i64::try_from(keys.len()).unwrap_or(size);
+                        if left > 0 {
+                            keys.extend(typed_page(left)?);
+                        }
+                        keys
+                    }
+                    (true, false) if after.is_some() => str_page(size)?,
+                    (true, _) => {
+                        let mut keys = typed_page(size)?;
+                        let left = size - i64::try_from(keys.len()).unwrap_or(size);
+                        if left > 0 {
+                            keys.extend(str_page_from_end(conn, timeout, left)?);
+                        }
+                        keys
+                    }
+                }
+            }
         }
-    }
+    };
+    let next = keys.last().map_or_else(|| cursor.clone(), |k| Cursor::Key(k.clone()));
+    Ok((keys, next))
+}
+
+/// The last `limit` str keys, newest key first: a reverse walk crossing from the typed keys.
+fn str_page_from_end(conn: &Connection, timeout: Duration, limit: i64) -> Result<Vec<OwnedKey>> {
+    let keys: Vec<Result<OwnedKey>> = conn
+        .prepare_cached(key_page_sql(true, false, false))
+        .and_then(|mut stmt| {
+            stmt.query_map((KEY_TYPE_STR, "", None::<&str>, limit), |r| Ok(stored_key(KEY_TYPE_STR, r.get_ref(0)?)))?
+                .collect()
+        })
+        .map_err(|e| Error::from_sqlite(e, timeout))?;
+    keys.into_iter().collect()
+}
+
+/// A stored key, by its `key_type`; a damaged one is an error, never skipped.
+fn stored_key(key_type: i64, key: ValueRef<'_>) -> Result<OwnedKey> {
+    OwnedKey::from_row(key_type, key).map_err(Error::CorruptKey)
 }
 
 #[cfg(test)]
@@ -474,7 +606,11 @@ mod tests {
             if keys.is_empty() {
                 return out;
             }
-            out.extend(keys);
+            // These tests store str keys only.
+            out.extend(keys.into_iter().map(|k| match k {
+                OwnedKey::Str(s) => s,
+                typed @ OwnedKey::Typed(_) => panic!("unexpected typed key {typed:?}"),
+            }));
             cursor = next;
         }
     }
@@ -509,6 +645,261 @@ mod tests {
                 assert!(detail.contains(&format!("cache_key ({search})")), "{plan}: {detail}");
                 assert!(detail.starts_with("SEARCH"), "{plan}: {detail}");
             }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    fn int_key(n: i64) -> crate::key::TypedKey {
+        let mut e = crate::key::Encoder::new();
+        e.int(n);
+        e.finish().unwrap()
+    }
+
+    fn tuple_key(name: &str, n: i64) -> crate::key::TypedKey {
+        let mut e = crate::key::Encoder::new();
+        e.begin_tuple();
+        e.str(name);
+        e.int(n);
+        e.none();
+        e.end_tuple();
+        e.finish().unwrap()
+    }
+
+    /// Every key in `order`, through pages of `size`.
+    fn walk(s: &Store, order: Order, size: i64) -> Vec<OwnedKey> {
+        let mut cursor = Cursor::Start;
+        let mut out = Vec::new();
+        loop {
+            let (keys, next) = s.keys_page_of(size, T, order, None, &cursor).unwrap();
+            if keys.is_empty() {
+                return out;
+            }
+            out.extend(keys);
+            cursor = next;
+        }
+    }
+
+    #[test]
+    fn typed_keys_are_stored_as_blobs_beside_text_keys_and_every_keyed_call_finds_them() {
+        let tmp = TempDir::new("maint-typed-keys");
+        let s = store(tmp.path());
+        let (one, t) = (int_key(1), tuple_key("m.f", 3));
+        put(&s, "1", None);
+        s.set(T, &one, Value::Bytes { mode: MODE_STR, data: b"int" }, None, NOW).unwrap();
+        s.set(T, &t, Value::Bytes { mode: MODE_STR, data: b"tuple" }, None, NOW).unwrap();
+        assert!(
+            s.contains(T, &one, NOW).unwrap() && s.contains(T, &t, NOW).unwrap() && s.contains(T, "1", NOW).unwrap()
+        );
+        let types: Vec<(i64, String)> = s
+            .read(T, |c| {
+                let mut stmt = c.prepare("SELECT key_type, typeof(key) FROM cache ORDER BY id").unwrap();
+                Ok(stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect())
+            })
+            .unwrap();
+        assert_eq!(types, [(1, "text".into()), (2, "blob".into()), (2, "blob".into())]);
+        assert!(s.touch(T, &one, Some(60.0), NOW).unwrap());
+        assert_eq!(
+            s.incr(T, &int_key(7), crate::ops::Number::Int(2), Some(crate::ops::Number::Int(0)), NOW).unwrap(),
+            crate::ops::Number::Int(2)
+        );
+        assert!(s.delete(T, &one, NOW).unwrap());
+        assert!(!s.contains(T, &one, NOW).unwrap() && s.contains(T, "1", NOW).unwrap(), "the str '1' is another key");
+    }
+
+    #[test]
+    fn a_key_walk_covers_str_keys_then_typed_keys_at_every_page_size() {
+        let tmp = TempDir::new("maint-typed-walk");
+        let s = store(tmp.path());
+        let mut expected: Vec<OwnedKey> = Vec::new();
+        for i in [5_i64, -3, 0, i64::MAX, i64::MIN] {
+            s.set(T, &int_key(i), Value::Bytes { mode: MODE_STR, data: b"v" }, None, NOW).unwrap();
+            expected.push(OwnedKey::Typed(int_key(i)));
+            put(&s, &format!("s{i}"), None);
+            expected.push(OwnedKey::Str(format!("s{i}")));
+            s.set(T, &tuple_key("f", i), Value::Bytes { mode: MODE_STR, data: b"v" }, None, NOW).unwrap();
+            expected.push(OwnedKey::Typed(tuple_key("f", i)));
+        }
+        let inserted = expected.clone();
+        expected.sort();
+        assert!(matches!(expected[0], OwnedKey::Str(_)) && matches!(expected.last(), Some(OwnedKey::Typed(_))));
+        for size in [1, 2, 3, 4, 5, 7, 512] {
+            assert_eq!(walk(&s, Order::Key { reverse: false }, size), expected, "forward, pages of {size}");
+            let mut reversed = expected.clone();
+            reversed.reverse();
+            assert_eq!(walk(&s, Order::Key { reverse: true }, size), reversed, "reverse, pages of {size}");
+            assert_eq!(walk(&s, Order::Inserted, size), inserted, "insertion order, pages of {size}");
+            let backwards: Vec<OwnedKey> = inserted.iter().rev().cloned().collect();
+            assert_eq!(walk(&s, Order::InsertedReverse, size), backwards, "reverse insertion order, pages of {size}");
+        }
+        assert_eq!(
+            all(&s, Order::Key { reverse: false }, Some("")).len(),
+            5,
+            "a prefix, even empty, walks str keys only"
+        );
+    }
+
+    #[test]
+    fn a_typed_key_page_seeks_on_the_index_too() {
+        let tmp = TempDir::new("maint-typed-plan");
+        let s = store(tmp.path());
+        s.read(T, |conn| {
+            for (reverse, after, upper, search) in KEY_PAGE_SHAPES {
+                let plan = format!("EXPLAIN QUERY PLAN {}", key_page_sql(reverse, after, upper));
+                let detail: String = conn
+                    .prepare(&plan)
+                    .and_then(|mut stmt| stmt.query_row((KEY_TYPE_TYPED, &b""[..], &b"\x10"[..], PAGE), |r| r.get(3)))
+                    .unwrap();
+                assert!(detail.contains(&format!("cache_key ({search})")), "{plan}: {detail}");
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_damaged_typed_key_fails_the_walk_and_an_unknown_key_type_is_skipped() {
+        let tmp = TempDir::new("maint-typed-damaged");
+        let s = store(tmp.path());
+        put(&s, "a", None);
+        let raw = |sql: &'static str| {
+            s.write(T, |_, c| c.execute(sql, []).map(drop).map_err(|e| Error::from_sqlite(e, T))).unwrap();
+        };
+        // A later build's key type: invisible, as typed keys are to 0.1.2.
+        raw(
+            "INSERT INTO cache (key_type, key, mode, value, size, store_time, store_seq, tag_type) VALUES (3, x'01', 1, 'v', 0, 0, 99, 0)",
+        );
+        assert_eq!(walk(&s, Order::Inserted, 512), [OwnedKey::Str("a".into())]);
+        assert_eq!(walk(&s, Order::Key { reverse: false }, 512), [OwnedKey::Str("a".into())]);
+        raw(
+            "INSERT INTO cache (key_type, key, mode, value, size, store_time, store_seq, tag_type) VALUES (2, x'11', 1, 'v', 0, 0, 100, 0)",
+        );
+        for order in [Order::Inserted, Order::Key { reverse: false }, Order::Key { reverse: true }] {
+            let got = s.keys_page(T, order, None, &Cursor::Start);
+            assert!(matches!(got, Err(Error::CorruptKey(_))), "{order:?}: {got:?}");
+        }
+    }
+
+    fn tag_put(s: &Store, key: &str, tag: Option<Key<'_>>, data: &[u8]) {
+        s.set_tagged(T, key, Value::Bytes { mode: MODE_STR, data }, None, tag.map(crate::rows::Tag), NOW).unwrap();
+    }
+
+    fn totals(s: &Store) -> (i64, i64, i64, i64) {
+        s.read(T, |c| {
+            c.query_row(
+                "SELECT (SELECT count FROM state), (SELECT COUNT(*) FROM cache),
+                        (SELECT size FROM state), (SELECT COALESCE(SUM(size), 0) FROM cache)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .map_err(|e| Error::from_sqlite(e, T))
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn evict_removes_exactly_one_tag_by_exact_type_in_chunks_with_its_files() {
+        let tmp = TempDir::new("maint-evict");
+        let s = store(tmp.path());
+        let one = int_key(1);
+        let big = vec![b'x'; crate::spill::THRESHOLD];
+        let rows = usize::try_from(CHUNK).unwrap() * 2 + 50;
+        for i in 0..rows {
+            tag_put(&s, &format!("a{i}"), Some(Key::Str("1")), b"v");
+        }
+        tag_put(&s, "a-big", Some(Key::Str("1")), &big);
+        tag_put(&s, "int", Some((&one).into()), b"v");
+        tag_put(&s, "other", Some(Key::Str("2")), b"v");
+        tag_put(&s, "untagged", None, b"v");
+        assert_eq!(s.evict(T, Key::Str("1")).unwrap(), u64::try_from(rows + 1).unwrap());
+        assert_eq!(all(&s, Order::Inserted, None), ["int", "other", "untagged"], "the int tag 1 isn't the str '1'");
+        let (count, rows_now, size, sum) = totals(&s);
+        assert_eq!((count, size), (rows_now, sum));
+        assert!(walkdir_vals(tmp.path()).is_empty(), "the big value's file went with its row");
+        assert_eq!(s.evict(T, (&one).into()).unwrap(), 1);
+        assert_eq!(s.evict(T, Key::Str("nobody")).unwrap(), 0);
+    }
+
+    fn walkdir_vals(dir: &Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                out.extend(walkdir_vals(&path));
+            } else if path.extension().is_some_and(|x| x == "val") {
+                out.push(path);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn evict_spares_a_row_tagged_after_its_snapshot() {
+        let tmp = TempDir::new("maint-evict-snapshot");
+        let s = store(tmp.path());
+        tag_put(&s, "before", Some(Key::Str("t")), b"v");
+        let snapshot = s.snapshot_until(Instant::now() + T).unwrap();
+        tag_put(&s, "after", Some(Key::Str("t")), b"v");
+        tag_put(&s, "before-again", Some(Key::Str("t")), b"v"); // A new key, so a new store_seq.
+        assert_eq!(s.evict_until(snapshot, Key::Str("t"), Instant::now() + T).unwrap(), 1);
+        assert_eq!(all(&s, Order::Inserted, None), ["after", "before-again"]);
+    }
+
+    #[test]
+    fn an_evict_chunk_is_a_covering_index_range_with_no_sort() {
+        let tmp = TempDir::new("maint-evict-plan");
+        let s = store(tmp.path());
+        s.read(T, |conn| {
+            let one = int_key(1);
+            for tag in [Key::Str("t"), Key::Typed(&one)] {
+                let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {EVICT_SQL}")).unwrap();
+                let details: Vec<String> = stmt
+                    .query_map((tag.key_type(), tag, 10_i64, CHUNK), |r| r.get(3))
+                    .unwrap()
+                    .collect::<rusqlite::Result<_>>()
+                    .unwrap();
+                let plan = details.join(" | ");
+                assert!(
+                    details.iter().any(|d| d.starts_with(
+                        "SEARCH cache USING COVERING INDEX cache_tag (tag_type=? AND tag=? AND store_seq<?)"
+                    )),
+                    "{plan}"
+                );
+                assert!(!plan.contains("TEMP B-TREE"), "a chunk sorted: {plan}");
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn an_evict_chunk_costs_the_same_however_many_rows_the_tag_and_others_have() {
+        const ROWS: usize = 6_000;
+        let tmp = TempDir::new("maint-evict-cost");
+        let s = store(tmp.path());
+        for i in 0..ROWS {
+            for tag in ["a", "m", "z"] {
+                tag_put(&s, &format!("{tag}{i}"), Some(Key::Str(tag)), b"v");
+            }
+            tag_put(&s, &format!("none{i}"), None, b"v");
+        }
+        // The chunk's SELECT, run alone so nothing is removed: what each DELETE chunk reads.
+        let select = EVICT_SQL
+            .split_once("IN (")
+            .and_then(|(_, rest)| rest.rsplit_once(')'))
+            .map(|(inner, _)| inner.trim().to_owned())
+            .unwrap();
+        let budget = i32::try_from(CHUNK).unwrap() * 12 + 100;
+        s.read(T, |conn| {
+            let mut stmt = conn.prepare(&select).unwrap();
+            let ids: Vec<i64> = stmt
+                .query_map((KEY_TYPE_STR, "m", i64::MAX, CHUNK), |r| r.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            assert_eq!(ids.len(), usize::try_from(CHUNK).unwrap());
+            let steps = stmt.get_status(rusqlite::StatementStatus::VmStep);
+            assert!(steps <= budget, "{steps} steps for one chunk of {CHUNK}");
             Ok(())
         })
         .unwrap();
@@ -831,7 +1222,7 @@ mod tests {
         let s = Store::open(&OpenOptions {
             directory: tmp.path().to_path_buf(),
             timeout: T,
-            requested: Requested { size_limit: Some(1 << 20), cull_limit: Some(0) },
+            requested: Requested { size_limit: Some(1 << 20), cull_limit: Some(0), eviction_policy: None },
             max_connections: DEFAULT_MAX_CONNECTIONS,
             cache_pages: DEFAULT_CACHE_PAGES,
             wal_size_limit: DEFAULT_WAL_SIZE_LIMIT,

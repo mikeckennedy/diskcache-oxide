@@ -26,12 +26,13 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - oxide: reads the clock natively. Tests pass `clock=` (e.g. `clock=lambda: time.time()` to follow a monkeypatch).
 - Why: calling into Python for the time on every operation would cost the hot path.
 
-## D-004 String keys only (until Phase 6a)
+## D-004 Keys are `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those
 
 - Kind: test-visible
-- diskcache: accepts any picklable key (int, bytes, float, tuple, ...).
-- oxide: accepts `str` keys only for now; any other key type raises `TypeError`. Keys are stored in a type-tagged column so other types can be added without a migration.
-- Tests: `test_basic.py`
+- diskcache: accepts any picklable key; `str`, `int`, `float` and `bytes` are stored natively and everything else is pickled.
+- oxide: accepts `str`, `bytes`, `int` within 64 bits, `float`, `bool`, `None`, and tuples of those nested up to 32 deep, never pickled. Only the exact types: a subclass (`IntEnum`, `StrEnum`, a `namedtuple`), `bytearray`, `memoryview`, `list`, `frozenset` and an int past 64 bits raise `TypeError`; a NaN raises `ValueError` (diskcache stores a lone NaN key as NULL and never finds it again). Keys are compared by exact type (D-044), with no Unicode normalization. A `str` key is stored as it always was; every other key is a typed key in a byte format of our own (`crates/diskcache-oxide-core/src/key.rs`).
+- Why: pickled keys would put pickle on every lookup and make a key's identity depend on pickle's bytes (D-001). A key's stored bytes are its identity and its FanoutCache shard, so they must follow from the value alone.
+- Tests: `test_keys.py`, `key::tests`
 
 ## D-005 Minimum size_limit
 
@@ -79,7 +80,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: note (to be pinned with an oxide test in Phase 2)
 - diskcache: `clear()` keeps deleting until the cache is empty, including entries written while it runs. In a repro with 50k entries and a concurrent writer, `clear()` removed 133k rows: 76k writes that had already succeeded were deleted and only 1 survived. Its running time grows with the write rate. Found by the Phase 0 locking tests (repro: `upstream/repros/clear_deletes_concurrent_writes.py`).
-- oxide: `clear()` removes the entries stored before it started (bounded by a `store_seq` snapshot) and always finishes. Writes that land while it runs, including overwrites of existing keys, survive.
+- oxide: `clear()` removes the entries stored before it started (bounded by a `store_seq` snapshot) and always finishes. Writes that land while it runs, including overwrites of existing keys, survive. `evict(tag)` is bounded the same way, where diskcache's pages on `rowid > last` and so also removes entries tagged under new keys while it runs.
 - Why: a maintenance call must be bounded, and it must not silently discard writes that callers saw succeed.
 
 ## D-012 A forked child can write even if another thread was writing at the fork
@@ -161,12 +162,12 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - oxide: `directory` is a required argument.
 - Why: a cache directory is a security boundary (D-015) and shared state across processes. An implicit temporary directory is almost never what a multi-process app wants, and it hides where the data lives.
 
-## D-022 No disk= or eviction_policy= (yet)
+## D-022 No disk=, and only the eviction policies that keep reads write-free
 
 - Kind: note
 - diskcache: accepts a `disk` class (also positionally, as the third argument) and `eviction_policy` (`least-recently-stored`, `least-recently-used`, `least-frequently-used`, `none`).
-- oxide: serialization is chosen with `serializer=` and `pickle=` instead of a `Disk` class, and there's no plan to support custom `Disk` subclasses; a type the codec doesn't know is registered per type instead (D-041). `eviction_policy` is always least-recently-stored until the other policies arrive in Phase 6a. Only `directory` and `timeout` can be passed positionally.
-- Why: a pluggable Python `Disk` would put Python code on every read and write in the Rust hot path.
+- oxide: serialization is chosen with `serializer=` and `pickle=` instead of a `Disk` class, and there's no plan to support custom `Disk` subclasses; a type the codec doesn't know is registered per type instead (D-041). `eviction_policy=` takes `'least-recently-stored'` (a new cache's default) or `'none'`, keyword-only, persisted in the cache like `size_limit`; `'least-recently-used'` and `'least-frequently-used'` raise `ValueError` saying why. The policy is read inside every write's transaction and `cull()`'s, not from a copy cached at open, so a `reset('eviction_policy', ...)` from another process applies to every open handle at its next write; the `eviction_policy` attribute is the handle's last look. There's no `tag_index` setting and no `create_tag_index()` or `drop_tag_index()`: tags are always indexed, with a partial index that untagged entries don't touch. Only `directory` and `timeout` can be passed positionally.
+- Why: a pluggable Python `Disk` would put Python code on every read and write in the Rust hot path. LRU and LFU make every `get` a write (diskcache updates the row's access time or count on each read), and reads that never write are what let many processes read at once. A policy cached at open would let a handle that outlives a switch to `'none'` keep evicting.
 
 ## D-023 sqlite_cache_size is a per-process memory budget, 1 MiB by default
 
@@ -231,7 +232,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: note (pinned by `tests/unit/test_durable.py`; the option doesn't exist on diskcache, and it's off by default, so nothing changes unless it's asked for)
 - diskcache: `Cache` has no such option, and its calls raise `Timeout`, an `OSError` or a `sqlite3` error. `FanoutCache` answers `Timeout` alone as a miss or False, and raises the rest.
-- oxide: with `durable=True`, an operational failure on a single-key call doesn't raise. `get`, `pop` and `in` give the default or False, `cache[key]` raises `KeyError`, `set`, `add` and `touch` give False, `cache[key] = v` drops the write, `incr` and `decr` give `default ± delta` as `NullCache` does (`default=None` raises `KeyError`), `delete` gives False and `del cache[key]` raises `KeyError`. `on_decode_error` defaults to `'miss'`, and an explicit value wins.
+- oxide: with `durable=True`, an operational failure on a single-key call doesn't raise. `get`, `pop` and `in` give the default or False, `cache[key]` raises `KeyError`, `set`, `add` and `touch` give False, `cache[key] = v` drops the write, `push` gives None, `pull` and `peek` the default, `peekitem` raises `KeyError`, `incr` and `decr` give `default ± delta` as `NullCache` does (`default=None` raises `KeyError`), `delete` gives False and `del cache[key]` raises `KeyError`. `on_decode_error` defaults to `'miss'`, and an explicit value wins.
 - What's operational is one exhaustive match, `Error::is_operational()`: `Timeout`, `OSError`s, SQLite errors including a damaged database, and a child forked inside a transaction (D-020). A failure is only swallowed where a store call returned it, so a `Timeout` from the caller's own `clock=`, or from a pickle hook during a write, still raises.
 - Still raised: bugs (`TypeError`, `ValueError`, `UnsafeValueError`, a non-numeric `incr`, an overflow, misuse of a transaction), `MemoryError` including `SQLITE_NOMEM` (which was an `OSError` before this, on any handle) and `KeyboardInterrupt`, the constructor and starting a transaction (`transact()`), admin calls (`clear`, `expire`, `cull`, `checkpoint`, `len`, `volume`, iteration), and anything on a store while this thread holds a transaction on it.
 - A pickle hook's `OSError` (`Timeout` included) or `RecursionError` on a read is a miss with the row kept, reported once per stored version, unless `on_decode_error='raise'` was passed. `MemoryError`, `BaseException` and `UnsafeValueError` still raise.
@@ -290,7 +291,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: note (pinned by `tests/unit/test_fanout.py`)
 - diskcache: `clear`, `expire`, `cull` and `evict` call each shard in turn and retry it forever on `Timeout`, so a shard that stays locked hangs the call, and nothing says which shards were done.
-- oxide: `clear`, `expire`, `cull` and `checkpoint` take `timeout=` (default: the handle's) for the whole call, not per shard, as do opening, `len()`, `volume()` and `close()`. A shard reached after the deadline still gets one try with no wait, so idle shards are always done. A failing shard doesn't stop the others; afterwards the call raises the first failure's own type (so `except Timeout` works) with `.failed_shards` (a tuple of indexes), `.removed` (the total removed from every shard, except on `checkpoint()`) and a note naming them. A removal takes every shard's snapshot first, so a write made during the call survives on every shard, as on `Cache` (D-011). `checkpoint()` is True only if every shard's WAL was reset. `durable=True` doesn't swallow any of these (D-028).
+- oxide: `clear`, `expire`, `cull`, `evict` and `checkpoint` take `timeout=` (default: the handle's) for the whole call, not per shard, as do opening, `len()`, `volume()` and `close()`. A shard reached after the deadline still gets one try with no wait, so idle shards are always done. A failing shard doesn't stop the others; afterwards the call raises the first failure's own type (so `except Timeout` works) with `.failed_shards` (a tuple of indexes), `.removed` (the total removed from every shard, except on `checkpoint()`) and a note naming them. A removal takes every shard's snapshot first, so a write made during the call survives on every shard, as on `Cache` (D-011). `checkpoint()` is True only if every shard's WAL was reset. `durable=True` doesn't swallow any of these (D-028).
 - Why: a maintenance job must finish in bounded time, and when it can't, it must say what it did.
 - Tests: `test_a_locked_shard_fails_alone_and_the_error_says_how_far_the_call_got`, `test_one_timeout_bounds_the_whole_call_not_one_per_shard`, `test_at_a_zero_timeout_every_idle_shard_is_still_emptied`, `test_checkpoint_is_true_only_when_every_shard_resets`, and the `fanout-fork-mid-clear` scenario in `tests/unit/fork_scenarios.py`
 
@@ -322,14 +323,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: note
 - diskcache: `FanoutCache(directory=None, shards=8, timeout=0.010, disk=Disk, **settings)`, so `FanoutCache(path, 4)` asks for 4 shards. It also has `transact()` across every shard, `cache()`, `deque()` and `index()` sub-collections, `stats()`, `evict()` and tag indexes, `check()`, `reset()`, `read()`, `reversed()`, the `retry=`, `read=` and `tag=` arguments, settings read as attributes from shard 0, and pickling.
-- oxide: `FanoutCache(directory, timeout=None, *, shards=None, ...)`, with the same options as `Cache` plus `shards`. `shards` is keyword-only, so stock's `FanoutCache(path, 4)` would be a 4-second timeout here: pass `shards=4`. None of the features above exist yet except `transact`, which here is `transact(key=...)`, scoped to one shard (D-040); the rest come with Phase 6a and 6d. `directory` is required (D-021), and there's no `disk=` (D-022).
+- oxide: `FanoutCache(directory, timeout=None, *, shards=None, ...)`, with the same options as `Cache` plus `shards`. `shards` is keyword-only, so stock's `FanoutCache(path, 4)` would be a 4-second timeout here: pass `shards=4`. Of the features above, `transact` is `transact(key=...)`, scoped to one shard (D-040); `stats()`, `evict()` and tags, `check()`, `reset()`, `reversed()`, `retry=`, `tag=`, settings as attributes and pickling are there, as on `Cache`; the sub-collections and `read()`/`read=` aren't yet. `directory` is required (D-021), and there's no `disk=` (D-022).
 - Why: the positional `timeout` matches `Cache`'s signature, and each missing feature needs its own design across shards rather than a copy of stock's.
 
 ## D-040 FanoutCache.transact(key=...) covers one shard and refuses other shards' keys, reads included
 
 - Kind: test-visible
 - diskcache: `FanoutCache.transact(retry=True)` takes every shard's transaction in shard order and yields `None`, so it is atomic across all keys and every other thread's and process's writes to any shard wait for it. Its `retry` defaults to True, and `retry=False` fails an `assert` (5.6.3), so the usual call is a bare `with cache.transact():`.
-- oxide: `transact(*, key, retry=False)` is `Cache.transact()` (D-029 to D-031) on the shard `key` lives in, and `tx` is the FanoutCache. `key` is keyword-only and required, so a switched-off cache's `NullCache.transact(key=...)` takes the same spelling, and `transact('k')` is a `TypeError` rather than a `retry` of 'k'. A ported `with cache.transact():` raises `TypeError` too, since `key` is required: name a key on the shard the block uses. Only that shard is locked: writes to the other shards, from other threads and processes, carry on. On the thread that entered it, a call for a key on any other shard of the root raises `ValueError` naming both shards, reads included and through any handle on the root (the stores are shared, as in D-029), and so does entering a `transact` for a key on another shard; a nested `transact` for a key on the same shard joins the outer one. `shard_of(key)` says which keys can share one. Calls over every shard are refused the same way, with `ValueError` naming the call and the transaction's shard: `len()`, `volume()`, `iter()`, `iterkeys()` (and `next()` on an iterator made before the block), `clear()`, `expire()`, `cull()` and `checkpoint()`. Inside a one-shard transaction, only that shard's keyed calls reach the cache. Other threads, another root's transaction and a plain `Cache`'s transaction refuse nothing. `close()` isn't refused: it never raises, and `__exit__`, garbage collection and `Caches.close_all()` rely on that. Under `durable=True` a failed begin, and any failure inside the block, raises (D-028). One gap: while a fork is pending, the owner of a transaction parked behind that fork (D-031) isn't refused on other shards' keys or on calls over every shard; that transaction was already ended elsewhere and rolls back, and the owner's exit raises `TransactionAborted` (a `RuntimeError`). A FanoutCache isn't a `TransactionalCacheLike`; it and `NullCache` are `ShardedCacheLike`.
+- oxide: `transact(*, key, retry=False)` is `Cache.transact()` (D-029 to D-031) on the shard `key` lives in, and `tx` is the FanoutCache. `key` is keyword-only and required, so a switched-off cache's `NullCache.transact(key=...)` takes the same spelling, and `transact('k')` is a `TypeError` rather than a `retry` of 'k'. A ported `with cache.transact():` raises `TypeError` too, since `key` is required: name a key on the shard the block uses. Only that shard is locked: writes to the other shards, from other threads and processes, carry on. On the thread that entered it, a call for a key on any other shard of the root raises `ValueError` naming both shards, reads included and through any handle on the root (the stores are shared, as in D-029), and so does entering a `transact` for a key on another shard; a nested `transact` for a key on the same shard joins the outer one. `shard_of(key)` says which keys can share one. Calls over every shard are refused the same way, with `ValueError` naming the call and the transaction's shard: `len()`, `volume()`, `iter()`, `iterkeys()` (and `next()` on an iterator made before the block), `clear()`, `expire()`, `cull()`, `evict()`, `check()`, `reset()` and `checkpoint()`. Inside a one-shard transaction, only that shard's keyed calls reach the cache. Other threads, another root's transaction and a plain `Cache`'s transaction refuse nothing. `close()` isn't refused: it never raises, and `__exit__`, garbage collection and `Caches.close_all()` rely on that. Under `durable=True` a failed begin, and any failure inside the block, raises (D-028). One gap: while a fork is pending, the owner of a transaction parked behind that fork (D-031) isn't refused on other shards' keys or on calls over every shard; that transaction was already ended elsewhere and rolls back, and the owner's exit raises `TransactionAborted` (a `RuntimeError`). A FanoutCache isn't a `TransactionalCacheLike`; it and `NullCache` are `ShardedCacheLike`.
 - Why: holding every shard's lock would serialize the whole cache behind one transaction, which is what sharding exists to avoid, and taking N locks in order is N times the waiting. A read on another shard is refused too because it would see a value that the transaction's own writes can't be atomic with, so a block that mixes shards is a mistake either way, best caught on the first call. A call over every shard would run inside the transaction on one shard and outside it on the rest, which is the same mistake (Michael, 2026-11-06). The check costs one relaxed load of a process-wide count of open transactions, but only while no transaction is open anywhere in the process: one long `Cache.transact()` on any thread sends every thread's keyed FanoutCache calls, calls over every shard and iterator `next()`s down the slow path, which is still cheap (it stops at once for a shard with no transaction, and costs a gate entry and a mutex lock per shard that has one). In a child forked while transactions were open the count can stay above zero for good, so that child always takes the slow path: speed only, never correctness.
 - Tests: `tests/conformance/test_fanout.py` (`test_a_write_to_another_shard_doesnt_wait_for_a_transaction` is a strict xfail on diskcache), `tests/unit/test_fanout_transact.py`
 
@@ -355,6 +356,118 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - oxide: value directories are created one level at a time inside the cache directory, which is never re-created: such a write raises `OSError` (`ENOENT`, naming the path) after one `mkdir`. A small `set` still succeeds, into the database file the process already has open, as it does on diskcache.
 - Why: re-creating the tree under a deleted cache leaves orphan value files in a directory nothing will read (plan 15's note). Deleting a cache's directory while a process has it open isn't supported; delete it with every process stopped.
 - Tests: `spill::tests::a_write_into_a_deleted_cache_directory_fails_at_once_and_creates_nothing`
+
+## D-044 Keys are compared by exact type
+
+- Kind: test-visible
+- diskcache: keys are compared by SQLite, so `1` and `1.0` are one key (the second write replaces the first), while `True`, pickled, is another.
+- oxide: `1`, `1.0` and `True` are three keys, as are `0` and `False`. `0.0` and `-0.0` are one key. Inside a tuple the same rule holds element by element.
+- Why: a key's stored bytes are its identity and its FanoutCache shard, so they must follow from the value and its type alone, in every process and release. The value codec never coerces types either (Michael, 2026-11-10).
+- Tests: `test_keys.py`
+
+## D-045 `memoize(typed=True)` keys hold type names, not classes
+
+- Kind: test-visible
+- diskcache: `typed=True` appends each argument's class to the key tuple, and pickles the key.
+- oxide: it appends each argument type's `'module.qualname'` string (`'builtins.int'`) where diskcache appends the class. An int and a float argument still make two entries.
+- Why: a class can't be stored as a key without pickle, and keys are never pickled (D-004, D-001).
+- Tests: `test_memoize.py`
+
+## D-046 `iterkeys()` orders keys of different types by type first
+
+- Kind: test-visible
+- diskcache: `iterkeys()` follows SQLite's order over the stored keys: numbers (ints and floats together), then text, then BLOBs (bytes, and pickled keys in pickle-byte order).
+- oxide: every `str` key first, in code-point order, then `None`, `False`, `True`, ints, floats, bytes and tuples, each type in value order; tuples compare element by element in the same order, and a tuple comes before any longer tuple it begins. `reverse=True` is exactly the reverse. `prefix=` walks `str` keys only. `iter(cache)` is insertion order for every key type, as before.
+- Why: it is the order of the stored bytes, so it is an index scan, the same in every process, and FanoutCache's merge gives the same order as `Cache`.
+- Tests: `tests/unit/test_keys.py`, `key::tests`
+
+## D-047 `retry` is keyword-only, and dict syntax never retries
+
+- Kind: test-visible
+- diskcache: `retry` is a positional parameter of every call that takes it (`cache.set(k, v, None, False, None, True)` works), and `cache[k]`, `cache[k] = v` and `del cache[k]` pass `retry=True`, so they wait forever on a busy database.
+- oxide: `retry=False` is keyword-only, a strict `bool`, on `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`, `expire`, `cull`, `clear` and `evict` (`Cache`, `FanoutCache`, `NullCache` and the protocols). With `retry=True` only a plain `Timeout` is retried, each round with the call's whole `timeout`; a durable handle then retries it rather than answering it as a miss. A retried `expire`, `cull`, `clear` or `evict` keeps the snapshot it started from and returns everything every round removed (on a FanoutCache, from every shard). Dict syntax raises `Timeout` after `timeout`, as `Cache.get` does (D-034 says the same for FanoutCache). Only this cache's own `Timeout` is retried: one raised by the caller's code (a hook, a `clock`, a nested call) is raised at once. A retried `set` or `add` encodes its value once. A removal that couldn't take its snapshot at first takes it when it gets in, so writes made during the wait can be removed too. Inside a held transaction a retried call keeps the transaction, and its write lock, across rounds, as diskcache does.
+- Why: a positional `retry` after `read` and `tag`, which oxide doesn't have, would bind the wrong argument; and an unbounded wait hidden behind `cache[k]` is the hang this library exists to remove. Ask for it with `retry=True`.
+- Tests: `tests/conformance/test_retry.py`, `tests/unit/test_retry.py`
+
+## D-048 A memoized function's arguments must be key types
+
+- Kind: test-visible
+- diskcache: a memoized call's key holds its arguments, pickled, so any picklable argument works: lists, dicts, sets, objects. A NaN argument pickles too, and hits.
+- oxide: every argument not in `ignore` must be a key type (D-004), checked before the function runs: otherwise the call raises `TypeError`, or `ValueError` for a NaN or a tuple nested too deep, naming the argument (`memoize: argument 0 can not be part of a cache key: ...`). `-0.0` and `0.0` are one argument, as for `functools.lru_cache`, so a sign-sensitive function gets `f(0.0)`'s result for `f(-0.0)`. `async def` functions are refused when decorated. On a durable handle the reads and writes don't pass `retry=True`, so an outage runs the function and drops the store.
+- Why: keys are never pickled (D-004, D-001). Pass a list as a tuple, or leave an argument that can't be a key out with `ignore=` (a connection, a client) and let the others identify the call.
+- Tests: `tests/unit/test_memoize.py`
+
+## D-049 `stats()` counts per process, in memory
+
+- Kind: test-visible
+- diskcache: hits and misses are stored in the database's `Settings` table, shared by every process and kept across restarts; with statistics on, every `get` becomes a write transaction to count it.
+- oxide: counted in memory, per process: every handle on a directory in one process shares the counts, they survive closing the last handle, a forked child and a restarted process start at zero, and other processes' lookups aren't included. Counted by `get` and `cache[key]` only (as diskcache); a durable outage answered as a miss counts as nothing. A `FanoutCache` sums its shards. `statistics=` isn't a constructor setting; `stats(enable=...)` turns counting on and off.
+- Why: a `get` that writes would queue every reader behind the write lock, and reads that never write are what let many processes read at once (Michael's decision 7, plan 24). Sum the workers' counts yourself (the monitoring recipe shows one way). `Caches.stats()` reports counts and sizes, not hits and misses.
+- Tests: `tests/conformance/test_parity.py`, `tests/unit/test_stats.py`
+
+## D-050 `check()` doesn't report empty value folders, and keeps young files
+
+- Kind: test-visible
+- diskcache: `check()` warns about every empty directory (`EmptyDirWarning`) and every file no entry names (`UnknownFileWarning`), whatever its age, and `fix=True` removes them; a wrong-size value file has its row's size corrected to the file's.
+- oxide: empty value folders aren't reported (they're normal on an open cache, D-042) and `fix=True` sweeps them; a file no entry names is reported, and removed by `fix=True`, only once it's over an hour old (a younger one may be a writer's in flight: its `.tmp`, or a renamed `.val` between a busy commit and its retry), and only inside a value folder is one ever removed; a wrong-size file means a crash cut it short, so `fix=True` removes the entry rather than serve the short bytes. The database's own files are never reported or touched. `check()` runs in short steps, without holding the write lock across the scan.
+- Why: a `check(fix=True)` that deleted a live writer's file, or blessed a truncated value, would cause the damage it's meant to find (Michael's decision 20, plan 24).
+- Tests: `tests/conformance/test_parity.py`, `check::tests`
+
+## D-051 The coordination recipes
+
+- Kind: test-visible
+- diskcache: `Lock`, `RLock`, `BoundedSemaphore`, `Averager`, `throttle` and `barrier` work on any cache; `RLock`'s owner is `'{pid}-{tid}'`; `throttle` raises `TypeError` once its bucket expires or is cleared, and every decoration refills the bucket (upstream bugs 13 and 14); a recipe that waits inside the caller's own transaction polls forever while holding the write lock; its checks are `assert`s.
+- oxide: the coordination recipes refuse a `NullCache` and a `durable=True` handle with `TypeError` (`memoize_stampede` follows `memoize` instead); `RLock`'s owner is `'{pid}-{tid}-{nonce}'`, the nonce made per process and again in a forked child; `throttle` treats a missing bucket as full and adds its bucket at decoration; a recipe that would wait inside this thread's own transaction on its cache raises `RuntimeError`; the release checks raise `AssertionError` explicitly (not stripped by `python -O`); on a `FanoutCache` a recipe's transaction covers its key's shard; `tag=` is any key type (D-052), and `barrier` passes it to the lock factory only when it isn't None, so a factory written without a `tag` parameter works.
+- Why: a lock that silently doesn't lock, or that one container's pid 7 shares with another's, is worse than an error (Michael's decisions 10, 16, 17 and 18, plan 24).
+- Tests: `tests/conformance/test_recipes.py`, `tests/unit/test_recipes.py`
+
+## D-052 Tags are compared by exact type
+
+- Kind: test-visible
+- diskcache: tags are stored as SQLite values and compared numerically, so `evict(1)` removes entries tagged `1`, `1.0` and `True`, a `True` tag reads back as `1`, a NaN tag is stored as no tag, and a tuple tag raises `ProgrammingError`.
+- oxide: a tag is any key type (D-004), stored and compared as a key is (D-044): `1`, `1.0` and `True` are three tags, a NaN tag raises `ValueError`, and a tuple is a tag. A bad tag's error says "invalid tag". `tag=` is keyword-only on `set` and `add`, as `retry=` is (D-047), and `tag=True` on `get` and `pop` returns diskcache's tuples. `memoize` takes `tag` fourth, as diskcache does. `evict(None)` is 0 and touches nothing, as in diskcache.
+- Why: one rule for keys and tags, with an identity that follows from the value and its type.
+- Tests: `tests/conformance/test_tags.py`, `tests/unit/test_tags.py`
+
+## D-053 `cull()` under `eviction_policy='none'` counts what it removed
+
+- Kind: test-visible
+- diskcache: under `'none'`, `cull()` removes the expired entries and then returns 0 (upstream bug 15).
+- oxide: it returns how many expired entries it removed. Under `'none'` nothing is ever evicted for size, by a write or by `cull()`, and the policy is read inside each write's transaction, so a handle opened before another process switched the cache to `'none'` stops evicting at once.
+- Why: `cull()`'s count is documented as what it removed.
+- Tests: `tests/conformance/test_tags.py`, `tests/unit/test_eviction_policy.py`
+
+## D-054 A queue's keys are exactly its own
+
+- Kind: test-visible
+- diskcache: `push`, `pull` and `peek` find a queue's end by range alone. With `prefix=None` the range is numeric, so a float or bool key in it counts (with `5.5` stored, `push()` returns `6.5`); with a prefix it is every string between `'{prefix}-000000000000000'` and `'{prefix}-999999999999999'`, so an ordinary key `'user-9'` makes `push(x, prefix='user')` return `'user-000000000000010'` (and the next push raises `IntegrityError`), and `pull(prefix='q')` takes `'q-1-500000000000000'`, an item of queue `'q-1'` (upstream bugs 17 and 18).
+- oxide: a queue's keys are `int` keys, by exact type, with `prefix=None`, or `str` keys of exactly `'{prefix}-'` and 15 digits with a prefix; any other key in the range is ignored by every queue call, so nested and shared prefixes never cross. Ignored keys in the range still cost a scan, so use a prefix no other key starts with.
+- Why: a queue must never hand out, renumber or crash on a key that isn't one of its items.
+- Tests: `tests/conformance/test_queue.py`, `tests/unit/test_queue.py`
+
+## D-055 peek and peekitem don't delete what they pass, and never spin
+
+- Kind: test-visible
+- diskcache: `peek` and `peekitem` take the write lock and delete the expired entries they pass, and both loop forever when the head's value file is missing, since that row is never deleted (upstream bug 16).
+- oxide: they write only what `get` would: the head is the first live entry, and expired ones are left to `expire()` and the next write's sweep. A head whose value file is gone, or whose bytes no build could read (under `on_decode_error='miss'`), is removed without waiting, as `get` removes one (D-013), and the call goes on to the next item. Like `get`, a read that keeps losing a spilled head to overwrites takes the write lock once to read it (D-016).
+- Why: reads never write (D-019), so any number of processes can peek at once.
+- Tests: `tests/conformance/test_queue.py`, `tests/unit/test_queue.py`
+
+## D-056 pull decodes before it deletes
+
+- Kind: test-visible
+- diskcache: `pull` deletes the head in its transaction and decodes it afterwards, so an item it can't decode is lost.
+- oxide: `pull` reads and decodes the head first and then deletes exactly that version, as `pop` does (D-026), and unlike `pop` it never falls back to removing before it decodes: a puller that loses the head to another reads the new one, pausing briefly after a few losses in a row, and one that keeps losing until its `timeout` raises `Timeout` having taken nothing. An item this process can't read stays at the head: a pickled one under `pickle=False` raises `UnsafeValueError`, and a foreign one (a newer deploy's type) raises or, under `on_decode_error='miss'`, makes `pull` return the default. One that no build could read is removed; it then raises `CorruptValueError`, or under `on_decode_error='miss'` is reported and `pull` goes on to the next item rather than returning the default, so a worker draining the queue doesn't stop early.
+- Why: a queue's producer and consumer are often different services, upgraded at different times (Michael, decisions 23 and 25). Each lost race is another puller's progress, so the queue always drains.
+- Tests: `tests/unit/test_queue.py`
+
+## D-057 push raises past its range, and a bad side is a ValueError
+
+- Kind: test-visible
+- diskcache: a push past either end of the range leaves it (after `cache[1] = ...`, `push(side='front')` stores key `0`), and the next push raises `sqlite3.IntegrityError`. A `side` other than `'front'` or `'back'` raises `KeyError`.
+- oxide: a push whose number would leave the range raises `OverflowError`, and a push never overwrites an existing key. A bad `side` raises `ValueError`, a non-`str` prefix `TypeError`.
+- Why: a queue must never overwrite one of the caller's own keys (Michael, decision 24); `ValueError` is the error for a bad argument value.
+- Tests: `tests/conformance/test_queue.py`, `tests/unit/test_queue.py`
 
 # Community fork differences
 

@@ -46,7 +46,7 @@ pub enum Error {
     /// The database was written by a format version this build doesn't know.
     /// `path` names the file that declared it when that isn't the database itself (a `FanoutCache`
     /// manifest).
-    #[error("cache format version {found} is not supported (this build uses version {expected}){}", path_note(.path.as_ref()))]
+    #[error("{}", format_mismatch(*.found, *.expected, .path.as_ref()))]
     FormatMismatch { found: i64, expected: i64, path: Option<PathBuf> },
 
     /// A `FanoutCache` root's manifest isn't the exact bytes this build writes (plan 13, section 1):
@@ -94,6 +94,15 @@ pub enum Error {
     #[error("this database can't be written in a process forked inside a transaction")]
     Unwritable,
 
+    /// A call that can't run inside a held transaction, naming the call and why (Python
+    /// `RuntimeError`).
+    #[error("{0}")]
+    InsideTransaction(&'static str),
+
+    /// A stored key that isn't one this build can read: a damaged page or file.
+    #[error("a stored key is damaged: {0}")]
+    CorruptKey(crate::key::KeyError),
+
     /// `incr`/`decr` with `default=None` on a missing or expired key (Python `KeyError`).
     #[error("key not found")]
     KeyMissing,
@@ -105,6 +114,15 @@ pub enum Error {
     /// `incr`/`decr` past the 64-bit integer range (Python `OverflowError`), as diskcache does.
     #[error("integer overflow")]
     Overflow,
+
+    /// A queue `push` whose number would leave the queue's key range (D-057; Python `OverflowError`).
+    #[error("the queue's key range is full on that side")]
+    QueueFull,
+
+    /// A queue `push` found its next key already stored, which the range rules make impossible: it
+    /// refuses rather than overwrite (decision 24).
+    #[error("the queue's next key is already stored; refusing to overwrite it")]
+    QueueKeyTaken,
 
     /// A setting the cache can't honor, such as a `size_limit` under the minimum (D-005).
     #[error("{0}")]
@@ -142,8 +160,16 @@ pub enum Error {
 }
 
 /// The " (in <path>)" suffix of a [`Error::FormatMismatch`] that came from a file other than the database.
-fn path_note(path: Option<&PathBuf>) -> String {
-    path.map_or_else(String::new, |p| format!(" (in {})", p.display()))
+/// [`Error::FormatMismatch`]'s message: what was found, and what to do, by direction.
+fn format_mismatch(found: i64, expected: i64, path: Option<&PathBuf>) -> String {
+    let note = path.map_or_else(String::new, |p| format!(" (in {})", p.display()));
+    let remedy = if found < expected {
+        "it was made by an older diskcache-oxide: delete the cache's directory (a FanoutCache's whole root) \
+         with every process using it stopped, and it will be recreated empty"
+    } else {
+        "it was made by a newer diskcache-oxide: upgrade this process"
+    };
+    format!("cache format version {found} is not supported (this build uses version {expected}){note}: {remedy}")
 }
 
 impl Error {
@@ -194,11 +220,16 @@ impl Error {
             | Self::KeyMissing
             | Self::NotNumeric
             | Self::Overflow
+            | Self::QueueFull
+            | Self::QueueKeyTaken
             | Self::NestedTransaction
             | Self::WriteLockBusyInTransaction
             | Self::NoTransaction
             | Self::EndInsideOperation
-            | Self::TransactionAborted => false,
+            | Self::TransactionAborted
+            // Damage, not an outage: never answered as a miss.
+            | Self::CorruptKey(_)
+            | Self::InsideTransaction(_) => false,
         }
     }
 
@@ -277,6 +308,7 @@ mod tests {
             Error::Overflow,
             Error::InvalidSetting("x".into()),
             Error::NestedTransaction,
+            Error::InsideTransaction("x"),
             Error::WriteLockBusyInTransaction,
             Error::NoTransaction,
             Error::EndInsideOperation,

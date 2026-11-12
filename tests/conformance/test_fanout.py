@@ -428,3 +428,16 @@ def test_a_write_to_another_shard_doesnt_wait_for_a_transaction(
 
         answer = _from_another_thread(write)
     assert answer is True, f'a write to another shard during the transaction answered {answer!r}'
+
+
+@pytest.mark.requires('key_types')
+def test_a_fanout_cache_takes_every_key_type(make_fanout: Callable[..., Any], cache_dir: Path) -> None:
+    cache = make_fanout(cache_dir, shards=4)
+    keys = [1, -1, 2.5, b'x', None, True, (1, 'a'), ('m.f', 3, None)]
+    for i, key in enumerate(keys):
+        cache.set(key, i)
+    for i, key in enumerate(keys):
+        assert cache.get(key) == i, key
+    assert len(cache) == len(keys)
+    for key in keys:
+        assert cache.delete(key) is True

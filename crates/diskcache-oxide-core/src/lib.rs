@@ -6,22 +6,26 @@
 // deny, not forbid, so that `stack` and `sqlite_mutex` alone can allow it.
 #![deny(unsafe_code)]
 
+pub mod check;
 mod error;
 pub mod fanout;
 pub mod gate;
 pub mod genlock;
+pub mod key;
 pub mod lockwait;
 pub mod maintenance;
 pub mod open;
 pub mod ops;
 pub mod poison;
 pub mod pool;
+pub mod queue;
 pub mod rows;
 pub mod schema;
 pub mod spill;
 pub mod sqlite;
 pub mod sqlite_mutex;
 mod stack;
+pub mod stats;
 pub mod store;
 mod sync;
 #[cfg(test)]

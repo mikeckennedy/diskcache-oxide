@@ -20,7 +20,7 @@ MiB = 1 << 20
 QUERY = (
     'import sqlite3, sys\n'
     'con = sqlite3.connect(sys.argv[1])\n'
-    'print(*con.execute("SELECT (SELECT count FROM totals), (SELECT size FROM totals),'
+    'print(*con.execute("SELECT (SELECT count FROM state), (SELECT size FROM state),'
     ' (SELECT COUNT(*) FROM cache), (SELECT COALESCE(SUM(size), 0) FROM cache)").fetchone())\n'
 )
 

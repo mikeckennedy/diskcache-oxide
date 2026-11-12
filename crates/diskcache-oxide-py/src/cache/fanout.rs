@@ -17,9 +17,11 @@ use std::sync::{Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
 use diskcache_oxide_core::fanout::{self, Manifest, ShardRequest};
+use diskcache_oxide_core::key::{Key, OwnedKey};
 use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, PAGE, Snapshot};
-use diskcache_oxide_core::open::Role;
+use diskcache_oxide_core::open::{Requested, Role};
 use diskcache_oxide_core::ops::Number;
+use diskcache_oxide_core::rows::Tag;
 use diskcache_oxide_core::store::Store;
 use diskcache_oxide_core::{Error, lockwait};
 use pyo3::PyTraverseError;
@@ -28,7 +30,10 @@ use pyo3::gc::PyVisit;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-use super::{DecodePolicy, Delta, HandleConfig, IncrDefault, Settings, StoreHandle, Transaction, str_key, whole};
+use super::{
+    DecodePolicy, Delta, HandleConfig, IncrDefault, Reduced, ReopenOptions, ResetLimit, Settings, StoreHandle,
+    Transaction, Wants, retrying, whole,
+};
 use crate::codec::TypeRegistry;
 use crate::to_py_err;
 
@@ -51,6 +56,7 @@ impl FanoutCache {
         shards = None,
         size_limit = None,
         cull_limit = None,
+        eviction_policy = None,
         serializer = "msgpack",
         pickle = false,
         types = None,
@@ -70,6 +76,7 @@ impl FanoutCache {
         shards: Option<&Bound<'_, PyAny>>,
         size_limit: Option<&Bound<'_, PyAny>>,
         cull_limit: Option<&Bound<'_, PyAny>>,
+        eviction_policy: Option<&str>,
         serializer: &str,
         pickle: bool,
         types: Option<Py<TypeRegistry>>,
@@ -89,6 +96,7 @@ impl FanoutCache {
             false,
             size_limit,
             cull_limit,
+            eviction_policy,
             serializer,
             pickle,
             types,
@@ -134,6 +142,12 @@ impl FanoutCache {
         self.shards[0].store.cached_limits().cull_limit
     }
 
+    /// Shard 0's eviction policy, as `cull_limit` is shard 0's.
+    #[getter]
+    fn eviction_policy(&self) -> &'static str {
+        self.shards[0].store.cached_limits().eviction_policy.name()
+    }
+
     /// Always True for a real cache (a `NullCache` is False).
     #[getter]
     #[allow(clippy::unused_self)] // A Python attribute: it needs `self` even though it's constant.
@@ -144,7 +158,7 @@ impl FanoutCache {
     /// The shard `key` lives in, `0 <= shard_of(key) < shards`: the same in every process and every
     /// release. Keys with the same shard can share a `transact(key=...)`.
     fn shard_of(&self, key: &Bound<'_, PyAny>) -> PyResult<usize> {
-        Ok(self.route(str_key(key)?).shard)
+        Ok(self.route(crate::codec::key::encode_key(key)?.key()).shard)
     }
 
     /// Test hook: every failure `durable=True` has swallowed on this handle, as `Cache`'s.
@@ -168,89 +182,249 @@ impl FanoutCache {
         self.config.traverse(&visit)
     }
 
+    /// Pickles as the root, its shard count and the options this handle was opened with, as `Cache`.
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<Reduced> {
+        let rebuild = py.import("diskcache_oxide._pickling")?.getattr("rebuild")?.unbind();
+        Ok((rebuild, ("FanoutCache", self.config.reopen.bind(py).copy()?.unbind())))
+    }
+
+    /// True for a `durable=True` handle.
+    #[getter]
+    fn durable(&self) -> bool {
+        self.config.failures.is_some()
+    }
+
+    /// As `Cache._in_transaction`: whether this thread holds a transaction on any of the shards.
+    fn _in_transaction(&self) -> bool {
+        self.shards.iter().any(|h| h.store.held_by_this_thread())
+    }
+
+    /// As `Cache.check`, over every shard in turn, each with the cache's `timeout`.
+    #[pyo3(signature = (fix = false, retry = false))]
+    fn check(&self, py: Python<'_>, fix: bool, retry: bool) -> PyResult<Py<pyo3::types::PyList>> {
+        self.refuse_fan_out("check()")?;
+        let mut found = Vec::new();
+        for (i, handle) in self.shards.iter().enumerate() {
+            if i > 0 {
+                py.check_signals()?;
+            }
+            loop {
+                let started = Instant::now();
+                let checked = crate::detach(py, || {
+                    handle.run(self.config.timeout, |timeout| handle.store.check(fix, timeout, &mut found))
+                });
+                match checked {
+                    Ok(()) => break,
+                    Err(Error::Timeout { .. }) if retry => super::pause_before_retry(py, started)?,
+                    Err(error) => return Err(to_py_err(error)),
+                }
+            }
+        }
+        super::findings_to_warnings(py, found)
+    }
+
+    /// As `Cache.stats`, summed over the shards; `enable` and `reset` apply to every shard.
+    #[pyo3(signature = (enable = true, reset = false))]
+    fn stats(&self, enable: bool, reset: bool) -> (u64, u64) {
+        // In memory: it touches no database, so it's fine inside a `transact(key=)`, as on `Cache`.
+        self.shards.iter().fold((0, 0), |(hits, misses), handle| {
+            let (h, m) = handle.store.stats().take(enable, reset);
+            (hits + h, misses + m)
+        })
+    }
+
+    /// As `Cache.reset`, over every shard under one `timeout`. A `size_limit` is a total, split
+    /// across the shards as the constructor splits it, and read back as the total; a `cull_limit`
+    /// and an `eviction_policy` are every shard's (and read back as shard 0's). Stops at the first
+    /// shard that fails, raising its error.
+    #[pyo3(signature = (key, value = None, update = true))]
+    fn reset(&self, py: Python<'_>, key: &str, value: Option<&Bound<'_, PyAny>>, update: bool) -> PyResult<Py<PyAny>> {
+        self.refuse_fan_out("reset()")?;
+        let which = ResetLimit::parse(key, value, update)?;
+        let count = u32::try_from(self.shards.len()).unwrap_or(u32::MAX);
+        let requested = match &which {
+            ResetLimit::Size(Some(total)) => Requested {
+                size_limit: Some(
+                    diskcache_oxide_core::store::split_size_limit("size_limit", *total, count).map_err(to_py_err)?,
+                ),
+                cull_limit: None,
+                eviction_policy: None,
+            },
+            _ => which.requested(),
+        };
+        let read = which.is_read();
+        let limits =
+            self.every_shard(
+                py,
+                |store, left| if read { store.read_limits(left) } else { store.set_limits(left, requested) },
+            )?;
+        if matches!(which, ResetLimit::Size(_)) {
+            return Ok(limits.iter().map(|l| l.size_limit).sum::<i64>().into_pyobject(py)?.into_any().unbind());
+        }
+        // A root always has at least one shard.
+        match limits.first() {
+            Some(&first) => which.of(py, first),
+            None => Ok(py.None()),
+        }
+    }
+
     // -- routed to one shard -------------------------------------------------------------------
 
-    #[pyo3(signature = (key, default = None, *, expire_time = false))]
+    #[pyo3(signature = (key, default = None, *, expire_time = false, tag = false, retry = false))]
     fn get(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         default: Option<Py<PyAny>>,
         expire_time: bool,
+        tag: bool,
+        retry: bool,
     ) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
-        self.config.get(py, self.routed(name)?, name, default, expire_time)
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
+        let wants = Wants { expire_time, tag };
+        retrying(py, retry, || {
+            self.config.get(py, self.routed(name)?, name, default.as_ref().map(|d| d.clone_ref(py)), wants)
+        })
     }
 
     fn __getitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
-        self.config.get_item(py, self.routed(name)?, key, name)
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
+        retrying(py, false, || self.config.get_item(py, self.routed(name)?, key, name))
     }
 
     fn __contains__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let name = str_key(key)?;
-        self.config.contains(py, self.routed(name)?, name)
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
+        retrying(py, false, || self.config.contains(py, self.routed(name)?, name))
     }
 
-    #[pyo3(signature = (key, value, expire = None))]
+    #[pyo3(signature = (key, value, expire = None, *, tag = None, retry = false))]
     fn set(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
+        tag: Option<&Bound<'_, PyAny>>,
+        retry: bool,
     ) -> PyResult<bool> {
-        let name = str_key(key)?;
-        self.config.set(py, self.routed(name)?, name, value, expire)
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
+        let t = crate::codec::key::encode_tag(tag)?;
+        let (encoded, expire) = self.config.encode_value(py, value, expire)?;
+        let tag = t.as_ref().map(|t| Tag(t.key()));
+        retrying(py, retry, || self.config.set(py, self.routed(name)?, name, &encoded, expire, tag))
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.set(py, key, value, None).map(|_| ())
+        self.set(py, key, value, None, None, false).map(|_| ())
     }
 
-    #[pyo3(signature = (key, value, expire = None))]
+    #[pyo3(signature = (key, value, expire = None, *, tag = None, retry = false))]
     fn add(
         &self,
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
         expire: Option<&Bound<'_, PyAny>>,
+        tag: Option<&Bound<'_, PyAny>>,
+        retry: bool,
     ) -> PyResult<bool> {
-        let name = str_key(key)?;
-        self.config.add(py, self.routed(name)?, name, value, expire)
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
+        let t = crate::codec::key::encode_tag(tag)?;
+        let (encoded, expire) = self.config.encode_value(py, value, expire)?;
+        let tag = t.as_ref().map(|t| Tag(t.key()));
+        retrying(py, retry, || self.config.add(py, self.routed(name)?, name, &encoded, expire, tag))
     }
 
-    fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let name = str_key(key)?;
-        self.config.delete(py, self.routed(name)?, name)
+    #[pyo3(signature = (key, *, retry = false))]
+    fn delete(&self, py: Python<'_>, key: &Bound<'_, PyAny>, retry: bool) -> PyResult<bool> {
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
+        retrying(py, retry, || self.config.delete(py, self.routed(name)?, name))
     }
 
     fn __delitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<()> {
-        if self.delete(py, key)? { Ok(()) } else { Err(PyKeyError::new_err(key.clone().unbind())) }
+        if self.delete(py, key, false)? { Ok(()) } else { Err(PyKeyError::new_err(key.clone().unbind())) }
     }
 
-    #[pyo3(signature = (key, default = None))]
-    fn pop(&self, py: Python<'_>, key: &Bound<'_, PyAny>, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
-        self.config.pop(py, self.routed(name)?, name, default)
+    #[pyo3(signature = (key, default = None, *, expire_time = false, tag = false, retry = false))]
+    fn pop(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        default: Option<Py<PyAny>>,
+        expire_time: bool,
+        tag: bool,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
+        let wants = Wants { expire_time, tag };
+        retrying(py, retry, || {
+            self.config.pop(py, self.routed(name)?, name, default.as_ref().map(|d| d.clone_ref(py)), wants)
+        })
     }
 
-    #[pyo3(signature = (key, expire = None))]
-    fn touch(&self, py: Python<'_>, key: &Bound<'_, PyAny>, expire: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        let name = str_key(key)?;
-        self.config.touch(py, self.routed(name)?, name, expire)
+    #[pyo3(signature = (key, expire = None, *, retry = false))]
+    fn touch(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        expire: Option<&Bound<'_, PyAny>>,
+        retry: bool,
+    ) -> PyResult<bool> {
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
+        retrying(py, retry, || self.config.touch(py, self.routed(name)?, name, expire))
     }
 
-    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
-    fn incr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
-        self.config.add_number(py, self.routed(name)?, key, name, delta, default, false)
+    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0))), *, retry = false))]
+    fn incr(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        delta: Delta,
+        default: IncrDefault,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
+        retrying(py, retry, || self.config.add_number(py, self.routed(name)?, key, name, delta, default, false))
     }
 
-    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0)))))]
-    fn decr(&self, py: Python<'_>, key: &Bound<'_, PyAny>, delta: Delta, default: IncrDefault) -> PyResult<Py<PyAny>> {
-        let name = str_key(key)?;
-        self.config.add_number(py, self.routed(name)?, key, name, delta, default, true)
+    #[pyo3(signature = (key, delta = Delta(Number::Int(1)), default = IncrDefault(Some(Number::Int(0))), *, retry = false))]
+    fn decr(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        delta: Delta,
+        default: IncrDefault,
+        retry: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let encoded = crate::codec::key::encode_key(key)?;
+        let name = encoded.key();
+        retrying(py, retry, || self.config.add_number(py, self.routed(name)?, key, name, delta, default, true))
+    }
+
+    /// As `Cache.memoize`: a decorator caching a function's results in this cache.
+    #[pyo3(
+        signature = (name = None, typed = false, expire = None, tag = None, ignore = None),
+        text_signature = "($self, name=None, typed=False, expire=None, tag=None, ignore=())"
+    )]
+    fn memoize(
+        slf: &Bound<'_, Self>,
+        name: Option<&Bound<'_, PyAny>>,
+        typed: bool,
+        expire: Option<&Bound<'_, PyAny>>,
+        tag: Option<&Bound<'_, PyAny>>,
+        ignore: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let durable = slf.get().config.failures.is_some();
+        super::memoize_on(slf.as_any(), name, typed, expire, tag, ignore, durable)
     }
 
     // -- over every shard, under one deadline ---------------------------------------------------
@@ -275,33 +449,52 @@ impl FanoutCache {
 
     /// Removes every expired entry from every shard. Returns how many it removed. `timeout`
     /// overrides the cache's for this call: one budget for the whole call (see `remove_everywhere`).
-    #[pyo3(signature = (*, timeout = None))]
-    fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+    #[pyo3(signature = (*, timeout = None, retry = false))]
+    fn expire(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>, retry: bool) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
         self.refuse_fan_out("expire()")?;
         let now = self.config.now(py)?;
-        self.remove_everywhere(py, "expire", timeout, |store, snapshot, deadline| {
+        self.remove_everywhere(py, "expire", timeout, retry, |store, snapshot, deadline| {
             store.expire_until(snapshot, now, deadline)
         })
     }
 
     /// Removes every entry stored before the call. Returns how many it removed. `timeout` as for
     /// `expire`.
-    #[pyo3(signature = (*, timeout = None))]
-    fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+    #[pyo3(signature = (*, timeout = None, retry = false))]
+    fn clear(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>, retry: bool) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
         self.refuse_fan_out("clear()")?;
-        self.remove_everywhere(py, "clear", timeout, Store::clear_until)
+        self.remove_everywhere(py, "clear", timeout, retry, Store::clear_until)
+    }
+
+    /// Removes every entry tagged `tag` and stored before the call, on every shard. Returns how many
+    /// it removed. `evict(None)` removes nothing. `timeout` and `retry` as for `clear`.
+    #[pyo3(signature = (tag, *, timeout = None, retry = false))]
+    fn evict(
+        &self,
+        py: Python<'_>,
+        tag: &Bound<'_, PyAny>,
+        timeout: Option<&Bound<'_, PyAny>>,
+        retry: bool,
+    ) -> PyResult<u64> {
+        let timeout = self.config.call_timeout(timeout)?;
+        self.refuse_fan_out("evict()")?;
+        let Some(encoded) = crate::codec::key::encode_tag(Some(tag))? else { return Ok(0) };
+        let tag = encoded.key();
+        self.remove_everywhere(py, "evict", timeout, retry, |store, snapshot, deadline| {
+            store.evict_until(snapshot, tag, deadline)
+        })
     }
 
     /// Removes expired entries, then evicts each shard until it's under its share of `size_limit`.
     /// Returns how many it removed. `timeout` as for `expire`.
-    #[pyo3(signature = (*, timeout = None))]
-    fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
+    #[pyo3(signature = (*, timeout = None, retry = false))]
+    fn cull(&self, py: Python<'_>, timeout: Option<&Bound<'_, PyAny>>, retry: bool) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
         self.refuse_fan_out("cull()")?;
         let now = self.config.now(py)?;
-        self.remove_everywhere(py, "cull", timeout, |store, snapshot, deadline| {
+        self.remove_everywhere(py, "cull", timeout, retry, |store, snapshot, deadline| {
             store.cull_until(snapshot, now, deadline)
         })
     }
@@ -355,7 +548,16 @@ impl FanoutCache {
     /// order the keys were stored in across the whole cache.
     fn __iter__(slf: Py<Self>) -> PyResult<FanoutKeyIterator> {
         slf.get().refuse_fan_out("iteration")?;
-        Ok(FanoutKeyIterator::new(slf, Walk::Shards { shard: 0, cursor: Cursor::Start, buffer: VecDeque::new() }, None))
+        let walk = Walk::Shards { shard: 0, cursor: Cursor::Start, buffer: VecDeque::new(), reverse: false };
+        Ok(FanoutKeyIterator::new(slf, walk, None))
+    }
+
+    /// Every key once, newest first: the last shard's in reverse insertion order, then the one
+    /// before, as diskcache chains its shards.
+    fn __reversed__(slf: Py<Self>) -> PyResult<FanoutKeyIterator> {
+        slf.get().refuse_fan_out("iteration")?;
+        let walk = Walk::Shards { shard: 0, cursor: Cursor::Start, buffer: VecDeque::new(), reverse: true };
+        Ok(FanoutKeyIterator::new(slf, walk, None))
     }
 
     // -- lifecycle ----------------------------------------------------------------------------
@@ -406,7 +608,7 @@ impl FanoutCache {
     /// takes the same spelling.
     #[pyo3(signature = (*, key, retry = false))]
     fn transact(slf: Py<Self>, key: &Bound<'_, PyAny>, retry: bool) -> PyResult<Transaction> {
-        let shard = slf.get().route(str_key(key)?).shard;
+        let shard = slf.get().route(crate::codec::key::encode_key(key)?.key()).shard;
         Ok(Transaction::on_shard(slf, shard, retry))
     }
 }
@@ -424,6 +626,7 @@ impl FanoutCache {
         keep_stored: bool,
         size_limit: Option<&Bound<'_, PyAny>>,
         cull_limit: Option<&Bound<'_, PyAny>>,
+        eviction_policy: Option<&str>,
         serializer: &str,
         pickle: bool,
         types: Option<Py<TypeRegistry>>,
@@ -435,11 +638,26 @@ impl FanoutCache {
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
     ) -> PyResult<Self> {
+        let reopen = ReopenOptions {
+            timeout,
+            serializer,
+            pickle,
+            types: types.as_ref(),
+            clock: clock.as_ref(),
+            max_connections,
+            sqlite_cache_size,
+            wal_size_limit,
+            wal_checkpoint,
+            on_decode_error: on_decode_error.as_ref(),
+            durable,
+        }
+        .build(py, &directory)?;
         let settings = Settings::parse(
             py,
             timeout,
             size_limit,
             cull_limit,
+            eviction_policy,
             serializer,
             max_connections,
             sqlite_cache_size,
@@ -453,23 +671,25 @@ impl FanoutCache {
         };
         let stores = crate::detach(py, || open(&directory, &settings, request))
             .map_err(|(e, shards)| open_error(py, e, shards))?;
-        let shards = stores
+        let shards: Box<[StoreHandle]> = stores
             .into_iter()
             .enumerate()
             .map(|(shard, store)| StoreHandle { store, shard, closed: AtomicBool::new(false) })
             .collect();
+        // The count actually opened, which an existing root decides.
+        reopen.bind(py).set_item("shards", shards.len())?;
         Ok(Self {
             shards,
-            config: HandleConfig::new(&directory, &settings, pickle, types, clock, on_decode_error, durable),
+            config: HandleConfig::new(&directory, &settings, pickle, types, clock, on_decode_error, durable, reopen),
         })
     }
 
     /// The handle of the shard `key` hashes to.
     #[inline]
-    fn route(&self, key: &str) -> &StoreHandle {
+    fn route(&self, key: Key<'_>) -> &StoreHandle {
         // The shard count came from a validated manifest, so it fits a `u32`.
         let count = u32::try_from(self.shards.len()).unwrap_or(u32::MAX);
-        &self.shards[fanout::shard_of_str(key, count)]
+        &self.shards[fanout::shard_of_key(key, count)]
     }
 
     /// The handle of the shard `key` hashes to, for a routed call: refused with `ValueError` if this
@@ -478,7 +698,7 @@ impl FanoutCache {
     /// is open (a `Cache.transact()` on any thread counts), it asks each other shard, which stops at
     /// once for a shard with none and costs a gate entry and a mutex lock for one that has one.
     #[inline]
-    fn routed(&self, key: &str) -> PyResult<&StoreHandle> {
+    fn routed(&self, key: Key<'_>) -> PyResult<&StoreHandle> {
         let handle = self.route(key);
         if Store::any_held_in_process() {
             self.refuse_other_shards(handle.shard)?;
@@ -576,10 +796,11 @@ impl FanoutCache {
         py: Python<'_>,
         call: &str,
         timeout: Duration,
+        retry: bool,
         remove: impl Fn(&Store, Snapshot, Instant) -> Result<u64, Interrupted> + Sync,
     ) -> PyResult<u64> {
         let deadline = lockwait::deadline_after(Instant::now(), timeout);
-        let snapshots: Vec<Result<Snapshot, Error>> = crate::detach(py, || {
+        let taken: Vec<Result<Snapshot, Error>> = crate::detach(py, || {
             let left = || deadline.saturating_duration_since(Instant::now());
             self.shards
                 .iter()
@@ -588,27 +809,47 @@ impl FanoutCache {
         });
         let mut removed = 0;
         let mut failures = Vec::new();
-        for (i, (handle, snapshot)) in self.shards.iter().zip(snapshots).enumerate() {
+        let mut snapshots: Vec<Option<Snapshot>> = Vec::with_capacity(taken.len());
+        for (i, (handle, snapshot)) in self.shards.iter().zip(taken).enumerate() {
             if i > 0 {
                 self.check_signals_between(py, call, Some(removed), &failures)?;
             }
-            let outcome = match snapshot {
-                Ok(snapshot) => crate::detach(py, || remove(&handle.store, snapshot, deadline)),
-                Err(error) => Err(Interrupted { removed: 0, error }),
-            };
-            match outcome {
-                Ok(n) => removed += n,
-                Err(Interrupted { removed: n, error }) => {
-                    removed += n;
+            let mut snapshot = match snapshot {
+                Ok(snapshot) => Some(snapshot),
+                Err(error) => {
                     failures.push((handle.shard, error));
+                    snapshots.push(None);
+                    continue;
                 }
+            };
+            let (n, failed) = remove_on(py, handle, &mut snapshot, deadline, &remove);
+            snapshots.push(snapshot);
+            removed += n;
+            failures.extend(failed.map(|error| (handle.shard, error)));
+        }
+        // `retry=True`: while every failure is a timeout, run the failed shards again, each round with
+        // the whole `timeout`, from the snapshots already taken (a shard that couldn't take one takes
+        // it now), adding up what every round removed.
+        while retry && !failures.is_empty() && failures.iter().all(|(_, e)| matches!(e, Error::Timeout { .. })) {
+            // Ctrl-C between rounds raises with `removed` and `failed_shards`, as between shards.
+            self.check_signals_between(py, call, Some(removed), &failures)?;
+            crate::detach(py, || std::thread::sleep(Duration::from_millis(1)));
+            let deadline = lockwait::deadline_after(Instant::now(), timeout);
+            for (shard, _) in std::mem::take(&mut failures) {
+                let (n, failed) = remove_on(py, &self.shards[shard], &mut snapshots[shard], deadline, &remove);
+                removed += n;
+                failures.extend(failed.map(|error| (shard, error)));
             }
         }
         if failures.is_empty() {
-            Ok(removed)
-        } else {
-            Err(self.partial_failure(py, call, timeout, Some(removed), failures))
+            return Ok(removed);
         }
+        if retry {
+            // Retrying stopped at an error it doesn't retry: raise that, not a `Timeout` the caller
+            // asked to have retried.
+            failures.sort_by_key(|(_, e)| matches!(e, Error::Timeout { .. }));
+        }
+        Err(self.partial_failure(py, call, timeout, Some(removed), failures))
     }
 
     /// The exception a fanned-out call raises when shards failed: the first failure's own type, so
@@ -678,6 +919,34 @@ impl FanoutCache {
     }
 }
 
+/// One shard's part of `FanoutCache::remove_everywhere`: what it removed, and its error, if any.
+/// Takes the shard's snapshot first if it has none yet.
+fn remove_on(
+    py: Python<'_>,
+    handle: &StoreHandle,
+    snapshot: &mut Option<Snapshot>,
+    deadline: Instant,
+    remove: &(impl Fn(&Store, Snapshot, Instant) -> Result<u64, Interrupted> + Sync),
+) -> (u64, Option<Error>) {
+    let taken = if let Some(taken) = *snapshot {
+        taken
+    } else {
+        let fresh = crate::detach(py, || {
+            handle
+                .ensure_open(deadline.saturating_duration_since(Instant::now()))
+                .and_then(|_| handle.store.snapshot_until(deadline))
+        });
+        match fresh {
+            Ok(fresh) => *snapshot.insert(fresh),
+            Err(error) => return (0, Some(error)),
+        }
+    };
+    match crate::detach(py, || remove(&handle.store, taken, deadline)) {
+        Ok(n) => (n, None),
+        Err(Interrupted { removed, error }) => (removed, Some(error)),
+    }
+}
+
 /// Keys per shard page in an `iterkeys` merge, which keeps one page per shard buffered at once:
 /// [`PAGE`] split across the shards, but at least `MIN_MERGE_PAGE`, so a shard's page is still
 /// worth a read. 64 at the default 8 shards; 32 at 256 shards, about 8,000 keys in all.
@@ -700,7 +969,8 @@ pub(crate) struct FanoutKeyIterator {
 /// Where a [`FanoutKeyIterator`] is.
 enum Walk {
     /// `__iter__`: shard `shard` in insertion order, then the next shard from its start.
-    Shards { shard: usize, cursor: Cursor, buffer: VecDeque<String> },
+    /// `shard` counts the shards walked so far; `reverse` walks them last to first, each newest first.
+    Shards { shard: usize, cursor: Cursor, buffer: VecDeque<OwnedKey>, reverse: bool },
     /// `iterkeys`: a k-way merge. `heads` holds each shard's next key, and `shards[i]` the keys
     /// buffered behind it. A shard in `pending` has nothing buffered: it is read at the start of the
     /// next `next()`, before any key is chosen, so an error there loses nothing and can be retried.
@@ -722,16 +992,17 @@ impl Walk {
 /// One shard's place in an `iterkeys` merge.
 struct MergeShard {
     cursor: Cursor,
-    buffer: VecDeque<String>,
+    buffer: VecDeque<OwnedKey>,
 }
 
 /// A shard's next key in the merge. The heap's greatest is the next key out: the smallest key
-/// ascending, the largest in reverse. Keys are compared as Rust strings, which is byte order on
-/// UTF-8, the order SQLite's `BINARY` collation gives each shard's pages (and code-point order, as
-/// `sorted()` gives). One key lives in one shard, so two heads are never equal.
+/// ascending, the largest in reverse. Keys compare as `OwnedKey`s: `str` keys before typed keys,
+/// each by its bytes, which is the `(key_type, key)` order SQLite gives each shard's pages (for
+/// `str` keys, code-point order, as `sorted()` gives). One key lives in one shard, so two heads are
+/// never equal.
 #[derive(PartialEq, Eq)]
 struct Head {
-    key: String,
+    key: OwnedKey,
     shard: usize,
     reverse: bool,
 }
@@ -762,7 +1033,7 @@ impl FanoutKeyIterator {
         order: Order,
         cursor: &Cursor,
         deadline: Instant,
-    ) -> Result<(Vec<String>, Cursor), Error> {
+    ) -> Result<(Vec<OwnedKey>, Cursor), Error> {
         let handle = &self.cache.get().shards[shard];
         let left = deadline.saturating_duration_since(Instant::now());
         let left = handle.ensure_open(left)?;
@@ -784,7 +1055,7 @@ impl FanoutKeyIterator {
     /// The next key. The reads one `next()` makes (every shard's first page, on the first call of a
     /// merge) share one deadline of the cache's `timeout`. Refused inside a `transact(key=...)` on
     /// this thread, as creating the iterator is, so one made before the block can't walk inside it.
-    fn __next__(&self) -> PyResult<Option<String>> {
+    fn __next__(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.cache.get().refuse_fan_out("iteration")?;
         // As `Cache`'s iterator: never wait for the state while attached (the gate's rules), and
         // another thread inside `next()` is an error, as for a generator.
@@ -800,14 +1071,17 @@ impl FanoutKeyIterator {
             other => to_py_err(other),
         };
         match &mut *walk {
-            Walk::Shards { shard, cursor, buffer } => loop {
+            Walk::Shards { shard, cursor, buffer, reverse } => loop {
                 if let Some(key) = buffer.pop_front() {
-                    return Ok(Some(key));
+                    return crate::codec::key::decode_owned(py, &key).map(Some);
                 }
-                if *shard >= self.cache.get().shards.len() {
+                let shards = self.cache.get().shards.len();
+                if *shard >= shards {
                     return Ok(None);
                 }
-                let (keys, next) = self.page(*shard, PAGE, Order::Inserted, cursor, deadline).map_err(whole)?;
+                let (at, order) =
+                    if *reverse { (shards - 1 - *shard, Order::InsertedReverse) } else { (*shard, Order::Inserted) };
+                let (keys, next) = self.page(at, PAGE, order, cursor, deadline).map_err(whole)?;
                 if keys.is_empty() {
                     *shard += 1;
                     *cursor = Cursor::Start;
@@ -836,7 +1110,7 @@ impl FanoutKeyIterator {
                     Some(next) => heads.push(Head { key: next, shard, reverse: *reverse }),
                     None => pending.push(shard),
                 }
-                Ok(Some(key))
+                crate::codec::key::decode_owned(py, &key).map(Some)
             }
         }
     }
@@ -854,6 +1128,7 @@ impl FanoutKeyIterator {
     shards,
     size_limit = None,
     cull_limit = None,
+    eviction_policy = None,
     serializer = "msgpack",
     pickle = false,
     types = None,
@@ -873,6 +1148,7 @@ pub(crate) fn _open_fanout_keeping_stored(
     shards: &Bound<'_, PyAny>,
     size_limit: Option<&Bound<'_, PyAny>>,
     cull_limit: Option<&Bound<'_, PyAny>>,
+    eviction_policy: Option<&str>,
     serializer: &str,
     pickle: bool,
     types: Option<Py<TypeRegistry>>,
@@ -892,6 +1168,7 @@ pub(crate) fn _open_fanout_keeping_stored(
         true,
         size_limit,
         cull_limit,
+        eviction_policy,
         serializer,
         pickle,
         types,

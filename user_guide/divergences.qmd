@@ -14,7 +14,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-001 | Values | Pickles everything | msgpack or JSON with type tags; pickle opt-in; never unpickles unless opted in |
 | D-002 | Database file | `cache.db` | `diskcache-oxide.sqlite` |
 | D-003 | Clock | `time.time()` | Native; `clock=` to control it |
-| D-004 | Keys | Anything picklable | `str` only, for now |
+| D-004 | Keys | Anything picklable | `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those; never pickled |
 | D-005 | Minimum `size_limit` | None; tiny limits silently empty the cache | 1 MiB, else `ValueError` |
 | D-006 | Empty-cache `volume()` | Its own value | A different value |
 | D-007 | `Timeout` | Subclasses `Exception` | Subclasses `TimeoutError` |
@@ -32,7 +32,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-019 | Opening an existing cache | Writes to the database | Never writes unless settings change |
 | D-020 | Forking inside your own transaction | Child stalls for the timeout | Fails fast with `RuntimeError` |
 | D-021 | `directory` | Optional (temp dir) | Required |
-| D-022 | `disk=`, `eviction_policy=` | Supported | Not supported (policies coming) |
+| D-022 | `disk=`, `eviction_policy=` | Supported | No `disk=`; least-recently-stored or `'none'`, read on every write; LRU and LFU refused |
 | D-023 | SQLite memory | 32 MiB cache + 64 MiB mmap per thread | 1 MiB per pooled connection |
 | D-024 | WAL file size | Can grow past 1 GiB and stay there | Trimmed; `checkpoint()` on demand |
 | D-025 | A key iterator used by two threads at once | `ValueError` from the generator | `ValueError`, from a native iterator with no `send()` or `close()` |
@@ -49,11 +49,25 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-036 | `size_limit` | Divided as a float, no minimum; reads shard 0's share | Split as integers, 1 MiB per shard minimum; reads back as the total |
 | D-037 | `max_connections` | One connection per thread per shard (264 fds at 64 threads) | A total across the shards; fds within `2 × max_connections + 2 × shards` |
 | D-038 | `Cache` and `FanoutCache` on each other's directory | Quietly creates or reuses a database | `LayoutMismatchError`, creating nothing |
-| D-039 | `FanoutCache` constructor and features | `FanoutCache(path, 4)`; sub-collections, tags, `stats()`, `check()` and more | `shards` is keyword-only; those features aren't there yet |
+| D-039 | `FanoutCache` constructor and features | `FanoutCache(path, 4)`; `cache()`, `deque()` and `index()` sub-collections, `read()` | `shards` is keyword-only; no sub-collections or `read()`; tags, `stats()`, `check()` and the rest as on `Cache` |
 | D-040 | `FanoutCache.transact()` | Locks every shard; `tx` is `None` | `transact(*, key)` locks one shard and refuses other shards' keys |
 | D-041 | Your own types | A `Disk` subclass, or pickle | `register_type()` per type; stored tagged, read by an allowlist; never pickled |
 | D-042 | Large values' folders | Two levels (65,536 folders); a folder goes with its last file | One level (at most 256); empty ones go at the last close and in `clear()` |
 | D-043 | A large write after the cache's folder was deleted | Re-creates the folders and succeeds | `OSError`; nothing is re-created |
+| D-044 | Key equality | `1` and `1.0` are one key; `True` another | `1`, `1.0` and `True` are three keys |
+| D-045 | `memoize(typed=True)` | Adds each argument's class to the key | Adds each argument type's name |
+| D-046 | `iterkeys()` across key types | Numbers, then text, then bytes | `str` keys, then the other types in a fixed order |
+| D-047 | `retry=` | Positional; `cache[k]` retries forever | Keyword-only; `cache[k]` raises `Timeout` |
+| D-048 | A memoized function's arguments | Anything picklable | Key types only, checked before the call |
+| D-049 | `stats()` | Persisted and shared; `get` writes while on | Per process, in memory; `get` never writes |
+| D-050 | `check()` | Warns on every empty folder and stray file; fixes a wrong size | Skips empty folders and files under an hour old; removes a wrong-size entry |
+| D-051 | The coordination recipes | Work on any cache; `throttle` breaks after its bucket expires | Refuse `NullCache` and durable caches; `throttle` fixed; `RLock` owner has a nonce |
+| D-052 | Tag equality | Numeric: `evict(1)` removes `1`, `1.0` and `True` | Exact type, as keys: three tags |
+| D-053 | `cull()` under `eviction_policy='none'` | Returns 0 after removing expired entries | Returns how many it removed |
+| D-054 | A queue's keys | Any key in the range: a float, `'user-9'`, another queue's items | Only keys of the queue's exact shape |
+| D-055 | `peek()`, `peekitem()` | Delete expired heads; hang on a missing value file | Write only what `get` would; pass over a missing file |
+| D-056 | `pull()` | Deletes, then decodes: an unreadable item is lost | Decodes, then deletes: it stays queued |
+| D-057 | `push()` past its range, a bad `side` | Leaves the range, then `IntegrityError`; `KeyError` | `OverflowError`; `ValueError` |
 
 ## Safety
 
@@ -81,7 +95,7 @@ diskcache's `expire()` works in chunks of 100, and when expired entries share on
 
 ### D-011: `clear()` keeps concurrent writes
 
-diskcache's `clear()` keeps deleting until the cache is empty, including entries written while it runs. In a reproduction with 50,000 entries and a concurrent writer, it deleted 76,000 writes that had already succeeded, and its running time grew with the write rate. diskcache-oxide's `clear()` removes only entries that existed when it started, and always finishes.
+diskcache's `clear()` keeps deleting until the cache is empty, including entries written while it runs. In a reproduction with 50,000 entries and a concurrent writer, it deleted 76,000 writes that had already succeeded, and its running time grew with the write rate. diskcache-oxide's `clear()` removes only entries that existed when it started, and always finishes. `evict(tag)` is bounded the same way.
 
 ### D-013 and D-016: large values under pressure
 
@@ -139,16 +153,27 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 
 - **D-002:** the database file is `diskcache-oxide.sqlite`, so the two libraries never misread each other's files.
 - **D-003:** the clock is read natively; pass `clock=` to control it in tests.
-- **D-004:** keys are `str` only for now (other key types are on the [roadmap](roadmap.qmd)). They're stored with a type tag, so other key types won't need a format change.
+- **D-004:** keys are `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, or tuples of those, nested up to 32 deep. Only those exact types: a subclass (`IntEnum`, `StrEnum`, a `namedtuple`), a `list`, a `frozenset` or an int past 64 bits raises `TypeError`, and a NaN raises `ValueError`. Keys are never pickled.
 - **D-005:** `size_limit` must be at least 1 MiB. In diskcache, a limit below the empty database's size silently evicts every value, including the one just stored.
 - **D-006:** an empty cache's `volume()` differs, so a `size_limit` leaves slightly different room.
 - **D-007:** `Timeout` subclasses `TimeoutError`, so `except TimeoutError` catches it too.
 - **D-009:** `bool(Cache)` is always True and `bool(NullCache)` is False, so `if cache:` means "caching is on".
-- **D-022:** there's no `disk=` (a Python `Disk` class would put Python code on every read and write) and no `eviction_policy=` until the other policies arrive (see the [roadmap](roadmap.qmd)).
+- **D-022:** there's no `disk=` and there won't be: a Python `Disk` class would put Python code on every read and write; `serializer=` and `register_type()` cover what it was for. `eviction_policy=` is `'least-recently-stored'` (the default) or `'none'`, stored in the cache and read inside every write, so a change made by one process applies to every other at its next write. Least-recently-used and least-frequently-used raise `ValueError`, because they make every `get` a write (see the [roadmap](roadmap.qmd)). Tags are always indexed, so there's no `tag_index` setting.
 - **D-041:** a type the codec doesn't know is registered per type with `register_type(cls, name=..., encode=..., decode=...)` (a dataclass needs only a name), process-wide or per cache with `types=`. It's stored as a tagged value and read back only where the name is registered, so nothing is imported by name; a registered type is never pickled; a `decode` error about the row is a `CorruptValueError` with yours as `__cause__`. See [Your own types](serialization.qmd#your-own-types).
 - **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.qmd#a-cache-that-cant-take-a-request-down).
 - **D-042:** a large value's file sits one folder deep, in at most 256 folders. A delete removes only the file; the last close in a process removes folders left empty and untouched for 30 seconds, and `clear()` removes the ones it emptied. A `FanoutCache`'s shards don't sweep yet. Before this, empty folders were never removed and a long-lived cache could hold 65,536 of them, about 257 MiB on ext4. See [Storage and WAL](storage-and-wal.qmd).
 - **D-043:** if a cache's folder is deleted while a process has it open, that process's next large write raises `OSError` instead of re-creating the folder. Delete a cache's folder only with every process stopped.
+- **D-044:** keys are compared by exact type: `1`, `1.0` and `True` are three keys, as are `0` and `False`, while `0.0` and `-0.0` are one. diskcache compares through SQLite, so `1` and `1.0` are one key there.
+- **D-045:** `memoize(typed=True)` adds each argument type's name (`'builtins.int'`) to the key, where diskcache adds the class itself, which can't be a key without pickle.
+- **D-046:** `iterkeys()` gives every `str` key first, in code-point order, then `None`, `False`, `True`, ints, floats, bytes and tuples, each in value order; `prefix=` walks `str` keys only. It's the order of the stored bytes, so it's an index scan and the same across a `FanoutCache`'s shards.
+- **D-047:** `retry=` is keyword-only and a strict `bool`, and retries only `Timeout`. Dict syntax never retries: `cache[k]` raises `Timeout` after `timeout`, where diskcache's waits forever.
+- **D-048:** a memoized function's arguments must be key types, checked before the function runs; leave out one that can't be (a connection, a client) with `ignore=`.
+- **D-049:** `stats()` counts hits and misses per process, in memory, so a `get` never writes. Every handle on a directory in one process shares the counts; other processes' aren't included, and a restart or a forked child starts at zero.
+- **D-050:** `check()` doesn't report empty value folders (normal on an open cache) and leaves files under an hour old alone, since a writer may own them. A value file of the wrong size was cut short by a crash, so `fix=True` removes its entry rather than correct the size and serve the short bytes.
+- **D-051:** the coordination recipes refuse a `NullCache` or `durable=True` cache, refuse to wait inside their own cache's transaction, give `RLock` a per-process owner nonce, and fix `throttle`'s two bugs (upstream bugs 13 and 14). See [Coordination](coordination.qmd).
+- **D-052:** tags are compared by exact type, as keys are: `1`, `1.0` and `True` are three tags, and a tuple can be one. diskcache compares them through SQLite, so its `evict(1)` removes all three and a `True` tag reads back as `1`. `tag=` is keyword-only on `set` and `add`.
+- **D-053:** under `eviction_policy='none'`, `cull()` returns how many expired entries it removed; diskcache's returns 0 (upstream bug 15).
+- **D-054 to D-057:** the queue calls. A queue's items are only keys of its exact shape, so floats, ordinary keys that share the prefix and nested queues never mix in (upstream bugs 17 and 18); `peek()` and `peekitem()` write only what `get` would and never hang on a missing value file (bug 16); `pull()` decodes before it deletes, on every path, so an item this process can't read stays queued; and `push()` raises `OverflowError` rather than leave its range or overwrite a key. See [Work queues](../recipes/work-queues.qmd).
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)
@@ -161,7 +186,7 @@ These are covered together in [FanoutCache: sharded caches](fanoutcache.qmd), an
 - **D-035:** a maintenance job must finish in bounded time, and when it can't, it must say what it did.
 - **D-036 and D-037:** budgets (size, connections, file descriptors) follow configuration, not the number of threads or shards.
 - **D-038:** a typo shouldn't leave a directory that neither kind of cache can open, or a shard written behind the `FanoutCache`'s back.
-- **D-039:** the missing stock features each need their own design across shards, so they arrive with those features on the [roadmap](roadmap.qmd) rather than as copies.
+- **D-039:** `shards` is keyword-only so that the second positional argument is `timeout`, as on `Cache`. The sub-collections and `read()` would each need their own design across shards, so they aren't copied from diskcache (see the [roadmap](roadmap.qmd)). Everything else on `Cache`, apart from the queue calls, works on a `FanoutCache` too.
 - **D-040:** holding every shard's lock would serialize the whole cache behind one transaction, which is what sharding exists to avoid.
 
 ## diskcache-community

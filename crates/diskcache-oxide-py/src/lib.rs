@@ -63,6 +63,12 @@ create_exception!(
 );
 create_exception!(
     diskcache_oxide,
+    CorruptKeyError,
+    CorruptValueError,
+    "A stored key couldn't be read: its bytes aren't a key this build wrote (a damaged page or file)."
+);
+create_exception!(
+    diskcache_oxide,
     ForeignValueError,
     CorruptValueError,
     "A stored value this build can't read but another might: an unknown mode, tag or extension (a \
@@ -127,6 +133,7 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
         Error::Unwritable
         | Error::ForkPoisoned
         | Error::NestedTransaction
+        | Error::InsideTransaction(_)
         | Error::NoTransaction
         | Error::EndInsideOperation => PyRuntimeError::new_err(message),
         Error::TransactionAborted => TransactionAborted::new_err(message),
@@ -137,7 +144,9 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
         Error::InvalidSetting(_) => PyValueError::new_err(message),
         Error::KeyMissing => pyo3::exceptions::PyKeyError::new_err(message),
         Error::NotNumeric => PyTypeError::new_err(message),
-        Error::Overflow => pyo3::exceptions::PyOverflowError::new_err(message),
+        Error::Overflow | Error::QueueFull => pyo3::exceptions::PyOverflowError::new_err(message),
+        Error::QueueKeyTaken => pyo3::exceptions::PyRuntimeError::new_err(message),
+        Error::CorruptKey(_) => CorruptKeyError::new_err(message),
         _ => PyOSError::new_err(message),
     }
 }
@@ -407,6 +416,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("UnsafeValueError", py.get_type::<UnsafeValueError>())?;
     m.add("CorruptValueError", py.get_type::<CorruptValueError>())?;
     m.add("ForeignValueError", py.get_type::<ForeignValueError>())?;
+    m.add("CorruptKeyError", py.get_type::<CorruptKeyError>())?;
     m.add_function(wrap_pyfunction!(sqlite_version, m)?)?;
     #[cfg(coverage)]
     m.add_function(wrap_pyfunction!(_write_coverage, m)?)?;

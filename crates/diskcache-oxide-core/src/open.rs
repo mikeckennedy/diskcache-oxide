@@ -13,7 +13,9 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 
 use crate::fanout::{HASH_IDENTITY, MAX_SHARDS, MIN_SHARDS, parse_decimal};
-use crate::schema::{CREATE, DB_FILENAME, DEFAULT_CULL_LIMIT, DEFAULT_SIZE_LIMIT, FORMAT_VERSION, MIN_SIZE_LIMIT};
+use crate::schema::{
+    CREATE, DB_FILENAME, DEFAULT_CULL_LIMIT, DEFAULT_SIZE_LIMIT, EvictionPolicy, FORMAT_VERSION, MIN_SIZE_LIMIT,
+};
 use crate::{Error, Result};
 use crate::{lockwait, sqlite};
 
@@ -23,13 +25,16 @@ use crate::{lockwait, sqlite};
 pub struct Requested {
     pub size_limit: Option<i64>,
     pub cull_limit: Option<i64>,
+    pub eviction_policy: Option<EvictionPolicy>,
 }
 
-/// The persisted limits in effect after opening.
+/// The persisted limits in effect after opening. Write paths read the policy inside their own
+/// transaction; this copy is for the attributes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     pub size_limit: i64,
     pub cull_limit: i64,
+    pub eviction_policy: EvictionPolicy,
 }
 
 impl Requested {
@@ -250,7 +255,11 @@ pub fn prepare_creating(
     if version == 0 {
         create_if_new(conn, requested, role, new_size_limit, timeout)?;
     } else if version != FORMAT_VERSION {
-        return Err(Error::FormatMismatch { found: version, expected: FORMAT_VERSION, path: None });
+        return Err(Error::FormatMismatch {
+            found: version,
+            expected: FORMAT_VERSION,
+            path: Some(database_path(conn)),
+        });
     }
     // On every open, not only a new one: a database another creator won the race for, or one made
     // by a plain `Cache` before this shard opened (which has no stamp, and is never adopted).
@@ -260,12 +269,13 @@ pub fn prepare_creating(
     let wanted = Limits {
         size_limit: requested.size_limit.unwrap_or(stored.size_limit),
         cull_limit: requested.cull_limit.unwrap_or(stored.cull_limit),
+        eviction_policy: requested.eviction_policy.unwrap_or(stored.eviction_policy),
     };
     if wanted != stored {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sqlite)?;
         tx.execute(
-            "UPDATE totals SET size_limit = ?1, cull_limit = ?2 WHERE only = 1",
-            (wanted.size_limit, wanted.cull_limit),
+            "UPDATE state SET size_limit = ?1, cull_limit = ?2, eviction_policy = ?3 WHERE only = 1",
+            (wanted.size_limit, wanted.cull_limit, wanted.eviction_policy.code()),
         )
         .map_err(sqlite)?;
         tx.commit().map_err(sqlite)?;
@@ -275,10 +285,12 @@ pub fn prepare_creating(
 
 /// Reads the persisted limits.
 pub fn read_limits(conn: &Connection, timeout: Duration) -> Result<Limits> {
-    conn.query_row("SELECT size_limit, cull_limit FROM totals WHERE only = 1", [], |row| {
-        Ok(Limits { size_limit: row.get(0)?, cull_limit: row.get(1)? })
-    })
-    .map_err(|e| Error::from_sqlite(e, timeout))
+    let (size_limit, cull_limit, policy): (i64, i64, i64) = conn
+        .query_row("SELECT size_limit, cull_limit, eviction_policy FROM state WHERE only = 1", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|e| Error::from_sqlite(e, timeout))?;
+    Ok(Limits { size_limit, cull_limit, eviction_policy: EvictionPolicy::try_from(policy)? })
 }
 
 /// Switches to WAL only if the database isn't in WAL mode already, then verifies it (WAL is
@@ -311,8 +323,13 @@ fn create_if_new(
         0 => {
             tx.execute_batch(CREATE).map_err(sqlite)?;
             tx.execute(
-                "INSERT INTO totals (only, count, size, next_seq, size_limit, cull_limit) VALUES (1, 0, 0, 1, ?1, ?2)",
-                (requested.size_limit.unwrap_or(new_size_limit), requested.cull_limit.unwrap_or(DEFAULT_CULL_LIMIT)),
+                "INSERT INTO state (only, count, size, next_seq, size_limit, cull_limit, eviction_policy)
+                 VALUES (1, 0, 0, 1, ?1, ?2, ?3)",
+                (
+                    requested.size_limit.unwrap_or(new_size_limit),
+                    requested.cull_limit.unwrap_or(DEFAULT_CULL_LIMIT),
+                    requested.eviction_policy.unwrap_or_default().code(),
+                ),
             )
             .map_err(sqlite)?;
             if let Some(stamp) = role.stamp() {
@@ -323,7 +340,7 @@ fn create_if_new(
             tx.commit().map_err(sqlite)
         }
         FORMAT_VERSION => Ok(()),
-        found => Err(Error::FormatMismatch { found, expected: FORMAT_VERSION, path: None }),
+        found => Err(Error::FormatMismatch { found, expected: FORMAT_VERSION, path: Some(database_path(&tx)) }),
     }
 }
 
@@ -349,7 +366,14 @@ mod tests {
     fn new_database_gets_defaults_wal_and_the_format_version() {
         let tmp = TempDir::new("open-new");
         let (conn, limits) = open(tmp.path(), Requested::default());
-        assert_eq!(limits, Limits { size_limit: DEFAULT_SIZE_LIMIT, cull_limit: DEFAULT_CULL_LIMIT });
+        assert_eq!(
+            limits,
+            Limits {
+                size_limit: DEFAULT_SIZE_LIMIT,
+                cull_limit: DEFAULT_CULL_LIMIT,
+                eviction_policy: crate::schema::EvictionPolicy::LeastRecentlyStored
+            }
+        );
         let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
         assert_eq!(mode, "wal");
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
@@ -374,7 +398,7 @@ mod tests {
     #[test]
     fn reopening_with_the_same_or_no_settings_writes_nothing() {
         let tmp = TempDir::new("open-nowrite");
-        let requested = Requested { size_limit: Some(5 << 20), cull_limit: Some(3) };
+        let requested = Requested { size_limit: Some(5 << 20), cull_limit: Some(3), eviction_policy: None };
         drop(open(tmp.path(), requested));
 
         let peer = connect(tmp.path(), T).unwrap();
@@ -382,7 +406,14 @@ mod tests {
         let (_same, limits) = open(tmp.path(), requested);
         let (_unspecified, unspecified_limits) = open(tmp.path(), Requested::default());
         assert_eq!(data_version(&peer), before, "an unchanged reopen must not write");
-        assert_eq!(limits, Limits { size_limit: 5 << 20, cull_limit: 3 });
+        assert_eq!(
+            limits,
+            Limits {
+                size_limit: 5 << 20,
+                cull_limit: 3,
+                eviction_policy: crate::schema::EvictionPolicy::LeastRecentlyStored
+            }
+        );
         assert_eq!(unspecified_limits, limits, "None keeps the stored values");
     }
 
@@ -392,9 +423,17 @@ mod tests {
         drop(open(tmp.path(), Requested::default()));
         let peer = connect(tmp.path(), T).unwrap();
         let before = data_version(&peer);
-        let (_conn, limits) = open(tmp.path(), Requested { size_limit: Some(2 << 20), cull_limit: None });
+        let (_conn, limits) =
+            open(tmp.path(), Requested { size_limit: Some(2 << 20), cull_limit: None, eviction_policy: None });
         assert_ne!(data_version(&peer), before);
-        assert_eq!(limits, Limits { size_limit: 2 << 20, cull_limit: DEFAULT_CULL_LIMIT });
+        assert_eq!(
+            limits,
+            Limits {
+                size_limit: 2 << 20,
+                cull_limit: DEFAULT_CULL_LIMIT,
+                eviction_policy: crate::schema::EvictionPolicy::LeastRecentlyStored
+            }
+        );
     }
 
     #[test]
@@ -405,7 +444,7 @@ mod tests {
         let peer = connect(tmp.path(), T).unwrap();
         let before = data_version(&peer);
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
-        let _: i64 = tx.query_row("SELECT count FROM totals", [], |r| r.get(0)).unwrap();
+        let _: i64 = tx.query_row("SELECT count FROM state", [], |r| r.get(0)).unwrap();
         tx.commit().unwrap();
         assert_eq!(data_version(&peer), before);
     }
@@ -415,13 +454,22 @@ mod tests {
         let tmp = TempDir::new("open-min");
         ensure_directory(tmp.path()).unwrap();
         let mut conn = connect(tmp.path(), T).unwrap();
-        let err =
-            prepare(&mut conn, Requested { size_limit: Some(MIN_SIZE_LIMIT - 1), cull_limit: None }, Role::Plain, T)
-                .unwrap_err();
+        let err = prepare(
+            &mut conn,
+            Requested { size_limit: Some(MIN_SIZE_LIMIT - 1), cull_limit: None, eviction_policy: None },
+            Role::Plain,
+            T,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::InvalidSetting(_)), "{err:?}");
         assert!(
-            prepare(&mut conn, Requested { size_limit: Some(MIN_SIZE_LIMIT), cull_limit: None }, Role::Plain, T)
-                .is_ok()
+            prepare(
+                &mut conn,
+                Requested { size_limit: Some(MIN_SIZE_LIMIT), cull_limit: None, eviction_policy: None },
+                Role::Plain,
+                T
+            )
+            .is_ok()
         );
     }
 
@@ -429,13 +477,18 @@ mod tests {
     fn a_newer_format_is_refused_without_writing() {
         let tmp = TempDir::new("open-newer");
         drop(open(tmp.path(), Requested::default()));
-        connect(tmp.path(), T).unwrap().execute_batch("PRAGMA user_version = 3").unwrap();
+        connect(tmp.path(), T).unwrap().execute_batch("PRAGMA user_version = 4").unwrap();
         let peer = connect(tmp.path(), T).unwrap();
         let before = data_version(&peer);
         let mut conn = connect(tmp.path(), T).unwrap();
-        let err =
-            prepare(&mut conn, Requested { size_limit: Some(9 << 20), cull_limit: None }, Role::Plain, T).unwrap_err();
-        assert!(matches!(err, Error::FormatMismatch { found: 3, expected: 2, .. }), "{err:?}");
+        let err = prepare(
+            &mut conn,
+            Requested { size_limit: Some(9 << 20), cull_limit: None, eviction_policy: None },
+            Role::Plain,
+            T,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::FormatMismatch { found: 4, expected: 3, .. }), "{err:?}");
         assert_eq!(data_version(&peer), before);
     }
 
@@ -447,7 +500,20 @@ mod tests {
         connect(tmp.path(), T).unwrap().execute_batch("PRAGMA user_version = 1").unwrap();
         let mut conn = connect(tmp.path(), T).unwrap();
         let err = prepare(&mut conn, Requested::default(), Role::Plain, T).unwrap_err();
-        assert!(matches!(err, Error::FormatMismatch { found: 1, expected: 2, .. }), "{err:?}");
+        assert!(matches!(err, Error::FormatMismatch { found: 1, expected: 3, .. }), "{err:?}");
+    }
+
+    #[test]
+    fn a_format_2_cache_is_refused_with_a_message_saying_what_to_do() {
+        // Format 2 had no tag or eviction policy columns (plan 24, decision 22): deleted on upgrade.
+        let tmp = TempDir::new("open-format-2");
+        drop(open(tmp.path(), Requested::default()));
+        connect(tmp.path(), T).unwrap().execute_batch("PRAGMA user_version = 2").unwrap();
+        let mut conn = connect(tmp.path(), T).unwrap();
+        let err = prepare(&mut conn, Requested::default(), Role::Plain, T).unwrap_err();
+        assert!(matches!(err, Error::FormatMismatch { found: 2, expected: 3, path: Some(_) }), "{err:?}");
+        let message = err.to_string();
+        assert!(message.contains("diskcache-oxide.sqlite") && message.contains("delete"), "{message}");
     }
 
     #[test]
@@ -470,7 +536,7 @@ mod tests {
             }
         });
         let conn = connect(&dir, T).unwrap();
-        let rows: i64 = conn.query_row("SELECT COUNT(*) FROM totals", [], |r| r.get(0)).unwrap();
+        let rows: i64 = conn.query_row("SELECT COUNT(*) FROM state", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 1);
     }
 
@@ -566,7 +632,9 @@ mod tests {
         ];
         for (dir, role, says) in cases {
             // With and without explicit settings: neither may write.
-            for requested in [Requested::default(), Requested { size_limit: Some(9 << 20), cull_limit: None }] {
+            for requested in
+                [Requested::default(), Requested { size_limit: Some(9 << 20), cull_limit: None, eviction_policy: None }]
+            {
                 let err = prepare(&mut connect(dir, T).unwrap(), requested, role, T).unwrap_err();
                 assert!(matches!(err, Error::RoleMismatch { .. }), "{err:?}");
                 assert!(err.to_string().contains(says), "{err}");

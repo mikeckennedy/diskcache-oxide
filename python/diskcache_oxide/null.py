@@ -7,14 +7,17 @@ is written and is swept straight away. Every result follows from that one senten
 - `set` and `add` return True (the key was absent, so an add "succeeds");
 - `incr`/`decr` return `default ± delta`, and raise `KeyError` when `default=None`;
 - `delete`, `touch` and `in` are False;
-- `len`, `volume`, `clear`, `expire` and `cull` are 0;
+- `len`, `volume`, `clear`, `expire`, `cull` and `evict` are 0;
+- a queue is always empty: `push` returns the key an empty queue's first item gets, `pull` and
+  `peek` return the default, and `peekitem` raises `KeyError`;
 - iteration yields nothing.
 
 It's falsy and its `enabled` is False, so `if cache:` reads as "caching is on".
 
 **`invalidate=`.** Passing `invalidate=real_cache` forwards the operations that *remove* data to
-that cache: `delete`, `pop` (as a delete), `clear`, and `iterkeys` (so enumerate-then-delete
-revocation still works). Invalidation by removal then still lands while caching is off. Everything
+that cache: `delete`, `pop` (as a delete), `clear`, `evict`, and `iterkeys` (so
+enumerate-then-delete revocation still works). The queue calls are never forwarded: a switched-off
+cache must not consume a real queue's items. Invalidation by removal then still lands while caching is off. Everything
 else stays null, so invalidation that writes doesn't: a `set` that overwrites the stale value, or an
 `incr` that bumps a version key, is dropped, and the old value is served again once caching is back
 on.
@@ -26,27 +29,111 @@ at once, and an exception in the block doesn't undo them.
 
 The constructor accepts the same arguments as `Cache` and ignores them, so switching between the
 two is a one-line change. Bad argument *types* still raise as they would on `Cache` (`bool`
-expire/timeout, non-`str` keys), so code that works with a `NullCache` also works with a real one.
+expire/timeout, a list as a key or a tag), so code that works with a `NullCache` also works with a real one.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterator
+import warnings
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, nullcontext
 from types import TracebackType
 from typing import Any, Literal, Self, overload
 
+from diskcache_oxide._constants import ENOVAL
 from diskcache_oxide._core import TypeRegistry
+from diskcache_oxide._types import Key, Memoizer
 from diskcache_oxide.protocol import CacheLike
 
 DEFAULT_SIZE_LIMIT = 2**30
 DEFAULT_CULL_LIMIT = 10
 
 
-def _check_key(key: object) -> None:
-    if type(key) is not str:
-        raise TypeError(f'cache keys must be str, not {type(key).__name__}')
+_KEY_TYPES = 'str, bytes, int, float, bool, None, or a tuple of those'
+_MAX_KEY_DEPTH = 32
+
+
+def _check_key(key: object, depth: int = 0) -> None:
+    """The engine's key rules, so a `NullCache` raises where a real cache would (D-004)."""
+    kind = type(key)
+    if kind is str or kind is bytes or kind is bool or key is None:
+        return
+    if kind is int:
+        if not -(2**63) <= key < 2**63:  # ty: ignore[unsupported-operator]
+            raise TypeError('int keys must fit in 64 bits')
+        return
+    if kind is float:
+        if key != key:
+            raise ValueError("a NaN float can't be a key: it isn't equal to itself")
+        return
+    if kind is tuple:
+        if depth == _MAX_KEY_DEPTH:
+            raise ValueError(f'key tuples nest at most {_MAX_KEY_DEPTH} deep')
+        for item in key:  # ty: ignore[not-iterable]
+            _check_key(item, depth + 1)
+        return
+    raise TypeError(f'cache keys must be {_KEY_TYPES}, not {kind.__name__}')
+
+
+_POLICIES = ('least-recently-stored', 'none')
+
+
+def _check_policy(value: object) -> None:
+    """`eviction_policy=` as a real cache checks it."""
+    if type(value) is not str:
+        raise TypeError(f'eviction_policy must be a str, not {type(value).__name__}')
+    if value in ('least-recently-used', 'least-frequently-used'):
+        raise ValueError(
+            f"eviction_policy={value!r} isn't supported: it makes every read a write, which would serialize "
+            "reads across processes (D-022); use 'least-recently-stored' or 'none'"
+        )
+    if value not in _POLICIES:
+        raise ValueError(f"eviction_policy must be 'least-recently-stored' or 'none', not {value!r}")
+
+
+def _check_prefix(prefix: object) -> None:
+    """A queue's `prefix`, as `Cache` checks it."""
+    if prefix is not None and type(prefix) is not str:
+        raise TypeError(f'prefix must be a str or None, not {type(prefix).__name__}')
+
+
+def _check_side(side: object) -> None:
+    """A queue's `side`, as `Cache` checks it (D-057)."""
+    if type(side) is not str:
+        raise TypeError(f"argument 'side': {type(side).__name__!r} object is not a str")
+    if side not in ('front', 'back'):
+        raise ValueError(f"side must be 'front' or 'back', not {side!r}")
+
+
+def _check_tag(tag: object) -> None:
+    """A tag is None or a valid key, raising as a real cache's `tag=` does."""
+    if tag is None:
+        return
+    try:
+        _check_key(tag)
+    except (TypeError, ValueError) as e:
+        raise type(e)(f'invalid tag: {e}') from None
+
+
+def _answer(default: Any, expire_time: bool, tag: bool) -> Any:
+    """A miss, shaped as `get` and `pop` return it."""
+    if expire_time and tag:
+        return (default, None, None)
+    return (default, None) if expire_time or tag else default
+
+
+_MIN_SIZE_LIMIT = 1 << 20
+
+
+def _check_size_limit(value: int) -> None:
+    if value < _MIN_SIZE_LIMIT:
+        raise ValueError(f'size_limit must be at least {_MIN_SIZE_LIMIT} bytes, got {value}')
+
+
+def _check_retry(value: object) -> None:
+    if type(value) is not bool:
+        raise TypeError(f'retry must be a bool, not {type(value).__name__}')
 
 
 def _check_seconds(name: str, value: object) -> None:
@@ -91,7 +178,7 @@ class NullCache:
     Args:
         directory: Accepted and ignored, like every other `Cache` argument, so switching between
             the two is a one-line change.
-        invalidate: A real cache to forward removals to (`delete`, `pop`, `clear` and `iterkeys`),
+        invalidate: A real cache to forward removals to (`delete`, `pop`, `clear`, `evict` and `iterkeys`),
             so invalidation by removal still lands while caching is off. Writes aren't forwarded:
             an overwriting `set` or a version-bump `incr` is dropped, and the old value is served
             once caching is back on.
@@ -111,7 +198,7 @@ class NullCache:
         ```
     """
 
-    __slots__ = ('_cull_limit', '_directory', '_invalidate', '_size_limit', '_timeout')
+    __slots__ = ('_cull_limit', '_directory', '_eviction_policy', '_invalidate', '_size_limit', '_timeout')
 
     def __init__(
         self,
@@ -120,6 +207,7 @@ class NullCache:
         *,
         size_limit: int | None = None,
         cull_limit: int | None = None,
+        eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
         serializer: Literal['msgpack', 'json'] = 'msgpack',
         pickle: bool = False,
         types: TypeRegistry | None = None,
@@ -139,6 +227,9 @@ class NullCache:
         self._timeout = 60.0 if timeout is None else float(timeout)
         self._size_limit = DEFAULT_SIZE_LIMIT if size_limit is None else size_limit
         self._cull_limit = DEFAULT_CULL_LIMIT if cull_limit is None else cull_limit
+        if eviction_policy is not None:
+            _check_policy(eviction_policy)
+        self._eviction_policy = 'least-recently-stored' if eviction_policy is None else eviction_policy
         self._invalidate = invalidate
 
     def __repr__(self) -> str:
@@ -169,22 +260,114 @@ class NullCache:
         return self._cull_limit
 
     @property
+    def eviction_policy(self) -> Literal['least-recently-stored', 'none']:
+        """The eviction policy passed to the constructor (default 'least-recently-stored'). Unused."""
+        return self._eviction_policy
+
+    @property
     def enabled(self) -> bool:
         """Always False: caching is off."""
         return False
 
+    @property
+    def durable(self) -> bool:
+        """Always False: a `NullCache` has no outages to answer."""
+        return False
+
+    def check(self, fix: bool = False, retry: bool = False) -> list[warnings.WarningMessage]:
+        """Always `[]`: there is nothing to check."""
+        _check_retry(retry)
+        return []
+
+    def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
+        """Always `(0, 0)`: nothing is looked up."""
+        return (0, 0)
+
+    @overload
+    def reset(self, key: Literal['size_limit', 'cull_limit'], value: Any = ..., update: bool = True) -> int: ...
+    @overload
+    def reset(
+        self,
+        key: Literal['eviction_policy'],
+        value: Any = ...,
+        update: bool = True,
+    ) -> Literal['least-recently-stored', 'none']: ...
+    @overload
+    def reset(self, key: str, value: Any = ..., update: bool = True) -> int | str: ...
+    def reset(self, key: str, value: Any = ENOVAL, update: bool = True) -> Any:
+        """Read `size_limit`, `cull_limit` or `eviction_policy`, or set it (checked as `Cache` checks it)
+        and return it."""
+        if key.startswith('sqlite_'):
+            raise ValueError(f"reset({key!r}) isn't supported: SQLite's settings are per process here (D-023)")
+        if key == 'statistics':
+            raise ValueError('statistics are turned on and off with stats(enable=...)')
+        if key not in ('size_limit', 'cull_limit', 'eviction_policy'):
+            raise ValueError(f"reset() takes 'size_limit', 'cull_limit' or 'eviction_policy', not {key!r}")
+        if not update:
+            raise ValueError("reset(..., update=False) isn't supported: these settings have no SQLite pragma to skip")
+        if key == 'eviction_policy':
+            if value is not ENOVAL:
+                _check_policy(value)
+                self._eviction_policy = value
+            return self._eviction_policy
+        if value is not ENOVAL:
+            if type(value) is not int:
+                raise TypeError(f'{key} must be an int or None, not {type(value).__name__}')
+            if key == 'size_limit':
+                _check_size_limit(value)
+                self._size_limit = value
+            else:
+                if value < 0:
+                    raise ValueError(f'cull_limit must not be negative, got {value}')
+                self._cull_limit = value
+        return self._size_limit if key == 'size_limit' else self._cull_limit
+
     # -- reads: nothing is ever present ---------------------------------------------------------
 
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any: ...
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> Any: ...
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def get(self, key: str, default: Any = None, *, expire_time: bool = False) -> Any:
-        """Return `default`, as every entry has already expired. With `expire_time=True`, `(default, None)`."""
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> tuple[Any, float | None]: ...
+    @overload
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: bool = False, tag: bool = False, retry: bool = False
+    ) -> Any:
+        """Return `default`, as every entry has already expired. With `expire_time=True` or `tag=True`,
+        `(default, None)`; with both, `(default, None, None)`."""
+        _check_retry(retry)
         _check_key(key)
-        return (default, None) if expire_time else default
+        return _answer(default, expire_time, tag)
 
-    def __getitem__(self, key: str, /) -> Any:
+    def __getitem__(self, key: Key, /) -> Any:
         """Always raises `KeyError`, as every entry has already expired."""
         _check_key(key)
         raise KeyError(key)
@@ -201,7 +384,11 @@ class NullCache:
         """Always False, so `if cache:` means "caching is on"."""
         return False
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> Iterator[Key]:
+        """Yields nothing."""
+        return iter(())
+
+    def __reversed__(self) -> Iterator[Key]:
         """Yields nothing."""
         return iter(())
 
@@ -216,77 +403,254 @@ class NullCache:
 
     # -- writes: succeed, then expire instantly ---------------------------------------------------
 
-    def set(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def set(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """Return True without storing anything: the write succeeds, then expires instantly."""
+        _check_retry(retry)
         _check_key(key)
         _check_seconds('expire', expire)
+        _check_tag(tag)
         return True
 
-    def __setitem__(self, key: str, value: Any, /) -> None:
+    def __setitem__(self, key: Key, value: Any, /) -> None:
         """Store nothing, as `set()` does."""
         self.set(key, value)
 
-    def add(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """Return True without storing anything: the key is always absent, so the add succeeds.
 
         With caching off, every caller's `add()` succeeds, so don't rely on it for job claims or locks.
         A `Cache(durable=True)` does the opposite when a write fails: its `add()` returns False.
         """
+        _check_retry(retry)
         _check_key(key)
         _check_seconds('expire', expire)
+        _check_tag(tag)
         return True
 
-    def touch(self, key: str, expire: float | None = None) -> bool:
+    def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
         """Always False: the key never exists."""
+        _check_retry(retry)
         _check_key(key)
         _check_seconds('expire', expire)
         return False
 
-    def incr(self, key: str, delta: float = 1, default: float | None = 0) -> int | float:
+    def incr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
         """Return `default + delta`, since every count starts again from `default`.
 
         Raises:
             KeyError: `default` is None.
         """
+        _check_retry(retry)
         _check_key(key)
         if default is None:
             raise KeyError(key)
         return default + delta
 
-    def decr(self, key: str, delta: float = 1, default: float | None = 0) -> int | float:
+    def decr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
         """Return `default - delta`. See `incr()`."""
-        return self.incr(key, -delta, default)
+        _check_retry(retry)
+        return self.incr(key, -delta, default, retry=retry)
 
     # -- removals: forwarded with invalidate= -----------------------------------------------------
 
-    def delete(self, key: str) -> bool:
+    def delete(self, key: Key, *, retry: bool = False) -> bool:
         """False, or with `invalidate=`, delete the key from that cache and return its result."""
+        _check_retry(retry)
         _check_key(key)
         if self._invalidate is not None:
-            return self._invalidate.delete(key)
+            return self._invalidate.delete(key, retry=retry) if retry else self._invalidate.delete(key)
         return False
 
-    def __delitem__(self, key: str, /) -> None:
+    def __delitem__(self, key: Key, /) -> None:
         """Raise `KeyError`, or with `invalidate=`, delete the key from that cache."""
         if not self.delete(key) and self._invalidate is None:
             raise KeyError(key)
 
-    def pop(self, key: str, default: Any = None) -> Any:
-        """Return `default`. With `invalidate=`, also delete the key from that cache."""
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> Any: ...
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> tuple[Any, float | None]: ...
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: bool = False, tag: bool = False, retry: bool = False
+    ) -> Any:
+        """Return `default`, shaped as `get()` returns it. With `invalidate=`, also delete the key from
+        that cache."""
+        _check_retry(retry)
         _check_key(key)
         if self._invalidate is not None:
-            self._invalidate.delete(key)
-        return default
+            self._invalidate.delete(key, retry=retry) if retry else self._invalidate.delete(key)
+        return _answer(default, expire_time, tag)
 
-    def clear(self, *, timeout: float | None = None) -> int:
+    # -- the queue calls: always empty, never forwarded -----------------------------------------
+
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int: ...
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: str,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> str: ...
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: str | None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int | str: ...
+    def push(
+        self,
+        value: Any,
+        prefix: str | None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int | str:
+        """Store nothing and return the key an empty queue's first item gets: the item expires the instant
+        it's written. Never forwarded to `invalidate=`."""
+        _check_retry(retry)
+        _check_prefix(prefix)
+        _check_side(side)
+        _check_seconds('expire', expire)
+        _check_tag(tag)
+        return 500_000_000_000_000 if prefix is None else f'{prefix}-500000000000000'
+
+    def pull(
+        self,
+        prefix: str | None = None,
+        default: Any = (None, None),
+        side: Literal['front', 'back'] = 'front',
+        *,
+        expire_time: bool = False,
+        tag: bool = False,
+        retry: bool = False,
+    ) -> Any:
+        """Return `default` (widened as `Cache.pull` widens it): the queue is always empty. Never forwarded
+        to `invalidate=`, which a switched-off cache must not consume."""
+        _check_retry(retry)
+        _check_prefix(prefix)
+        _check_side(side)
+        return _answer(default, expire_time, tag)
+
+    def peek(
+        self,
+        prefix: str | None = None,
+        default: Any = (None, None),
+        side: Literal['front', 'back'] = 'front',
+        *,
+        expire_time: bool = False,
+        tag: bool = False,
+        retry: bool = False,
+    ) -> Any:
+        """Return `default`, as `pull` does."""
+        _check_retry(retry)
+        _check_prefix(prefix)
+        _check_side(side)
+        return _answer(default, expire_time, tag)
+
+    def peekitem(self, last: bool = True, *, expire_time: bool = False, tag: bool = False, retry: bool = False) -> Any:
+        """Raise `KeyError`: the cache is always empty."""
+        _check_retry(retry)
+        raise KeyError('dictionary is empty')
+
+    def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count."""
+        _check_retry(retry)
         _check_timeout(timeout)
         if self._invalidate is None:
             return 0
-        # Passed on only when given, so an `invalidate=` cache without the keyword still works.
-        return self._invalidate.clear() if timeout is None else self._invalidate.clear(timeout=timeout)
+        # Passed on only when given, so an `invalidate=` cache without the keywords still works.
+        options: dict[str, Any] = {}
+        if timeout is not None:
+            options['timeout'] = timeout
+        if retry:
+            options['retry'] = True
+        return self._invalidate.clear(**options)
 
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+    def evict(self, tag: Key, *, timeout: float | None = None, retry: bool = False) -> int:
+        """0, or with `invalidate=`, evict `tag` from that cache (passing `timeout` on) and return its
+        count."""
+        _check_retry(retry)
+        _check_timeout(timeout)
+        _check_tag(tag)
+        if self._invalidate is None or tag is None:
+            return 0
+        options: dict[str, Any] = {}
+        if timeout is not None:
+            options['timeout'] = timeout
+        if retry:
+            options['retry'] = True
+        return self._invalidate.evict(tag, **options)
+
+    def memoize(
+        self,
+        name: str | None = None,
+        typed: bool = False,
+        expire: float | None = None,
+        tag: Key = None,
+        ignore: Iterable[int | str] = (),
+    ) -> Memoizer:
+        """As `Cache.memoize`, but every call runs the function, as every entry has already expired. The
+        arguments are still checked as keys, so a call that would fail on a real cache fails here."""
+        from diskcache_oxide._memoize import memoize
+
+        return memoize(self, name, typed, expire, tag, ignore)
+
+    @overload
+    def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]: ...
+    @overload
+    def iterkeys(self, *, prefix: None = None, reverse: bool = False) -> Iterator[Key]: ...
+    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[Key]:
         """Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works."""
         if self._invalidate is not None:
             return self._invalidate.iterkeys(prefix=prefix, reverse=reverse)
@@ -294,7 +658,7 @@ class NullCache:
 
     # -- transactions: nothing to hold ------------------------------------------------------------
 
-    def transact(self, retry: bool = False, *, key: str | None = None) -> AbstractContextManager[Self]:
+    def transact(self, retry: bool = False, *, key: Key | None = None) -> AbstractContextManager[Self]:
         """A no-op context manager that yields this `NullCache`.
 
         It never opens a transaction on an `invalidate=` cache: removals forwarded inside the block
@@ -303,10 +667,10 @@ class NullCache:
         Args:
             retry: Accepted for `Cache.transact()`'s signature; it must be a `bool`.
             key: Accepted so a switched-off sharded cache's `transact(key=...)` works too; it must be
-                a `str` or None.
+                a key or None.
 
         Raises:
-            TypeError: `retry` isn't a `bool`, or `key` isn't a `str` or None.
+            TypeError: `retry` isn't a `bool`, or `key` isn't a key type.
         """
         if not isinstance(retry, bool):
             raise TypeError(f'retry must be a bool, not {type(retry).__name__}')
@@ -316,13 +680,15 @@ class NullCache:
 
     # -- maintenance and lifecycle -------------------------------------------------------------
 
-    def expire(self, *, timeout: float | None = None) -> int:
+    def expire(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Always 0."""
+        _check_retry(retry)
         _check_timeout(timeout)
         return 0
 
-    def cull(self, *, timeout: float | None = None) -> int:
+    def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Always 0."""
+        _check_retry(retry)
         _check_timeout(timeout)
         return 0
 

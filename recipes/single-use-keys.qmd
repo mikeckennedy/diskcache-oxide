@@ -16,7 +16,7 @@ import threading
 
 from diskcache_oxide import Cache
 
-tokens = Cache(tempfile.mkdtemp())
+tokens = Cache(tempfile.mkdtemp(), eviction_policy='none')   # why: see the last section
 
 def issue_reset_token(user_id: int) -> str:
     token = secrets.token_urlsafe(32)
@@ -59,15 +59,17 @@ A six-digit verification code is guessable, so pair it with a counter, created w
 ```python
 def check_code(user_id: int, entered: str) -> bool:
     attempts_key = f'verify-attempts:{user_id}'
+    code_key = f'verify-code:{user_id}'
     tokens.add(attempts_key, 0, expire=10 * 60)
     if tokens.incr(attempts_key) > 5:
-        tokens.delete(f'verify-code:{user_id}')   # too many tries: the code is dead
+        tokens.delete(code_key)                   # too many tries: the code is dead
         return False
-    if tokens.get(f'verify-code:{user_id}') != entered:
+    if tokens.get(code_key) != entered:
         return False
-    tokens.delete(f'verify-code:{user_id}')       # right, and good for one entry only
-    return True
+    return tokens.pop(code_key) == entered        # right, and good for one entry only
 ```
+
+The last line uses `pop()` so that two requests entering the right code at the same moment can't both pass: only one of them gets the code back.
 
 ## Idempotency keys with `add()`
 
@@ -76,7 +78,7 @@ A client that times out on a `POST` retries it, and the second attempt must not 
 ```python
 def charge(idempotency_key: str, amount_cents: int) -> dict:
     key = f'idem:{idempotency_key}'
-    if not requests_seen.add(key, {'status': 'in-progress'}, expire=24 * 3600):
+    if not requests_seen.add(key, {'status': 'in-progress'}, expire=10 * 60):
         previous = requests_seen.get(key)
         if previous is None or previous['status'] == 'in-progress':
             raise Conflict('this request is still being processed; retry in a moment')
@@ -91,7 +93,7 @@ def charge(idempotency_key: str, amount_cents: int) -> dict:
     return result
 ```
 
-The sequence: `add()` claims the key, and exactly one caller gets `True`. A retry that arrives while the first attempt is still running sees `in-progress` and is told to come back; one that arrives after it finished gets the stored result, which should carry everything needed to send the same response again (the status code too). If the work fails, the claim is deleted so that a retry really retries. `previous is None` covers the rare case where the entry expired, or was evicted, between the `add()` and the `get()`.
+The sequence: `add()` claims the key, and exactly one caller gets `True`. A retry that arrives while the first attempt is still running sees `in-progress` and is told to come back; one that arrives after it finished gets the stored result, which should carry everything needed to send the same response again (the status code too). If the work fails, the claim is deleted so that a retry really retries. If the worker dies mid-charge, nothing deletes it, so the claim's own expiry (ten minutes here) is how long retries are turned away; keep it longer than your slowest charge, or a retry could charge while the first attempt is still running. `previous is None` covers the rare case where the entry expired, or was evicted, between the `add()` and the `get()`.
 
 The stored result has to be something the cache can hold: a dict of built-in types, or a type you've [registered](custom-types.qmd).
 
@@ -102,7 +104,7 @@ Tokens and idempotency keys aren't a copy of something you can recompute, so two
 - **Eviction.** A cache at its `size_limit` evicts the least recently stored entries, and an unused token is a tiny, old entry, exactly what goes first. An evicted reset link is a dead link; an evicted idempotency key is a double charge.
 - **Switching caching off.** A `NullCache` never stores, so `pop()` returns `None` and no token can ever be redeemed, and its `add()` always returns `True`, so every retry charges again.
 
-Give them a directory of their own, with a `size_limit` they'll never reach and no `NullCache` in front of it, as the [job claims](run-once.qmd#give-claims-their-own-small-cache) recipe does. [`Caches`](../user-guide/caches.qmd) can register it under its own name so the rest of the app's caches can still be switched off.
+Give them a directory of their own, opened with `eviction_policy='none'` so nothing is evicted for size (tokens still expire) and with no `NullCache` in front of it, as the [job claims](run-once.qmd#give-claims-their-own-small-cache) recipe does. [`Caches`](../user-guide/caches.qmd) can register it under its own name so the rest of the app's caches can still be switched off.
 
 `durable=True` is safe here, if you check return values: a `pop()` whose delete fails returns `None` rather than risk delivering the token twice (the user clicks again), `add()` fails closed, and a `set()` that was dropped returns `False`, so `issue_reset_token` should raise rather than hand out a link that was never stored. See [errors](../user-guide/errors.qmd).
 

@@ -113,7 +113,17 @@ impl PendingFile {
     /// temp file keeps non-empty, so a sweep can't take it.
     pub fn commit_name(&self) -> Result<()> {
         match std::fs::rename(&self.tmp, &self.val) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                // A rename keeps the temp file's mtime, so refresh it: `check()` leaves alone a file
+                // no row names until it has been idle for `TMP_MIN_AGE`, and a write in flight for
+                // longer than that (a long timeout, a long transaction) must still count as fresh.
+                // Not under Miri, which can't emulate macOS's `fsetattrlist` (sanitizer lane A).
+                #[cfg(not(miri))]
+                if let Ok(file) = File::options().write(true).open(&self.val) {
+                    let _ = file.set_modified(SystemTime::now());
+                }
+                Ok(())
+            }
             Err(e) if e.kind() == ErrorKind::NotFound && self.val.exists() => Ok(()),
             Err(e) => Err(io_error(&self.tmp, e)),
         }
@@ -192,7 +202,7 @@ pub fn value_path(directory: &Path, relative: &str) -> Option<PathBuf> {
 }
 
 /// Whether `s` is exactly `len` lowercase hex characters.
-fn is_hex(s: &str, len: usize) -> bool {
+pub(crate) fn is_hex(s: &str, len: usize) -> bool {
     s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 

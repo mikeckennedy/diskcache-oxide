@@ -150,6 +150,9 @@ pub struct Store {
     /// later open of the same directory however it's spelled. Falls back to `directory`.
     canonical: PathBuf,
     file_id: FileId,
+    /// This database's hit and miss counters in this process (`stats()`), shared with every later
+    /// store on the same file.
+    stats: Arc<crate::stats::Stats>,
     /// Held open so the inode stays reserved while any handle is open (see [`open_pin`]). Released
     /// when the last handle closes (D-018: nothing left open); the store is then `retired`, and the
     /// registry only revives it for the same directory, since the inode number may since have been
@@ -180,6 +183,9 @@ pub struct Store {
     /// current values inside their transaction.
     size_limit: AtomicI64,
     cull_limit: AtomicI64,
+    /// The stored eviction policy's code, for the attribute only: write paths read it inside their
+    /// transaction (plan 24, release 3, H2).
+    eviction_policy: AtomicI64,
     /// A write transaction held across calls (`transact()`): its owner thread's operations run on
     /// the pinned connection. Locked only under
     /// the gate, and only for a moment: an operation borrows the connection (see
@@ -532,10 +538,12 @@ impl Store {
             let replaced = std::io::Error::other("the database file was replaced while it was being opened");
             return Err(Error::Io { path: db_path, source: replaced });
         }
+        let stats = crate::stats::for_file(file_id, &canonical);
         let store = Arc::new(Self {
             directory: options.directory.clone(),
             canonical,
             file_id,
+            stats,
             pin: Mutex::new(Some(pin)),
             retired: AtomicBool::new(false),
             pool: Pool::new(&gate, usize::try_from(options.max_connections).unwrap_or(usize::MAX)),
@@ -551,6 +559,7 @@ impl Store {
             deferred_releases: AtomicUsize::new(0),
             size_limit: AtomicI64::new(limits.size_limit),
             cull_limit: AtomicI64::new(limits.cull_limit),
+            eviction_policy: AtomicI64::new(limits.eviction_policy.code()),
             pinned: Mutex::new(PinnedSlot::Empty),
             pinned_active: AtomicBool::new(false),
             // `prepare` just checked the stamp against it.
@@ -699,31 +708,60 @@ impl Store {
         if options.requested == Requested::default() {
             return Ok(());
         }
-        let result = self.write(timeout, |_writer, tx| {
-            let stored = open::read_limits(tx, options.timeout)?;
-            let wanted = Limits {
-                size_limit: options.requested.size_limit.unwrap_or(stored.size_limit),
-                cull_limit: options.requested.cull_limit.unwrap_or(stored.cull_limit),
-            };
-            if wanted != stored {
-                tx.execute(
-                    "UPDATE totals SET size_limit = ?1, cull_limit = ?2 WHERE only = 1",
-                    (wanted.size_limit, wanted.cull_limit),
-                )
-                .map_err(|e| Error::from_sqlite(e, options.timeout))?;
-            }
-            Ok(wanted)
-        });
-        match result {
-            Ok(limits) => {
-                self.cache_limits(limits);
-                Ok(())
-            }
+        match self.set_limits(timeout, options.requested) {
+            Ok(_) => Ok(()),
             Err(error) => {
                 self.release_now_or_defer();
                 Err(error)
             }
         }
+    }
+
+    /// Persists the limits `requested` names, keeping the others, and returns them all (`reset`,
+    /// and a handle that opens with explicit limits). Writes only if they change (D-019).
+    ///
+    /// # Errors
+    ///
+    /// An invalid value ([`Requested::validate`]), or the write's errors.
+    pub fn set_limits(&self, timeout: Duration, requested: Requested) -> Result<Limits> {
+        requested.validate()?;
+        // Inside a held transaction the write isn't final: a rollback would leave the cached limits
+        // (which this process culls by) wrong.
+        if self.held_by_this_thread() {
+            return Err(Error::InsideTransaction(
+                "reset() can't change a limit inside this thread's transaction on the cache: a rollback \
+                 would leave this process culling by the wrong limit",
+            ));
+        }
+        let limits = self.write(timeout, |_writer, tx| {
+            let stored = open::read_limits(tx, timeout)?;
+            let wanted = Limits {
+                size_limit: requested.size_limit.unwrap_or(stored.size_limit),
+                cull_limit: requested.cull_limit.unwrap_or(stored.cull_limit),
+                eviction_policy: requested.eviction_policy.unwrap_or(stored.eviction_policy),
+            };
+            if wanted != stored {
+                tx.execute(
+                    "UPDATE state SET size_limit = ?1, cull_limit = ?2, eviction_policy = ?3 WHERE only = 1",
+                    (wanted.size_limit, wanted.cull_limit, wanted.eviction_policy.code()),
+                )
+                .map_err(|e| Error::from_sqlite(e, timeout))?;
+            }
+            Ok(wanted)
+        })?;
+        self.cache_limits(limits);
+        Ok(limits)
+    }
+
+    /// The limits as stored now (another process may have changed them), refreshing the cached copy.
+    ///
+    /// # Errors
+    ///
+    /// The read's errors.
+    pub fn read_limits(&self, timeout: Duration) -> Result<Limits> {
+        let limits = self.read(timeout, |conn| open::read_limits(conn, timeout))?;
+        self.cache_limits(limits);
+        Ok(limits)
     }
 
     /// Releases the handle a failed open registered, with no wait (the open has used its budget):
@@ -904,12 +942,15 @@ impl Store {
         Limits {
             size_limit: self.size_limit.load(Ordering::Acquire),
             cull_limit: self.cull_limit.load(Ordering::Acquire),
+            eviction_policy: crate::schema::EvictionPolicy::try_from(self.eviction_policy.load(Ordering::Acquire))
+                .unwrap_or_default(),
         }
     }
 
     pub(crate) fn cache_limits(&self, limits: Limits) {
         self.size_limit.store(limits.size_limit, Ordering::Release);
         self.cull_limit.store(limits.cull_limit, Ordering::Release);
+        self.eviction_policy.store(limits.eviction_policy.code(), Ordering::Release);
     }
 
     /// Runs a read. `read` may run several times (each attempt starts from scratch), so it must
@@ -1099,6 +1140,37 @@ impl Store {
             let outcome = self.checkpoint_once(deadline);
             self.wal.record_outcome(&outcome);
         }
+    }
+
+    /// `VACUUM`, then a forced checkpoint, for `check(fix=True)`: rewrites the database without
+    /// its free pages. Holds this process's write lock throughout, so its writers queue (within their
+    /// timeouts) rather than meet SQLite's lock; other processes' writers wait on SQLite's. A long
+    /// single step: a fork waits for it, it writes the whole database through the WAL, and SQLite
+    /// builds a full temporary copy in `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`. Never inside a held transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NestedTransaction`] at gate depth > 0; a `Timeout` for the whole `timeout`; SQLite's
+    /// errors (a full disk among them).
+    pub(crate) fn vacuum(&self, timeout: Duration) -> Result<()> {
+        if GATE.own_depth() > 0 {
+            return Err(Error::NestedTransaction);
+        }
+        let deadline = lockwait::deadline_after(Instant::now(), timeout);
+        let token = self.write_lock.lock_until(deadline).ok_or(Error::Timeout { seconds: timeout.as_secs_f64() })?;
+        let result = lockwait::retry(deadline.saturating_duration_since(Instant::now()), |attempt_deadline| {
+            let _permit = self.reserve_slot(attempt_deadline)?;
+            let gate = enter_until(attempt_deadline)?;
+            let lease = self.lease(&gate, timeout)?;
+            lease.conn().execute_batch("VACUUM").map_err(|e| Error::from_sqlite(e, timeout))
+        })
+        .map_err(|error| match error {
+            Error::Timeout { .. } => Error::Timeout { seconds: timeout.as_secs_f64() },
+            other => other,
+        });
+        drop(token);
+        result?;
+        self.checkpoint(timeout).map(drop)
     }
 
     /// The `-wal` file's size in bytes (0 if it doesn't exist).
@@ -1292,6 +1364,12 @@ impl Store {
     #[must_use]
     pub fn wal_stats(&self) -> crate::wal::WalStats {
         self.wal.stats()
+    }
+
+    /// This database's `stats()` counters in this process.
+    #[must_use]
+    pub fn stats(&self) -> &crate::stats::Stats {
+        &self.stats
     }
 
     /// Fails with [`Error::Unwritable`] in a child forked inside a transaction on this file (D-020).
@@ -2051,6 +2129,7 @@ pub fn drain_deferred_releases() {
 }
 
 mod shards;
+pub use shards::split_size_limit;
 
 #[cfg(test)]
 mod fork_timeout;
@@ -2087,12 +2166,13 @@ mod tests {
         store
             .write(T, |w, _| {
                 w.upsert(&NewRow {
-                    key,
+                    key: key.into(),
                     mode: 2,
                     value: Stored::Blob(value),
                     size: i64::try_from(value.len()).unwrap(),
                     store_time: 1.0,
                     expire_time: None,
+                    tag: None,
                 })
             })
             .unwrap();
@@ -2104,9 +2184,7 @@ mod tests {
 
     fn count(store: &Store) -> i64 {
         store
-            .read(T, |c| {
-                c.query_row("SELECT count FROM totals", [], |r| r.get(0)).map_err(|e| Error::from_sqlite(e, T))
-            })
+            .read(T, |c| c.query_row("SELECT count FROM state", [], |r| r.get(0)).map_err(|e| Error::from_sqlite(e, T)))
             .unwrap()
     }
 
@@ -2242,7 +2320,7 @@ mod tests {
     fn a_second_handle_applies_explicit_settings_only() {
         let tmp = TempDir::new("store-settings");
         let a = Store::open(&OpenOptions {
-            requested: Requested { size_limit: Some(5 << 20), cull_limit: None },
+            requested: Requested { size_limit: Some(5 << 20), cull_limit: None, eviction_policy: None },
             ..options(tmp.path())
         })
         .unwrap();
@@ -2250,7 +2328,7 @@ mod tests {
         let _b = Store::open(&options(tmp.path())).unwrap();
         assert_eq!(a.cached_limits().size_limit, 5 << 20, "an unspecified setting keeps the stored value");
         let _c = Store::open(&OpenOptions {
-            requested: Requested { size_limit: Some(7 << 20), cull_limit: None },
+            requested: Requested { size_limit: Some(7 << 20), cull_limit: None, eviction_policy: None },
             ..options(tmp.path())
         })
         .unwrap();
@@ -2289,7 +2367,7 @@ mod tests {
                                 let now = live.fetch_add(1, Ordering::AcqRel) + 1;
                                 peak.fetch_max(now, Ordering::AcqRel);
                                 let n: i64 = c
-                                    .query_row("SELECT count FROM totals", [], |r| r.get(0))
+                                    .query_row("SELECT count FROM state", [], |r| r.get(0))
                                     .map_err(|e| Error::from_sqlite(e, T))?;
                                 live.fetch_sub(1, Ordering::AcqRel);
                                 Ok(n)
@@ -2965,12 +3043,13 @@ mod tests {
         let write = |key: &str, timeout: Duration| {
             store.write(timeout, |writer, _| {
                 writer.upsert(&NewRow {
-                    key,
+                    key: key.into(),
                     mode: 2,
                     value: Stored::Blob(b"v"),
                     size: 1,
                     store_time: 1.0,
                     expire_time: None,
+                    tag: None,
                 })
             })
         };
@@ -3022,12 +3101,13 @@ mod tests {
         }
         for i in 0..writes {
             let row = NewRow {
-                key: "nowait",
+                key: "nowait".into(),
                 mode: 2,
                 value: Stored::Blob(b"v"),
                 size: 1,
                 store_time: f64::from(u32::try_from(i).unwrap()),
                 expire_time: None,
+                tag: None,
             };
             // It skips while another test's fork is pending.
             let wrote = (0..5_000).any(|_| {

@@ -3,9 +3,9 @@
 This changelog is generated automatically from [GitHub Releases](https://github.com/mikeckennedy/diskcache-oxide/releases).
 
 
-# v0.2.3 (unreleased)
+# v0.2.3
 
-[GitHub](https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md)
+*2026-11-12* · [GitHub](https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.2.3)
 
 **Delete your caches when you upgrade.** This release changes the on-disk format (format 3, for tags and the eviction policy). Opening a cache made by 0.1.2 raises [FormatMismatchError](reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError), naming the database: stop every process using the cache, delete its directory (a FanoutCache's whole root, never one shard), and it's recreated empty on the next open. 0.1.2 refuses a format-3 cache the same way, and neither version writes anything into the other's. A 0.1.2 worker still running when its cache is deleted and recreated can't change the new one either: once it opens the new file, its writes, deletes and maintenance calls fail with "no such table" (only a [touch](reference/Cache.touch.html#diskcache_oxide.Cache.touch) gets through), because format 3 renames the table they all use.
 

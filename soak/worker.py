@@ -11,7 +11,9 @@ Two caches share the run directory:
 - chaos/: keys shared by every worker, expiring entries, a small size_limit (so culling runs), large
   values that spill to files, and clear()/expire()/cull() from maintenance processes. Anything may
   vanish here; what's checked is that whatever comes back is intact and not expired.
-- ledger/: nothing expires, is cleared or is culled, so every acknowledged write must survive:
+- ledger/: nothing expires or is cleared, and it is under `eviction_policy='none'` far past its
+  1 MiB `size_limit`, so nothing is ever evicted and every acknowledged write must survive (a
+  `maint cull` culls it too, and must remove nothing):
   - `ctr:<worker>` counters, against the count of incr() calls that returned;
   - `own:<worker>:<n>` keys with a single writer, which must read back exactly what was last written;
   - `once:<slot>` add() races, which must have exactly one winner;
@@ -26,6 +28,8 @@ Two caches share the run directory:
   - `pq:<tick>`, `pqw:<token>` and `delivered:<token>`, the exactly-once lane: every `run` worker's
     threads aim at the same wall-clock tick, race an add() into the slot and race pop() out of it, and
     whoever gets the token records it with add('delivered:<token>'), where a False is a duplicate.
+    Each round also push()es a token onto the shared queue `pqueue` and pull()s one from its front,
+    delivered and checked the same way;
     `maint verify-pq` checks at the end that no recorded token vanished, allowing for kills.
 
 The other roles run lanes that plan 09 needs, on stores of their own:
@@ -43,7 +47,10 @@ The other roles run lanes that plan 09 needs, on stores of their own:
   database fds stay within the shard budget (D-037).
 
 Every value carries its key and a CRC of its payload, so corruption or a value landing under the
-wrong key is caught on every read.
+wrong key is caught on every read. It carries the tag it was stored with too: chaos/ writes tag most
+entries with one of a few groups (plan 24, release 3), a share of reads and every pop ask for the tag
+and check it is the one stored with that value (never another version's), and now and then a write
+is followed by `evict` of a group.
 
 The worker writes its counters to stats/<worker>.json every few seconds (atomically), and its
 problems to the same file, for the orchestrator to collect. SIGUSR1 asks for a fork test (fork
@@ -89,8 +96,16 @@ HELD_KEYS = 50
 HELD_SHARE = 0.01
 HELD_COMMIT = 0.6
 # A get that started this long after a value's expire time must not return it (the writer's and
-# reader's clock reads aren't simultaneous).
+# reader's clock reads aren't simultaneous). Used only by reads that don't ask for the cache's own
+# expire time.
 EXPIRY_SLACK = 1.0
+# The wall clock's offset from the monotonic clock when the worker started (see `problem`).
+CLOCK_OFFSET_AT_START = time.time() - time.monotonic()
+# With the cache's own expire time there's no race: the cache reads the clock when the call starts,
+# after `asked_at`, so a value whose stored expiry had passed when the get began must never come back.
+# This covers float rounding only. A failure message then says which expiry was passed, the stored one
+# or the writer's, so a stale read and a writer whose expiry disagrees with the cache's are told apart.
+STORED_EXPIRY_SLACK = 0.01
 
 
 # Pacing: the shortest sleep worth taking, and how far behind schedule a thread may fall before the
@@ -104,6 +119,8 @@ PACE_MAX_BEHIND = 0.02
 # thread, between its pop and its add.
 PQ_TICKS_PER_S = 2
 PQ_THREADS = 2
+# The queue that every `run` worker's exactly-once threads also push to and pull from, on the ledger.
+QUEUE_PREFIX = 'pqueue'
 
 # Budgets for the lanes that measure calls. A call that takes longer than its budget by more than
 # OVERRUN_ALLOWANCE is a failure. The overshoot the design allows is one poll plus the interpreter
@@ -164,7 +181,10 @@ def open_chaos(run_dir: Path) -> Cache:
 
 
 def open_ledger(run_dir: Path) -> Cache:
-    return Cache(run_dir / 'ledger', timeout=60.0, size_limit=2**36)
+    # Under 'none' with the smallest size_limit, which it outgrows in minutes (plan 24, release 3):
+    # every write is over the limit, so one that evicted for size would lose an acknowledged write,
+    # and the ledger's checks would say so.
+    return Cache(run_dir / 'ledger', timeout=60.0, size_limit=2**20, eviction_policy='none')
 
 
 def pace(interval: float, next_at: float, stop: threading.Event) -> tuple[float, bool]:
@@ -181,44 +201,103 @@ def pace(interval: float, next_at: float, stop: threading.Event) -> tuple[float,
 # ---------------------------------------------------------------------------
 
 
-def make_value(key: str, rng: random.Random, expire_at: float | None) -> Any:
+def key_tag(key: Any) -> str:
+    """How a value records the key it was stored under: the key itself for a `str`, else its repr."""
+    return key if isinstance(key, str) else repr(key)
+
+
+def soak_key(rng: random.Random, prefix: str, n: int) -> Any:
+    """A key for slot `n`: mostly `str`, otherwise a typed key (plan 24), so every lane meets both."""
+    form = rng.random()
+    if form < 0.70:
+        return f'{prefix}:{n}'
+    if form < 0.80:
+        return n
+    if form < 0.90:
+        return (prefix, n, None)  # memoize's shape
+    if form < 0.95:
+        return f'{prefix}:{n}'.encode()
+    return (prefix, n + 0.5)
+
+
+# The tags chaos/ writes use: a few groups of different types (an int and a float that are equal in
+# Python are different tags), or none.
+SOAK_TAGS: tuple[Any, ...] = ('g:0', 'g:1', 'g:2', 3, 3.0, ('g', 4))
+UNCHECKED = object()
+
+
+def soak_tag(rng: random.Random) -> Any:
+    """A tag for a chaos/ write: none a third of the time, else one of `SOAK_TAGS`."""
+    return None if rng.random() < 0.33 else rng.choice(SOAK_TAGS)
+
+
+def make_value(key: Any, rng: random.Random, expire_at: float | None, stored_tag: Any = None) -> Any:
+    tag = key_tag(key)
     roll = rng.random()
     if roll < 0.90:
         body = 'x' * rng.randrange(10, 400)
         return {
-            'key': key,
+            'key': tag,
             'crc': zlib.crc32(body.encode()),
             'body': body,
             'exp': expire_at,
             'n': rng.randrange(1 << 40),
+            'tag': repr(stored_tag),
         }
     size = rng.randrange(1_024, 8_192) if roll < 0.99 else rng.randrange(64 * 1024, 512 * 1024)
     payload = rng.randbytes(size)
-    header = json.dumps({'key': key, 'crc': zlib.crc32(payload), 'exp': expire_at}).encode()
+    header = json.dumps({'key': tag, 'crc': zlib.crc32(payload), 'exp': expire_at, 'tag': repr(stored_tag)}).encode()
     return len(header).to_bytes(4, 'big') + header + payload
 
 
-def check_value(key: str, value: Any, now: float) -> str | None:
-    """None if `value` is intact and current, else what's wrong with it."""
+def check_value(
+    key: Any, value: Any, now: float, stored_tag: Any = UNCHECKED, stored_expire: Any = UNCHECKED
+) -> str | None:
+    """None if `value` is intact and current (and, if `stored_tag` is given, was stored with that
+    tag), else what's wrong with it.
+
+    `stored_expire` is the expire time the cache returned with the value (`expire_time=True`). When
+    it's given, currency is judged against it, and it must agree with what the writer recorded: no
+    expiry for none, and never earlier than the writer's (read just before its set began). It may be
+    later by any amount: the cache reads the clock when its call starts, and a writer thread can be
+    descheduled between recording the time and calling set() (1.3 s seen on the loaded mini,
+    2026-11-11), so a later stored expiry says nothing about the library.
+    """
+    tag = key_tag(key)
     if isinstance(value, dict):
-        if value.get('key') != key:
+        if value.get('key') != tag:
             return f'value under {key!r} belongs to {value.get("key")!r}'
         if zlib.crc32(str(value.get('body', '')).encode()) != value.get('crc'):
             return f'dict value under {key!r} fails its CRC'
         expire_at = value.get('exp')
+        recorded = value.get('tag', 'None')
     elif isinstance(value, bytes):
         n = int.from_bytes(value[:4], 'big')
         try:
             header = json.loads(value[4 : 4 + n])
         except ValueError:
             return f'bytes value under {key!r} has a corrupt header'
-        if header.get('key') != key:
+        if header.get('key') != tag:
             return f'bytes value under {key!r} belongs to {header.get("key")!r}'
         if zlib.crc32(value[4 + n :]) != header.get('crc'):
             return f'bytes value under {key!r} ({len(value)} bytes) fails its CRC'
         expire_at = header.get('exp')
+        recorded = header.get('tag', 'None')
     else:
         return f'unexpected value type under {key!r}: {type(value).__name__}'
+    if stored_tag is not UNCHECKED and recorded != repr(stored_tag):
+        return f'{key!r} read back the tag {stored_tag!r} with a value stored with {recorded}'
+    if stored_expire is not UNCHECKED:
+        if (stored_expire is None) != (expire_at is None):
+            return f'{key!r} was written with expire time {expire_at!r} and the cache stored {stored_expire!r}'
+        if expire_at is not None:
+            if stored_expire < expire_at - STORED_EXPIRY_SLACK:
+                return (
+                    f'{key!r} has a stored expiry {expire_at - stored_expire:.3f}s before the one its writer recorded'
+                )
+            if now > stored_expire + STORED_EXPIRY_SLACK:
+                return f'{key!r} returned {now - stored_expire:.3f}s after its stored expiry'
+        return None
     if expire_at is not None and now > expire_at + EXPIRY_SLACK:
         return f'{key!r} returned {now - expire_at:.1f}s after it expired'
     return None
@@ -285,10 +364,15 @@ class Worker:
         self.held_desynced = False
 
     def problem(self, text: str) -> None:
+        # How far the wall clock has moved against the monotonic one since this module loaded: a
+        # step (NTP, or the OS around an update) makes expiry checks misfire, and this tells the two
+        # apart from a real stale read.
+        drift = (time.time() - time.monotonic()) - CLOCK_OFFSET_AT_START
+        clock = f' [wall clock {drift:+.3f}s vs monotonic since start]' if abs(drift) >= 0.05 else ''
         with self.lock:
             self.problem_count += 1
             if len(self.problems) < MAX_PROBLEMS_KEPT:
-                self.problems.append(f'{time.strftime("%H:%M:%S")} {text}')
+                self.problems.append(f'{time.strftime("%H:%M:%S")} {text}{clock}')
 
     def count(self, name: str, n: int = 1) -> None:
         with self.lock:
@@ -331,34 +415,42 @@ class Worker:
                 time.sleep(0.1)
 
     def one_op(self, rng: random.Random, i: int, every: int) -> None:
-        key = f'c:{rng.randrange(CHAOS_KEYS)}'
+        key = soak_key(rng, 'c', rng.randrange(CHAOS_KEYS))
         # Paced runs are slow enough to time every call, so the maximum is the true worst case.
         sample = self.thread_rate > 0 or i % LATENCY_SAMPLE_EVERY == 0
         if i % every == 0 and rng.random() < 0.25:
             asked_at = time.time()
-            value = self.chaos.pop(key)
+            value, stored_expire, tag = self.chaos.pop(key, expire_time=True, tag=True)
             self.count('pops_chaos')
-            if value is not None and (wrong := check_value(key, value, asked_at)) is not None:
+            if value is not None and (wrong := check_value(key, value, asked_at, tag, stored_expire)) is not None:
                 self.problem(f'pop: {wrong}')
             self.ledger_op(rng)
         elif i % every == 0:
             expire = rng.choice((None, None, rng.uniform(1, 60)))
             expire_at = None if expire is None else time.time() + expire
-            value = make_value(key, rng, expire_at)
+            tag = soak_tag(rng)
+            value = make_value(key, rng, expire_at, tag)
             start = time.perf_counter_ns()
-            self.chaos.set(key, value, expire=expire)
+            self.chaos.set(key, value, expire=expire, tag=tag)
             self.record('set', time.perf_counter_ns() - start)  # Writes are rare enough to time every one.
+            if rng.random() < 0.01:
+                self.chaos.evict(rng.choice(SOAK_TAGS))
+                self.count('evicts_chaos')
             self.ledger_op(rng)
         else:
             asked_at = time.time()  # Expired means expired before we asked, not by the time we look.
+            with_tag = rng.random() < 0.1
             start = time.perf_counter_ns()
-            value = self.chaos.get(key)
-            if sample:
+            if with_tag:
+                value, stored_expire, tag = self.chaos.get(key, expire_time=True, tag=True)
+            else:
+                (value, stored_expire), tag = self.chaos.get(key, expire_time=True), UNCHECKED
+            if sample and not with_tag:
                 self.record('get', time.perf_counter_ns() - start)
             if value is None:
                 with self.lock:
                     self.misses += 1
-            elif (wrong := check_value(key, value, asked_at)) is not None:
+            elif (wrong := check_value(key, value, asked_at, tag, stored_expire)) is not None:
                 self.problem(wrong)
         if i % 5_000 == 0 and rng.random() < 0.05:
             self.reopen()
@@ -488,6 +580,7 @@ class Worker:
                 # in case every consumer of one was descheduled or killed.
                 for slot in (tick, tick, tick - 1, tick - 2, tick - 4):
                     self.pq_consume(f'pq:{slot}')
+                self.queue_round(f'q.{token}', tick)
             except Timeout:
                 with self.lock:
                     self.timeouts += 1
@@ -517,6 +610,32 @@ class Worker:
             self.problem(
                 f'duplicate delivery: {slot} gave {token} to worker {self.id}, which another pop had already delivered'
             )
+
+    def queue_round(self, token: str, tick: int) -> None:
+        """The queue calls on the same ledger (plan 24, release 4): push this thread's token onto one
+        queue every worker shares, record it, then pull one item from the front and deliver it as the
+        slot lane does, so a token pulled twice, or pushed under a key some other push returned, shows up
+        as a duplicate delivery or a lost token at the end."""
+        self.ledger.push(token, prefix=QUEUE_PREFIX)
+        self.ledger.set(f'pqw:{token}', tick)
+        self.count('queue_pushed')
+        key, pulled = self.ledger.pull(prefix=QUEUE_PREFIX)
+        if key is None:
+            return
+        if not isinstance(pulled, str) or not pulled.startswith('q.'):
+            self.problem(f'{key} pulled {pulled!r}, which no producer pushed')
+            return
+        self.count('queue_pulled')
+        while True:
+            try:
+                first = self.ledger.add(f'delivered:{pulled}', self.id)
+                break
+            except Timeout:
+                with self.lock:
+                    self.timeouts += 1
+        if not first:
+            self.count('pq_duplicates')
+            self.problem(f'duplicate delivery: {key} pulled {pulled}, which another pull had already delivered')
 
     def record(self, op: str, ns: int) -> None:
         with self.lock:
@@ -1123,8 +1242,8 @@ class LaneWorker(Worker):
         """A bug isn't an outage: these raise whatever the store is doing, before it's reached."""
         self.count('durable_bug_checks')
         for what, work in (
-            ('a non-str key to set', lambda: self.durable.set(123, 'v')),  # ty: ignore[invalid-argument-type]
-            ('a non-str key to get', lambda: self.durable.get(123)),  # ty: ignore[invalid-argument-type]
+            ('a key of no key type to set', lambda: self.durable.set([123], 'v')),  # ty: ignore[invalid-argument-type]
+            ('a key of no key type to get', lambda: self.durable.get([123])),  # ty: ignore[invalid-argument-type]
         ):
             try:
                 work()
@@ -1409,14 +1528,14 @@ class FanoutWorker(Worker):
 
     def fan_op(self, rng: random.Random) -> None:
         roll = rng.random()
-        key = f'f:{rng.randrange(FANOUT_KEYS)}'
+        key = soak_key(rng, 'f', rng.randrange(FANOUT_KEYS))
         if roll < 0.70:
             asked_at = time.time()
-            value = self.fan.get(key)
+            value, stored_expire = self.fan.get(key, expire_time=True)
             if value is None:
                 with self.lock:
                     self.misses += 1
-            elif (wrong := check_value(key, value, asked_at)) is not None:
+            elif (wrong := check_value(key, value, asked_at, stored_expire=stored_expire)) is not None:
                 self.problem(f'fanout get: {wrong}')
         elif roll < 0.85:
             expire = rng.choice((None, None, rng.uniform(1, 60)))
@@ -1424,8 +1543,11 @@ class FanoutWorker(Worker):
             self.fan.set(key, make_value(key, rng, expire_at), expire=expire)
         elif roll < 0.88:
             asked_at = time.time()
-            value = self.fan.pop(key)
-            if value is not None and (wrong := check_value(key, value, asked_at)) is not None:
+            value, stored_expire = self.fan.pop(key, expire_time=True)
+            if (
+                value is not None
+                and (wrong := check_value(key, value, asked_at, stored_expire=stored_expire)) is not None
+            ):
                 self.problem(f'fanout pop: {wrong}')
         elif roll < 0.90:
             self.fan.delete(key)
@@ -1482,8 +1604,12 @@ class FanoutWorker(Worker):
         self.count('fanout_merges')
         if rounds % 4 == 0:  # Every key, both ways: the whole root is larger, so less often.
             merged = list(self.fan.iterkeys())
-            if any(a >= b for a, b in zip(merged, merged[1:], strict=False)):
+            # D-046: every str key first, strictly sorted, then the typed keys; nothing twice.
+            texts = [k for k in merged if isinstance(k, str)]
+            if merged[: len(texts)] != texts or any(a >= b for a, b in zip(texts, texts[1:], strict=False)):
                 self.problem('fanout iterkeys() over every key is out of order or repeats a key')
+            if len(set(map(repr, merged))) != len(merged):
+                self.problem('fanout iterkeys() over every key repeats a key')
             walked = list(self.fan)
             if len(walked) != len(set(walked)):
                 self.problem(f'fanout __iter__ repeated {len(walked) - len(set(walked))} keys')
@@ -1661,6 +1787,7 @@ def verify_pq(run_dir: Path) -> dict[str, Any]:
     produced = {key.removeprefix('pqw:') for key in ledger.iterkeys(prefix='pqw:')}
     delivered = {key.removeprefix('delivered:') for key in ledger.iterkeys(prefix='delivered:')}
     queued = {ledger.get(key) for key in ledger.iterkeys(prefix='pq:')}
+    queued |= {ledger.get(key) for key in ledger.iterkeys(prefix=f'{QUEUE_PREFIX}-')}
     queued.discard(None)
     ledger.close()
     return {
@@ -1672,6 +1799,8 @@ def verify_pq(run_dir: Path) -> dict[str, Any]:
         # A kill between a winning add and its record leaves a token with no record: harmless.
         'unrecorded': len((delivered | queued) - produced),
         'ticks_per_s': PQ_TICKS_PER_S,
+        # Tokens a kill can lose per worker: each thread finishes one delivery before it starts the next,
+        # so it has at most one token removed and not yet recorded.
         'threads': PQ_THREADS,
     }
 
@@ -1716,6 +1845,13 @@ def maint(run_dir: Path, op: str) -> int:
     removed = getattr(cache, op)()
     print(f'{op} {removed} {time.perf_counter() - start:.3f}')
     cache.close()
+    if op == 'cull':
+        # The ledger has nothing expired, and under 'none' a cull evicts nothing for size.
+        with open_ledger(run_dir) as ledger:
+            culled = ledger.cull()
+        if culled:
+            print(f"ledger cull under eviction_policy='none' removed {culled} entries")
+            return 1
     return 0
 
 

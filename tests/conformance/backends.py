@@ -32,6 +32,12 @@ FEATURE_PHASES: dict[str, str] = {
     'tags': '6a',
     'statistics': '6a',
     'memoize': '6a',
+    'key_types': '6a',
+    'retry': '6a',
+    'reversed': '6a',
+    'pop_expire_time': '6a',
+    'pickling': '6a',
+    'reset': '6a',
     'peek_pull_push': '6a',
     'read': '6a',
     'check': '6a',
@@ -42,7 +48,25 @@ FEATURE_PHASES: dict[str, str] = {
 }
 assert set(FEATURE_PHASES.values()) <= set(PHASE_ORDER)
 # Features that landed ahead of their phase, by name: bumping OXIDE_PHASE to 6b would turn on all of 6a.
-OXIDE_EARLY_FEATURES = frozenset({'transact', 'fanout'})
+OXIDE_EARLY_FEATURES = frozenset(
+    {
+        'transact',
+        'tags',
+        'peek_pull_push',
+        'eviction_policy',
+        'fanout',
+        'key_types',
+        'retry',
+        'memoize',
+        'reversed',
+        'pop_expire_time',
+        'pickling',
+        'reset',
+        'statistics',
+        'check',
+        'recipes',
+    }
+)
 assert OXIDE_EARLY_FEATURES <= set(FEATURE_PHASES)
 OXIDE_SUPPORTED_FEATURES: frozenset[str] = (
     frozenset(f for f, phase in FEATURE_PHASES.items() if PHASE_ORDER.index(phase) <= PHASE_ORDER.index(OXIDE_PHASE))
@@ -73,6 +97,10 @@ class Backend:
     patches_time_time: bool = False
     # The imported backend package (diskcache, diskcache_oxide, ...).
     _module: Any
+
+    def recipe(self, name: str) -> Any:
+        """A recipe or constant from the backend's package (`Lock`, `throttle`, `ENOVAL`, ...)."""
+        return getattr(self._module, name)
 
     def make_cache(
         self,

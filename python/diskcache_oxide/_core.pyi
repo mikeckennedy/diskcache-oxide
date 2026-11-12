@@ -1,9 +1,12 @@
 """Type stubs for the compiled `diskcache_oxide._core` extension (hand-written, checked by tests/unit/test_stubs.py)."""
 
 import os
-from collections.abc import Callable, Iterator
+import warnings
+from collections.abc import Callable, Iterable, Iterator
 from types import TracebackType
 from typing import Any, Literal, Self, final, overload
+
+from diskcache_oxide._types import Key, Memoizer
 
 # PyO3 generates __all__ from everything the module adds, in the order it adds them.
 __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
@@ -16,6 +19,7 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     'UnsafeValueError',
     'CorruptValueError',
     'ForeignValueError',
+    'CorruptKeyError',
     'sqlite_version',
     'sqlite_compile_options',
     '_encode',
@@ -60,6 +64,10 @@ class UnsafeValueError(TypeError):
 class CorruptValueError(ValueError):
     """A stored value couldn't be decoded: an unknown mode, or bytes that don't parse."""
 
+class CorruptKeyError(CorruptValueError):
+    """A stored key couldn't be read: its bytes aren't a key this build wrote (a damaged page or file). Raised by
+    iteration, which never skips a key it can't read."""
+
 class ForeignValueError(CorruptValueError):
     """A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote
     it), or a time zone missing from this host."""
@@ -100,6 +108,7 @@ def _open_fanout_keeping_stored(
     shards: int,
     size_limit: int | None = None,
     cull_limit: int | None = None,
+    eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
     serializer: str = 'msgpack',
     pickle: bool = False,
     types: TypeRegistry | None = None,
@@ -150,6 +159,11 @@ class Cache:
             1 MiB). Stored in the cache, so it applies to every process.
         cull_limit: How many least-recently-stored entries a `set()` evicts when the cache is over
             `size_limit` (default 10).
+        eviction_policy: `'least-recently-stored'` (a new cache's default) evicts the oldest stored
+            entries when over `size_limit`; `'none'` never evicts for size, only removing expired
+            entries, so the cache can grow past `size_limit`. Stored in the cache, so it applies to
+            every process, and every write reads it afresh. None keeps the stored one.
+            `'least-recently-used'` and `'least-frequently-used'` raise `ValueError` (D-022).
         serializer: `'msgpack'` (the default) or `'json'`, for values that aren't plain `str` or
             `bytes`.
         pickle: Allow pickle for values the serializer can't represent exactly. Without it, such
@@ -228,6 +242,7 @@ class Cache:
         *,
         size_limit: int | None = None,
         cull_limit: int | None = None,
+        eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
         serializer: str = 'msgpack',
         pickle: bool = False,
         types: TypeRegistry | None = None,
@@ -252,10 +267,22 @@ class Cache:
     def cull_limit(self) -> int:
         """The most entries a single `set()` evicts when the cache is over `size_limit`."""
     @property
+    def eviction_policy(self) -> Literal['least-recently-stored', 'none']:
+        """`'least-recently-stored'` or `'none'`, as this handle last saw it stored (at open or its
+        own `reset`). Writes read the stored policy afresh, so another process's change applies at once."""
+    @property
     def enabled(self) -> bool:
         """Always True for a real cache; False for a `NullCache`."""
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> Any:
         """Return the value stored for `key`, or `default` if it's missing or expired.
 
         Reads never write, so any number of threads and processes can read at once.
@@ -264,10 +291,15 @@ class Cache:
             key: The key to look up.
             default: Returned when the key is missing or expired.
             expire_time: Also return the entry's expiry time.
+            tag: Also return the entry's tag.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             The value, or `default`. With `expire_time=True`, a `(value, expire_time)` tuple, where
             `expire_time` is a Unix timestamp, or None for an entry that never expires (or a miss).
+            With `tag=True`, `(value, tag)`, the tag None when untagged (or a miss); with both,
+            `(value, expire_time, tag)`.
 
         Raises:
             UnsafeValueError: The value was stored with pickle and this cache has `pickle=False`.
@@ -280,11 +312,34 @@ class Cache:
             user = cache.get('user:42')                     # None on a miss
             user = cache.get('user:42', default={})         # {} on a miss
             value, expires_at = cache.get('user:42', expire_time=True)
+            value, tag = cache.get('user:42', tag=True)
             ```
         """
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def set(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> tuple[Any, float | None]: ...
+    @overload
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def set(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """Store `value` under `key`, replacing any existing value.
 
         Values of 64 KiB or more (after encoding) are stored in their own file.
@@ -294,22 +349,29 @@ class Cache:
             value: The value: `str`, `bytes`, numbers, `Decimal`, `bool`, `None`, and lists, tuples, dicts,
                 sets, frozensets, datetimes and dates of those, or anything picklable with `pickle=True`.
             expire: Seconds until the entry expires, or None for never.
+            tag: A label for the entry, which `evict(tag)` removes by: any value a key can be,
+                compared by exact type, so `1`, `1.0` and `True` are three tags. None for none. An
+                overwrite replaces the old tag, so an overwrite without one leaves the entry untagged.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             True. With `durable=True`, False if the write failed and was dropped: whatever was
             stored under `key` stays, and can be served stale.
 
         Raises:
-            TypeError: The value can't be stored exactly without pickle, or `expire` is a `bool`.
+            TypeError: The value can't be stored exactly without pickle, `expire` is a `bool`, or
+                `tag` isn't a valid key type.
             Timeout: Another process held the write lock for longer than `timeout`.
 
         Examples:
             ```python
             cache.set('episodes:popular', episodes, expire=300)   # expires in 5 minutes
+            cache.set('user:42:profile', profile, tag='user:42')  # evict('user:42') removes it
             cache.set('config', {'retries': 3})                   # never expires
             ```
         """
-    def add(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """Store `value` only if `key` is missing or expired.
 
         Atomic across threads and processes: when several callers race to add one key, exactly one
@@ -319,6 +381,9 @@ class Cache:
             key: The key.
             value: The value, as for `set()`.
             expire: Seconds until the entry expires, or None for never.
+            tag: The entry's tag, as for `set()`. A live entry keeps its own.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             True if the value was stored, False if the key already held a live value. With
@@ -335,7 +400,7 @@ class Cache:
                 remove_stale_sessions()   # only the worker whose add() returned True gets here
             ```
         """
-    def delete(self, key: str) -> bool:
+    def delete(self, key: Key, *, retry: bool = False) -> bool:
         """Remove `key`.
 
         Returns:
@@ -354,7 +419,16 @@ class Cache:
                 cache.delete(key)          # safe while iterating
             ```
         """
-    def pop(self, key: str, default: Any = None) -> Any:
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> Any:
         """Remove `key` and return its value, delivering it to exactly one caller.
 
         Reads and decodes the value first, as `get` does, then deletes exactly that stored version,
@@ -366,9 +440,14 @@ class Cache:
         Args:
             key: The key.
             default: Returned when the key is missing or expired, or its value file is missing.
+            expire_time: Also return the entry's expiry time.
+            tag: Also return the entry's tag.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
-            The removed value, or `default`. With `durable=True`, a `pop` whose delete fails returns
+            The removed value, or `default`; with `expire_time` or `tag`, a tuple as `get` returns.
+            With `durable=True`, a `pop` whose delete fails returns
             `default`, never the value, which could otherwise be delivered twice. The row stays.
 
         Raises:
@@ -387,12 +466,38 @@ class Cache:
             token = cache.pop('reset-token:abc')   # None if it was missing or already used
             ```
         """
-    def touch(self, key: str, expire: float | None = None) -> bool:
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> tuple[Any, float | None]: ...
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
         """Change the expiry of an existing entry without rewriting its value.
 
         Args:
             key: The key.
             expire: Seconds from now until the entry expires, or None to make it never expire.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             True if the entry existed and was updated, False if it was missing or expired, or with
@@ -407,7 +512,7 @@ class Cache:
             ```
         """
     # Defaults are delta=1, default=0; PyO3 reports them as `...` at runtime.
-    def incr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
+    def incr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
         """Add `delta` to the number stored under `key`, atomically, and return the result.
 
         Atomic across threads and processes, so concurrent increments are never lost. The entry
@@ -418,6 +523,8 @@ class Cache:
             delta: The amount to add (default 1).
             default: The starting value for a missing or expired key (default 0). Pass None to
                 raise `KeyError` instead.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             The new value. With `durable=True`, `default + delta` if the call failed, whatever was
@@ -437,13 +544,120 @@ class Cache:
             allowed = cache.incr('rate:203.0.113.7:1731') <= 100  # then count; incr keeps the expiry
             ```
         """
-    def decr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
+    def decr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
         """Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 
         Returns:
             The new value.
         """
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+    def memoize(
+        self,
+        name: str | None = None,
+        typed: bool = False,
+        expire: float | None = None,
+        tag: Key = None,
+        ignore: Iterable[int | str] = (),
+    ) -> Memoizer:
+        """Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
+
+        A call's key is `(name,) + args + (None,)` and then each keyword argument's name and value,
+        sorted by name, where `name` defaults to the function's module and qualified name: the same
+        tuple diskcache builds, which `wrapper.__cache_key__(*args, **kwargs)` returns. Arguments
+        aren't bound to the signature, so `f(1, 2)` and `f(1, b=2)` are two entries. A miss runs the
+        function and stores its result (`None` included; an exception stores nothing); reads and
+        writes pass `retry=True`. Call it: `@cache.memoize()`, not `@cache.memoize`.
+
+        Args:
+            name: The key's first element, in place of the function's qualified name.
+            typed: Also key on each argument's type, as `'module.qualname'` (D-045), so `f(1)` and
+                `f(1.0)` are two entries.
+            expire: Seconds until a stored result expires; `None` never. Zero or negative never
+                stores, as in diskcache.
+            tag: The tag every stored result gets, for `evict(tag)`: a key type, checked here.
+            ignore: Positions and keyword names left out of the key.
+
+        Raises:
+            TypeError: `name` is callable (the decorator was used without parentheses), `tag` isn't
+                a key type, the function is `async def`, or, at a call, an argument isn't a key type (D-048).
+            ValueError: at a call, an argument is a NaN or a tuple nested too deep (D-048).
+
+        Examples:
+            ```python
+            @cache.memoize(expire=300)
+            def episode(number: int) -> dict:
+                return load_episode(number)
+
+            cache.delete(episode.__cache_key__(42))  # forget one call
+            ```
+        """
+    def check(self, fix: bool = False, retry: bool = False) -> list[warnings.WarningMessage]:
+        """Check the database and the value files against each other, as diskcache's `check()`.
+
+        Reports, as a list of `warnings.WarningMessage` (nothing is issued through `warnings`): lines
+        of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size
+        (`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache
+        directory, that no entry names and that is over an hour old (`unknown file: ...`, an
+        `UnknownFileWarning`; a younger one may be a writer's in flight); and stored totals that
+        don't match the rows. Empty value folders aren't reported: they're normal on an open cache.
+        Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and
+        `VACUUM`.
+
+        Args:
+            fix: Also repair: remove an entry whose file is missing or the wrong size (it reads as a
+                miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
+                value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
+                whole database through the write-ahead log and needs a temporary copy of it in
+                `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`; forks and writers wait for it.
+            retry: On a `Timeout`, start again until it gets through.
+
+        Raises:
+            RuntimeError: Inside this thread's own `transact()` block.
+            Timeout: A step waited longer than `timeout` (and `retry` is False).
+        """
+    def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
+        """`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
+
+        Returns the counts as they were, then resets them if `reset`, then turns counting on or off
+        with `enable` (off by default). Counted per process and in memory, never in the database, so
+        a read never writes: other processes' lookups aren't included, the counts start from zero
+        when the process (or a forked child) starts, and every handle on one directory in a process
+        shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
+        counts as nothing. A `FanoutCache` sums its shards.
+        """
+    @property
+    def durable(self) -> bool:
+        """True for a `durable=True` handle."""
+    @overload
+    def reset(self, key: Literal['size_limit', 'cull_limit'], value: Any = ..., update: bool = True) -> int:
+        """Read `size_limit`, `cull_limit` or `eviction_policy` as stored now, or persist a new value and
+        return it.
+
+        Args:
+            key: `'size_limit'`, `'cull_limit'` or `'eviction_policy'`.
+            value: The new value, checked as the constructor checks it; leave it out (or pass
+                `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
+            update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
+
+        Returns:
+            The setting: an `int` for a limit, the policy's name for `eviction_policy`.
+
+        Raises:
+            ValueError: Another key, `update=False`, or a value the constructor would refuse.
+            TypeError: A limit that isn't an `int`, or a policy that isn't a `str`.
+        """
+    @overload
+    def reset(
+        self,
+        key: Literal['eviction_policy'],
+        value: Any = ...,
+        update: bool = True,
+    ) -> Literal['least-recently-stored', 'none']: ...
+    @overload
+    def reset(self, key: str, value: Any = ..., update: bool = True) -> int | str: ...
+    def __reversed__(self) -> Iterator[Key]:
+        """Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first)."""
+    @overload
+    def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]:
         """Iterate over keys in sorted order, optionally only those starting with `prefix`.
 
         A prefix is an indexed range scan, so it costs time in proportion to the matches, not the
@@ -466,7 +680,9 @@ class Cache:
             newest_first = cache.iterkeys(reverse=True)
             ```
         """
-    def expire(self, *, timeout: float | None = None) -> int:
+    @overload
+    def iterkeys(self, *, prefix: None = None, reverse: bool = False) -> Iterator[Key]: ...
+    def expire(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove every expired entry, and its value file.
 
         Works in chunks and lets other writers in between them.
@@ -475,6 +691,8 @@ class Cache:
             timeout: Seconds each chunk may wait for the write lock (another thread's or another
                 process's), for this call only (default: the cache's `timeout`). It bounds each
                 wait, not the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.
@@ -484,7 +702,7 @@ class Cache:
             removed = cache.expire(timeout=10.0)   # from a scheduled job, with its own timeout
             ```
         """
-    def clear(self, *, timeout: float | None = None) -> int:
+    def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove every entry that existed when the call started.
 
         Works in chunks and lets other writers in between them. Writes that land while it runs,
@@ -497,6 +715,8 @@ class Cache:
             timeout: Seconds each chunk may wait for the write lock (another thread's or another
                 process's), for this call only (default: the cache's `timeout`). It bounds each
                 wait, not the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.
@@ -506,13 +726,43 @@ class Cache:
             cache.clear(timeout=10.0)   # safe while other processes keep writing
             ```
         """
-    def cull(self, *, timeout: float | None = None) -> int:
+    def evict(self, tag: Key, *, timeout: float | None = None, retry: bool = False) -> int:
+        """Remove every entry tagged `tag` that existed when the call started.
+
+        Works in chunks as `clear` does, and keeps writes that land while it runs. Tags compare by
+        exact type, as keys do: `evict(1)` leaves entries tagged `1.0` or `True` (D-052). `evict(None)`
+        removes nothing: untagged entries have no tag to evict by.
+
+        Args:
+            tag: The tag.
+            timeout: Seconds each chunk may wait for the write lock (another thread's or another
+                process's), for this call only (default: the cache's `timeout`). It bounds each
+                wait, not the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
+
+        Returns:
+            How many entries were removed.
+
+        Raises:
+            TypeError: `tag` isn't a key type.
+
+        Examples:
+            ```python
+            cache.set('user:42:profile', profile, tag='user:42')
+            cache.set('user:42:orders', orders, tag='user:42')
+            cache.evict('user:42')   # 2
+            ```
+        """
+    def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove expired entries, then evict the least recently stored until under `size_limit`.
 
         Args:
             timeout: Seconds each chunk may wait for the write lock (another thread's or another
                 process's), for this call only (default: the cache's `timeout`). It bounds each
                 wait, not the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.
@@ -572,6 +822,138 @@ class Cache:
         and then by operation. Empty on a handle that isn't durable."""
     def _handle_count(self) -> int:
         """Test hook: how many open handles this cache's store counts, deferred releases included."""
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int | None:
+        """Push `value` onto a queue and return its key, as diskcache's `push`.
+
+        With `prefix=None` the queue's keys are ints, numbered from 500,000,000,000,000; with a prefix,
+        `str` keys `'{prefix}-'` and 15 digits. `side='back'` takes the next number up, `'front'` the next
+        down. Only keys of exactly that shape belong to the queue: a float, an ordinary key that shares
+        the prefix, or a nested prefix's items are ignored (D-054), so use a prefix no other key starts
+        with. The number is found and the item stored in one write transaction, so concurrent pushes in
+        any process never collide, and a push never overwrites a key.
+
+        Args:
+            value: The value, as for `set()`.
+            prefix: The queue's name, or None for the int queue.
+            side: `'back'` (the default) or `'front'`.
+            expire: Seconds until the item expires, or None for never.
+            tag: The item's tag, as for `set()`.
+            retry: As for `set()`.
+
+        Returns:
+            The item's key. With `durable=True`, None if the write failed (nothing was stored).
+
+        Raises:
+            OverflowError: The queue's numbers are used up on that side (D-057).
+            ValueError: `side` isn't `'front'` or `'back'`.
+            TypeError: `prefix` isn't a `str` or None, or as for `set()`.
+
+        Examples:
+            ```python
+            jobs = Cache('/var/cache/my-app/jobs', eviction_policy='none')
+            jobs.push({'episode': 512}, prefix='transcode')   # 'transcode-500000000000000'
+            ```
+        """
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: str,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> str | None: ...
+    @overload
+    def push(
+        self,
+        value: Any,
+        prefix: str | None = None,
+        side: Literal['front', 'back'] = 'back',
+        expire: float | None = None,
+        *,
+        tag: Key = None,
+        retry: bool = False,
+    ) -> int | str | None: ...
+    def pull(
+        self,
+        prefix: str | None = None,
+        default: Any = (None, None),
+        side: Literal['front', 'back'] = 'front',
+        *,
+        expire_time: bool = False,
+        tag: bool = False,
+        retry: bool = False,
+    ) -> Any:
+        """Remove and return the item at `side` of a queue, as diskcache's `pull`.
+
+        Reads and decodes the item first, then deletes exactly that stored version, as `pop` does, so an
+        item this process can't read stays queued for one that can (D-056): a pickled item on a
+        `pickle=False` handle raises `UnsafeValueError`, and a newer deploy's value raises, or with
+        `on_decode_error='miss'` returns `default`. An item no build could read is removed, then raised
+        as `CorruptValueError`, or under `'miss'` reported while the pull goes on to the next. A puller
+        that loses the head to others reads the new one; one that keeps losing until `timeout` raises
+        `Timeout`, having taken nothing. Expired items are passed over. Inside a
+        `transact()` block it joins the transaction, and a rollback puts the item back.
+
+        Args:
+            prefix: The queue's name, or None for the int queue.
+            default: Returned when the queue is empty (default `(None, None)`).
+            side: `'front'` (the default) or `'back'`.
+            expire_time: Also return the item's expiry time.
+            tag: Also return the item's tag.
+            retry: As for `get()`.
+
+        Returns:
+            `(key, value)`, or with `expire_time` and `tag` `((key, value), expire_time, tag)` and the
+            pairs, as `get()`'s tuples; `default`, widened to match, when empty.
+
+        Examples:
+            ```python
+            key, job = jobs.pull(prefix='transcode')
+            if key is not None:
+                transcode(job)
+            ```
+        """
+
+    def peek(
+        self,
+        prefix: str | None = None,
+        default: Any = (None, None),
+        side: Literal['front', 'back'] = 'front',
+        *,
+        expire_time: bool = False,
+        tag: bool = False,
+        retry: bool = False,
+    ) -> Any:
+        """The item at `side` of a queue, without removing it, as diskcache's `peek`.
+
+        Writes only what `get` would (D-055): expired items are passed over and left for `expire()`. Arguments and
+        return values as for `pull()`.
+        """
+
+    def peekitem(self, last: bool = True, *, expire_time: bool = False, tag: bool = False, retry: bool = False) -> Any:
+        """The newest entry (or with `last=False`, the oldest) of any key, without removing it, as
+        diskcache's `peekitem`. Writes only what `get` would; expired entries are passed over.
+
+        Returns:
+            `(key, value)`, widened with `expire_time` and `tag` as for `pull()`.
+
+        Raises:
+            KeyError: The cache has no live entry.
+        """
+
     def transact(self, retry: bool = False) -> Transaction[Cache]:
         """A write transaction, for `with cache.transact() as tx:`.
 
@@ -590,8 +972,9 @@ class Cache:
         exits cleanly when its writes are gone.
 
         Args:
-            retry: Keep trying to begin while it times out, instead of raising `Timeout`. Never
-                retries `TransactionBusy`. Each attempt waits up to `timeout`.
+            retry: Keep trying to begin while it times out, instead of raising `Timeout`, each
+                attempt with the whole `timeout`, a `durable=True` handle included. Only `Timeout`
+                is retried, never `TransactionBusy`.
 
         Raises:
             TypeError: `retry` isn't a `bool`.
@@ -604,13 +987,13 @@ class Cache:
                 tx.set('last_request', now)
             ```
         """
-    def __getitem__(self, key: str, /) -> Any:
+    def __getitem__(self, key: Key, /) -> Any:
         """`cache[key]`: the value, or `KeyError` if it's missing or expired, or the read failed under
         `durable=True`."""
-    def __setitem__(self, key: str, value: Any, /) -> None:
+    def __setitem__(self, key: Key, value: Any, /) -> None:
         """`cache[key] = value`: store a value that never expires, like `set()`. Under `durable=True` a failed write is
         dropped."""
-    def __delitem__(self, key: str, /) -> None:
+    def __delitem__(self, key: Key, /) -> None:
         """`del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired, or the delete failed
         under `durable=True`."""
     def __contains__(self, key: object, /) -> bool:
@@ -620,7 +1003,7 @@ class Cache:
         """The number of entries, including expired entries not yet removed."""
     def __bool__(self) -> bool:
         """Always True, even when empty, so `if cache:` means "caching is on"."""
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> Iterator[Key]:
         """Iterate over keys in insertion order. An overwrite keeps its key's place.
 
         As with `iterkeys()`, `next()` raises `ValueError` while another thread is inside it.
@@ -669,6 +1052,7 @@ class FanoutCache:
             shards, each of which culls on its own. Each shard needs at least 1 MiB, so the total must
             be at least `shards` MiB. With none given, a new root gets 1 GiB in all.
         cull_limit: As for `Cache`, per shard.
+        eviction_policy: As for `Cache`, on every shard.
         serializer: As for `Cache`.
         pickle: As for `Cache`.
         clock: As for `Cache`.
@@ -713,6 +1097,7 @@ class FanoutCache:
         shards: int | None = None,
         size_limit: int | None = None,
         cull_limit: int | None = None,
+        eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
         serializer: str = 'msgpack',
         pickle: bool = False,
         types: TypeRegistry | None = None,
@@ -743,9 +1128,12 @@ class FanoutCache:
         Shard 0's value: every shard's only while they were all created, and last set, under the same settings.
         """
     @property
+    def eviction_policy(self) -> Literal['least-recently-stored', 'none']:
+        """Shard 0's eviction policy, as for `cull_limit`."""
+    @property
     def enabled(self) -> bool:
         """Always True for a real cache; False for a `NullCache`."""
-    def shard_of(self, key: str) -> int:
+    def shard_of(self, key: Key) -> int:
         """The shard `key` lives in, from 0 to `shards - 1`: the same in every process and release.
 
         Examples:
@@ -753,7 +1141,7 @@ class FanoutCache:
             cache.shard_of('user:42') == cache.shard_of('user:42:profile')   # usually False: no grouping by prefix
             ```
         """
-    def transact(self, *, key: str, retry: bool = False) -> Transaction[FanoutCache]:
+    def transact(self, *, key: Key, retry: bool = False) -> Transaction[FanoutCache]:
         """A write transaction on the shard `key` lives in, for `with cache.transact(key='total') as tx:`.
 
         It is `Cache.transact()` on that one shard: `tx` is this FanoutCache, calls on this thread
@@ -781,6 +1169,8 @@ class FanoutCache:
         Args:
             key: Keyword-only. Any key on the shard to hold; it needn't exist.
             retry: As for `Cache.transact()`.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Raises:
             TypeError: `key` isn't a `str`, or `retry` isn't a `bool`.
@@ -793,30 +1183,93 @@ class FanoutCache:
             ```
         """
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[False] = False) -> Any:
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> Any:
         """As `Cache.get`, on the key's shard."""
     @overload
-    def get(self, key: str, default: Any = None, *, expire_time: Literal[True]) -> tuple[Any, float | None]: ...
-    def set(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> tuple[Any, float | None]: ...
+    @overload
+    def get(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def get(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def set(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """As `Cache.set`, on the key's shard."""
-    def add(self, key: str, value: Any, expire: float | None = None) -> bool:
+    def add(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
         """As `Cache.add`, on the key's shard: atomic across threads and processes."""
-    def delete(self, key: str) -> bool:
+    def delete(self, key: Key, *, retry: bool = False) -> bool:
         """As `Cache.delete`, on the key's shard."""
-    def pop(self, key: str, default: Any = None) -> Any:
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> Any:
         """As `Cache.pop`, on the key's shard."""
-    def touch(self, key: str, expire: float | None = None) -> bool:
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[True],
+        tag: Literal[False] = False,
+        retry: bool = False,
+    ) -> tuple[Any, float | None]: ...
+    @overload
+    def pop(
+        self,
+        key: Key,
+        default: Any = None,
+        *,
+        expire_time: Literal[False] = False,
+        tag: Literal[True],
+        retry: bool = False,
+    ) -> tuple[Any, Key]: ...
+    @overload
+    def pop(
+        self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
+    ) -> tuple[Any, float | None, Key]: ...
+    def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
         """As `Cache.touch`, on the key's shard."""
-    def incr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
+    def incr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
         """As `Cache.incr`, on the key's shard: atomic across threads and processes."""
-    def decr(self, key: str, delta: float = ..., default: float | None = ...) -> int | float:
+    def decr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
         """As `Cache.decr`, on the key's shard."""
     def volume(self) -> int:
         """The total disk use in bytes of every shard (databases plus value files).
 
         Raises on any shard's failure, under `durable=True` too.
         """
-    def expire(self, *, timeout: float | None = None) -> int:
+    def expire(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove every expired entry from every shard, and its value file, as `Cache.expire` does.
 
         Args:
@@ -825,6 +1278,8 @@ class FanoutCache:
                 the cache's `timeout`). It bounds waiting, not work: a chunk already running finishes,
                 and once it's spent, each remaining chunk still gets one try with no wait, so shards no
                 one else is writing are all done even at a short timeout.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.
@@ -842,7 +1297,7 @@ class FanoutCache:
                 exc.failed_shards, exc.removed   # which shards were skipped, and how many entries went anyway
             ```
         """
-    def clear(self, *, timeout: float | None = None) -> int:
+    def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove every entry that existed when the call started, from every shard.
 
         Every shard's starting point is taken before anything is removed, so writes that land while
@@ -850,6 +1305,8 @@ class FanoutCache:
 
         Args:
             timeout: As for `expire`: one budget for the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.
@@ -857,12 +1314,31 @@ class FanoutCache:
         Raises:
             Timeout: As for `expire`, with `removed` and `failed_shards`.
         """
-    def cull(self, *, timeout: float | None = None) -> int:
+    def evict(self, tag: Key, *, timeout: float | None = None, retry: bool = False) -> int:
+        """Remove every entry tagged `tag` that existed when the call started, from every shard, as
+        `Cache.evict`.
+
+        Args:
+            tag: The tag.
+            timeout: As for `expire`: one budget for the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
+
+        Returns:
+            How many entries were removed.
+
+        Raises:
+            TypeError: `tag` isn't a key type.
+            Timeout: As for `expire`, with `removed` and `failed_shards`.
+        """
+    def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
         """Remove expired entries, then evict the least recently stored from each shard until it's
         under its share of `size_limit`.
 
         Args:
             timeout: As for `expire`: one budget for the whole call.
+            retry: On a `Timeout`, try again until the call gets through, each round with the
+                whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Returns:
             How many entries were removed.
@@ -885,7 +1361,114 @@ class FanoutCache:
             OSError: A real error, such as a full disk, on some shard, raised after every shard was
                 tried. It carries `failed_shards` (see the class docs).
         """
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+    def memoize(
+        self,
+        name: str | None = None,
+        typed: bool = False,
+        expire: float | None = None,
+        tag: Key = None,
+        ignore: Iterable[int | str] = (),
+    ) -> Memoizer:
+        """Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
+
+        A call's key is `(name,) + args + (None,)` and then each keyword argument's name and value,
+        sorted by name, where `name` defaults to the function's module and qualified name: the same
+        tuple diskcache builds, which `wrapper.__cache_key__(*args, **kwargs)` returns. Arguments
+        aren't bound to the signature, so `f(1, 2)` and `f(1, b=2)` are two entries. A miss runs the
+        function and stores its result (`None` included; an exception stores nothing); reads and
+        writes pass `retry=True`. Call it: `@cache.memoize()`, not `@cache.memoize`.
+
+        Args:
+            name: The key's first element, in place of the function's qualified name.
+            typed: Also key on each argument's type, as `'module.qualname'` (D-045), so `f(1)` and
+                `f(1.0)` are two entries.
+            expire: Seconds until a stored result expires; `None` never. Zero or negative never
+                stores, as in diskcache.
+            tag: The tag every stored result gets, for `evict(tag)`: a key type, checked here.
+            ignore: Positions and keyword names left out of the key.
+
+        Raises:
+            TypeError: `name` is callable (the decorator was used without parentheses), `tag` isn't
+                a key type, the function is `async def`, or, at a call, an argument isn't a key type (D-048).
+            ValueError: at a call, an argument is a NaN or a tuple nested too deep (D-048).
+
+        Examples:
+            ```python
+            @cache.memoize(expire=300)
+            def episode(number: int) -> dict:
+                return load_episode(number)
+
+            cache.delete(episode.__cache_key__(42))  # forget one call
+            ```
+        """
+    def check(self, fix: bool = False, retry: bool = False) -> list[warnings.WarningMessage]:
+        """Check the database and the value files against each other, as diskcache's `check()`.
+
+        Reports, as a list of `warnings.WarningMessage` (nothing is issued through `warnings`): lines
+        of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size
+        (`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache
+        directory, that no entry names and that is over an hour old (`unknown file: ...`, an
+        `UnknownFileWarning`; a younger one may be a writer's in flight); and stored totals that
+        don't match the rows. Empty value folders aren't reported: they're normal on an open cache.
+        Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and
+        `VACUUM`.
+
+        Args:
+            fix: Also repair: remove an entry whose file is missing or the wrong size (it reads as a
+                miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
+                value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
+                whole database through the write-ahead log and needs a temporary copy of it in
+                `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`; forks and writers wait for it.
+            retry: On a `Timeout`, start again until it gets through.
+
+        Raises:
+            RuntimeError: Inside this thread's own `transact()` block.
+            Timeout: A step waited longer than `timeout` (and `retry` is False).
+        """
+    def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
+        """`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
+
+        Returns the counts as they were, then resets them if `reset`, then turns counting on or off
+        with `enable` (off by default). Counted per process and in memory, never in the database, so
+        a read never writes: other processes' lookups aren't included, the counts start from zero
+        when the process (or a forked child) starts, and every handle on one directory in a process
+        shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
+        counts as nothing. A `FanoutCache` sums its shards.
+        """
+    @property
+    def durable(self) -> bool:
+        """True for a `durable=True` handle."""
+    @overload
+    def reset(self, key: Literal['size_limit', 'cull_limit'], value: Any = ..., update: bool = True) -> int:
+        """Read `size_limit`, `cull_limit` or `eviction_policy` as stored now, or persist a new value and
+        return it.
+
+        Args:
+            key: `'size_limit'`, `'cull_limit'` or `'eviction_policy'`.
+            value: The new value, checked as the constructor checks it; leave it out (or pass
+                `ENOVAL`) to read. On a `FanoutCache` a `size_limit` is a total, split across the shards.
+            update: Must be True: there's no SQLite pragma to skip (diskcache's `update=False`).
+
+        Returns:
+            The setting: an `int` for a limit, the policy's name for `eviction_policy`.
+
+        Raises:
+            ValueError: Another key, `update=False`, or a value the constructor would refuse.
+            TypeError: A limit that isn't an `int`, or a policy that isn't a `str`.
+        """
+    @overload
+    def reset(
+        self,
+        key: Literal['eviction_policy'],
+        value: Any = ...,
+        update: bool = True,
+    ) -> Literal['least-recently-stored', 'none']: ...
+    @overload
+    def reset(self, key: str, value: Any = ..., update: bool = True) -> int | str: ...
+    def __reversed__(self) -> Iterator[Key]:
+        """Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first)."""
+    @overload
+    def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]:
         """Iterate over keys in sorted order, optionally only those starting with `prefix`.
 
         The same order `Cache.iterkeys` gives for the same keys (code-point order, like `sorted()`):
@@ -904,7 +1487,9 @@ class FanoutCache:
             Timeout: A shard stayed locked, or a fork stayed pending, for longer than `timeout`
                 during one `next()` (which shares that one budget across the shards it reads).
         """
-    def __iter__(self) -> Iterator[str]:
+    @overload
+    def iterkeys(self, *, prefix: None = None, reverse: bool = False) -> Iterator[Key]: ...
+    def __iter__(self) -> Iterator[Key]:
         """Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on.
 
         That isn't the order keys were stored in across the cache. Otherwise as `iterkeys()`.
@@ -923,11 +1508,11 @@ class FanoutCache:
         """Test hook: every failure `durable=True` has swallowed on this handle, as `Cache._durable_stats`."""
     def _handle_counts(self) -> list[int]:
         """Test hook: how many open handles each shard's store counts, in shard order."""
-    def __getitem__(self, key: str, /) -> Any:
+    def __getitem__(self, key: Key, /) -> Any:
         """`cache[key]`, as on `Cache`."""
-    def __setitem__(self, key: str, value: Any, /) -> None:
+    def __setitem__(self, key: Key, value: Any, /) -> None:
         """`cache[key] = value`, as on `Cache`."""
-    def __delitem__(self, key: str, /) -> None:
+    def __delitem__(self, key: Key, /) -> None:
         """`del cache[key]`, as on `Cache`."""
     def __contains__(self, key: object, /) -> bool:
         """`key in cache`, as on `Cache`."""

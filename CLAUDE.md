@@ -74,6 +74,7 @@ make wheels                                     # all four Pythons: macOS arm64,
 make wheels-mac / make wheels-linux             # one platform
 make wheels-local                               # macOS, 3.15 only, for a quick local wheel
 scripts/sanitize.sh [--lanes A,B,C,D,E] [--quick]   # Miri, TSan, ASan lanes; results in sanitize-results/
+scripts/release_tier.sh [base]                  # which release gate the changes since base need (see Release tiers)
 soak/run.sh --hours 24                          # the soak; soak-results/latest/status.txt is the live view
 ```
 
@@ -99,7 +100,20 @@ Every heavy job on the Mac runs under `nice -n 20` so the machine stays usable, 
 - A step is done when `cargo clippy`/`cargo test` pass and the suite is green on both 3.14 (`venv/`) and 3.14t (`.venv-ft/`), against oxide. `scripts/check.sh` before a phase ends.
 - Commit and push to `main` at the end of each phase (standing approval). Mid-phase commits, other branches, force-pushes, filing upstream issues and publishing to PyPI need Michael to ask. Commit messages are one descriptive paragraph on a single line saying what changed and why (see `git log`); no `Co-Authored-By` lines.
 - Record user-visible changes in `CHANGELOG.md` under Unreleased. The version lives in `Cargo.toml` (`workspace.package.version`); `pyproject.toml` reads it dynamically.
-- Release: sanitizer pass, then a fresh 24-hour soak on the final commit, then PGO wheels and PyPI. PyPI already holds a `0.0.1` placeholder and a yanked `0.1.0.dev1`; those filenames can never be reused.
+- Release: pick the gate from the tiers below, then PGO wheels (`make wheels`) and PyPI. PyPI already holds a `0.0.1` placeholder and a yanked `0.1.0.dev1`; those filenames can never be reused.
+
+### Release tiers
+
+The gate depends on what a change touches, not how big it is: a one-line change to the write lock is riskier than 200 lines in a codec. `scripts/release_tier.sh [base]` lists the files changed since the last release (the newest `v*` tag, or a commit you pass) and prints the tier they need. Its tier is a floor: when in doubt, take the higher one, and Michael can always ask for the full gate.
+
+| Tier | What changed | Gate |
+|---|---|---|
+| None | Docs, recipes, the skill, scripts, benchmarks, tests that don't change shipped code | No release. `make docs` for docs; run what a script change affects |
+| Patch | Python-only code, the codecs (without changing the bytes they write), error messages, `durable`, `check`, `stats`, `queue`, the PyO3 layer, an isolated Rust fix outside the full-tier areas | `scripts/check.sh` (all four Pythons), `scripts/sanitize.sh --quick`, a 2-hour soak in the release shape (`soak/run.sh --hours 2 --procs 7 --threads 4 --rate 180000 --fanout-threads 16`). Release, then run the 24-hour soak on the released commit; if it finds a problem, yank and fix |
+| Full | Locks, the fork gate, `sync`, the lock-free `stack`, `sqlite_mutex` and `sqlite`, `lockwait`, `poison`, `pool`, `store`, `open`, the WAL, value files (`spill`), `rows`, `ops`, `maintenance` (eviction, `cull`, `clear`), any `unsafe`, the core's integration tests, `.cargo/config.toml` (SQLite's compile flags), `rust-toolchain.toml`, or a new SQLite, rusqlite or PyO3 | Every sanitizer lane, then a 24-hour soak on the final commit, before the release |
+| Format | Anything that changes what's on disk: `schema`, key encoding, the fanout root, the bytes a codec writes | A minor bump (the last number still goes up: 0.2.3 to 0.3.4), the full gate, and upgrade notes first in the changelog entry (see `recipes/upgrading.qmd`) |
+
+Every soak, either length, uses the release shape: `--procs 7 --threads 4 --rate 180000 --fanout-threads 16`. Without `--rate` the load runs unpaced and saturates the disk. The patch soak is 2 hours, not 30 minutes, because of the record: the only soak that has failed (2026-11-07, run without `--rate`, so `durable` calls overran their budget) first failed at 1.17 hours and again at 1.58. Problems that build up under load take more than half an hour to show. Every other soak through 2026-11-10 passed. A 2-hour run's leak check can flag workers whose RSS rises and falls in a slow wave, since it's tuned for 24 hours; that flag is a WARN, not a failure.
 
 ## Gotchas
 

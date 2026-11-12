@@ -1,8 +1,36 @@
 # Changelog
 
-All notable changes to diskcache-oxide are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org/). During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its entry; caches made by an older format must be deleted when you upgrade to it.
+All notable changes to diskcache-oxide are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org/). During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its entry; caches made by an older format must be deleted when you upgrade to it. The last number goes up with every release, a minor bump included, so 0.1.2 is followed by 0.2.3.
 
 ## [Unreleased]
+
+## [0.2.3] - 2026-11-12
+
+**Delete your caches when you upgrade.** This release changes the on-disk format (format 3, for tags and the eviction policy). Opening a cache made by 0.1.2 raises `FormatMismatchError`, naming the database: stop every process using the cache, delete its directory (a FanoutCache's whole root, never one shard), and it's recreated empty on the next open. 0.1.2 refuses a format-3 cache the same way, and neither version writes anything into the other's. A 0.1.2 worker still running when its cache is deleted and recreated can't change the new one either: once it opens the new file, its writes, deletes and maintenance calls fail with "no such table" (only a `touch` gets through), because format 3 renames the table they all use.
+
+### Added
+
+- Keys of every native type: `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples of those, nested up to 32 deep, beside `str`. They're never pickled and compare by exact type, so `1`, `1.0` and `True` are three keys. `iterkeys()` lists `str` keys first, then the other types in a fixed order; `iterkeys(prefix=...)` lists `str` keys only. A FanoutCache routes every key type. Type checkers see `diskcache_oxide.Key`.
+- `memoize(name=None, typed=False, expire=None, tag=None, ignore=())` on `Cache`, `FanoutCache` and `NullCache`, as diskcache's, with the same keys, so `f.__cache_key__(...)` returns the tuple diskcache would. Every argument must be a key type, checked before the function runs; `typed=True` stores type names. `Memoized` and `Memoizer` type the wrapper.
+- `CorruptKeyError`, a `CorruptValueError`, raised by iteration that meets a stored key it can't read (a damaged page or file); it never skips one.
+- `reversed(cache)`, `pop(key, expire_time=True)`, a read-only `durable` attribute, and `reset(key, value)` to read or persist `size_limit`, `cull_limit` and `eviction_policy` (a `FanoutCache` splits a `size_limit` total across its shards), on `Cache`, `FanoutCache` and `NullCache`.
+- Pickling a `Cache` or `FanoutCache`: it reopens the directory with the options the handle was opened with, in another process too. A `TypeRegistry` pickles (the global one by reference).
+- `stats(enable=True, reset=False)`: hit and miss counts of `get`, per process and in memory, so a `get` never writes.
+- `check(fix=False, retry=False)`: the database and value files against each other, as diskcache's, in short steps; `fix=True` removes entries whose files are missing or cut short and old orphan files, sweeps empty folders, corrects the totals and `VACUUM`s. `UnknownFileWarning` and `EmptyDirWarning`.
+- The coordination recipes `Lock`, `RLock`, `BoundedSemaphore`, `Averager`, `throttle`, `barrier` and `memoize_stampede`, as diskcache's, refusing a `NullCache` or `durable=True` cache, with `throttle`'s two diskcache bugs fixed. See the new Coordination guide page.
+- Tags: `tag=` (keyword-only) on `set` and `add`, any key type, compared by exact type, and `tag=True` on `get` and `pop`, returning diskcache's `(value, tag)` and `(value, expire_time, tag)` tuples. `evict(tag, *, timeout=None, retry=False)` on `Cache`, `FanoutCache` and `NullCache` removes every entry with that tag stored before the call, in chunks like `clear()`. `memoize(tag=...)` and the recipes' `tag=` tag what they store. An overwrite without `tag=` leaves the entry untagged; `add` on a live key, `touch` and `incr` keep its tag.
+- `eviction_policy='least-recently-stored'` (the default) or `'none'` on `Cache` and `FanoutCache`, stored in the cache and read inside every write, so a change from one process applies to all at their next write. Under `'none'` nothing is evicted for size, expired entries are still removed, and `cull()` returns how many it removed. `'least-recently-used'` and `'least-frequently-used'` raise `ValueError`. A read-only `eviction_policy` attribute.
+- The queue calls `push`, `pull`, `peek` and `peekitem` on `Cache` and `NullCache`, with diskcache's signatures and return shapes (`expire_time=`, `tag=`, `retry=` keyword-only). Each item goes to exactly one puller across every process; `pull` decodes before it deletes, so an item this process can't read stays queued; `peek` and `peekitem` never write. A queue's items are only keys of its exact shape, and `push` raises `OverflowError` rather than overwrite a key. See the new Work queues recipe.
+- `ENOVAL` and `UNKNOWN`, diskcache's sentinels.
+- `retry=True` (keyword-only) on `get`, `set`, `add`, `delete`, `pop`, `touch`, `incr`, `decr`, `expire`, `cull`, `clear` and `evict`: this cache's own `Timeout` is retried until the call gets through, even on a `durable=True` handle; one raised by your code (a hook, a `clock`) is not. A retried `expire`, `cull`, `clear` or `evict` returns everything it removed.
+
+### Changed
+
+- Iterating a cache is typed `Iterator[Key]` rather than `Iterator[str]`, since keys can now be other types; `iterkeys(prefix=...)` is still `Iterator[str]`. Type-checked code that treats every iterated key as a `str` needs a narrowing (`isinstance(key, str)`).
+- The `TypeError` for a key of the wrong type now names the types that are accepted.
+- `TransactionalCacheLike` gained `push`, `pull`, `peek` and `peekitem` (not `CacheLike`: `FanoutCache` has no queue calls).
+- `CacheLike` gained `memoize`, `stats`, `check`, `reset`, `evict`, `durable`, `eviction_policy` and `__reversed__`, `get` and `pop` their `tag=` (and `pop` its `expire_time=`), and `set` and `add` theirs; a fake typed against it needs them too.
+- `transact(retry=True)` sleeps between attempts instead of retrying at once, so a `timeout=0` cache doesn't spin.
 
 ## [0.1.2] - 2026-11-09
 
@@ -34,5 +62,6 @@ The first release: diskcache's `Cache` API on a Rust engine and SQLite storage, 
 
 Development before this release, including the `0.1.0.dev` builds (`0.1.0.dev1` was yanked from PyPI), is in the git history. A `0.1.0` and a `0.1.1` were built and verified but never published: new tests found two bugs just before the first upload and a third (a size-limited cache evicting entries it had room for) just before the second, each fixed first, so `0.1.2` is the first release on PyPI. `0.1.1` ran in production at Talk Python in the meantime. The `0.0.1` on PyPI is a name placeholder with no code.
 
-[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.1.2...v0.2.3
 [0.1.2]: https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.1.2

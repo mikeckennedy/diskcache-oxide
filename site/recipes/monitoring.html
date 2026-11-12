@@ -472,7 +472,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.3</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-12">v0.2.3</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -681,7 +681,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-health-check" class="level1">
 <h1>A health check</h1>
 <p>Everything here reads a few numbers and never waits on writers, so it’s fine to call on every health probe:</p>
-<div id="434ecc04" class="cell" data-execution_count="1">
+<div id="67997a66" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> os</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -745,7 +745,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Hits and misses across workers</h1>
 <p>The counts live in each process’s memory and are never written to the database, so reading them costs nothing. That also means a health probe that lands on one gunicorn worker sees that worker’s counts only, since its last restart; a forked child starts from zero. Every handle on one directory in a process shares one set of counts, and they survive closing the last handle.</p>
 <p>For a total across workers, have each worker add its counts to a shared counter now and then, from a timer or after every few hundred requests. Keep those counters in a small cache of their own, so reading the totals doesn’t count as lookups in the cache you’re measuring:</p>
-<div id="90d10739" class="cell" data-execution_count="2">
+<div id="887515b6" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>counters <span class="op">=</span> Cache(tempfile.mkdtemp())</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> publish_stats(cache: Cache, counters: Cache) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
@@ -768,7 +768,7 @@ this worker since: (0, 0)</code></pre>
 <section id="an-admin-page-for-every-cache" class="level1">
 <h1>An admin page for every cache</h1>
 <p>A <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry gives you one row per cache with <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>. It opens each registered cache, and never raises: a cache that can’t be opened gets its <code>error</code> set, with the exception’s type and message.</p>
-<div id="03a751bd" class="cell" data-execution_count="3">
+<div id="cde6b948" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> dataclasses</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Caches</span>
@@ -808,7 +808,7 @@ this worker since: (0, 0)</code></pre>
 <section id="checking-for-damage" class="level1">
 <h1>Checking for damage</h1>
 <p><a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> compares the database with the value files and returns what it found as a list of <code>warnings.WarningMessage</code>, without issuing any warnings. An empty list means nothing is wrong. Here a value file is deleted behind the cache’s back:</p>
-<div id="d90bce70" class="cell" data-execution_count="4">
+<div id="aa6564b6" class="cell" data-execution_count="4">
 <div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> glob</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>damaged <span class="op">=</span> Cache(tempfile.mkdtemp())</span>
@@ -821,7 +821,7 @@ this worker since: (0, 0)</code></pre>
 <span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(warning.category.<span class="va">__name__</span>, <span class="bu">str</span>(warning.message).replace(damaged.directory, <span class="st">'...'</span>))</span>
 <span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'repaired:'</span>, <span class="bu">len</span>(damaged.check(fix<span class="op">=</span><span class="va">True</span>)), <span class="st">'| after:'</span>, damaged.check(), <span class="st">'| entries:'</span>, <span class="bu">len</span>(damaged))</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>UserWarning file not found: .../5e/5eca008c7aa8df81dc2903b8bb34a373.val
+<pre><code>UserWarning file not found: .../3c/3c8eb1f6db06981c7f27e5d37ef5984d.val
 repaired: 1 | after: [] | entries: 1</code></pre>
 </div>
 </div>

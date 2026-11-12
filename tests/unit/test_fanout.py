@@ -24,9 +24,10 @@ from typing import Any
 
 import pytest
 import xxhash
-from diskcache_oxide import Cache, FanoutCache, Timeout
+from diskcache_oxide import Cache, FanoutCache, Key, Timeout
 
 from tests.conformance.proc_workers import SqlitePeer
+from tests.keys import str_keys
 from tests.unit.fork_timeout_scenarios import fds_inside
 from tests.unit.spawn_race import race
 
@@ -113,10 +114,15 @@ def test_a_shared_prefix_still_spreads_across_eight_shards(tmp_path: Path) -> No
     assert counts == [109, 126, 126, 126, 127, 129, 114, 143]
 
 
-def test_shard_of_takes_str_keys_only(tmp_path: Path) -> None:
-    with FanoutCache(tmp_path) as cache:
-        for key in (b'a', 1, None):
-            with pytest.raises(TypeError, match='must be str'):
+def test_shard_of_takes_every_key_type_and_refuses_others(tmp_path: Path) -> None:
+    with FanoutCache(tmp_path, shards=8) as cache:
+        for key in (b'a', 1, None, 2.5, True, ('m.f', 1, None)):
+            shard = cache.shard_of(key)
+            assert 0 <= shard < 8
+            cache.set(key, 'v')
+            assert cache.get(key) == 'v'
+        for key in ([1], frozenset(), bytearray(b'a')):
+            with pytest.raises(TypeError, match='cache keys must be str, bytes, int'):
                 cache.shard_of(key)  # ty: ignore[invalid-argument-type]
 
 
@@ -678,7 +684,7 @@ def test_iter_yields_every_key_once_shard_by_shard_each_in_insertion_order(tmp_p
     keys = [f'k{i}' for i in range(2_000)]
     cache = _filled_cache(tmp_path, keys)
     cache.set('k0', 2)  # An overwrite keeps its place, as on `Cache`.
-    got = list(cache)
+    got = str_keys(cache)
     assert sorted(got) == sorted(keys)
     shards = [cache.shard_of(k) for k in got]
     assert shards == sorted(shards), 'shard 0 first, then shard 1, ...'
@@ -692,7 +698,7 @@ def test_iteration_over_one_shard_and_over_many_with_few_keys(tmp_path: Path, sh
     cache = _filled_cache(tmp_path, ['c', 'a', 'b'], shards=shards)
     assert list(cache.iterkeys()) == ['a', 'b', 'c']
     assert list(cache.iterkeys(reverse=True)) == ['c', 'b', 'a']
-    assert sorted(cache) == ['a', 'b', 'c']
+    assert sorted(str_keys(cache)) == ['a', 'b', 'c']
     cache.clear()
     assert list(cache.iterkeys()) == [] and list(cache) == []
     cache.close()
@@ -731,6 +737,7 @@ def test_iterating_while_writing_never_repeats_or_reorders_a_key(tmp_path: Path)
         seen: list[str] = []
         doomed = sorted(deleted)
         for i, key in enumerate(iterator):
+            assert isinstance(key, str)
             seen.append(key)
             if i % 10 == 0 and doomed:
                 cache.delete(doomed.pop(rng.randrange(len(doomed))))
@@ -799,7 +806,7 @@ def test_a_merge_read_that_fails_loses_no_key_and_the_same_iterator_carries_on(t
             while True:  # Until shard 1's page runs out and its refill can't get a connection.
                 seen.append(next(iterator))
     seen.extend(iterator)
-    assert seen == sorted(cache.iterkeys()), 'a key was lost or repeated across the failed next()'
+    assert seen == sorted(str_keys(cache.iterkeys())), 'a key was lost or repeated across the failed next()'
     assert len(seen) == len(keys) + 1
     cache.close()
 
@@ -809,7 +816,7 @@ def test_a_second_thread_inside_next_raises_instead_of_waiting(tmp_path: Path) -
     for key in ('a', 'b', 'c', 'd'):
         cache.set(key, 1)
     iterator = cache.iterkeys()
-    first: list[str] = []
+    first: list[Key] = []
     with _stalled_shard(cache, 1):
         inside = threading.Thread(target=lambda: first.append(next(iterator)))
         inside.start()  # Waits inside next() for shard 1's connection.
@@ -819,7 +826,7 @@ def test_a_second_thread_inside_next_raises_instead_of_waiting(tmp_path: Path) -
             next(iterator)
     inside.join(10)
     assert first == ['a']
-    assert list(iterator) == [k for k in sorted(cache.iterkeys()) if k != 'a']
+    assert list(iterator) == [k for k in sorted(str_keys(cache.iterkeys())) if k != 'a']
     cache.close()
 
 

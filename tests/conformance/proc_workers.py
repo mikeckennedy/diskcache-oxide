@@ -206,6 +206,12 @@ def add_race(backend_name: str, directory: str, key: str, barrier: Barrier, resu
         results.put((os.getpid(), cache.add(key, os.getpid())))
 
 
+@titled('stats-reader')
+def stats_reader(backend_name: str, directory: str, results: Any) -> None:
+    with open_cache(backend_name, directory) as cache:
+        results.put(cache.stats())
+
+
 @titled('race-incr')
 def incr_many(backend_name: str, directory: str, barrier: Barrier, ops: int) -> None:
     with open_cache(backend_name, directory) as cache:

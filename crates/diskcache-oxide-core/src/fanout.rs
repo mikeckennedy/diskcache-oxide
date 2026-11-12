@@ -82,6 +82,20 @@ pub fn shard_of_str(key: &str, shards: u32) -> usize {
     shard_of(KEY_TAG_STR, key.as_bytes(), shards)
 }
 
+/// The type tag of a typed key: its stored `key_type`.
+const KEY_TAG_TYPED: u8 = 2;
+const _: () = assert!(KEY_TAG_TYPED as i64 == crate::schema::KEY_TYPE_TYPED);
+
+/// The shard of any key: its stored bytes under its `key_type`. A `str` key's is [`shard_of_str`]'s.
+#[must_use]
+pub fn shard_of_key(key: crate::key::Key<'_>, shards: u32) -> usize {
+    let tag = match key {
+        crate::key::Key::Str(_) => KEY_TAG_STR,
+        crate::key::Key::Typed(_) => KEY_TAG_TYPED,
+    };
+    shard_of(tag, key.bytes(), shards)
+}
+
 /// A validated root manifest. The shard count is always in `MIN_SHARDS..=MAX_SHARDS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Manifest {

@@ -56,7 +56,7 @@ def close_cache() -> None:
 
 ### Django
 
-diskcache-oxide isn't a Django cache backend (`DjangoCache` is a [non-goal](../user-guide/roadmap.qmd#non-goals)), so `django.core.cache` keeps whatever it has. Open the shared cache in a module of its own and import it where it's needed; the settings module says where it lives.
+diskcache-oxide doesn't ship a Django cache backend yet. One is next on the [roadmap](../user-guide/roadmap.qmd#next); until then, `django.core.cache` keeps whatever it has. Open the shared cache in a module of its own and import it where it's needed; the settings module says where it lives.
 
 ```python
 # myapp/caching.py

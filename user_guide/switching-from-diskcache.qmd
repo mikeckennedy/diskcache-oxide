@@ -3,7 +3,9 @@ title: "Switching from python-diskcache"
 description: "The one-line switch from python-diskcache, and everything you might notice afterwards."
 ---
 
-If you're here, the question is a practical one: what breaks? Very little, and on purpose. diskcache-oxide is **API compatible** with [python-diskcache](https://github.com/grantjenks/python-diskcache) 5.6.3's `Cache`, and deliberately **not data compatible**. Keeping diskcache's API makes switching a one-line change. Not keeping its on-disk format is what made it possible to fix the design instead of inheriting it, pickle and all. So the switch itself is small, and the rest of this page is about what you'll notice afterwards, which is mostly things getting better and now and then things getting stricter.
+If you're here, the question is a practical one: what breaks? Very little, and on purpose. diskcache-oxide is API compatible with [python-diskcache](https://github.com/grantjenks/python-diskcache) 5.6.3's `Cache` and `FanoutCache`, and it is not data compatible. Keeping diskcache's API makes switching a one-line change. Leaving its on-disk format behind is what made it possible to fix the design underneath, pickle included. So the switch itself is small, and the rest of this page is about what you'll notice afterwards: mostly fixes, and now and then something stricter.
+
+diskcache is also unmaintained. Its last release, 5.6.3, came out in August 2023, the repository has had no commits since 2023, and its open issues and pull requests go unanswered. The bugs this page mentions were found by running diskcache-oxide's test suite against it, and each one has a standalone reproduction in the repository's `upstream/` folder.
 
 For most apps, switching looks like this:
 
@@ -20,7 +22,7 @@ diskcache-oxide stores its data in `diskcache-oxide.sqlite`, not diskcache's `ca
 
 ### Upgrading diskcache-oxide
 
-During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. Delete existing caches when you upgrade to it, with every worker stopped. Until you do, opening one raises `FormatMismatchError`, which a `Caches` registry reports and answers with a `NullCache`. A release that keeps the format needs nothing.
+During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. 0.2.3 is one of them: it adds tags and the eviction policy to the format, so caches made by 0.1.2 have to be deleted when you upgrade. Stop every worker, delete the cache's directory (a `FanoutCache`'s whole root, never one shard), and it's recreated empty on the next open. Until you do, opening an old cache raises `FormatMismatchError`, which a `Caches` registry reports and answers with a `NullCache`. 0.1.2 refuses a 0.2.3 cache the same way, so old and new workers can't share a cache during a rolling deploy. A release that keeps the format needs nothing.
 
 ## What you might notice
 
@@ -30,17 +32,24 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 |---|---|---|
 | Values | Pickled | msgpack (default) or JSON with exact type tags. Pickle is opt-in with `pickle=True`. |
 | Unrepresentable values | Pickled | `TypeError` at `set()`, unless `pickle=True` |
-| Keys | Anything picklable | `str` only for now |
 | `bool(cache)` | False when empty | Always True; `NullCache` is False |
 | `Timeout` | Subclasses `Exception` | Subclasses `TimeoutError` |
 | `directory` | Optional (makes a temp dir) | Required |
 | Clock | Reads `time.time()` | Reads the clock in Rust; pass `clock=` to control it |
 | `size_limit` | Anything (tiny values silently empty the cache) | At least 1 MiB |
 | `expire=True` / `timeout=True` | Treated as `1` | `TypeError` |
-| `disk=`, `eviction_policy=` | Supported | Not supported (eviction policies are coming) |
+| `disk=`, `eviction_policy=` | Supported | No `disk=`; `eviction_policy=` is `'least-recently-stored'` or `'none'`, and LRU and LFU raise `ValueError` |
+| Queues (`push`, `pull`, `peek`, `peekitem`) | Any key in the range is an item; `peek` writes | Only keys of the queue's exact shape; `peek` never writes; `pull` decodes first; `Cache` only |
+| Tags | Compared numerically (`1`, `1.0` and `True` are one tag); `tag` positional | Any key type, compared by exact type; `tag=` keyword-only on `set` and `add` |
 | `transact()` | `tx` is `None` | `tx` is the cache; see [`transact()`](#transact) below |
 | `FanoutCache` | Supported | Supported, with differences; see [`FanoutCache`](#fanoutcache) below |
-| Tags, `memoize` | Supported | Coming in later phases |
+| Keys | Anything picklable | `str`, `bytes`, `int`, `float`, `bool`, `None` and tuples of those; see [Keys](#keys) below |
+| `memoize` | Supported | Supported, with the same keys; see [Keys](#keys) below |
+| `retry=` | Positional; `cache[k]` retries forever | Keyword-only; `cache[k]` raises `Timeout` |
+| `stats()` | Persisted, shared by every process | Per process, in memory (D-049) |
+| `check()` | Supported | Supported, with differences (D-050) |
+| Locks, semaphores, `throttle`, `barrier`, `Averager`, `memoize_stampede` | Supported | Supported, with differences; see [Coordination](coordination.qmd) |
+| `Deque`, `Index`, `DjangoCache`, `disk=`, `read=` | Supported | Not available |
 
 ## Values: no pickle unless you ask
 
@@ -61,9 +70,15 @@ objects = Cache('/var/cache/my-app-objects', pickle=True)
 
 A cache opened without `pickle=True` never unpickles. If it finds a pickled value written by a `pickle=True` peer, it raises `UnsafeValueError` and leaves the value alone. More in [Serialization](serialization.qmd).
 
-## String keys
+## Keys
 
-Only `str` keys are accepted today; anything else raises `TypeError`. Keys are already stored with a type tag, so other key types can be added later without changing the file format (see the [roadmap](roadmap.qmd)). In the meantime, build string keys yourself (`f'user:{user_id}'`).
+Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples of those, nested. diskcache takes anything picklable and pickles what it doesn't store natively; diskcache-oxide never pickles a key, so a `list`, a `dict`, an object, a subclass such as an `IntEnum`, or an int past 64 bits raises `TypeError`. Keys are compared by exact type: `1`, `1.0` and `True` are three keys, where diskcache makes `1` and `1.0` one.
+
+`iterkeys()` lists every `str` key first, in sorted order, then the other types (`None`, bools, ints, floats, bytes, tuples), each sorted; `iterkeys(prefix=...)` lists only `str` keys. diskcache sorts numbers, then text, then bytes.
+
+`memoize` works as diskcache's, and `f.__cache_key__(...)` returns the same tuple, with two differences: every argument must be a key type (leave one out with `ignore=`), and `typed=True` stores each argument type's name rather than the class.
+
+`retry=True` is accepted wherever diskcache takes it, as a keyword, and retries only `Timeout`. Dictionary syntax never retries: `cache[k]` raises `Timeout` after `timeout`, where diskcache's waits forever.
 
 ## `transact()`
 
@@ -84,13 +99,14 @@ Only `str` keys are accepted today; anything else raises `TypeError`. Keys are a
 - **`shards` is keyword-only** (`FanoutCache(path, shards=4)`). `FanoutCache(path, 4)` is a four-second `timeout` here. The constructor is `FanoutCache(directory, timeout=None, *, shards=None, ...)`, and `directory` is required (D-039).
 - **The shard count is recorded**, and a different `shards=` raises `LayoutMismatchError` instead of silently sending keys to other shards. `shards=None` uses the stored count, or creates 8 (D-032).
 - **A plain `Cache` and a `FanoutCache` refuse each other's directories** with `LayoutMismatchError`, and nothing is created by the refused open (D-038).
-- **Shards are chosen by XXH3, not adler32**, so which shard a key lands in differs from diskcache's, and `shard_of(key)` tells you. Iteration goes shard by shard, and `iterkeys(prefix=, reverse=)` gives the merged sorted order. There's no `reversed()` yet (D-033).
+- **Shards are chosen by XXH3, not adler32**, so which shard a key lands in differs from diskcache's, and `shard_of(key)` tells you. Iteration goes shard by shard, and `iterkeys(prefix=, reverse=)` gives the merged sorted order (D-033).
 - **A busy shard raises `Timeout`** after `timeout` (60 seconds by default) instead of silently giving False or the default after 10 ms. `durable=True` gives the miss answers, and logs them (D-034).
 - **Maintenance shares one `timeout`** across the shards, doesn't retry forever, and reports partial progress: a failure raises with `failed_shards` and `removed` (D-035).
 - **`size_limit` is a total**, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0's share (D-036).
 - **`max_connections` is a total** across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least `shards` (D-037).
 - **`transact()` takes a key** and covers one shard: `with cache.transact(key=k):` where diskcache's `with cache.transact():` locks every shard. Calls for keys on other shards inside the block raise `ValueError`, reads included. A ported bare `transact()` raises `TypeError` (D-040).
-- **Not there yet:** `cache()`, `deque()` and `index()`, `stats()`, `evict()` and tags, `check()`, `reset()`, `read()`, `reversed()`, `retry=`, `read=` and `tag=` arguments, settings as attributes, and pickling (D-039).
+- **No queue calls.** `push`, `pull`, `peek` and `peekitem` are on `Cache` only, since a queue spread over shards would have no order. Use a plain `Cache` for a queue.
+- **Not there:** `cache()`, `deque()` and `index()`, and `read()` and `read=` (D-039). `memoize`, `retry=`, `stats()`, `check()`, `reset()`, `reversed()`, pickling, tags with `evict()`, `eviction_policy=` and settings as attributes all work as on `Cache`.
 
 ## Truthiness
 
@@ -118,3 +134,13 @@ You don't have to change anything for these:
 - `clear()` keeps writes that land while it runs, `expire()` removes every expired entry, and a read during an overwrite never misses.
 - File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache. A `FanoutCache` bounds them for the whole root, not per shard.
 - Opening a cache and reading from it never writes to the database.
+
+## What diskcache doesn't have
+
+Once you've switched, a few things are there that diskcache never offered:
+
+- [`durable=True`](getting-started.qmd#a-cache-that-cant-take-a-request-down) answers a busy lock or a full disk as a miss on single-key calls and logs it once a minute, so a cache outage costs speed instead of failed requests.
+- [`NullCache`](null-cache.qmd) switches caching off without touching call sites, and [`Caches`](caches.qmd) names an app's caches, opens each on first use and hands out a `NullCache` while one can't open.
+- [`register_type()`](serialization.qmd#your-own-types) stores your own classes, dataclasses and library types without pickle.
+- A [`FanoutCache` transaction](fanoutcache.qmd#shard_of-and-transactkey) locks one shard instead of all of them.
+- Free-threaded Python (3.14t and 3.15t) is supported and tested on every change.

@@ -22,6 +22,7 @@ from pathlib import Path
 from diskcache_oxide import Cache, FanoutCache, Timeout, register_type, unregister_type
 
 from tests.conformance.proc_workers import SqlitePeer
+from tests.keys import str_keys
 from tests.proctitle import set_title
 from tests.unit.fork_timeout_scenarios import fds_inside
 
@@ -80,6 +81,7 @@ def d020(directory: Path) -> list[str]:
     other = directory.parent / f'{directory.name}-other'
     cache = Cache(directory, timeout=TIMEOUT)
     cache.set('before', 'parent')
+    queued = cache.push('queued')
     hold = cache.transact()
     hold.__enter__()
     cache.set('in-hold', 1)
@@ -103,6 +105,9 @@ def d020(directory: Path) -> list[str]:
         fails_fast('pop of a key the child can read', lambda: cache.pop('before'))
         fails_fast('pop of a missing key', lambda: cache.pop('missing'))
         assert cache.get('before') == 'parent', 'the refused pop removed nothing'
+        fails_fast('pull from a queue', cache.pull)
+        fails_fast('push onto a queue', lambda: cache.push('child'))
+        assert cache.peek() == (queued, 'queued'), 'peek still reads, and the refused pull removed nothing'
         fresh = Cache(directory, timeout=TIMEOUT)
         assert fresh.get('before') == 'parent'
         fails_fast('write through a fresh Cache', lambda: fresh.set('child', 1))
@@ -182,6 +187,115 @@ def fork_while_a_write_waits(directory: Path) -> list[str]:
         failures.append(f'the waiting write failed: {waiter_errors[0]!r}')
     if cache.get('waiter') != 1 or cache.get('child') != 1:
         failures.append(f'missing writes: waiter={cache.get("waiter")!r} child={cache.get("child")!r}')
+    cache.close()
+    return failures
+
+
+def fork_while_a_write_retries(directory: Path) -> list[str]:
+    """Fork while another thread's `set(retry=True)` keeps timing out behind another process's lock.
+
+    Between rounds the retrying thread holds nothing (no gate level, no connection, no write lock),
+    so the fork must not wait for it, and its retry must not be starved by the fork. The child can
+    write once the other process lets go, and the retried write lands in the parent.
+    """
+    hold_for = 1.5
+    cache = Cache(directory, timeout=0.05)
+    cache.set('before', 'parent')
+    failures: list[str] = []
+    with SqlitePeer(directory / 'diskcache-oxide.sqlite') as peer:
+        peer.begin('IMMEDIATE')
+        released = time.monotonic() + hold_for
+        errors: list[BaseException] = []
+
+        def retrier() -> None:
+            try:
+                cache.set('retried', 1, retry=True)
+            except BaseException as ex:
+                errors.append(ex)
+
+        thread = threading.Thread(target=retrier)
+        thread.start()
+        time.sleep(0.3)  # Many rounds in.
+
+        def child() -> None:
+            with Cache(directory, timeout=TIMEOUT) as mine:
+                assert mine.get('before') == 'parent'
+                mine.set('child', 1, retry=True)
+                assert time.monotonic() >= released - 0.1, 'the child wrote while another process held the lock'
+
+        start = time.monotonic()
+        pid = fork(child)
+        latency = time.monotonic() - start
+        time.sleep(max(0.0, released - time.monotonic()))
+        peer.rollback()
+        thread.join(TIMEOUT + 1)
+        code = wait(pid)
+
+    if latency > 0.25:
+        failures.append(f'fork took {latency:.3f}s while a write was retrying')
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if thread.is_alive():
+        failures.append('the retrying write never finished')
+    if errors:
+        failures.append(f'the retrying write failed: {errors[0]!r}')
+    if cache.get('retried') != 1 or cache.get('child') != 1:
+        failures.append(f'missing writes: retried={cache.get("retried")!r} child={cache.get("child")!r}')
+    cache.close()
+    return failures
+
+
+def stats_after_fork(directory: Path) -> list[str]:
+    """`stats()` counts per process (decision 19): a forked child starts at zero, keeps counting on,
+    and the parent's counts are its own."""
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.stats(enable=True, reset=True)
+    cache.set('k', 1)
+    cache.get('k')
+
+    def child() -> None:
+        assert cache.stats() == (0, 0), cache.stats()
+        cache.get('k')
+        cache.get('missing')
+        assert cache.stats() == (1, 1), cache.stats()
+
+    code = wait(fork(child))
+    failures = []
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if cache.stats() != (1, 0):
+        failures.append(f"the parent's counts changed: {cache.stats()}")
+    cache.close()
+    return failures
+
+
+def rlock_after_fork(directory: Path) -> list[str]:
+    """An RLock the parent holds is another owner's in a forked child (decision 18): the child can't
+    re-enter it (it would wait) or release it (AssertionError), and the parent still can."""
+    from diskcache_oxide import RLock
+
+    cache = Cache(directory, timeout=TIMEOUT)
+    rlock = RLock(cache, 'shared')
+    rlock.acquire()
+
+    def child() -> None:
+        try:
+            rlock.release()
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("the child released its parent's lock")
+        got = threading.Event()
+        threading.Thread(target=lambda: (rlock.acquire(), got.set()), daemon=True).start()
+        assert not got.wait(0.3), "the child re-entered its parent's lock"
+
+    code = wait(fork(child))
+    failures = []
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    rlock.release()
+    with rlock:
+        pass
     cache.close()
     return failures
 
@@ -633,7 +747,7 @@ def fanout_fork_mid_merge(directory: Path) -> list[str]:
     def merger() -> None:
         try:
             while not stop.is_set():
-                merged = list(cache.iterkeys())
+                merged = str_keys(cache.iterkeys())
                 if any(a >= b for a, b in zip(merged, merged[1:], strict=False)):
                     errors.append('a merge during the forks was out of order or repeated a key')
                 if [k for k in merged if k.startswith('k')] != expected:
@@ -648,7 +762,7 @@ def fanout_fork_mid_merge(directory: Path) -> list[str]:
         assert all(a < b for a, b in zip(tail, tail[1:], strict=False)), 'the tail is out of order'
 
     def child(r: int) -> None:
-        check_rest(list(it))
+        check_rest(str_keys(it))
         assert list(cache.iterkeys(prefix='k')) == expected
         mine = sorted(one_key_per_shard(cache, f'child-{r}-').values())
         for key in mine:
@@ -671,7 +785,7 @@ def fanout_fork_mid_merge(directory: Path) -> list[str]:
     if head != expected[:taken]:
         failures.append('the first keys of the merge are wrong')
     try:
-        check_rest(list(it))
+        check_rest(str_keys(it))
     except AssertionError as ex:
         failures.append(f'in the parent: {ex}')
     if codes != [0] * rounds:
@@ -825,7 +939,7 @@ def fanout_fork_mid_clear(directory: Path) -> list[str]:
         failures.append(f'child exit code {code}')
     if removed != [filled]:
         failures.append(f'clear() removed {removed}, expected exactly the {filled} keys it started with')
-    survivors = sorted(cache.iterkeys())
+    survivors = sorted(str_keys(cache.iterkeys()))
     if len(survivors) != shards or not all(k.startswith('child-') for k in survivors):
         failures.append(f"after clear(), expected the child's {shards} keys, found {survivors[:10]}")
     cache.close()
@@ -960,7 +1074,10 @@ SCENARIOS = {
     'transact-fork-from-another-thread': transact_fork_from_another_thread,
     'transact-inherited-mid-operation': transact_inherited_mid_operation,
     'fork-while-a-write-waits': fork_while_a_write_waits,
+    'fork-while-a-write-retries': fork_while_a_write_retries,
     'two-forkers': two_forkers,
+    'stats-after-fork': stats_after_fork,
+    'rlock-after-fork': rlock_after_fork,
     'parent-closes-after-fork': parent_closes_after_fork,
     'shared-iterator-while-a-fork-waits': shared_iterator_while_a_fork_waits,
     'fanout-fork-while-writing': fanout_fork_while_writing,

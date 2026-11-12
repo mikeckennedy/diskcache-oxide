@@ -25,24 +25,36 @@ Every row of this table follows from that sentence, so you never have to guess, 
 | Call | Result | Because |
 |---|---|---|
 | `get(key, default)` | `default` | the entry already expired |
+| `get(key, tag=True)` | `(default, None)` | the entry and its tag already expired |
 | `cache[key]` | raises `KeyError` | the entry already expired |
 | `set(...)` | `True` | the write succeeded, then expired |
+| a `@cache.memoize()` function | runs on every call | every stored result already expired |
 | `add(...)` | `True` | the key was absent, so the add succeeded |
 | `incr(key, delta, default)` | `default + delta` | it starts from the default each time; `KeyError` if `default=None` |
 | `delete`, `touch`, `key in cache` | `False` | there's nothing there |
 | `pop(key, default)` | `default` | there's nothing there |
+| `push(value, ...)` | the first key a queue gets | the item expired the instant it was written |
+| `pull()`, `peek()` | the default | the queue is empty; never forwarded to `invalidate=` |
+| `peekitem()` | raises `KeyError` | it's empty |
 | `len(cache)`, `cache.volume()` | `0` | it's empty and uses no disk |
-| `expire()`, `clear()`, `cull()` | `0` | nothing to remove |
-| iteration, `iterkeys()` | nothing | it's empty |
+| `expire()`, `clear()`, `cull()`, `evict(tag)` | `0` | nothing to remove |
+| iteration, `iterkeys()`, `reversed(cache)` | nothing | it's empty |
+| `stats()`, `check()` | `(0, 0)`, `[]` | nothing is looked up or stored |
 | `bool(cache)`, `cache.enabled` | `False` | caching is off |
 
-The constructor accepts the same arguments as `Cache` and ignores them, and the directory is optional. Bad argument *types* still raise as they would on `Cache` (a non-`str` key, `expire=True`), so code that passes with a `NullCache` in tests also works with a real one.
+The constructor accepts the same arguments as `Cache` and ignores them, and the directory is optional. Bad arguments still raise as they would on `Cache` (a list as a key or a tag, `expire=True`, `side='middle'` on a queue call), and a memoized function's arguments are still checked as keys, so a call that would raise on a real cache raises here too. Values are the exception. A `NullCache` never encodes them, so `set()` accepts a value a real cache would refuse with `TypeError` (see [Serialization](serialization.qmd#what-isnt-stored)), and so does a memoized function that returns one. A test suite that runs only against a `NullCache` won't catch those.
 
 ### Watch `add()`
 
 The rule means `add()` always succeeds on a `NullCache`. If you use `add()` to claim a job so only one worker runs it, then with caching off every worker's claim succeeds and the job runs once per worker. That's harmless for idempotent work and wrong for work with side effects, like sending email. Keep claims like that on a cache that's never switched off.
 
 `Cache(durable=True)` goes the other way: its `add()` returns `False` when a write fails, so a claim fails closed there and open here. Keep claims on a handle that isn't durable and handle its exceptions. See [A cache that can't take a request down](getting-started.qmd#a-cache-that-cant-take-a-request-down).
+
+The [coordination recipes](coordination.qmd) won't run on a `NullCache` at all. `Lock`, `RLock`, `BoundedSemaphore`, `Averager`, `throttle` and `barrier` raise `TypeError`, because a lock that every caller holds at once is worse than no lock. `memoize_stampede` is a cache rather than a lock, so it runs on one the way `memoize` does, calling the function every time.
+
+### Watch the queue calls
+
+A queue on a `NullCache` is always empty. `push()` returns the key an empty queue's first item would get and stores nothing, so with caching off every job you push is lost, and `pull()` on the other side never sees it. Keep a [work queue](../recipes/work-queues.qmd) on a cache that's never switched off, as you would a claim.
 
 ## `if cache:` means "caching is on"
 
@@ -68,10 +80,13 @@ cache.get('user:42')             # None
 cache.delete('user:42')          # deleted from the real cache
 cache.pop('user:42')             # deleted from the real cache; returns the default
 cache.clear()                    # clears the real cache
+cache.evict('user:42')           # evicts the tag from the real cache
 cache.iterkeys(prefix='user:')   # the real cache's keys, so list-then-delete still works
 ```
 
-When caching comes back on, nothing you invalidated by removing it is waiting.
+When caching comes back on, nothing you invalidated by removing it is waiting. That covers a memoized function too: `cache.delete(f.__cache_key__(42))` reaches the real cache, and so does `evict(tag)` for results stored with `memoize(tag=...)`.
+
+The queue calls are never forwarded. `pull()` and `peek()` on a `NullCache(invalidate=real)` return the default and leave the real cache's queue alone, because a cache that's switched off must not consume real jobs.
 
 Only removals are forwarded, so invalidating by *writing* is lost while caching is off. Overwriting the stale value with a fresh `set`, or bumping a version key with `incr` so readers build a new key, does nothing, and the old value is served once caching is back on:
 
@@ -99,7 +114,7 @@ def load_user(user_id: str, cache: CacheLike) -> dict:
     return user
 ```
 
-A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `CacheLike` keep identical public signatures, so they can't drift apart.
+It covers everything the two share: the reads and writes with their `tag=` and `retry=` options, `memoize`, `evict`, the maintenance calls, `stats`, `check` and `reset`, iteration, and the `durable` and `eviction_policy` attributes. A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `CacheLike` keep identical public signatures, so they can't drift apart.
 
 ## `transact()` and `TransactionalCacheLike`
 
@@ -107,4 +122,4 @@ A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `Cach
 
 With `invalidate=`, it never opens a transaction on the real cache: a switched-off cache must never take a write lock or raise `Timeout`. So removals forwarded inside the block land at once, and an exception in the block doesn't undo them.
 
-`CacheLike` has no `transact()`. To accept either class and call it, annotate with `TransactionalCacheLike`, which adds it. See [Transactions](transactions.qmd#typing-transactionalcachelike). A [`FanoutCache`](fanoutcache.qmd)'s `transact` takes a key, so for code that accepts a `FanoutCache` or a `NullCache` use `ShardedCacheLike` instead (see [Typing](fanoutcache.qmd#typing)); the `key=` a `NullCache` ignores is what lets it satisfy both.
+`CacheLike` leaves out `transact()` and the queue calls, because a `FanoutCache` satisfies it too: its `transact` takes a key, and it has no queue calls. To accept a `Cache` or a `NullCache` and call `transact()`, `push`, `pull`, `peek` or `peekitem`, annotate with `TransactionalCacheLike`, which adds them. See [Transactions](transactions.qmd#typing-transactionalcachelike). A [`FanoutCache`](fanoutcache.qmd)'s `transact` takes a key, so for code that accepts a `FanoutCache` or a `NullCache` use `ShardedCacheLike` instead (see [Typing](fanoutcache.qmd#typing)); the `key=` a `NullCache` ignores is what lets it satisfy both.
