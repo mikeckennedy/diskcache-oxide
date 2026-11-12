@@ -349,7 +349,8 @@ fn _sqlite_mutex_status() -> &'static str {
 fn install_sqlite_mutex(py: Python<'_>) -> PyResult<()> {
     let status = sqlite_mutex::ensure_installed();
     let message = match status {
-        MutexStatus::Installed => return Ok(()),
+        // `Native` is Windows, which installs nothing by design (plan 25).
+        MutexStatus::Installed | MutexStatus::Native => return Ok(()),
         MutexStatus::Raced => {
             return Err(PyImportError::new_err(
                 "diskcache_oxide: SQLite was initialized concurrently with the install of its mutex \

@@ -161,8 +161,7 @@ fn a_racing_open_whose_connection_is_on_a_replaced_file_joins_but_doesnt_hand_it
     });
     let (parked, winner) = (parked.unwrap(), winner.unwrap());
     assert!(Arc::ptr_eq(&parked, &winner), "the parked open didn't join the store on the new file");
-    let db = std::fs::metadata(tmp.path().join(DB_FILENAME)).unwrap();
-    assert_eq!(winner.file_id, (db.dev(), db.ino()));
+    assert_eq!(winner.file_id, super::file_id(&tmp.path().join(DB_FILENAME)).unwrap());
     assert_eq!(idle(&winner), 1, "a connection on the old file went into the new file's pool");
     release(&[&parked, &winner]);
 }

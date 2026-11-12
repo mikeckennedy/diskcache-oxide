@@ -41,6 +41,20 @@ impl Drop for TempDir {
     }
 }
 
+/// Asserts `path` is a directory with `mode` as its permission bits. Windows has no mode bits (a
+/// directory takes its parent's default ACL), so there it checks only that `path` is a directory.
+pub(crate) fn assert_dir_mode(path: &Path, mode: u32) {
+    let metadata = std::fs::metadata(path).unwrap();
+    assert!(metadata.is_dir(), "{} is not a directory", path.display());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(metadata.permissions().mode() & 0o777, mode, "{}", path.display());
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+}
+
 /// This process's open file descriptors on the file at `path`, pending ones SQLite hasn't closed
 /// yet included: `/proc/self/fd` on Linux, `lsof` on macOS (where `stat` of `/dev/fd/N` doesn't
 /// reach the file, and opening it to `fstat` would add a descriptor whose close drops SQLite's locks).

@@ -1,6 +1,7 @@
 //! The mutex methods are installed before SQLite's first use (plan 12 step 5a). Its own test binary,
 //! so it's its own process and nothing initialized SQLite first; one test, so nothing else in this
-//! process runs before it.
+//! process runs before it. On Windows nothing is installed (plan 25): the status is `Native`, and
+//! the compile options still prove `.cargo/config.toml`'s flags reached the MSVC build.
 
 // Two raw SQLite calls, neither of which initializes SQLite; the grep test in `sqlite.rs` allows them
 // here by name.
@@ -66,13 +67,25 @@ const COMPILE_OPTIONS: &[&str] = &[
     "MAX_VARIABLE_NUMBER=32766",
     "MAX_VDBE_OP=250000000",
     "MAX_WORKER_THREADS=8",
-    "MUTEX_PTHREADS",
+    MUTEX_OPTION,
     "SOUNDEX",
     "SYSTEM_MALLOC",
     "TEMP_STORE=1",
     "THREADSAFE=1",
     "USE_URI",
 ];
+
+/// SQLite's mutex implementation as built: pthreads on Unix (which ours replace), Win32 on Windows.
+#[cfg(unix)]
+const MUTEX_OPTION: &str = "MUTEX_PTHREADS";
+#[cfg(windows)]
+const MUTEX_OPTION: &str = "MUTEX_W32";
+
+/// What the first open's install reports.
+#[cfg(unix)]
+const EXPECTED: MutexStatus = MutexStatus::Installed;
+#[cfg(windows)]
+const EXPECTED: MutexStatus = MutexStatus::Native;
 
 /// A fresh directory under the system temp dir, removed on drop.
 struct Scratch(PathBuf);
@@ -86,7 +99,7 @@ impl Drop for Scratch {
 #[test]
 fn installed_before_the_first_connection() {
     assert_eq!(sqlite_mutex::status(), None, "nothing may install before the first open");
-    #[cfg(debug_assertions)]
+    #[cfg(all(unix, debug_assertions))]
     assert_eq!(sqlite_mutex::dynamic_allocations(), 0);
 
     let dir = Scratch(std::env::temp_dir().join(format!("dco-sqlite-mutex-{}", std::process::id())));
@@ -104,9 +117,9 @@ fn installed_before_the_first_connection() {
     .unwrap();
     assert_eq!(store.len(Duration::from_secs(5)).unwrap(), 0);
 
-    assert_eq!(sqlite_mutex::status(), Some(MutexStatus::Installed));
-    assert_eq!(sqlite_mutex::ensure_installed(), MutexStatus::Installed);
-    #[cfg(debug_assertions)]
+    assert_eq!(sqlite_mutex::status(), Some(EXPECTED));
+    assert_eq!(sqlite_mutex::ensure_installed(), EXPECTED);
+    #[cfg(all(unix, debug_assertions))]
     assert!(sqlite_mutex::dynamic_allocations() > 0, "SQLite allocated no mutex through our methods");
 
     // Config is refused once SQLite is initialized, so it was initialized after ours was accepted.

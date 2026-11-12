@@ -17,6 +17,8 @@ diskcache-oxide-core = { path = "crates/diskcache-oxide-core" }
 # The type registry's lock-free snapshot (plan 16): readers never take a lock, so a forked child can't inherit one held.
 arc-swap = "1.9.3"
 base64 = "0.22.1"
+# Value-file names (spill.rs): the OS's random source on every platform, so no /dev/urandom path.
+getrandom = { version = "0.2.17", features = ["std"] }
 libc = "0.2.191"
 pyo3 = "0.30.1"
 pyo3-build-config = "0.30.1"
@@ -26,6 +28,9 @@ serde = "1.0.229"
 # float_roundtrip is required: without it about 1 in 1,500 random floats decode one ULP off (Spike 3).
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 thiserror = "2"
+# A file's identity on Windows (store.rs, `file_id_at`): `GetFileInformationByHandle`'s volume serial
+# number and file index, since std's `MetadataExt` for them is unstable.
+winapi-util = "0.1.11"
 # The fan-out shard hash (plan 13). Only the xxh3 feature: the hash is on-disk format, so nothing else is needed.
 xxhash-rust = { version = "0.8.19", default-features = false, features = ["xxh3"] }
 # The model checker for the gate and the write lock, only under `--cfg shuttle` (scripts/model-check.sh).

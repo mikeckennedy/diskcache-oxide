@@ -22,10 +22,9 @@
 //! reads as a miss and unlinks nothing, instead of reaching outside the cache directory.
 
 use std::ffi::OsString;
-use std::fs::{DirBuilder, File, OpenOptions as FileOptions};
+use std::fs::{File, OpenOptions as FileOptions};
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -144,7 +143,7 @@ fn create_in(parent: &Path, tmp: &Path, data: &[u8]) -> std::result::Result<(), 
         round += 1;
         #[cfg(test)]
         hooks::count_round();
-        match DirBuilder::new().mode(0o700).create(parent) {
+        match crate::open::owner_only_dir_builder().create(parent) {
             Ok(()) => made = true,
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
             Err(e) => break Err((parent.to_path_buf(), e)),
@@ -362,12 +361,12 @@ const fn libc_enospc() -> i32 {
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
-/// 128 random bits as 32 lowercase hex characters, from the OS's random source.
+/// 128 random bits as 32 lowercase hex characters, from the OS's random source (`getrandom(2)` or
+/// `/dev/urandom` on Unix, `BCryptGenRandom` on Windows, where there's no `/dev/urandom`).
 fn random_hex() -> Result<String> {
     let mut bytes = [0u8; 16];
-    File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut bytes))
-        .map_err(|source| Error::Io { path: PathBuf::from("/dev/urandom"), source })?;
+    getrandom::getrandom(&mut bytes)
+        .map_err(|e| Error::Io { path: PathBuf::from("<OS random source>"), source: std::io::Error::from(e) })?;
     Ok(bytes
         .iter()
         .flat_map(|b| [char::from(HEX[usize::from(b >> 4)]), char::from(HEX[usize::from(b & 0xF)])])
@@ -503,13 +502,11 @@ mod tests {
 
     #[test]
     fn names_are_unique_and_directories_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
         let tmp = TempDir::new("spill-names");
         let a = PendingFile::write(tmp.path(), b"x").unwrap();
         let b = PendingFile::write(tmp.path(), b"x").unwrap();
         assert_ne!(a.relative, b.relative);
-        let dir = a.tmp.parent().unwrap();
-        assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700);
+        crate::testutil::assert_dir_mode(a.tmp.parent().unwrap(), 0o700);
     }
 
     /// The value directories (two lowercase hex characters) directly under `dir`, sorted.
@@ -541,14 +538,12 @@ mod tests {
 
     #[test]
     fn a_write_retries_a_directory_that_vanishes_and_recreates_it_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
         let tmp = TempDir::new("spill-vanish");
         for n in [1, 63] {
             hooks::vanish_next(n);
             let pending = PendingFile::write(tmp.path(), b"x").unwrap();
             assert_eq!(hooks::rounds(), n + 1, "{n} lost rounds, then one that succeeds");
-            let dir = pending.tmp.parent().unwrap();
-            assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700);
+            crate::testutil::assert_dir_mode(pending.tmp.parent().unwrap(), 0o700);
             assert!(pending.tmp.exists());
             pending.discard();
         }

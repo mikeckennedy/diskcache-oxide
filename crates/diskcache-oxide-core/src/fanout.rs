@@ -14,7 +14,6 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -331,10 +330,17 @@ fn create_manifest(root: &Path, manifest: Manifest) -> Result<Created> {
 /// The error for a failed `link`: a filesystem without hard links (FAT, exFAT, SMB, some FUSE) gets
 /// a message naming the limit, since there is no fallback.
 fn link_error(path: &Path, source: std::io::Error) -> Error {
-    // EPERM; on macOS also ENOTSUP (45), which Rust reports as uncategorized (only EOPNOTSUPP is `Unsupported`).
-    let unsupported = source.kind() == ErrorKind::Unsupported
-        || source.raw_os_error() == Some(1)
-        || (cfg!(target_os = "macos") && source.raw_os_error() == Some(45));
+    // Unix: EPERM; on macOS also ENOTSUP (45), which Rust reports as uncategorized (only EOPNOTSUPP
+    // is `Unsupported`). Windows: FAT and exFAT answer ERROR_INVALID_FUNCTION (1), and some
+    // redirectors ERROR_NOT_SUPPORTED (50, which Rust already maps to `Unsupported`).
+    #[cfg(unix)]
+    let codes: &[i32] = if cfg!(target_os = "macos") { &[1, 45] } else { &[1] };
+    #[cfg(windows)]
+    let codes: &[i32] = &[1, 50];
+    #[cfg(not(any(unix, windows)))]
+    let codes: &[i32] = &[];
+    let unsupported =
+        source.kind() == ErrorKind::Unsupported || source.raw_os_error().is_some_and(|code| codes.contains(&code));
     if unsupported {
         let source = std::io::Error::new(
             source.kind(),
@@ -345,13 +351,17 @@ fn link_error(path: &Path, source: std::io::Error) -> Error {
     Error::Io { path: path.to_path_buf(), source }
 }
 
-/// Creates `diskcache-oxide-fanout.tmp-<pid>-<nonce>` with `O_EXCL` and mode 0644 (masked by the umask, like the databases; the hard link makes this inode the manifest).
+/// Creates `diskcache-oxide-fanout.tmp-<pid>-<nonce>` with `O_EXCL` and, on Unix, mode 0644 (masked by the umask, like the databases; the hard link makes this inode the manifest).
 fn create_temp(root: &Path) -> Result<(PathBuf, File)> {
     static NEXT: AtomicU32 = AtomicU32::new(0);
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o644);
     loop {
         let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
         let path = root.join(format!("{MANIFEST_FILENAME}.tmp-{}-{nonce}", std::process::id()));
-        match OpenOptions::new().write(true).create_new(true).mode(0o644).open(&path) {
+        match options.open(&path) {
             Ok(file) => return Ok((path, file)),
             // A leftover from a crashed process with the same pid: try the next nonce.
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
@@ -361,14 +371,23 @@ fn create_temp(root: &Path) -> Result<(PathBuf, File)> {
 }
 
 /// `fsync` of a directory, which makes a link created in it durable.
+#[cfg(unix)]
 fn sync_directory(dir: &Path) -> Result<()> {
     File::open(dir).and_then(|d| d.sync_all()).map_err(|source| Error::Io { path: dir.to_path_buf(), source })
+}
+
+/// Nothing on Windows: opening a directory needs `FILE_FLAG_BACKUP_SEMANTICS` (a plain open is
+/// `ERROR_ACCESS_DENIED`), and flushing a directory handle isn't how a link becomes durable there,
+/// since NTFS journals its metadata. The manifest's own `sync_all` still runs.
+#[cfg(not(unix))]
+#[expect(clippy::unnecessary_wraps, reason = "the same signature as the Unix version")]
+fn sync_directory(_dir: &Path) -> Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
-    use std::os::unix::fs::PermissionsExt;
     use std::sync::Barrier;
 
     use super::*;
@@ -540,15 +559,19 @@ mod tests {
         let manifest = open_manifest(&root, ShardRequest::Stored).unwrap();
         assert_eq!(manifest.shards(), DEFAULT_SHARDS);
         assert_eq!(std::fs::read_to_string(manifest_path(&root)).unwrap(), CANONICAL_8);
-        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
-        let umask = {
-            // Read the process umask without changing it for long: set, then restore.
-            let probe = tmp.path().join("probe");
-            std::fs::OpenOptions::new().write(true).create_new(true).mode(0o777).open(&probe).unwrap();
-            0o777 & !mode(&probe)
-        };
-        assert_eq!(mode(&manifest_path(&root)), 0o644 & !umask);
-        assert_eq!(mode(&root), 0o700);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            let umask = {
+                // Read the process umask from a probe file's mode, without changing it.
+                let probe = tmp.path().join("probe");
+                std::fs::OpenOptions::new().write(true).create_new(true).mode(0o777).open(&probe).unwrap();
+                0o777 & !mode(&probe)
+            };
+            assert_eq!(mode(&manifest_path(&root)), 0o644 & !umask);
+        }
+        crate::testutil::assert_dir_mode(&root, 0o700);
         let names: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names, [MANIFEST_FILENAME], "the temporary file is removed");
     }
