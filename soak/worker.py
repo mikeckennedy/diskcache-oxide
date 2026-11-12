@@ -258,8 +258,10 @@ def check_value(
 
     `stored_expire` is the expire time the cache returned with the value (`expire_time=True`). When
     it's given, currency is judged against it, and it must agree with what the writer recorded: no
-    expiry for none, never earlier than the writer's (read just before its set began), and no more
-    than `EXPIRY_SLACK` later.
+    expiry for none, and never earlier than the writer's (read just before its set began). It may be
+    later by any amount: the cache reads the clock when its call starts, and a writer thread can be
+    descheduled between recording the time and calling set() (1.3 s seen on the loaded mini,
+    2026-11-11), so a later stored expiry says nothing about the library.
     """
     tag = key_tag(key)
     if isinstance(value, dict):
@@ -293,8 +295,6 @@ def check_value(
                 return (
                     f'{key!r} has a stored expiry {expire_at - stored_expire:.3f}s before the one its writer recorded'
                 )
-            if stored_expire > expire_at + EXPIRY_SLACK:
-                return f'{key!r} has a stored expiry {stored_expire - expire_at:.3f}s after the one its writer recorded'
             if now > stored_expire + STORED_EXPIRY_SLACK:
                 return f'{key!r} returned {now - stored_expire:.3f}s after its stored expiry'
         return None
