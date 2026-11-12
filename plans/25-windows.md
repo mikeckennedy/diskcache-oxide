@@ -1,0 +1,106 @@
+# Plan 25: Windows
+
+Ship diskcache-oxide on Windows: `win_amd64` PGO wheels for cp314, cp314t, cp315 and cp315t, the same API, and the test suite green there. Michael wants it before the repo goes public. Windows has no `fork()`, so the fork gate and every fork guarantee don't apply there; everything else (threads, processes, durability, the codecs, `Caches`) behaves as it does on macOS and Linux. It ships as 0.2.4 on every platform (no format change), since the cfg split touches code every platform runs.
+
+**Who does what.** The port is done in a Claude Code session on Michael's Windows 10 machine (repo at `C:\Users\mkenn\source\repos\diskcache-oxide`, branch `windows`), which can compile and test there. The Mac session stays off this branch's files and checks each pushed commit on Unix: clippy, `cargo test`, the Python suites on 3.14 and 3.14t, and later the sanitizers and the soak on the mini. The Windows session commits to `windows` and pushes as it goes (Michael approved commits on this branch, 2026-11-12), with one-paragraph, single-line commit messages and no attribution lines, and appends to this plan's Log after each step.
+
+**The Windows machine** (set up 2026-11-12): Windows 10, PowerShell 7.6, VS 2022 Build Tools (MSVC, Windows SDK), rustup with the pinned 1.99.1 `x86_64-pc-windows-msvc` and `llvm-tools`, uv 0.13.7 with CPython 3.14.10, 3.14.10t, 3.15.2 and 3.15.2t, git with `core.longpaths`, and `LongPathsEnabled` set in the registry. Record the Windows 10 build number (`[System.Environment]::OSVersion.Version`, or `winver`) in the Log at the start of step 1: POSIX delete semantics depend on it. CLAUDE.md's environment table and `scripts/check.sh` are Unix; on Windows use `uv sync` with `UV_PROJECT_ENVIRONMENT=venv` (3.14) and `.venv-ft` (3.14t), and `venv\Scripts\pytest`. The Mac-only rules in CLAUDE.md (`/bin/ls`, `nice -n 20`, the mini) don't apply on Windows.
+
+## Where we are
+
+`cargo check --workspace --all-targets` on Windows (2026-11-12, e950a5c) compiles the bundled SQLite with MSVC, then fails in `diskcache-oxide-core`: 30 errors in the library, 45 with the tests. The binding crate is never reached. The code has no `cfg(unix)` or `cfg(windows)` anywhere. The compile errors fall into four groups:
+
+1. **File modes.** `DirBuilderExt::mode(0o700)` in `open.rs` and `spill.rs`, `OpenOptionsExt::mode(0o644)` in `fanout.rs`, and `PermissionsExt` in tests (`open.rs`, `spill.rs`, `fanout.rs`, `store/shards.rs`).
+2. **File identity.** `MetadataExt::{dev, ino}` in `store.rs` (`lookup`, `file_id_at`, `open_pin`) and `store/open_race.rs`'s test.
+3. **The SQLite mutexes.** `sqlite_mutex.rs` implements SQLite's nine mutex methods on pthread mutexes (plan 12, step 5a).
+4. **Open-file limits.** The binding's `cache/fanout.rs` (`fd_shortfall`, `soft_fd_limit`, `open_fds`, about lines 1210-1255) maps `EMFILE`/`ENFILE` and reads `RLIMIT_NOFILE`.
+
+The architect's review (2026-11-12) found the bugs that compile cleanly and fail at run time, which matter more. They are in the Design below, marked R-H1 to R-L13 so commits can name them.
+
+## Decisions (Michael, 2026-11-12)
+
+1. **SQLite's own mutexes on Windows.** Install nothing there: libsqlite3-sys builds with `SQLITE_THREADSAFE=1` on MSVC, which selects SQLite's Win32 mutexes (`SRWLOCK` for the fast and static kinds, which already spins before parking, and a critical section for the recursive kind). No `unsafe` added. `bench.gate` on Windows says whether plan 12's spin is missed; if it is, porting `sqlite_mutex` comes back as its own decision.
+2. **The Windows release gate**: the unit and conformance suites (against oxide, and conformance against diskcache as the oracle) on 3.14 and 3.14t, the `slow` tests, the unit suite and oxide conformance on 3.15 and 3.15t too (wheels ship for them), a new multi-process Windows stress test run for 2 hours with Defender's real-time protection on, and `bench.gate`. A Windows soak port comes after CI. The Unix gate is the full tier (below).
+3. **x86-64 only** (`win_amd64`). Windows on ARM later if anyone asks.
+
+## Design
+
+### Compile errors
+
+**File modes.** Every `.mode(...)` call and every mode-checking test becomes `#[cfg(unix)]`. On Windows a cache directory gets the default ACL of where it's created; the docs say so.
+
+**File identity.** On Windows, `FileId` is `(volume serial number, file index)` from `GetFileInformationByHandle`. `std::os::windows::fs::MetadataExt::{volume_serial_number, file_index}` are unstable on 1.99.1 (`windows_by_handle`, rust-lang/rust#63010; the architect checked the toolchain's std source), so use `winapi-util`'s `file::information`, which takes an open handle: add `winapi-util` under `[target.'cfg(windows)'.dependencies]`, and run `cargo deny check`. One function, `file_id_at(&Path)`, behind `cfg`, and every caller uses it, so no `dev()`/`ino()` remains outside it. `FileId` is already `(u64, u64)` (`poison.rs:33`); making it a newtype is a nice-to-have, not required.
+
+**R-M6, ReFS.** On NTFS the 64-bit file index includes a sequence number and is stronger than an inode. On ReFS (Dev Drive, which developers use) Microsoft documents the 64-bit index as not guaranteed unique; the real id is 128-bit (`FILE_ID_INFO`). `lookup` and `claim_live` (`store.rs:578-589`) match on `file_id` alone, so a collision would join another directory's store and serve its rows. Decision for this release, the architect's recommendation: on Windows, a store matches only if both `file_id` and the canonical path match (`canonicalize` resolves junctions and case through `GetFinalPathNameByHandleW`). Cross-directory hard links to `cache.sqlite` are exotic on Windows; the hard-link test (`store.rs:2580`) gets a Windows expectation. The alternative, `GetFileInformationByHandleEx(FileIdInfo)` through `windows-sys`, needs `unsafe` in a third core module, a policy change that is Michael's to make.
+
+**The pin.** `open_pin`'s comment explains a POSIX rule (closing any descriptor drops the process's locks on the file). Windows locks are per handle, so the pin is harmless there; keep the code, scope the comment to Unix.
+
+**The mutexes**, per decision 1. `sqlite_mutex`'s implementation compiles only on Unix, behind a small portable front: `MutexStatus` gains `Native`, un-`cfg`'d so the enum and the stub have one shape, produced only by the Windows `ensure_installed`; `sqlite::open*` still calls `ensure_installed` on both platforms, and the grep test that bans direct opens stays. With no `SQLITE_CONFIG_MUTEX` call on Windows, the `Raced` window doesn't exist there. Callers to update (R-M9): `install_sqlite_mutex`'s match in the binding (`lib.rs:350-366`, a `Native` arm that logs nothing), `_sqlite_mutex_status` (`lib.rs:331-336`), the `Literal` in `_core.pyi:133`, `tests/unit/test_sqlite_mutex.py:18,29`, and `bench/scaling/slot_wait.py:34` and `spin_sweep.py:68`, which assert `'installed'` (`m2_probe.py` accepts any status, so it's the one to use for a Windows contention run). `tests/sqlite_mutex.rs` (asserts `Installed`) becomes `cfg(unix)`.
+
+**Open-file limits.** `fd_shortfall`, `soft_fd_limit` and `open_fds` are self-contained and all become `cfg(unix)`. On Windows, SQLite and Rust use Win32 handles, limited only by memory, so the error path there is the plain `OSError`.
+
+### Run-time bugs the compiler can't see
+
+**R-H1, every spilled write fails.** `random_hex` reads `/dev/urandom` (`spill.rs:366-375`), which on Windows is `C:\dev\urandom`: NotFound. Use `getrandom::getrandom(&mut bytes)` on every platform (`getrandom` 0.2.17 is already in Cargo.lock transitively; make it a direct workspace dependency). Same name format, so no format change.
+
+**R-H2, every new FanoutCache root fails.** `sync_directory` (`fanout.rs:364-366`) does `File::open(dir)`, and opening a directory on Windows needs `FILE_FLAG_BACKUP_SEMANTICS`, so it fails with `ERROR_ACCESS_DENIED`, on both arms of `create_manifest`. Make it a `#[cfg(windows)]` no-op with a comment (NTFS journals metadata; flushing a directory handle isn't the durability mechanism there). Make `link_error` (`fanout.rs:334-337`) explicit for Windows too: FAT and exFAT return `ERROR_INVALID_FUNCTION` (1), which matches the EPERM literal only by accident.
+
+**R-H3, `import diskcache_oxide` fails.** `recipes.py:59` calls `os.register_at_fork(...)` at module level, imported by `__init__.py:69`. Guard it with `if hasattr(os, 'register_at_fork'):`, as the binding does (`lib.rs:281`). Grep the Python package for any other Unix-only call at import time.
+
+**R-H4, deletes that succeed but leave the name.** Windows refuses to delete or rename a file another handle holds open unless that handle was opened with `FILE_SHARE_DELETE`. Rust's `std::fs::File` opens with delete sharing (`sys/fs/windows.rs:206`); SQLite's `winOpen` doesn't. The subtler case: a delete that succeeds while another handle is open leaves the name as delete-pending unless POSIX delete semantics apply (recent Windows 10 and 11 on local NTFS, for files; not FAT/exFAT, not SMB, not older builds; unclear for `RemoveDirectoryW`). While it lingers, opening it returns `ERROR_ACCESS_DENIED` (std decodes it as `PermissionDenied`, not `NotFound`), and `mkdir` of a pending directory or `create_new` inside one also returns `ERROR_ACCESS_DENIED`, and `rmdir` of its parent returns `DirectoryNotEmpty`. So:
+
+- **Readers.** `spill::read` and `spill::open` (`spill.rs:302-316`) would raise an I/O error on a value that was just overwritten, instead of taking the D-016 retry. On Windows, in the optimistic attempts only, treat `PermissionDenied` and raw 303 (`ERROR_DELETE_PENDING`) as gone. Under the locked fallback keep it an error: the current row's file is never being deleted, so a denial there is real.
+- **Writers.** A write racing another process's sweep fails in `create_in` (`spill.rs:146-160`); `directory_vanished` (`spill.rs:174-177`) knows NotFound and EINVAL (22), and 22 on Windows is `ERROR_BAD_COMMAND`. On Windows, the `mkdir` arm and the create arm both continue the round on 5 and 303, still bounded by `CREATE_ROUNDS`, and the EINVAL literal is `cfg(unix)`.
+- **What already works.** No value-file name is ever reused and nothing renames over a file (the manifest uses a create-if-absent `hard_link`, `fanout.rs:312`), so the classic rename-over traps don't exist. `Store::unlink` (`store.rs:1069-1083`) and the sweep's non-recursive `remove_dir` (`spill.rs:247`) already ignore errors, so "in use" already means "skip, a later sweep gets it".
+- **Databases.** A database can't be deleted while any connection is open on it. The delete-and-recreate tests (`test_mixed_versions.py`, the open-race and retired-store tests in `store.rs`, D-016's fallback tests) can't run as written on Windows. Each is rewritten to close first, marked Unix-only with the reason, or kept as a Windows test of what does happen (the delete fails with `PermissionError`). A test is never weakened to pass; if Windows needs different library behavior, that's a `D-NNN` entry.
+
+**R-M5, Win32 codes are not errnos.** `raw_os_error()` on Windows is a Win32 code. `lib.rs:127-131` passes it as `OSError(errno, msg)`, so `ERROR_SHARING_VIOLATION` (32) becomes `BrokenPipeError` and `ERROR_ACCESS_DENIED` (5) a plain `OSError` instead of `PermissionError`; `SqliteIo { errno }` has the same problem (SQLite's system errno on Windows is `GetLastError()`). On Windows build `OSError(None, msg, None, winerror)`: the four-argument form maps `winerror` to `errno` and picks the right subclass. `spill.rs:350-358` compares against 28, which on Windows is `ERROR_OUT_OF_PAPER`, so a full disk never becomes `DiskFull`: use `matches!(source.kind(), ErrorKind::StorageFull | ErrorKind::QuotaExceeded)` everywhere, which also catches EDQUOT on Unix as `error.rs:24` already claims. Put every remaining raw code in one `os_error` module and add a grep test, like the SQLite-open one, banning errno literals elsewhere.
+
+**R-M7, silent orphans.** Antivirus, the indexer and backup tools hold files briefly, so an unlink can fail with a sharing violation and leave a `.val` no row names, outside `size_limit`'s accounting, until `check(fix=True)`. The places: `Store::unlink` (`store.rs:1069-1083`), `check.rs:239`, `remove_dead_temp_files`, and `commit_name`'s rename (`spill.rs:112`). On Windows only, a bounded retry (a few tries over about 50 ms, off the caller's path) for `ERROR_SHARING_VIOLATION` (32) and `ERROR_LOCK_VIOLATION` (33), in one helper, and a stats counter for what's still left.
+
+**R-L10, long paths.** SQLite's default win32 VFS caps paths at `MAX_PATH` (`SQLITE_WIN32_MAX_PATH_CHARS`, sqlite3.c:49286), while Rust std handles long paths. Test a cache whose shard `-wal` path passes 260 characters; then either open with the bundled `win32-longpath` VFS on Windows (through `sqlite::open*`, so the grep test holds) or raise a clear error.
+
+**R-L12, `metadata` costs more.** On Windows `std::fs::metadata` is CreateFile, a query and CloseHandle, through antivirus filters: tens of microseconds. It runs in the WAL-size check and every open's `lookup`. Watch for it in `bench.gate`.
+
+**R-L13, verbatim paths.** `canonicalize` returns `\\?\` paths on Windows (`store.rs:461`). Fine for registry matching; keep them out of messages and the `directory` property, as today.
+
+### Tests and the harness
+
+- **pytest-timeout.** `timeout_method = "signal"` is in `pyproject.toml:95`, and pytest-timeout uses `signal.SIGALRM` unguarded, so every test raises on Windows. The override has to land before pytest-timeout reads its settings: a `tryfirst` `pytest_configure` in `tests/conftest.py` that sets the thread method on Windows, or `-o timeout_method=thread` in every Windows invocation. Prefer the conftest so a bare `pytest` works.
+- **Skips.** One helper for Unix-only tests (fork, SIGKILL, `resource`, `fcntl`, mode bits, `os.getuid`, lsof), always with a reason. About 19 of the 58 test files touch one of these. `tests/unit/test_fanout.py:13` imports `resource` at module level, so the whole file fails collection: move the import into the tests that need it, or `pytest.importorskip`, since a skip marker can't help there.
+- **Rust test helpers.** `testutil::fds_on` (`testutil.rs:47-66`) shells out to `lsof` on non-Linux and unwraps, so it panics on Windows; its callers (`open_race.rs:107,134,139,186,205`, `fork_timeout.rs:120-130`) test POSIX lock-drop deferral and become `cfg(unix)`. `tests/unclaimed_fork.rs` (`libc::fork`) becomes whole-file `cfg(unix)`.
+- **`orphan_guard`.** Windows never reparents, so `os.getppid()` keeps returning the dead parent's pid and `_watch` (`tests/orphan_guard.py:32`) never fires. Use `multiprocessing.parent_process().is_alive()` instead, which waits on the parent's sentinel handle and works on every platform; `tests/unit/test_orphan_guard.py` must still pass on Unix.
+- **Teardown.** `TemporaryDirectory` cleanup fails with `PermissionError` while a cache in it is open. Expect many teardown errors on the first run; the fix is closing caches in fixtures, which the suite should do anyway.
+- **The oracle.** The conformance suite runs against diskcache on Windows too; diskcache's Windows behavior is the baseline that settles most "is this a divergence" questions.
+
+**The Windows stress test** (decision 2): `tests/unit/test_windows_stress.py`, `slow`, Windows only. N spawned processes times M threads, the 99:1 mix on one `Cache` and one `FanoutCache`, values across the spill threshold; `clear`, `cull` and `check(fix=True)` from another process; sweeps racing writers across processes and readers racing overwrites of spilled values (R-H4); processes killed with `Process.kill()` (`TerminateProcess`) and restarted; then every acknowledged write checked. Duration from a parameter: 2 hours for the release, minutes in the normal slow run. Also port `writers_racing_a_sweeper_in_one_directory_never_fail` across processes, and run the stress test once on an exFAT VHD (no POSIX delete semantics).
+
+### Build and docs
+
+**Build.** `scripts/build_pgo.ps1`, a port of `build_pgo.sh`: per Python, an instrumented `maturin build` with `-Cprofile-generate`, training (`bench.baseline --quick` and `bench.pgo_train`) in a throwaway uv venv, `llvm-profdata merge` (from `rustc --print sysroot`'s `lib\rustlib`), then the `-Cprofile-use` build into `dist\`. Child processes run at `BelowNormal` priority (Windows has no `nice`). `make wheels-windows` runs `pwsh -NoProfile -File scripts/build_pgo.ps1` for a machine with GNU make (`winget install ezwinports.make`); otherwise run the script directly. The wheel smoke test (the same set/get, tag, evict, FanoutCache spill, push/pull check as the Unix wheels) also asserts `_sqlite_mutex_status() == 'native'` and the compile options (`DEFAULT_MEMSTATUS=0`, no STAT4), proving `.cargo/config.toml`'s `LIBSQLITE3_FLAGS` reached the MSVC build, since `check.sh` doesn't run on Windows.
+
+**Docs.** The README's and index's platform line (macOS, Linux, Windows; `fork()` safety is Unix-only, since Windows has no fork), the install page, a Windows note (a cache directory can't be deleted while a process has it open; exclude cache directories from antivirus scanning for speed), the changelog. `tests/DIVERGENCES.md` only where the library behaves differently from diskcache on Windows.
+
+## Steps
+
+1. **The core compiles on Windows.** Modes, file identity (with R-M6), the mutex front, and R-H1 and R-H2 while those files are open. Check on Windows: `cargo check --workspace --all-targets` and `cargo clippy --all-targets -- -D warnings` for the core. `cargo test` on the Mac only at this step (R-L11).
+2. **The binding compiles; `cargo test` passes on Windows.** The rlimit code, R-M5, R-M9's binding callers, then the core's tests (modes, `fds_on`, `unclaimed_fork`, `sqlite_mutex`, open-race identity, delete-while-open). Then a short audit, grepping for `raw_os_error`, `from_raw_os_error`, errno literals, `"/dev/"` and `File::open` on directories, with each hit fixed or noted here.
+3. **The Python suite on Windows.** R-H3, `uv sync` into `venv` and `.venv-ft`, the timeout method, the skip helper, `orphan_guard`, fixture closes, then the unit suite, conformance against oxide and against diskcache, and `-m slow`, on 3.14 and 3.14t. Each Windows-only failure gets a fix or a decision, never a skip without a reason.
+4. **Windows behavior and the stress test.** R-H4's reader and writer fixes with tests that reproduce them first, R-M7's retry, R-L10's long paths, delete-and-recreate, the stress test and the exFAT run.
+5. **`bench.gate` on Windows**, 3.14 and 3.14t, against diskcache on the same machine (AC power, nothing else heavy running). If oxide loses where it wins on Unix, look at R-L12 and decision 1 first.
+6. **`build_pgo.ps1` and `make wheels-windows`**; the four wheels smoke-tested in fresh venvs, plus the unit suite and oxide conformance on 3.15 and 3.15t.
+7. **Docs, changelog, the architect's phase review**, then the release. The full Unix tier applies (it touches `sqlite_mutex`, `sqlite`, `store`, `open`, `spill` and `fanout`: every sanitizer lane and a 24-hour soak, on the mini), plus the Windows gate from decision 2. 0.2.4.
+
+## Out of scope
+
+Windows CI (comes with CI generally, next on the list), a Windows port of the soak, Windows on ARM, 32-bit Windows, and Python older than 3.14.
+
+## Risks
+
+- **SQLite's Windows locking under heavy multi-process load** is less exercised in our stack than POSIX locks; the stress test is the check, and `durable`'s busy handling is the likely place for surprises.
+- **R-H4 is intermittent and load-dependent**: exactly what the stress test must target, with Defender on.
+- **Lint coverage.** cfg(windows) code is invisible to clippy on the Mac, and cfg(unix) code to clippy on Windows. Until Windows CI exists, every step runs clippy on both.
+
+## Log
+
+- 2026-11-12: plan written from the first `cargo check` on Windows (e950a5c). The architect reviewed it: four run-time bugs the compiler can't see (R-H1 to R-H4), the errno and orphan issues, the harness gaps, and decision 1(a) confirmed safe; all folded in above. Michael decided: SQLite's own mutexes, the suite plus a 2-hour stress test as the Windows gate, x86-64 only.
