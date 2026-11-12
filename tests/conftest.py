@@ -9,6 +9,7 @@ import os
 
 import pytest
 
+from tests import orphan_guard
 from tests.conformance.backends import BACKEND_KEY, BACKENDS
 from tests.proctitle import set_title
 
@@ -25,6 +26,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     name = config.getoption('--backend')
     set_title(f'pytest[{name}]')
+    orphan_guard.install()
     try:
         config.stash[BACKEND_KEY] = BACKENDS[name]()
     except ImportError as ex:
