@@ -96,8 +96,16 @@ HELD_KEYS = 50
 HELD_SHARE = 0.01
 HELD_COMMIT = 0.6
 # A get that started this long after a value's expire time must not return it (the writer's and
-# reader's clock reads aren't simultaneous).
+# reader's clock reads aren't simultaneous). Used only by reads that don't ask for the cache's own
+# expire time.
 EXPIRY_SLACK = 1.0
+# The wall clock's offset from the monotonic clock when the worker started (see `problem`).
+CLOCK_OFFSET_AT_START = time.time() - time.monotonic()
+# With the cache's own expire time there's no race: the cache reads the clock when the call starts,
+# after `asked_at`, so a value whose stored expiry had passed when the get began must never come back.
+# This covers float rounding only. A failure message then says which expiry was passed, the stored one
+# or the writer's, so a stale read and a writer whose expiry disagrees with the cache's are told apart.
+STORED_EXPIRY_SLACK = 0.01
 
 
 # Pacing: the shortest sleep worth taking, and how far behind schedule a thread may fall before the
@@ -242,9 +250,17 @@ def make_value(key: Any, rng: random.Random, expire_at: float | None, stored_tag
     return len(header).to_bytes(4, 'big') + header + payload
 
 
-def check_value(key: Any, value: Any, now: float, stored_tag: Any = UNCHECKED) -> str | None:
+def check_value(
+    key: Any, value: Any, now: float, stored_tag: Any = UNCHECKED, stored_expire: Any = UNCHECKED
+) -> str | None:
     """None if `value` is intact and current (and, if `stored_tag` is given, was stored with that
-    tag), else what's wrong with it."""
+    tag), else what's wrong with it.
+
+    `stored_expire` is the expire time the cache returned with the value (`expire_time=True`). When
+    it's given, currency is judged against it, and it must agree with what the writer recorded: no
+    expiry for none, never earlier than the writer's (read just before its set began), and no more
+    than `EXPIRY_SLACK` later.
+    """
     tag = key_tag(key)
     if isinstance(value, dict):
         if value.get('key') != tag:
@@ -269,6 +285,19 @@ def check_value(key: Any, value: Any, now: float, stored_tag: Any = UNCHECKED) -
         return f'unexpected value type under {key!r}: {type(value).__name__}'
     if stored_tag is not UNCHECKED and recorded != repr(stored_tag):
         return f'{key!r} read back the tag {stored_tag!r} with a value stored with {recorded}'
+    if stored_expire is not UNCHECKED:
+        if (stored_expire is None) != (expire_at is None):
+            return f'{key!r} was written with expire time {expire_at!r} and the cache stored {stored_expire!r}'
+        if expire_at is not None:
+            if stored_expire < expire_at - STORED_EXPIRY_SLACK:
+                return (
+                    f'{key!r} has a stored expiry {expire_at - stored_expire:.3f}s before the one its writer recorded'
+                )
+            if stored_expire > expire_at + EXPIRY_SLACK:
+                return f'{key!r} has a stored expiry {stored_expire - expire_at:.3f}s after the one its writer recorded'
+            if now > stored_expire + STORED_EXPIRY_SLACK:
+                return f'{key!r} returned {now - stored_expire:.3f}s after its stored expiry'
+        return None
     if expire_at is not None and now > expire_at + EXPIRY_SLACK:
         return f'{key!r} returned {now - expire_at:.1f}s after it expired'
     return None
@@ -335,10 +364,15 @@ class Worker:
         self.held_desynced = False
 
     def problem(self, text: str) -> None:
+        # How far the wall clock has moved against the monotonic one since this module loaded: a
+        # step (NTP, or the OS around an update) makes expiry checks misfire, and this tells the two
+        # apart from a real stale read.
+        drift = (time.time() - time.monotonic()) - CLOCK_OFFSET_AT_START
+        clock = f' [wall clock {drift:+.3f}s vs monotonic since start]' if abs(drift) >= 0.05 else ''
         with self.lock:
             self.problem_count += 1
             if len(self.problems) < MAX_PROBLEMS_KEPT:
-                self.problems.append(f'{time.strftime("%H:%M:%S")} {text}')
+                self.problems.append(f'{time.strftime("%H:%M:%S")} {text}{clock}')
 
     def count(self, name: str, n: int = 1) -> None:
         with self.lock:
@@ -386,9 +420,9 @@ class Worker:
         sample = self.thread_rate > 0 or i % LATENCY_SAMPLE_EVERY == 0
         if i % every == 0 and rng.random() < 0.25:
             asked_at = time.time()
-            value, tag = self.chaos.pop(key, tag=True)
+            value, stored_expire, tag = self.chaos.pop(key, expire_time=True, tag=True)
             self.count('pops_chaos')
-            if value is not None and (wrong := check_value(key, value, asked_at, tag)) is not None:
+            if value is not None and (wrong := check_value(key, value, asked_at, tag, stored_expire)) is not None:
                 self.problem(f'pop: {wrong}')
             self.ledger_op(rng)
         elif i % every == 0:
@@ -408,15 +442,15 @@ class Worker:
             with_tag = rng.random() < 0.1
             start = time.perf_counter_ns()
             if with_tag:
-                value, tag = self.chaos.get(key, tag=True)
+                value, stored_expire, tag = self.chaos.get(key, expire_time=True, tag=True)
             else:
-                value, tag = self.chaos.get(key), UNCHECKED
+                (value, stored_expire), tag = self.chaos.get(key, expire_time=True), UNCHECKED
             if sample and not with_tag:
                 self.record('get', time.perf_counter_ns() - start)
             if value is None:
                 with self.lock:
                     self.misses += 1
-            elif (wrong := check_value(key, value, asked_at, tag)) is not None:
+            elif (wrong := check_value(key, value, asked_at, tag, stored_expire)) is not None:
                 self.problem(wrong)
         if i % 5_000 == 0 and rng.random() < 0.05:
             self.reopen()
@@ -1497,11 +1531,11 @@ class FanoutWorker(Worker):
         key = soak_key(rng, 'f', rng.randrange(FANOUT_KEYS))
         if roll < 0.70:
             asked_at = time.time()
-            value = self.fan.get(key)
+            value, stored_expire = self.fan.get(key, expire_time=True)
             if value is None:
                 with self.lock:
                     self.misses += 1
-            elif (wrong := check_value(key, value, asked_at)) is not None:
+            elif (wrong := check_value(key, value, asked_at, stored_expire=stored_expire)) is not None:
                 self.problem(f'fanout get: {wrong}')
         elif roll < 0.85:
             expire = rng.choice((None, None, rng.uniform(1, 60)))
@@ -1509,8 +1543,11 @@ class FanoutWorker(Worker):
             self.fan.set(key, make_value(key, rng, expire_at), expire=expire)
         elif roll < 0.88:
             asked_at = time.time()
-            value = self.fan.pop(key)
-            if value is not None and (wrong := check_value(key, value, asked_at)) is not None:
+            value, stored_expire = self.fan.pop(key, expire_time=True)
+            if (
+                value is not None
+                and (wrong := check_value(key, value, asked_at, stored_expire=stored_expire)) is not None
+            ):
                 self.problem(f'fanout pop: {wrong}')
         elif roll < 0.90:
             self.fan.delete(key)
