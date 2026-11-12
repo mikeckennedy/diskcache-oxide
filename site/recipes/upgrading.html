@@ -703,7 +703,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="rolling-deploys-one-directory-per-format" class="level1">
 <h1>Rolling deploys: one directory per format</h1>
 <p>A rolling deploy runs old and new workers side by side for a while, and they can’t share a cache across a format change. Give each minor version its own directory, so new workers start on an empty one while old workers finish on theirs. A directory named after the first two parts of <code>diskcache_oxide.__version__</code> changes exactly when the format can:</p>
-<div id="4b57ee1e" class="cell" data-execution_count="1">
+<div id="ec17fd05" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> diskcache_oxide</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> format_series(version: <span class="bu">str</span> <span class="op">=</span> diskcache_oxide.__version__) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
