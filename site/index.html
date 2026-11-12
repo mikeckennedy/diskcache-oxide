@@ -630,6 +630,28 @@ section.level2:first-of-type > h2:first-child,
 </tbody>
 </table>
 </div>
+<section id="an-app-with-several-caches" class="level2">
+<h2 class="anchored" data-anchor-id="an-app-with-several-caches">An app with several caches</h2>
+<p>Most apps end up with more than one cache: rendered pages, API responses, sessions, rate limits, each with its own size and settings. <a href="reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> is the registry for them. You register each cache once at startup, and a lookup by name opens it on first use and returns the same object every time after that. If a cache can’t open (a full disk, a permissions problem, a cache left behind by an older release), the lookup returns a <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> instead of raising, so requests carry on without that cache while the error is logged, and the registry tries again every 10 seconds until the real one is back. One call switches a cache off for a load test, and <a href="reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> gives an admin page every cache’s entries, size and errors.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Caches</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>caches <span class="op">=</span> Caches(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)  <span class="co"># settings here apply to every cache</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'pages'</span>, size_limit<span class="op">=</span><span class="dv">2</span> <span class="op">*</span> <span class="dv">2</span><span class="op">**</span><span class="dv">30</span>)</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'sessions'</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)  <span class="co"># never evicted for size</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'rate_limits'</span>, shards<span class="op">=</span><span class="dv">8</span>)  <span class="co"># a FanoutCache, for many writers</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>html <span class="op">=</span> caches[<span class="st">'pages'</span>].get(<span class="st">'/about'</span>)  <span class="co"># opens on first use, the same object after that</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>caches[<span class="st">'sessions'</span>].<span class="bu">set</span>(<span class="st">'session:9f2c'</span>, {<span class="st">'user'</span>: <span class="dv">42</span>}, expire<span class="op">=</span><span class="dv">3600</span>)</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>caches.fanout(<span class="st">'rate_limits'</span>).incr(<span class="st">'ip:203.0.113.7'</span>)</span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>caches.disable(<span class="st">'pages'</span>)  <span class="co"># a load test without the page cache: no call site changes</span></span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, stat <span class="kw">in</span> caches.stats().items():  <span class="co"># for an admin page</span></span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(name, stat.count, stat.volume, stat.error)</span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>caches.close_all()  <span class="co"># at shutdown</span></span></code></pre></div>
+<p>Talk Python runs its eight caches this way. <a href="./user-guide/caches.html">Named caches</a> covers the registry in full.</p>
+</section>
 <section id="where-this-is-going" class="level2">
 <h2 class="anchored" data-anchor-id="where-this-is-going">Where this is going</h2>
 <p>diskcache-oxide is being built in three stages. The first is done and the second is mostly done.</p>
@@ -675,17 +697,17 @@ Note
 </section>
 <section id="install" class="level2">
 <h2 class="anchored" data-anchor-id="install">Install</h2>
-<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install diskcache-oxide</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install diskcache-oxide</span></code></pre></div>
 <p>It supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t and 3.15t), on macOS and Linux. Wheels cover macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64 for all four Pythons, with the compiled engine and a bundled SQLite inside, so there’s nothing else to install. Anywhere else pip builds from source, which needs the latest stable Rust toolchain. Windows support is planned.</p>
 <p>Before 1.0, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry: delete your caches when you upgrade to it. Until you do, opening one raises <a href="reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>, which names the file. It’s a cache, so the cost is a cold start.</p>
 </section>
 <section id="coming-from-diskcache" class="level2">
 <h2 class="anchored" data-anchor-id="coming-from-diskcache">Coming from diskcache?</h2>
 <p>Change the import and point it at a new directory. That’s the migration. diskcache-oxide keeps diskcache’s API but uses its own file format (<code>diskcache-oxide.sqlite</code>), so it never reads or touches an existing <code>cache.db</code>:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co">## from diskcache import Cache</span></span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-oxide'</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co">## from diskcache import Cache</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-oxide'</span>)</span></code></pre></div>
 <p><a href="./user-guide/switching-from-diskcache.html">Switching from diskcache</a> covers every difference you might notice, which is mostly things getting better and now and then things getting stricter.</p>
 </section>
 <section id="where-to-next" class="level2">

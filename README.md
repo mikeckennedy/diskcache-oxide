@@ -31,6 +31,32 @@ def episode(number: int) -> dict:
     return {'number': number}  # stand-in for a database read
 ```
 
+## An app with several caches
+
+Most apps end up with more than one cache: rendered pages, API responses, sessions, rate limits, each with its own size and settings. `Caches` is the registry for them. You register each cache once at startup, and a lookup by name opens it on first use and returns the same object every time after that. If a cache can't open (a full disk, a permissions problem, a cache left behind by an older release), the lookup returns a `NullCache` instead of raising, so requests carry on without that cache while the error is logged, and the registry tries again every 10 seconds until the real one is back. One call switches a cache off for a load test, and `stats()` gives an admin page every cache's entries, size and errors.
+
+```python
+from diskcache_oxide import Caches
+
+caches = Caches('/var/cache/my-app', timeout=1.0)  # settings here apply to every cache
+caches.register('pages', size_limit=2 * 2**30)
+caches.register('sessions', eviction_policy='none')  # never evicted for size
+caches.register('rate_limits', shards=8)  # a FanoutCache, for many writers
+
+html = caches['pages'].get('/about')  # opens on first use, the same object after that
+caches['sessions'].set('session:9f2c', {'user': 42}, expire=3600)
+caches.fanout('rate_limits').incr('ip:203.0.113.7')
+
+caches.disable('pages')  # a load test without the page cache: no call site changes
+
+for name, stat in caches.stats().items():  # for an admin page
+    print(name, stat.count, stat.volume, stat.error)
+
+caches.close_all()  # at shutdown
+```
+
+Talk Python runs its eight caches this way. [Named caches](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html) covers the registry in full.
+
 ## Status
 
 diskcache-oxide runs in production at [Talk Python](https://talkpython.fm), [Python Bytes](https://pythonbytes.fm) and [Talk Python Training](https://training.talkpython.fm). Before each release it passes the same conformance suite run against diskcache 5.6.3 itself (apart from the [documented divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)), a sanitizer pass over the whole codebase (Miri, ThreadSanitizer including a free-threaded CPython, AddressSanitizer and LeakSanitizer), and a 24-hour soak that throws processes, threads, forks and `SIGKILL` at one directory.
