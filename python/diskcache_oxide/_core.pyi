@@ -130,8 +130,8 @@ def _open_fanout_keeping_stored(
 def _held_stores() -> int:
     """Test hook: how many stores in this process have a held transaction, on any thread."""
 
-def _sqlite_mutex_status() -> Literal['installed', 'too_late', 'raced', 'init_failed', 'not_attempted']:
-    """Test hook: whether SQLite runs on the extension's own mutex methods (live)."""
+def _sqlite_mutex_status() -> Literal['installed', 'too_late', 'raced', 'init_failed', 'native', 'not_attempted']:
+    """Test hook: whether SQLite runs on the extension's own mutex methods (live); 'native' on Windows."""
 
 def _sqlite_error(code: int) -> BaseException:
     """Test hook: the exception a SQLite result code becomes, as a store call would raise it."""
@@ -822,6 +822,9 @@ class Cache:
         and then by operation. Empty on a handle that isn't durable."""
     def _handle_count(self) -> int:
         """Test hook: how many open handles this cache's store counts, deferred releases included."""
+    def _left_value_files(self) -> int:
+        """Test hook: value files this cache's store's unlinks couldn't remove (a Windows program holding one past the
+        retries). Each stays until `check(fix=True)`."""
     @overload
     def push(
         self,
@@ -1508,6 +1511,8 @@ class FanoutCache:
         """Test hook: every failure `durable=True` has swallowed on this handle, as `Cache._durable_stats`."""
     def _handle_counts(self) -> list[int]:
         """Test hook: how many open handles each shard's store counts, in shard order."""
+    def _left_value_files(self) -> list[int]:
+        """Test hook: value files each shard's unlinks couldn't remove, in shard order."""
     def __getitem__(self, key: Key, /) -> Any:
         """`cache[key]`, as on `Cache`."""
     def __setitem__(self, key: Key, value: Any, /) -> None:

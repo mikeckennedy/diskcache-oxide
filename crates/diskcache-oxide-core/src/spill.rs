@@ -22,10 +22,9 @@
 //! reads as a miss and unlinks nothing, instead of reaching outside the cache directory.
 
 use std::ffi::OsString;
-use std::fs::{DirBuilder, File, OpenOptions as FileOptions};
+use std::fs::{File, OpenOptions as FileOptions};
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -110,9 +109,11 @@ impl PendingFile {
 
     /// Renames the temp file into place. Called inside the write transaction (under the write
     /// lock); safe to call again if a retried attempt already did it. Same directory, which the
-    /// temp file keeps non-empty, so a sweep can't take it.
+    /// temp file keeps non-empty, so a sweep can't take it. On Windows a sweep's `rmdir` attempt on
+    /// the directory makes the rename a sharing violation for a moment, so that's retried briefly,
+    /// with the interpreter released.
     pub fn commit_name(&self) -> Result<()> {
-        match std::fs::rename(&self.tmp, &self.val) {
+        match crate::os_error::retry_sharing_violations_detached(|| std::fs::rename(&self.tmp, &self.val)) {
             Ok(()) => {
                 // A rename keeps the temp file's mtime, so refresh it: `check()` leaves alone a file
                 // no row names until it has been idle for `TMP_MIN_AGE`, and a write in flight for
@@ -144,9 +145,15 @@ fn create_in(parent: &Path, tmp: &Path, data: &[u8]) -> std::result::Result<(), 
         round += 1;
         #[cfg(test)]
         hooks::count_round();
-        match DirBuilder::new().mode(0o700).create(parent) {
+        match crate::open::owner_only_dir_builder().create(parent) {
             Ok(()) => made = true,
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+            // Windows: `aa` is delete-pending (see `directory_vanished`); it goes when the handle
+            // that was open at the `rmdir` closes, so try the round again.
+            Err(e) if crate::os_error::is_delete_pending(&e) && round < CREATE_ROUNDS => {
+                pause_after_a_lost_round();
+                continue;
+            }
             Err(e) => break Err((parent.to_path_buf(), e)),
         }
         // Only the create's error can mean a sweep took `aa`; once the file exists the directory
@@ -157,7 +164,7 @@ fn create_in(parent: &Path, tmp: &Path, data: &[u8]) -> std::result::Result<(), 
         let created = create_new(tmp);
         match created {
             Ok(file) => break write_into(file, tmp, data).map_err(|e| (tmp.to_path_buf(), e)),
-            Err(e) if directory_vanished(&e) && round < CREATE_ROUNDS => {}
+            Err(e) if directory_vanished(&e) && round < CREATE_ROUNDS => pause_after_a_lost_round(),
             Err(e) => break Err((tmp.to_path_buf(), e)),
         }
     };
@@ -167,13 +174,32 @@ fn create_in(parent: &Path, tmp: &Path, data: &[u8]) -> std::result::Result<(), 
     outcome
 }
 
+/// Nothing on Unix: a lost round there means the directory really went, and the next `mkdir`
+/// makes it again at once.
+#[cfg(not(windows))]
+fn pause_after_a_lost_round() {}
+
+/// 1 ms on Windows, so at most about [`CREATE_ROUNDS`] ms in all: a lost round there usually means
+/// `aa` is delete-pending, which lasts until the handle that was open at the `rmdir` closes. When
+/// that's another process's (antivirus, the indexer, a sweep elsewhere), immediate retries can
+/// spend every round inside the window (seen in `writers_racing_a_sweeper_in_one_directory`).
+#[cfg(windows)]
+fn pause_after_a_lost_round() {
+    std::thread::sleep(Duration::from_millis(1));
+}
+
 /// Whether a create in a value directory failed because a sweep removed the directory under it.
 /// `ENOENT` on Linux; macOS's APFS can also answer `EINVAL` when the directory goes during the
-/// create's lookup (seen in `writers_racing_a_sweeper_in_one_directory_never_fail`). Retrying an
-/// `EINVAL` with another cause costs at most [`CREATE_ROUNDS`] quick failures.
+/// create's lookup (seen in `writers_racing_a_sweeper_in_one_directory_never_fail`). On Windows
+/// (plan 25, R-H4) `RemoveDirectoryW` leaves a directory another handle has open delete-pending
+/// until that handle closes: its `mkdir` answers `ERROR_ALREADY_EXISTS` and a create inside it
+/// `ERROR_PATH_NOT_FOUND`, which is `NotFound` (seen on Windows 10 22H2); `ERROR_ACCESS_DENIED`
+/// and `ERROR_DELETE_PENDING` are retried too. Retrying an `EINVAL` or an access denial with
+/// another cause costs at most [`CREATE_ROUNDS`] quick failures.
 fn directory_vanished(error: &std::io::Error) -> bool {
-    const EINVAL: i32 = 22; // Linux and macOS.
-    error.kind() == ErrorKind::NotFound || error.raw_os_error() == Some(EINVAL)
+    error.kind() == ErrorKind::NotFound
+        || crate::os_error::is_vanished_directory_code(error)
+        || crate::os_error::is_delete_pending(error)
 }
 
 /// Creates `path`, which must not exist. A failed create removes nothing, since whatever holds that
@@ -300,17 +326,32 @@ pub fn sweep_start() -> usize {
 /// isn't a name this module writes ([`value_path`]).
 pub fn read(directory: &Path, relative: &str, size: i64) -> Result<Option<Vec<u8>>> {
     let Some(path) = value_path(directory, relative) else { return Ok(None) };
-    match File::open(&path) {
+    match open_value_file(&path) {
         Ok(file) => read_open(&file, &path, size),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io_error(&path, e)),
     }
 }
 
+/// Whether a failed [`read`] can mean its file is delete-pending (Windows only, plan 25 R-H4): an
+/// overwrite's delete while another handle had the file open. Only the caller can tell that from a
+/// real denial, by reading the row again: a changed row means the file was replaced.
+#[must_use]
+pub fn may_be_delete_pending(error: &Error) -> bool {
+    matches!(error, Error::Io { source, .. } if crate::os_error::is_delete_pending(source))
+}
+
+/// Opens a value file for reading. Windows: another program holding it without read sharing (a
+/// backup tool, some scanners) makes the open a sharing violation for a moment, which is waited out
+/// with the interpreter released (plan 25, R-M7).
+fn open_value_file(path: &Path) -> std::io::Result<File> {
+    crate::os_error::retry_sharing_violations_detached(|| File::open(path))
+}
+
 /// Opens a value file (for the locked fallback, which reads it after releasing the lock).
 pub fn open(directory: &Path, relative: &str) -> Result<Option<(File, PathBuf)>> {
     let Some(path) = value_path(directory, relative) else { return Ok(None) };
-    match File::open(&path) {
+    match open_value_file(&path) {
         Ok(file) => Ok(Some((file, path))),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io_error(&path, e)),
@@ -348,26 +389,21 @@ fn read_checked(file: &File, expected: u64) -> std::io::Result<Option<Vec<u8>>> 
 }
 
 fn io_error(path: &Path, source: std::io::Error) -> Error {
-    if source.raw_os_error() == Some(libc_enospc()) {
+    if crate::os_error::is_storage_full(&source) {
         Error::DiskFull { source: Box::new(source) }
     } else {
         Error::Io { path: path.to_path_buf(), source }
     }
 }
 
-/// `ENOSPC`, without a libc dependency in core (28 on Linux and macOS).
-const fn libc_enospc() -> i32 {
-    28
-}
-
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
-/// 128 random bits as 32 lowercase hex characters, from the OS's random source.
+/// 128 random bits as 32 lowercase hex characters, from the OS's random source (`getrandom(2)` or
+/// `/dev/urandom` on Unix, `BCryptGenRandom` on Windows, where there's no `/dev/urandom`).
 fn random_hex() -> Result<String> {
     let mut bytes = [0u8; 16];
-    File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut bytes))
-        .map_err(|source| Error::Io { path: PathBuf::from("/dev/urandom"), source })?;
+    getrandom::getrandom(&mut bytes)
+        .map_err(|e| Error::Io { path: PathBuf::from("<OS random source>"), source: std::io::Error::from(e) })?;
     Ok(bytes
         .iter()
         .flat_map(|b| [char::from(HEX[usize::from(b >> 4)]), char::from(HEX[usize::from(b & 0xF)])])
@@ -416,7 +452,7 @@ pub(crate) mod hooks {
         let (left, errno) = FAIL.get();
         if left > 0 {
             FAIL.set((left - 1, errno));
-            return Some(Err(std::io::Error::from_raw_os_error(errno)));
+            return Some(Err(crate::os_error::from_code(errno)));
         }
         let vanish = VANISH.get();
         if vanish > 0 {
@@ -503,13 +539,11 @@ mod tests {
 
     #[test]
     fn names_are_unique_and_directories_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
         let tmp = TempDir::new("spill-names");
         let a = PendingFile::write(tmp.path(), b"x").unwrap();
         let b = PendingFile::write(tmp.path(), b"x").unwrap();
         assert_ne!(a.relative, b.relative);
-        let dir = a.tmp.parent().unwrap();
-        assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700);
+        crate::testutil::assert_dir_mode(a.tmp.parent().unwrap(), 0o700);
     }
 
     /// The value directories (two lowercase hex characters) directly under `dir`, sorted.
@@ -541,14 +575,12 @@ mod tests {
 
     #[test]
     fn a_write_retries_a_directory_that_vanishes_and_recreates_it_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
         let tmp = TempDir::new("spill-vanish");
         for n in [1, 63] {
             hooks::vanish_next(n);
             let pending = PendingFile::write(tmp.path(), b"x").unwrap();
             assert_eq!(hooks::rounds(), n + 1, "{n} lost rounds, then one that succeeds");
-            let dir = pending.tmp.parent().unwrap();
-            assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700);
+            crate::testutil::assert_dir_mode(pending.tmp.parent().unwrap(), 0o700);
             assert!(pending.tmp.exists());
             pending.discard();
         }
@@ -583,29 +615,39 @@ mod tests {
         assert!(!root.exists(), "the root must not be re-created");
     }
 
-    const EACCES: i32 = 13; // Linux and macOS.
-    const EINVAL: i32 = 22;
+    use crate::os_error::CREATE_REFUSED;
+
+    /// The codes besides `NotFound` a create can get when a sweep took its directory: macOS's
+    /// `EINVAL`, and Windows's access denial and `ERROR_DELETE_PENDING` for a delete-pending one.
+    #[cfg(unix)]
+    const VANISHED_CODES: &[i32] = &[crate::os_error::EINVAL];
+    #[cfg(windows)]
+    const VANISHED_CODES: &[i32] = &[5, 303];
 
     #[test]
-    fn macos_einval_from_the_create_is_retried_like_not_found() {
+    fn a_vanished_directory_code_from_the_create_is_retried_like_not_found() {
         let tmp = TempDir::new("spill-einval");
-        hooks::fail_next_creates(5, EINVAL);
-        let pending = PendingFile::write(tmp.path(), b"x").unwrap();
-        assert_eq!(hooks::rounds(), 6, "five EINVAL rounds, then one that succeeds");
-        assert!(pending.tmp.exists());
+        for &code in VANISHED_CODES {
+            hooks::fail_next_creates(5, code);
+            let pending = PendingFile::write(tmp.path(), b"x").unwrap();
+            assert_eq!(hooks::rounds(), 6, "five rounds failing with {code}, then one that succeeds");
+            assert!(pending.tmp.exists());
+            pending.discard();
+        }
     }
 
     #[test]
     fn a_failed_create_removes_the_directory_it_made() {
         let tmp = TempDir::new("spill-failed-create");
-        hooks::fail_next_creates(1, EACCES);
+        hooks::fail_next_creates(1, CREATE_REFUSED);
         let error = PendingFile::write_named(tmp.path(), &hex_with_prefix("cd", 1), b"x").unwrap_err();
         assert_eq!(hooks::rounds(), 1, "a create error that isn't a vanished directory is terminal");
-        assert!(matches!(&error, Error::Io { source, .. } if source.kind() == ErrorKind::PermissionDenied));
+        let refused = crate::os_error::from_code(CREATE_REFUSED).kind();
+        assert!(matches!(&error, Error::Io { source, .. } if source.kind() == refused), "{error:?}");
         assert_eq!(value_dirs(tmp.path()), Vec::<String>::new());
         // One it didn't make stays: another file lives there.
         let other = PendingFile::write_named(tmp.path(), &hex_with_prefix("cd", 2), b"x").unwrap();
-        hooks::fail_next_creates(1, EACCES);
+        hooks::fail_next_creates(1, CREATE_REFUSED);
         PendingFile::write_named(tmp.path(), &hex_with_prefix("cd", 3), b"x").unwrap_err();
         assert!(other.tmp.exists());
         assert_eq!(value_dirs(tmp.path()), ["cd"]);
@@ -695,9 +737,7 @@ mod tests {
         for name in ["10", "11", "12"] {
             std::fs::create_dir(tmp.path().join(name)).unwrap();
         }
-        let set_mtime = |name: &str, at: SystemTime| {
-            File::open(tmp.path().join(name)).unwrap().set_modified(at).unwrap();
-        };
+        let set_mtime = |name: &str, at: SystemTime| crate::testutil::set_mtime(&tmp.path().join(name), at);
         set_mtime("10", SystemTime::now() - Duration::from_secs(120));
         set_mtime("12", SystemTime::now() + Duration::from_secs(3_600));
         sweep(tmp.path(), far(), SWEEP_MIN_AGE, 0);
@@ -756,7 +796,7 @@ mod tests {
     }
 
     fn backdate(path: &Path, by: Duration) {
-        File::open(path).unwrap().set_modified(SystemTime::now() - by).unwrap();
+        crate::testutil::set_mtime(path, SystemTime::now() - by);
     }
 
     fn names_in(dir: &Path) -> Vec<String> {

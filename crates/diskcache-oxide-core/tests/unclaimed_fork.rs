@@ -4,6 +4,8 @@
 //! bumps the global generation, and a raw fork while another test's thread holds a std mutex could
 //! leave the child stuck on it. One test, so nothing else in this process runs beside it.
 
+// Windows has no fork().
+#![cfg(unix)]
 // One raw `fork()`, `waitpid()` and `_exit()`; the library itself denies unsafe code.
 #![allow(unsafe_code)]
 

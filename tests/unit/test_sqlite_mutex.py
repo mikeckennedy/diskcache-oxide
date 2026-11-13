@@ -1,5 +1,6 @@
 """SQLite runs on the extension's own mutex methods, installed when the module loads (plan 12 step 5a), and the
-standard library's `sqlite3` (a different SQLite) is untouched."""
+standard library's `sqlite3` (a different SQLite) is untouched. Windows installs nothing and reports 'native': SQLite
+runs on its own Win32 mutexes there (plan 25)."""
 
 from __future__ import annotations
 
@@ -8,6 +9,9 @@ import sys
 
 from diskcache_oxide import _core
 
+# What the module init leaves: our methods, or SQLite's own on Windows.
+EXPECTED = 'native' if sys.platform == 'win32' else 'installed'
+
 
 def _run(code: str) -> str:
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=60, check=True)
@@ -15,7 +19,7 @@ def _run(code: str) -> str:
 
 
 def test_the_methods_are_installed_at_import() -> None:
-    assert _core._sqlite_mutex_status() == 'installed'
+    assert _core._sqlite_mutex_status() == EXPECTED
 
 
 def test_not_a_spin_sweep_build() -> None:
@@ -26,7 +30,7 @@ def test_not_a_spin_sweep_build() -> None:
 
 def test_installed_in_a_fresh_process_before_any_cache() -> None:
     # Nothing opens a cache here: the module init alone installs them.
-    assert _run('import diskcache_oxide._core as c; print(c._sqlite_mutex_status())') == 'installed'
+    assert _run('import diskcache_oxide._core as c; print(c._sqlite_mutex_status())') == EXPECTED
 
 
 def test_stdlib_sqlite3_is_unchanged() -> None:

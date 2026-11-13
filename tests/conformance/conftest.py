@@ -3,9 +3,11 @@
 Pick the backend with `--backend=diskcache|community|oxide` (or the DCO_BACKEND environment variable).
 
 Markers:
-    diverges(backend=..., ref="D-00N", reason=..., raises=None)
+    diverges(backend=..., ref="D-00N", reason=..., raises=None, platform=None)
         A deliberate, documented difference from diskcache. On the named backend the test becomes
         a strict xfail, so if the divergence ever disappears the run fails and forces an update.
+        `platform` (a `sys.platform` value) limits it to one platform, for a difference that only
+        shows there.
         Every ref must exist in tests/DIVERGENCES.md. `raises` (an exception type or tuple) is
         passed to the xfail, so only that exception counts as the divergence; anything else (an
         unrelated crash) is a real failure. Use AssertionError when the divergence shows up as a
@@ -30,6 +32,7 @@ changes one of those behaviors fails the run.
 from __future__ import annotations
 
 import re
+import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -39,6 +42,7 @@ import pytest
 
 from tests.conformance.backends import BACKEND_KEY as _backend_key
 from tests.conformance.backends import FEATURE_PHASES, Backend, community_difference
+from tests.platforms import UNIX_ONLY_PREFIX
 
 DIVERGENCES_FILE = Path(__file__).parent.parent / 'DIVERGENCES.md'
 _REF_HEADING = re.compile(r'^##+\s+(D-\d{3})\b', re.MULTILINE)
@@ -62,7 +66,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 raise pytest.UsageError(
                     f'{item.nodeid}: divergence {ref!r} is not documented in {DIVERGENCES_FILE.name}'
                 )
-            if mark.kwargs.get('backend') == backend.name:
+            if mark.kwargs.get('backend') == backend.name and mark.kwargs.get('platform', sys.platform) == sys.platform:
                 item.add_marker(
                     pytest.mark.xfail(
                         strict=True,
@@ -106,9 +110,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 def _expected_skip(reason: str) -> bool:
-    # The skips the markers above add. Anything else (a pytest.skip() or importorskip inside a
-    # test, a missing fixture dependency) would quietly shrink the oxide run.
-    return _NOT_YET_PREFIX in reason or reason.endswith('-only behavior')
+    # The skips the markers above add, and tests.platforms' unix_only. Anything else (a pytest.skip()
+    # or importorskip inside a test, a missing fixture dependency) would quietly shrink the oxide run.
+    return _NOT_YET_PREFIX in reason or reason.endswith('-only behavior') or UNIX_ONLY_PREFIX in reason
 
 
 _unexpected_skips: list[str] = []

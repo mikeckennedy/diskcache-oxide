@@ -30,6 +30,7 @@ from diskcache_oxide import (
 )
 
 from tests.conformance.proc_workers import SqlitePeer
+from tests.platforms import unix_only
 from tests.unit.durable_scenarios import SCENARIOS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -92,6 +93,29 @@ def _value_file(directory: Path) -> Path:
     return path
 
 
+def _grow_sparse(path: Path, size: int) -> None:
+    """Extend `path` to `size` bytes without writing them. On Windows `os.truncate` is the CRT's
+    `_chsize_s`, which writes every zero, so there the file is marked sparse and its end moved."""
+    if sys.platform != 'win32':
+        os.truncate(path, size)
+        return
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    fsctl_set_sparse = 0x0009_00C4
+    with path.open('r+b') as f:
+        handle = wintypes.HANDLE(msvcrt.get_osfhandle(f.fileno()))
+        returned = wintypes.DWORD()
+        if not (
+            kernel32.DeviceIoControl(handle, fsctl_set_sparse, None, 0, None, 0, ctypes.byref(returned), None)
+            and kernel32.SetFilePointerEx(handle, ctypes.c_longlong(size), None, 0)
+            and kernel32.SetEndOfFile(handle)
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+
 @contextmanager
 def peer_holding_the_write_lock(directory: Path) -> Generator[None]:
     with SqlitePeer(_db(directory)) as peer:
@@ -102,8 +126,30 @@ def peer_holding_the_write_lock(directory: Path) -> Generator[None]:
             peer.rollback()
 
 
+def _damage(directory: Path) -> None:
+    """Overwrite the database and its WAL and index with garbage, while they're open. On Windows the
+    -shm is overwritten in place around bytes 120-128, which SQLite holds byte-range locks on (the
+    WAL locks and the dead-man switch): Windows locks are mandatory, and it won't truncate a mapped file."""
+    for path in directory.glob('diskcache-oxide.sqlite*'):
+        size = path.stat().st_size
+        if sys.platform == 'win32' and path.name.endswith('-shm'):
+            locked = range(120, 129)
+            with path.open('r+b') as f:
+                f.write(b'\xff' * locked.start)
+                f.seek(locked.stop)
+                f.write(b'\xff' * (size - locked.stop))
+            continue
+        path.write_bytes(b'\xff' * size)
+
+
 @contextmanager
 def unreadable(path: Path) -> Generator[None]:
+    """`path` can't be opened. On Windows, where chmod only sets the read-only flag, a handle that
+    shares nothing is held instead, so every other open fails with a sharing violation."""
+    if sys.platform == 'win32':
+        with _held_without_sharing(path):
+            yield
+        return
     os.chmod(path, 0)
     try:
         yield
@@ -112,8 +158,30 @@ def unreadable(path: Path) -> Generator[None]:
 
 
 @contextmanager
+def _held_without_sharing(path: Path) -> Generator[None]:
+    assert sys.platform == 'win32'
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    generic_read, open_existing, invalid = 0x8000_0000, 3, wintypes.HANDLE(-1).value
+    handle = kernel32.CreateFileW(str(path), generic_read, 0, None, open_existing, 0, None)
+    if handle == invalid:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        yield
+    finally:
+        kernel32.CloseHandle(wintypes.HANDLE(handle))
+
+
+@contextmanager
 def unwritable_directory(path: Path) -> Generator[None]:
     """A value file can't be created under `path`. Its database files are already open."""
+    if sys.platform == 'win32':
+        with _denied_creates(path):
+            yield
+        return
     mode = path.stat().st_mode
     for each in (path, *[p for p in path.rglob('*') if p.is_dir()]):
         os.chmod(each, 0o500)
@@ -122,6 +190,39 @@ def unwritable_directory(path: Path) -> Generator[None]:
     finally:
         for each in (path, *[p for p in path.rglob('*') if p.is_dir()]):
             os.chmod(each, mode)
+
+
+def _user_sid() -> str:
+    """Windows: this user's SID, for `icacls`."""
+    out = subprocess.run(['whoami', '/user', '/fo', 'csv', '/nh'], capture_output=True, text=True, check=True).stdout
+    return out.strip().split(',')[-1].strip('"')
+
+
+@contextmanager
+def _denied_read(path: Path) -> Generator[None]:
+    """Windows: a deny entry for this user on reading `path`, so opening it is `ERROR_ACCESS_DENIED`
+    (5), the code a delete-pending file also gives; removed afterwards."""
+    sid = _user_sid()
+    subprocess.run(['icacls', str(path), '/deny', f'*{sid}:(RD)'], capture_output=True, check=True)
+    try:
+        yield
+    finally:
+        subprocess.run(['icacls', str(path), '/remove:d', f'*{sid}'], capture_output=True, check=True)
+
+
+@contextmanager
+def _denied_creates(path: Path) -> Generator[None]:
+    """Windows: a deny entry for this user on creating files and subdirectories in `path` and every
+    directory under it (`icacls`' WD and AD), removed afterwards."""
+    sid = _user_sid()
+    dirs = [path, *[p for p in path.rglob('*') if p.is_dir()]]
+    for each in dirs:
+        subprocess.run(['icacls', str(each), '/deny', f'*{sid}:(WD,AD)'], capture_output=True, check=True)
+    try:
+        yield
+    finally:
+        for each in dirs:
+            subprocess.run(['icacls', str(each), '/remove:d', f'*{sid}'], capture_output=True, check=True)
 
 
 def _messages(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
@@ -269,6 +370,26 @@ def test_a_pool_taken_by_a_slow_hook_fails_reads_as_a_miss(directory: Path) -> N
     cache.close()
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows only: an ACL that denies reading')
+def test_a_value_file_denied_with_its_row_unchanged_is_a_logged_miss_and_stays(
+    directory: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # ERROR_ACCESS_DENIED is also what a delete-pending file gives, which the read retries when the
+    # row changed. Here the row is the same, so it is a real denial: never a lost file whose row goes.
+    cache = Cache(directory, durable=True)
+    plain = Cache(directory)
+    cache.set('k', b'x' * BIG)
+    with _denied_read(_value_file(directory)), caplog.at_level(logging.WARNING, logger=LOGGER):
+        assert cache.get('k', 'default') == 'default'
+        with pytest.raises(PermissionError):
+            plain.get('k')
+    [record] = _messages(caplog)
+    assert record.levelno == logging.ERROR and 'get: 1' in record.getMessage()
+    assert cache.get('k') == b'x' * BIG, 'the row went as if its file were gone'
+    cache.close()
+    plain.close()
+
+
 @NOT_AS_ROOT
 def test_a_value_file_it_cant_read_is_a_miss_and_stays(directory: Path, caplog: pytest.LogCaptureFixture) -> None:
     cache = Cache(directory, durable=True)
@@ -283,7 +404,9 @@ def test_a_value_file_it_cant_read_is_a_miss_and_stays(directory: Path, caplog: 
     assert cache._durable_stats()['broken']['pop'] == 1
     [record] = _messages(caplog)
     assert record.levelno == logging.ERROR
-    assert 'get: 1' in record.getMessage() and 'Permission denied' in record.getMessage()
+    # The OS's own words: Windows says it for the sharing violation `unreadable` makes there.
+    denied = 'being used by another process' if sys.platform == 'win32' else 'Permission denied'
+    assert 'get: 1' in record.getMessage() and denied in record.getMessage()
     assert cache.get('k') == b'x' * BIG, 'neither call removed it'
     cache.close()
 
@@ -319,11 +442,13 @@ def test_a_size_the_value_file_doesnt_match_is_a_miss(directory: Path, durable: 
 )
 @pytest.mark.parametrize('durable', [True, False])
 def test_a_value_too_big_to_allocate_is_a_memory_error_and_stays(directory: Path, durable: bool) -> None:
-    size = 2**54  # past any address space, and a sparse file APFS allows
+    # Past any address space, and a sparse file APFS allows. NTFS caps a file near 16 TiB, so on
+    # Windows 8 TiB: inside the address space, but past any machine's commit limit.
+    size = 2**43 if sys.platform == 'win32' else 2**54
     cache = Cache(directory, durable=durable)
     cache.set('k', b'x' * BIG)
     try:
-        os.truncate(_value_file(directory), size)
+        _grow_sparse(_value_file(directory), size)
     except OSError:
         pytest.skip('this filesystem has no sparse file that big')
     _sql(directory, f'UPDATE cache SET size = {size}')
@@ -339,8 +464,7 @@ def test_a_damaged_database_is_a_miss(directory: Path, caplog: pytest.LogCapture
     cache = Cache(directory, timeout=SHORT, durable=True)
     plain = Cache(directory, timeout=SHORT)
     cache.set('k', 1)
-    for path in directory.glob('diskcache-oxide.sqlite*'):
-        path.write_bytes(b'\xff' * path.stat().st_size)
+    _damage(directory)
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         assert cache.get('k', 'default') == 'default'
         assert 'k' not in cache
@@ -916,8 +1040,7 @@ def test_each_kind_of_failure_has_its_own_limit(directory: Path, caplog: pytest.
             assert cache.delete('k') is False
             assert cache.delete('k') is False
         assert len(_messages(caplog)) == 2
-        for path in directory.glob('diskcache-oxide.sqlite*'):
-            path.write_bytes(b'\xff' * path.stat().st_size)
+        _damage(directory)
         cache.get('k')
         cache.get('k')
     busy, lost, broken = _messages(caplog)
@@ -1268,6 +1391,7 @@ os._exit(0)
 """
 
 
+@unix_only('fork')
 def test_a_first_log_line_behind_a_stuck_fork_with_diskcache_oxide_imported_first(
     tmp_path: Path,
 ) -> None:
@@ -1341,6 +1465,7 @@ def test_caches_refuses_a_durable_that_isnt_a_bool(tmp_path: Path) -> None:
 # -- what needs a fresh process ---------------------------------------------------------------------------------
 
 
+@unix_only('fork')
 @pytest.mark.parametrize('scenario', sorted(SCENARIOS))
 def test_scenario(scenario: str, tmp_path: Path) -> None:
     proc = subprocess.run(

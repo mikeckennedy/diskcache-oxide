@@ -31,7 +31,8 @@ def child(tmp: str, over: int) -> None:
     from diskcache_oxide import _core
 
     assert not _core._DEBUG_BUILD, 'measure a release build'
-    assert _core._sqlite_mutex_status() == 'installed'
+    # 'native' on Windows, which runs on SQLite's own mutexes (plan 25).
+    assert _core._sqlite_mutex_status() in ('installed', 'native')
 
     def fill(c):
         for i, k in enumerate(KEYS):

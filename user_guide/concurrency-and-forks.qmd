@@ -38,6 +38,8 @@ Any number of processes can open the same directory, each with its own `Cache`. 
 
 ## Forks
 
+This section is about macOS and Linux. Windows has no `fork()`: there `multiprocessing` starts every worker fresh, each opens its own handle, and nothing here applies.
+
 Pre-forking servers (gunicorn, Celery's prefork pool, `multiprocessing` with the fork start method) create workers with `fork()`, which copies the whole process. Picture a thread halfway through a write at the instant the server forks. The child is a photocopy of the parent, SQLite's note that this process holds the write lock included. But only the forking thread exists in the child, so the thread that was going to release that lock isn't there. In diskcache, that child's first write waits for a ghost: it stalls for the full timeout (60 seconds by default). Under a busy read/write load, that hits 20-50% of forks.
 
 diskcache-oxide prevents it with a **fork barrier**, a crossing guard installed when `diskcache_oxide` is imported. It stops traffic in a specific order:

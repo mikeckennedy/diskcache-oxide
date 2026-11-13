@@ -12,6 +12,7 @@ import pytest
 
 from tests.conformance.backends import Backend
 from tests.conformance.proc_workers import SqlitePeer, checkpoint
+from tests.platforms import unix_only
 
 # ---------------------------------------------------------------------------
 # get / set / delete
@@ -273,6 +274,7 @@ def _umask() -> int:
     return mask
 
 
+@unix_only("mode bits; a Windows directory takes its parent's ACL")
 @pytest.mark.diverges(
     backend='oxide',
     ref='D-015',
@@ -285,6 +287,7 @@ def test_new_directory_follows_the_umask(make_cache: Callable[..., Any], tmp_pat
     assert _mode(directory) == 0o777 & ~_umask()
 
 
+@unix_only("mode bits; a Windows directory takes its parent's ACL")
 @pytest.mark.backend_only('oxide')
 def test_oxide_new_directory_is_owner_only(make_cache: Callable[..., Any], tmp_path: Path) -> None:
     directory = tmp_path / 'parent' / 'cache'
@@ -294,6 +297,7 @@ def test_oxide_new_directory_is_owner_only(make_cache: Callable[..., Any], tmp_p
     assert _mode(directory.parent) == 0o777 & ~_umask()
 
 
+@unix_only("mode bits; a Windows directory takes its parent's ACL")
 @pytest.mark.backend_only('oxide')
 def test_oxide_existing_directory_permissions_are_left_alone(make_cache: Callable[..., Any], tmp_path: Path) -> None:
     directory = tmp_path / 'shared'

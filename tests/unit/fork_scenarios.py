@@ -33,6 +33,7 @@ TIMEOUT = 5.0
 
 
 def fork(body: Callable[[], None]) -> int:
+    assert sys.platform != 'win32'
     pid = os.fork()
     if pid == 0:
         code = 0
@@ -47,6 +48,7 @@ def fork(body: Callable[[], None]) -> int:
 
 
 def wait(pid: int, deadline: float = CHILD_DEADLINE) -> int | None:
+    assert sys.platform != 'win32'
     end = time.monotonic() + deadline
     while time.monotonic() < end:
         done, status = os.waitpid(pid, os.WNOHANG)

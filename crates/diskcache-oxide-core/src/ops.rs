@@ -264,16 +264,25 @@ impl Store {
             tries += 1;
             #[cfg(test)]
             run_hook(&BEFORE_OPTIMISTIC_READ, self);
-            if let Some(bytes) = spill::read(self.directory(), &file.relative, file.size)? {
-                return Ok(Read::Hit(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?)));
-            }
-            // Missing or short: overwritten since the row was read, or truly gone.
+            // Windows: a file an overwrite deleted while another handle had it open can linger
+            // delete-pending, and opening it is denied (R-H4). Kept until the row is read again.
+            let denied = match spill::read(self.directory(), &file.relative, file.size) {
+                Ok(Some(bytes)) => return Ok(Read::Hit(file.hit(decode(file.mode, ValueRef::Blob(&bytes))?))),
+                Ok(None) => None,
+                Err(e) if spill::may_be_delete_pending(&e) => Some(e),
+                Err(e) => return Err(e),
+            };
+            // Missing, short or denied: overwritten since the row was read, or truly gone.
             row = self
                 .read(left(&mut budget), |conn| locate_row(conn, locate, skip, now, with_tag, timeout, &mut decode))
                 .map_err(whole_timeout)?;
             if let Found::File(again) = &row
                 && again.version == file.version
             {
+                // The row's own file denied: a real error, maybe a permission, never a lost file.
+                if let Some(e) = denied {
+                    return Err(e);
+                }
                 // Same version, no readable file: a true miss (D-013). Remove exactly that version,
                 // only if it needs no waiting; a later write's cleanup gets it otherwise.
                 let _ = self.delete_version_nowait(file.version);
@@ -1252,6 +1261,171 @@ mod tests {
             assert_eq!(read.got.unwrap(), None, "at_fallback={at_fallback}");
             assert_eq!(read.decodes, [], "at_fallback={at_fallback}");
         }
+    }
+
+    /// A plain `get` of `k` that returns the bytes, for the delete-pending tests.
+    #[cfg(windows)]
+    fn get_bytes(s: &Store) -> Result<Option<Vec<u8>>> {
+        s.get_with(
+            T,
+            "k",
+            NOW,
+            |_| false,
+            |_, v| {
+                Ok(match v {
+                    ValueRef::Blob(b) | ValueRef::Text(b) => b.to_vec(),
+                    _ => Vec::new(),
+                })
+            },
+        )
+        .map(|hit| hit.map(|h| h.value))
+    }
+
+    /// R-H4, readers: an overwrite whose delete of the old file left it delete-pending (no POSIX
+    /// delete semantics, and another handle open) makes the reader's open of it `ERROR_ACCESS_DENIED`.
+    /// The row changed, so that is the D-016 race, retried like a missing file.
+    #[cfg(windows)]
+    #[test]
+    fn a_value_file_left_delete_pending_by_an_overwrite_is_retried_like_a_missing_one() {
+        let tmp = TempDir::new("ops-delete-pending-overwrite");
+        let s = store(tmp.path(), Requested::default());
+        set_big(&s, MODE_BYTES, 0);
+        let held = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let keep = held.clone();
+        let dir = tmp.path().to_path_buf();
+        let hook = Hook::install(&BEFORE_OPTIMISTIC_READ, move |s| {
+            if keep.borrow().is_empty() {
+                keep.borrow_mut().extend(value_files(&dir).iter().map(|f| crate::testutil::delete_pending(f)));
+                set_big(s, MODE_BYTES, 1);
+            }
+        });
+        let got = get_bytes(&s);
+        drop(hook);
+        assert_eq!(held.borrow().len(), 1, "the hook made the old file delete-pending");
+        assert_eq!(got.unwrap(), Some(vec![1; spill::THRESHOLD]));
+    }
+
+    /// The other side: a denied open of the row's own file, with the row unchanged, may be a real
+    /// permission error, so it's returned as one and the row stays (never D-013's "truly gone").
+    #[cfg(windows)]
+    #[test]
+    fn a_denied_value_file_whose_row_is_unchanged_is_an_error_and_the_row_stays() {
+        let tmp = TempDir::new("ops-delete-pending-same");
+        let s = store(tmp.path(), Requested::default());
+        set_big(&s, MODE_BYTES, 0);
+        let [file] = value_files(tmp.path()).into_iter().collect::<Vec<_>>().try_into().unwrap();
+        let held = crate::testutil::delete_pending(&file);
+        match get_bytes(&s) {
+            Err(Error::Io { source, .. }) => assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied),
+            other => panic!("expected the denied open's error, got {other:?}"),
+        }
+        assert_eq!(s.len(T).unwrap(), 1, "the row was removed as if its file were gone");
+        drop(held);
+    }
+
+    /// Windows: `path` opened as a program that doesn't share delete (most of them) opens it.
+    #[cfg(windows)]
+    fn held_without_delete_sharing(path: &Path) -> std::fs::File {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ_WRITE: u32 = 0x3;
+        std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ_WRITE).open(path).unwrap()
+    }
+
+    /// Windows: runs `op` while another thread holds `held` and drops it about 10 ms after `op`
+    /// starts. Returns `op`'s result, or `None` if the drop landed later than 25 ms in, well inside
+    /// the 50 ms retry budget only when the machine isn't so loaded that the thread wakes late (a
+    /// full `cargo test` can be), so the caller tries again rather than assert on a scenario that
+    /// didn't happen.
+    #[cfg(windows)]
+    fn with_a_brief_hold<T>(held: std::fs::File, op: impl FnOnce() -> T) -> Option<T> {
+        let (go, started) = std::sync::mpsc::channel::<Instant>();
+        let release = std::thread::spawn(move || {
+            let start = started.recv().unwrap();
+            std::thread::sleep(Duration::from_millis(10));
+            drop(held);
+            start.elapsed()
+        });
+        go.send(Instant::now()).unwrap();
+        let result = op();
+        let dropped_after = release.join().unwrap();
+        (dropped_after < Duration::from_millis(25)).then_some(result)
+    }
+
+    /// R-M7: a delete whose unlink meets another program's brief handle waits it out.
+    #[cfg(windows)]
+    #[test]
+    fn an_unlink_another_program_blocks_for_a_moment_is_retried() {
+        for _ in 0..20 {
+            let tmp = TempDir::new("ops-unlink-retried");
+            let s = store(tmp.path(), Requested::default());
+            set_big(&s, MODE_BYTES, 0);
+            let [file] = value_files(tmp.path()).into_iter().collect::<Vec<_>>().try_into().unwrap();
+            let held = held_without_delete_sharing(&file);
+            let Some(deleted) = with_a_brief_hold(held, || s.delete(T, "k", NOW).unwrap()) else { continue };
+            assert!(deleted);
+            assert!(!file.exists(), "the unlink gave up while the other handle was open");
+            assert_eq!(s.left_files(), 0);
+            return;
+        }
+        panic!("the hold was never released within 25 ms in 20 tries");
+    }
+
+    /// A read whose value file another program holds without read sharing, for a moment, waits it
+    /// out; held throughout, the read fails within the same bounded wait.
+    #[cfg(windows)]
+    #[test]
+    fn a_read_another_program_blocks_for_a_moment_is_retried() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = TempDir::new("ops-read-retried");
+        let s = store(tmp.path(), Requested::default());
+        set_big(&s, MODE_BYTES, 3);
+        let [file] = value_files(tmp.path()).into_iter().collect::<Vec<_>>().try_into().unwrap();
+        let exclusive = || std::fs::OpenOptions::new().read(true).share_mode(0).open(&file).unwrap();
+        let got = (0..20).find_map(|_| with_a_brief_hold(exclusive(), || get_bytes(&s)));
+        let got = got.expect("the hold was never released within 25 ms in 20 tries");
+        assert_eq!(got.unwrap(), Some(vec![3; spill::THRESHOLD]));
+        let held = exclusive();
+        let started = Instant::now();
+        assert!(matches!(get_bytes(&s), Err(Error::Io { .. })), "a file held throughout can't be read");
+        assert!(started.elapsed() < Duration::from_secs(1), "the retries are bounded");
+        drop(held);
+    }
+
+    /// A batch of held files shares one retry budget: a `clear()` over 40 of them waits about 50
+    /// ms, not 50 ms for each (about 2 s).
+    #[cfg(windows)]
+    #[test]
+    fn many_unlinks_other_programs_block_share_one_retry_budget() {
+        let tmp = TempDir::new("ops-unlink-batch");
+        let s = store(tmp.path(), Requested::default());
+        let big = vec![1_u8; spill::THRESHOLD];
+        for i in 0..40 {
+            s.set(T, &format!("k{i}"), Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
+        }
+        let held: Vec<_> = value_files(tmp.path()).iter().map(|f| held_without_delete_sharing(f)).collect();
+        assert_eq!(held.len(), 40);
+        let started = Instant::now();
+        assert_eq!(s.clear(T).unwrap(), 40);
+        assert!(started.elapsed() < Duration::from_millis(500), "took {:?}", started.elapsed());
+        assert_eq!(s.left_files(), 40);
+        drop(held);
+    }
+
+    /// And one held throughout is left, and counted.
+    #[cfg(windows)]
+    #[test]
+    fn an_unlink_another_program_keeps_blocking_is_counted() {
+        let tmp = TempDir::new("ops-unlink-left");
+        let s = store(tmp.path(), Requested::default());
+        set_big(&s, MODE_BYTES, 0);
+        let [file] = value_files(tmp.path()).into_iter().collect::<Vec<_>>().try_into().unwrap();
+        let held = held_without_delete_sharing(&file);
+        let started = Instant::now();
+        assert!(s.delete(T, "k", NOW).unwrap(), "the delete itself succeeds");
+        assert!(started.elapsed() < Duration::from_secs(1), "the retries are bounded");
+        assert!(file.exists());
+        assert_eq!(s.left_files(), 1);
+        drop(held);
     }
 
     #[test]

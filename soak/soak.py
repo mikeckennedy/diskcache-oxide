@@ -38,6 +38,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# The soak needs fork, SIGKILL, SIGUSR1/2 and the load average: Unix only (plan 25 leaves its port for later).
+assert sys.platform != 'win32'
+
 REPO = Path(__file__).resolve().parents[1]
 DB_NAME = 'diskcache-oxide.sqlite'
 

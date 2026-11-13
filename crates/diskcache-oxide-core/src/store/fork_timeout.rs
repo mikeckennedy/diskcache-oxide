@@ -115,7 +115,9 @@ fn file_count(dir: &Path) -> usize {
         .sum()
 }
 
-/// Open file descriptors on files inside `dir`, this process's.
+/// Open file descriptors on files inside `dir`, this process's. Unix only: Windows has handles, not
+/// descriptors, and its locks belong to a handle, so the counts these tests make don't apply there.
+#[cfg(unix)]
 fn fds_inside(dir: &Path) -> usize {
     let dir = std::fs::canonicalize(dir).unwrap();
     if cfg!(target_os = "linux") {
@@ -346,6 +348,7 @@ fn row_5_a_release_behind_a_stuck_fork_defers_and_the_drain_finishes_it() {
     let store = open_store(tmp.path());
     put(&store, "k");
     let weak = Arc::downgrade(&store);
+    #[cfg(unix)]
     assert!(fds_inside(tmp.path()) > 0);
     let budget = Duration::from_millis(100);
     behind_a_fork(move || {
@@ -370,6 +373,7 @@ fn row_5_a_release_behind_a_stuck_fork_defers_and_the_drain_finishes_it() {
     let gate = GATE.enter_shared_blocking();
     assert_eq!(store.pool.idle(&gate), 0);
     drop(gate);
+    #[cfg(unix)]
     assert_eq!(fds_inside(tmp.path()), 0, "D-018 holds once the release has drained");
     drop(store);
     eventually(|| weak.strong_count() == 0);
@@ -557,6 +561,7 @@ fn row_5_a_deferral_racing_the_end_of_a_fork_is_never_stranded() {
         assert_eq!(store.handles(), 0);
         assert!(store.is_retired());
     }
+    #[cfg(unix)]
     assert_eq!(fds_inside(tmp.path()), 0);
     only_owner(&store);
 }
@@ -1188,6 +1193,8 @@ fn a_drain_that_finds_the_slot_lent_to_the_drainer_abandons_the_end_to_the_opera
 
 // -- rows 16 and 17: drops -----------------------------------------------------------------------
 
+// Unix only: all it checks is a descriptor count, which Windows doesn't have.
+#[cfg(unix)]
 #[test]
 fn row_16_a_pin_dropped_behind_a_fork_leaks_its_fd_and_closes_nothing() {
     let _forks = one_global_fork_at_a_time();
@@ -1222,7 +1229,9 @@ fn row_17_a_pool_dropped_behind_a_fork_is_closed_by_that_fork() {
     let weak_idle = pool.idle(&gate);
     assert_eq!(weak_idle, 1);
     store.release_handle();
+    #[cfg(unix)]
     let baseline = fds_inside(tmp.path());
+    #[cfg(unix)]
     assert!(baseline > 0, "the pool's connection is open");
     let (dropped, wait_for_drop) = mpsc::channel::<()>();
     let fork_thread = std::thread::spawn(|| {
@@ -1236,10 +1245,12 @@ fn row_17_a_pool_dropped_behind_a_fork_is_closed_by_that_fork() {
     });
     wait_for_drop.recv_timeout(T).expect("the watchdog: dropping a pool waited for a fork");
     drop_thread.join().unwrap();
+    #[cfg(unix)]
     assert_eq!(fds_inside(tmp.path()), baseline, "the pool closed a connection outside the gate");
     // This thread's level is what the fork was waiting for.
     drop(gate);
     fork_thread.join().unwrap();
+    #[cfg(unix)]
     assert_eq!(fds_inside(tmp.path()), 0, "the fork didn't close the dropped pool's connection");
 }
 

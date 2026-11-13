@@ -5,8 +5,8 @@
 //! Racing creators of a new database are safe because creation re-checks `user_version` under
 //! `BEGIN IMMEDIATE`.
 
+use std::fs::DirBuilder;
 use std::io::ErrorKind;
-use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -173,18 +173,29 @@ pub fn db_path(directory: &Path) -> PathBuf {
     directory.join(DB_FILENAME)
 }
 
-/// Creates a shard directory as owner-only (0700) if it doesn't exist, but never its parent: a
-/// root deleted while its shards were opening gives `NotFound` instead of being re-created without
-/// a manifest, with the old count's shards in it (plan 15, R3).
+/// A non-recursive `DirBuilder` for a directory the cache owns: owner-only (0700) on Unix (D-015).
+/// Windows has no mode bits, so there the directory inherits the default ACL of its parent.
+#[must_use]
+pub(crate) fn owner_only_dir_builder() -> DirBuilder {
+    #[cfg_attr(not(unix), expect(unused_mut))]
+    let mut builder = DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder
+}
+
+/// Creates a shard directory as owner-only (0700 on Unix) if it doesn't exist, but never its
+/// parent: a root deleted while its shards were opening gives `NotFound` instead of being
+/// re-created without a manifest, with the old count's shards in it (plan 15, R3).
 pub fn ensure_shard_directory(directory: &Path) -> Result<()> {
-    match std::fs::DirBuilder::new().mode(0o700).create(directory) {
+    match owner_only_dir_builder().create(directory) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == ErrorKind::AlreadyExists && directory.is_dir() => Ok(()),
         Err(source) => Err(Error::Io { path: directory.to_path_buf(), source }),
     }
 }
 
-/// Creates `directory` as owner-only (0700) if it doesn't exist (D-015). Missing parents are
+/// Creates `directory` as owner-only (0700 on Unix) if it doesn't exist (D-015). Missing parents are
 /// created with the process umask, like `os.makedirs`; an existing directory is left alone. For a
 /// plain cache's directory or a `FanoutCache` root; a shard uses [`ensure_shard_directory`].
 pub fn ensure_directory(directory: &Path) -> Result<()> {
@@ -194,7 +205,7 @@ pub fn ensure_directory(directory: &Path) -> Result<()> {
     {
         std::fs::create_dir_all(parent).map_err(io)?;
     }
-    match std::fs::DirBuilder::new().mode(0o700).create(directory) {
+    match owner_only_dir_builder().create(directory) {
         Ok(()) => Ok(()),
         // Another opener (thread or process) won the race, or it already existed.
         Err(e) if e.kind() == ErrorKind::AlreadyExists && directory.is_dir() => Ok(()),
@@ -380,6 +391,7 @@ mod tests {
         assert_eq!(version, FORMAT_VERSION);
     }
 
+    #[cfg(unix)]
     #[test]
     fn directory_is_created_owner_only_and_existing_ones_are_left_alone() {
         use std::os::unix::fs::PermissionsExt;

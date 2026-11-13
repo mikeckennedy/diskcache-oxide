@@ -1,0 +1,98 @@
+# AMD Ryzen 7 3700X, 8 cores (16 threads), 16 GB, Windows 10 22H2 (build 19045), NTFS, Defender real-time protection on, desktop on AC power, nothing else heavy running. diskcache-oxide a44fd51 plus the bench.baseline gc fix (plan 25, step 5), 2026-11-12. The cp314t PGO wheel from scripts/build_pgo.ps1, the build that ships.
+Exception in thread Thread-10 (worker):
+Traceback (most recent call last):
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1083, in _bootstrap_inner
+    self._context.run(self.run)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1025, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\bench\baseline.py", line 364, in worker
+    set_(key, value)
+    ~~~~^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Local\Temp\claude\pgo-gate-ft\Lib\site-packages\diskcache\core.py", line 796, in set
+    with self._transact(retry, filename) as (sql, cleanup):
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "C:\Users\mkenn\AppData\Local\Temp\claude\pgo-gate-ft\Lib\site-packages\diskcache\core.py", line 730, in _transact
+    raise Timeout from None
+diskcache.core.Timeout
+round 1/4: diskcache done
+round 1/4: oxide done
+Exception in thread Thread-15 (worker):
+Traceback (most recent call last):
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1083, in _bootstrap_inner
+    self._context.run(self.run)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1025, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\bench\baseline.py", line 364, in worker
+    set_(key, value)
+    ~~~~^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Local\Temp\claude\pgo-gate-ft\Lib\site-packages\diskcache\core.py", line 796, in set
+    with self._transact(retry, filename) as (sql, cleanup):
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "C:\Users\mkenn\AppData\Local\Temp\claude\pgo-gate-ft\Lib\site-packages\diskcache\core.py", line 730, in _transact
+    raise Timeout from None
+diskcache.core.Timeout
+round 2/4: diskcache done
+round 2/4: oxide done
+Exception in thread Thread-10 (worker):
+Traceback (most recent call last):
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1083, in _bootstrap_inner
+    self._context.run(self.run)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1025, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\bench\baseline.py", line 364, in worker
+    set_(key, value)
+    ~~~~^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Local\Temp\claude\pgo-gate-ft\Lib\site-packages\diskcache\core.py", line 796, in set
+    with self._transact(retry, filename) as (sql, cleanup):
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "C:\Users\mkenn\AppData\Local\Temp\claude\pgo-gate-ft\Lib\site-packages\diskcache\core.py", line 730, in _transact
+    raise Timeout from None
+diskcache.core.Timeout
+round 3/4: diskcache done
+round 3/4: oxide done
+round 4/4: diskcache done
+round 4/4: oxide done
+
+Python 3.14.10 (free-threaded), 4 interleaved rounds, tolerance 1.05x
+
+workload                     variant          p50 us / ops  vs diskcache  verdict
+get_hit_small                diskcache               6.946
+get_hit_small                oxide                   3.559         0.51x  pass (target <= 0.55x)
+get_miss                     diskcache               5.611
+get_miss                     oxide                   3.131         0.56x  pass
+get_hit_small_dict           diskcache               9.984
+get_hit_small_dict           oxide                   4.832         0.48x  pass
+set_small                    diskcache              95.601
+set_small                    oxide                  69.473         0.73x  pass (target <= 0.85x)
+get_random_wide              diskcache              15.457
+get_random_wide              oxide                  14.968         0.97x  pass
+threads_99to1 x1             diskcache         113,970.664
+threads_99to1 x1             oxide             182,306.958         1.60x  pass
+threads_99to1 x2             diskcache         143,956.550
+threads_99to1 x2             oxide             219,933.059         1.53x  pass
+threads_99to1 x4             diskcache         134,282.014
+threads_99to1 x4             oxide             292,889.831         2.18x  pass
+threads_99to1 x8             diskcache         132,149.907
+threads_99to1 x8             oxide             346,821.369         2.62x  pass
+threads_1000to1 x1           diskcache         126,136.472
+threads_1000to1 x1           oxide             201,823.227         1.60x  pass
+threads_1000to1 x2           diskcache         206,429.151
+threads_1000to1 x2           oxide             331,439.635         1.61x  pass
+threads_1000to1 x4           diskcache         287,441.214
+threads_1000to1 x4           oxide             476,780.240         1.66x  pass
+threads_1000to1 x8           diskcache         377,297.129
+threads_1000to1 x8           oxide             606,935.158         1.61x  pass
+
+oxide: GO

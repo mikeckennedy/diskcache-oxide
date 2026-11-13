@@ -20,6 +20,7 @@ from tests.conformance import proc_workers
 from tests.conformance.backends import Backend
 from tests.conformance.proc_workers import SqlitePeer
 from tests.conformance.test_threads import _stable_fds_inside, _threads_held
+from tests.platforms import unix_only
 
 pytestmark = [pytest.mark.requires('fanout'), pytest.mark.timeout(60)]
 
@@ -242,6 +243,7 @@ def _fds_held(cache: Any, cache_dir: Path) -> int:
         return _stable_fds_inside(cache_dir)
 
 
+@unix_only('counts file descriptors; Windows has handles')
 @pytest.mark.diverges(
     backend='diskcache',
     ref='D-037',
@@ -256,6 +258,7 @@ def test_peak_fds_bounded_by_the_shard_budget(make_fanout: Callable[..., Any], c
     assert peak <= 2 * (2 * shards) + 2 * shards, f'{peak} fds open inside the root with {FD_THREADS} threads'
 
 
+@unix_only('counts file descriptors; Windows has handles')
 @pytest.mark.diverges(
     backend='diskcache',
     ref='D-018',

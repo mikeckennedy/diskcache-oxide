@@ -174,6 +174,11 @@ impl FanoutCache {
         self.shards.iter().map(|h| h.store.handles()).collect()
     }
 
+    /// Test hook: value files each shard's unlinks couldn't remove, in shard order.
+    fn _left_value_files(&self) -> Vec<u64> {
+        self.shards.iter().map(|h| h.store.left_files()).collect()
+    }
+
     fn __repr__(&self) -> String {
         format!("FanoutCache({:?}, shards={})", self.config.directory, self.shards.len())
     }
@@ -1202,6 +1207,7 @@ impl Drop for FanoutCache {
 /// About how many file descriptors opening one shard takes: its pin, the connection the open
 /// seeds the pool with (the database and its `-wal`), and the shared `-shm`. Each further pooled
 /// connection a shard opens in use adds two more.
+#[cfg(unix)]
 const FDS_PER_SHARD: u64 = 4;
 
 /// The exception a failed open raises. An I/O failure opening a shard when this process can't
@@ -1209,6 +1215,7 @@ const FDS_PER_SHARD: u64 = 4;
 /// only as "unable to open database file": say so, with the numbers, and keep SQLite's as the
 /// cause. The check runs after the failed open has released its shards, so it compares the
 /// limit with what is open now plus what the shards need, not with a count taken mid-failure.
+#[cfg(unix)]
 fn open_error(py: Python<'_>, error: Error, shards: Option<u32>) -> PyErr {
     let Some(message) = shards.and_then(|shards| fd_shortfall(&error, shards)) else { return to_py_err(error) };
     let raised = pyo3::exceptions::PyOSError::new_err((libc::EMFILE, message));
@@ -1216,7 +1223,15 @@ fn open_error(py: Python<'_>, error: Error, shards: Option<u32>) -> PyErr {
     raised
 }
 
+/// The exception a failed open raises. Windows has no per-process open-file limit to explain
+/// (SQLite and std use Win32 handles, limited only by memory), so it's the plain error.
+#[cfg(not(unix))]
+fn open_error(_py: Python<'_>, error: Error, _shards: Option<u32>) -> PyErr {
+    to_py_err(error)
+}
+
 /// The message for an open that failed for want of file descriptors, or `None` if that's not it.
+#[cfg(unix)]
 fn fd_shortfall(error: &Error, shards: u32) -> Option<String> {
     let io = match error {
         Error::SqliteIo { .. } => true,
@@ -1240,6 +1255,7 @@ fn fd_shortfall(error: &Error, shards: u32) -> Option<String> {
 }
 
 /// This process's soft limit on open files, if it has a finite one.
+#[cfg(unix)]
 #[allow(unsafe_code)]
 fn soft_fd_limit() -> Option<u64> {
     let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
@@ -1249,6 +1265,7 @@ fn soft_fd_limit() -> Option<u64> {
 }
 
 /// How many file descriptors this process has open now (its `/dev/fd` entries).
+#[cfg(unix)]
 fn open_fds() -> Option<u64> {
     let dir = if cfg!(target_os = "linux") { "/proc/self/fd" } else { "/dev/fd" };
     std::fs::read_dir(dir).ok().map(|entries| entries.count() as u64)

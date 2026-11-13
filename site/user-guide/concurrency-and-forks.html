@@ -723,6 +723,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="forks" class="level1">
 <h1>Forks</h1>
+<p>This section is about macOS and Linux. Windows has no <code>fork()</code>: there <code>multiprocessing</code> starts every worker fresh, each opens its own handle, and nothing here applies.</p>
 <p>Pre-forking servers (gunicorn, Celery’s prefork pool, <code>multiprocessing</code> with the fork start method) create workers with <code>fork()</code>, which copies the whole process. Picture a thread halfway through a write at the instant the server forks. The child is a photocopy of the parent, SQLite’s note that this process holds the write lock included. But only the forking thread exists in the child, so the thread that was going to release that lock isn’t there. In diskcache, that child’s first write waits for a ghost: it stalls for the full timeout (60 seconds by default). Under a busy read/write load, that hits 20-50% of forks.</p>
 <p>diskcache-oxide prevents it with a <strong>fork barrier</strong>, a crossing guard installed when <code>diskcache_oxide</code> is imported. It stops traffic in a specific order:</p>
 <ol type="1">

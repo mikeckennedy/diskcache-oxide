@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import statistics
@@ -26,6 +27,12 @@ import sys
 import tempfile
 import threading
 import time
+
+
+def load1() -> float:
+    """The one-minute load average; Windows has none."""
+    return math.nan if sys.platform == 'win32' else os.getloadavg()[0]
+
 
 N = 60_000
 KEYS = [f'https://talkpython.fm/static/img/{i:05d}/cover.webp?{i}' for i in range(700)]
@@ -143,7 +150,7 @@ def main() -> None:
     results: dict[str, list[dict]] = {name: [] for name, _, _ in arms}
     loads = []
     for r in range(a.rounds):
-        loads.append(round(os.getloadavg()[0], 2))
+        loads.append(round(load1(), 2))
         for name, python, overrides in arms:
             env = {k: v for k, v in os.environ.items() if not k.startswith('DCO_')}
             env.update(overrides)
@@ -157,7 +164,7 @@ def main() -> None:
             mutex = row.pop('mutex')
             results[name].append(row)
             line = ', '.join(f'{k} {v:,.0f}' for k, v in row.items())
-            print(f'round {r + 1} {name:>8} (mutex {mutex}, load {os.getloadavg()[0]:.1f}): {line}', flush=True)
+            print(f'round {r + 1} {name:>8} (mutex {mutex}, load {load1():.1f}): {line}', flush=True)
     names = [name for name, _, _ in arms]
     print(f'\nMedian (min-max) of {a.rounds} rounds, thousands of gets/s; 1-min load before each round: {loads}')
     print('| Case | ' + ' | '.join(names) + ' |')

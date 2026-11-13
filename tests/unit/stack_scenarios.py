@@ -20,7 +20,8 @@ from typing import Any
 
 from diskcache_oxide import Cache, _core
 
-SMALL_STACK = max(64 * 1024, os.sysconf('SC_THREAD_STACK_MIN'))  # glibc on aarch64 refuses under 128 KiB
+# glibc on aarch64 refuses under 128 KiB. Windows has no sysconf; its floor (32 KiB) is under 64 KiB.
+SMALL_STACK = 64 * 1024 if sys.platform == 'win32' else max(64 * 1024, os.sysconf('SC_THREAD_STACK_MIN'))
 WATCHDOG = 40.0
 MSGPACK_MODE = 3
 SERIALIZERS = ('msgpack', 'json')

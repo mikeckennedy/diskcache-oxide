@@ -216,6 +216,7 @@ def hook_reraising_clears_the_cycle(directory: Path) -> None:
 def rlimit_fsize(directory: Path) -> None:
     """A real I/O failure: `RLIMIT_FSIZE` in a forked child, with `SIGXFSZ` ignored, so a write past the
     limit is `EFBIG`. A spilled value fails on its file, and a small one on the WAL."""
+    assert sys.platform != 'win32'
     import resource
 
     c = Cache(directory / 'c', durable=True)
@@ -272,6 +273,7 @@ def rlimit_fsize(directory: Path) -> None:
 def fork_inside_a_hold(directory: Path) -> None:
     """A child forked inside a transaction can't write that database (D-020), and can't use the
     transaction: both are `RuntimeError`s on a plain handle and a miss or False on a durable one."""
+    assert sys.platform != 'win32'
     import warnings
 
     c = Cache(directory / 'c', durable=True)

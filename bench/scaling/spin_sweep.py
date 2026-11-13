@@ -65,7 +65,8 @@ def child(tmp: str, threads: list[int], fanout: list[int], phase: list[int]) -> 
     assert not _core._DEBUG_BUILD, 'measure a release build'
     budget = getattr(_core, '_SWEEP_SPIN_BUDGET', None)
     assert budget is not None, 'not a sweep build (RUSTFLAGS="--cfg dco_spin_sweep")'
-    assert _core._sqlite_mutex_status() == 'installed'
+    # The sweep tunes our mutex spin, which Windows doesn't install (plan 25).
+    assert _core._sqlite_mutex_status() == 'installed', 'the spin sweep needs our mutex methods (Unix only)'
     policy = list(getattr(_core, '_SWEEP_SPIN_POLICY', ()))
     slot_waits = getattr(_core, '_sweep_slot_waits', lambda: -1)
 

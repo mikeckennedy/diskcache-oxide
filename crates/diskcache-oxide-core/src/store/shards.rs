@@ -289,12 +289,11 @@ mod tests {
 
     #[test]
     fn shard_directories_are_private_and_a_file_in_their_place_is_an_error() {
-        use std::os::unix::fs::PermissionsExt;
         let tmp = TempDir::new("shards-mode");
         let stores = open(&base(tmp.path()), Some(2)).unwrap();
         for name in ["000", "001"] {
-            let mode = std::fs::metadata(tmp.path().join(name)).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o700, "shard {name} isn't owner-only (D-015)");
+            // Owner-only (D-015) on Unix.
+            crate::testutil::assert_dir_mode(&tmp.path().join(name), 0o700);
         }
         close(&stores);
         let other = TempDir::new("shards-file");

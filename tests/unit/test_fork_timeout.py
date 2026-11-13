@@ -15,12 +15,14 @@ from pathlib import Path
 import pytest
 from diskcache_oxide import Cache
 
+from tests.platforms import unix_only
 from tests.unit.fork_timeout_scenarios import SCENARIOS, fds_inside
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GIL_ONLY = {'ticker-gap'}
 
 
+@unix_only('fork')
 @pytest.mark.parametrize('scenario', sorted(SCENARIOS))
 def test_stuck_fork_scenario(scenario: str, tmp_path: Path) -> None:
     if scenario in GIL_ONLY and not sys._is_gil_enabled():
@@ -41,6 +43,7 @@ def test_stuck_fork_scenario(scenario: str, tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
 
 
+@unix_only('counts file descriptors; Windows has handles')
 def test_racing_reopens_and_closes_keep_the_handle_count(tmp_path: Path) -> None:
     """`ensure_open` loads the closed flag and flips it under a gate level: N threads reopening and
     closing one handle end with the right count, and D-018 clean."""

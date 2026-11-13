@@ -66,6 +66,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-055 | [peek()](../reference/Cache.peek.md#diskcache_oxide.Cache.peek), [peekitem()](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem) | Delete expired heads; hang on a missing value file | Write only what [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) would; pass over a missing file |
 | D-056 | [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) | Deletes, then decodes: an unreadable item is lost | Decodes, then deletes: it stays queued |
 | D-057 | [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push) past its range, a bad `side` | Leaves the range, then `IntegrityError`; `KeyError` | `OverflowError`; `ValueError` |
+| D-058 | Windows: deleting or overwriting a large value while it's being read | Leaks its file, outside [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) | Removes it |
 
 
 # Safety
@@ -195,6 +196,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-052:** tags are compared by exact type, as keys are: `1`, `1.0` and `True` are three tags, and a tuple can be one. diskcache compares them through SQLite, so its `evict(1)` removes all three and a `True` tag reads back as `1`. `tag=` is keyword-only on [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) and [add](../reference/Cache.add.md#diskcache_oxide.Cache.add).
 - **D-053:** under `eviction_policy='none'`, [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) returns how many expired entries it removed; diskcache's returns 0 (upstream bug 15).
 - **D-054 to D-057:** the queue calls. A queue's items are only keys of its exact shape, so floats, ordinary keys that share the prefix and nested queues never mix in (upstream bugs 17 and 18); [peek()](../reference/Cache.peek.md#diskcache_oxide.Cache.peek) and [peekitem()](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem) write only what [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) would and never hang on a missing value file (bug 16); [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) decodes before it deletes, on every path, so an item this process can't read stays queued; and [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push) raises `OverflowError` rather than leave its range or overwrite a key. See [Work queues](../recipes/work-queues.md).
+- **D-058:** on Windows, diskcache can't delete a value file while any reader has it open (Python's `open()` doesn't share delete) and ignores the failure, so the file stays with nothing pointing at it (upstream bug 19); one test left 154 files for 6 entries. diskcache-oxide's readers allow the delete, so nothing leaks.
 - **D-025:** `iter(cache)` and [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 

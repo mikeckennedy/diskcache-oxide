@@ -3,7 +3,7 @@ name: diskcache-oxide
 description: >-
   Use diskcache-oxide, a shared, durable disk cache for Python with a Rust engine, SQLite storage and python-diskcache's API, built for many threads, many worker processes and free-threaded CPython. Use when adding or configuring diskcache_oxide in an app (Cache, FanoutCache, NullCache, Caches), switching code from diskcache, choosing between Cache and FanoutCache or between raising, missing and switching caching off, writing tests around a cache, or when code raises Timeout, TransactionBusy, UnsafeValueError, CorruptValueError, LayoutMismatchError, FormatMismatchError, or "can't be stored without pickle".
 license: MIT
-compatibility: Requires CPython 3.14 or 3.15 (GIL or free-threaded) on macOS or Linux. SQLite is bundled; no runtime dependencies.
+compatibility: Requires CPython 3.14 or 3.15 (GIL or free-threaded) on macOS, Linux or Windows (x86_64). SQLite is bundled; no runtime dependencies.
 ---
 
 # diskcache-oxide
@@ -74,7 +74,7 @@ In tests: `Cache(tmp_path / 'cache')` per test, `NullCache()` where caching must
 - `stats(enable=True, reset=False) -> (hits, misses)` counts `get` and `cache[k]` per process, in memory, never in the database; counting is off until the first `stats()` call turns it on. `check(fix=False, retry=False)` returns a list of `warnings.WarningMessage`; `fix=True` removes broken entries and old orphan files, then `VACUUM`s (slow on a big cache, needs temp space, blocks writers and forks). `reset('size_limit' | 'cull_limit' | 'eviction_policy', value)` persists a setting for every process, and without `value` reads the stored one. `reversed(cache)`, `pop(key, expire_time=True)`, and pickling a cache (it reopens the directory) work.
 - Tags: `set(k, v, tag='user:42')` (`tag=` is keyword-only, any key type, compared by exact type), `get(k, tag=True)` returns `(value, tag)`, and `evict('user:42')` removes every entry that had that tag when it started; an overwrite without `tag=` clears the tag, while `touch`, `incr` and `add` on a live key keep it. `memoize(tag=...)` tags every stored result. `1`, `1.0` and `True` are three tags. `eviction_policy='none'` (keyword-only, stored in the cache) never evicts for size: use it for locks, claims and anything that must not vanish, and give those entries an `expire`. `'least-recently-used'` and `'least-frequently-used'` raise `ValueError`.
 - Queues (`Cache` only, not `FanoutCache`): `push(value, prefix=None, side='back', expire=None, *, tag=None, retry=False)` returns the key; `pull(prefix=None, default=(None, None), side='front', *, expire_time=False, tag=False, retry=False)` returns `(key, value)`, or `(None, None)` when empty, and each item goes to exactly one caller; `peek(...)` the same without removing; `peekitem(last=True, ...)` the newest or oldest entry, `KeyError` when empty. Open a queue's cache with `eviction_policy='none'` (least-recently-stored would evict the queue's front) and use a prefix no other key starts with. `side` must be `'front'` or `'back'` (`ValueError`).
-- Not available yet, so don't generate calls to them: `Deque`, `Index`, `AsyncCache`, `FanoutCache.cache()`/`deque()`/`index()`, `read()`/`read=`, and Windows. LRU/LFU eviction and `disk=` aren't coming.
+- Not available yet, so don't generate calls to them: `Deque`, `Index`, `AsyncCache`, `FanoutCache.cache()`/`deque()`/`index()`, and `read()`/`read=`. LRU/LFU eviction and `disk=` aren't coming.
 
 ## Decision table
 

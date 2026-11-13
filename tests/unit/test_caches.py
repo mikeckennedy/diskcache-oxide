@@ -29,6 +29,7 @@ from diskcache_oxide import (
 from diskcache_oxide import caches as caches_module
 from diskcache_oxide._core import _open_fanout_keeping_stored
 
+from tests.platforms import unix_only
 from tests.unit.spawn_race import race
 
 MiB = 1 << 20
@@ -484,7 +485,9 @@ def test_close_all_and_the_context_manager(base: Path) -> None:
 
 
 @pytest.mark.skipif(not hasattr(os, 'fork'), reason='needs fork')
+@unix_only('fork')
 def test_a_child_forked_during_lookups_can_use_the_registry(base: Path) -> None:
+    assert sys.platform != 'win32'
     caches = Caches(base)
     for i in range(8):
         caches.register(f'c{i}')

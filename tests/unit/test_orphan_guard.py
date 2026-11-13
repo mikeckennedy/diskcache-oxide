@@ -36,11 +36,29 @@ def nap(running: Any) -> None:
 
 
 def _alive(pid: int) -> bool:
+    if sys.platform == 'win32':
+        # os.kill(pid, 0) would terminate the process here; ask whether its handle is signaled.
+        import ctypes
+
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        synchronize, wait_timeout = 0x0010_0000, 0x0000_0102
+        handle = kernel32.OpenProcess(synchronize, False, pid)
+        if not handle:
+            return False
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     return True
+
+
+def _kill(pid: int) -> None:
+    """SIGKILL on Unix; TerminateProcess on Windows, which is what os.kill does there."""
+    os.kill(pid, signal.SIGTERM if sys.platform == 'win32' else signal.SIGKILL)
 
 
 def test_a_spawned_child_exits_when_its_parent_is_killed(tmp_path: Path) -> None:
@@ -57,14 +75,14 @@ def test_a_spawned_child_exits_when_its_parent_is_killed(tmp_path: Path) -> None
         assert parent.stdout is not None
         child = int(parent.stdout.readline())
         assert _alive(child)
-        parent.send_signal(signal.SIGKILL)
+        parent.kill()  # SIGKILL on Unix, TerminateProcess on Windows
         parent.wait(10)
         deadline = time.monotonic() + 10
         while _alive(child) and time.monotonic() < deadline:
             time.sleep(0.05)
         alive = _alive(child)
         if alive:
-            os.kill(child, signal.SIGKILL)
+            _kill(child)
         assert not alive, 'the spawned child outlived its killed parent by 10 s'
     finally:
         if parent.poll() is None:

@@ -20,6 +20,7 @@ from __future__ import annotations
 import collections.abc
 import multiprocessing
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -27,6 +28,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 from diskcache_oxide import Cache
+
+from tests.platforms import unix_only
 
 if TYPE_CHECKING:
     import multiprocessing.synchronize
@@ -484,10 +487,12 @@ def test_checkpoint_takes_its_own_timeout(tmp_path: Path) -> None:
     cache.close()
 
 
+@unix_only('fork')
 def test_a_fork_never_checkpoints_the_wal(tmp_path: Path) -> None:
     # The before-fork hook closes every idle connection. With no other process on the file, the
     # last close used to make SQLite checkpoint and delete the WAL right there, with every other
     # thread of the process waiting behind the fork. Now the WAL stays as it was.
+    assert sys.platform != 'win32'
     import os
     import warnings
 

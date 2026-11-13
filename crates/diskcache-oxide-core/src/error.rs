@@ -32,8 +32,9 @@ pub enum Error {
     /// `SQLITE_CANTOPEN`, `SQLITE_PERM` and `SQLITE_NOLFS`.
     #[error("SQLite I/O error: {source}")]
     SqliteIo {
-        /// The OS error behind it, where known. rusqlite has no safe `sqlite3_system_errno`, so
-        /// [`Error::from_sqlite`] leaves it `None`.
+        /// The OS error behind it, where known: an errno on Unix, a Win32 error code on Windows
+        /// (SQLite's system errno there is `GetLastError()`). rusqlite has no safe
+        /// `sqlite3_system_errno`, so [`Error::from_sqlite`] leaves it `None`.
         errno: Option<i32>,
         #[source]
         source: rusqlite::Error,

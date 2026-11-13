@@ -527,6 +527,9 @@ for exc in (ValueError, None):
         assert exc is not None
     zero('the owner exiting after a cross-thread end')
 
+if not hasattr(os, 'fork'):
+    raise SystemExit(0)  # Windows: the last case needs fork; every case above ran.
+
 # Parked and drained: the owner forks inside its block, the fork waits for another thread's
 # transaction, and a third thread's rollback can't get in behind the owner's fork, so it parks; the
 # drain at the end of the fork rolls it back.

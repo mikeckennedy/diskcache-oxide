@@ -29,7 +29,6 @@
 //! slot counter all recognize the new [process generation](crate::gate::generation).
 
 use std::cell::{Cell, RefCell};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
@@ -179,6 +178,9 @@ pub struct Store {
     /// Handles closed behind a stuck fork, still counted in `handles`, for the drain to release (see
     /// [`Store::release_handle`]).
     deferred_releases: AtomicUsize,
+    /// Value files an unlink couldn't remove, even after retrying a Windows sharing violation (plan 25,
+    /// R-M7): each is left with no row, outside the totals, until `check(fix=True)`.
+    left_files: AtomicU64,
     /// Cached copies of the persisted limits, for the attribute getters only. Write paths read the
     /// current values inside their transaction.
     size_limit: AtomicI64,
@@ -458,7 +460,7 @@ impl Store {
         }
 
         // Before the retry, so the gate level below isn't kept across it.
-        let canonical = std::fs::canonicalize(&options.directory).unwrap_or_else(|_| options.directory.clone());
+        let canonical = canonical_directory(&options.directory);
 
         // Open outside the registry lock (the open sequence may wait on other processes). Then, if
         // another thread registered a live store for the file meanwhile (two first opens racing),
@@ -488,7 +490,7 @@ impl Store {
             open_race::after_prepare(&options.directory);
             if let Some(id) = conn_file {
                 let stores = registry(&gate);
-                if let Some(store) = Self::claim_live(&stores, id) {
+                if let Some(store) = Self::claim_live(&stores, id, directory_check(&canonical)) {
                     drop(stores);
                     // The claim is the closure's last fallible step, so `retry` never runs it twice.
                     store.adopt(&gate, conn, generation, options.max_connections);
@@ -557,6 +559,7 @@ impl Store {
             wal_path: db_path.with_extension("sqlite-wal"),
             handles: AtomicIsize::new(1),
             deferred_releases: AtomicUsize::new(0),
+            left_files: AtomicU64::new(0),
             size_limit: AtomicI64::new(limits.size_limit),
             cull_limit: AtomicI64::new(limits.cull_limit),
             eviction_policy: AtomicI64::new(limits.eviction_policy.code()),
@@ -576,17 +579,31 @@ impl Store {
     /// A live store for `db_path`, with one more handle registered on it. A retired one is left to
     /// the slow path, which has the pinned file to revive it with. Times out with no handle claimed.
     fn lookup(db_path: &Path, deadline: Instant) -> Result<Option<Arc<Self>>> {
-        let Ok(metadata) = std::fs::metadata(db_path) else { return Ok(None) };
-        let id = (metadata.dev(), metadata.ino());
+        let Ok(id) = file_id(db_path) else { return Ok(None) };
+        // Windows matches on the directory too (see `directory_check`).
+        #[cfg(windows)]
+        let Some(canonical) = db_path.parent().map(canonical_directory) else {
+            return Ok(None);
+        };
+        #[cfg(windows)]
+        let directory = Some(canonical.as_path());
+        #[cfg(not(windows))]
+        let directory = None;
         let gate = enter_until(deadline)?;
         let stores = registry(&gate);
-        Ok(Self::claim_live(&stores, id))
+        Ok(Self::claim_live(&stores, id, directory))
     }
 
-    /// The live store for the file `id`, with one more handle registered on it, or None. A live store
-    /// already has its pin, so the claim takes none and hands none back.
-    fn claim_live(stores: &MutexGuard<'_, Vec<Weak<Self>>>, id: FileId) -> Option<Arc<Self>> {
-        let store = stores.iter().filter_map(Weak::upgrade).find(|s| s.file_id == id && !s.is_retired())?;
+    /// Whether this store is for the database `id`, in the directory `canonical` when one is given
+    /// (see [`directory_check`]).
+    fn is_for(&self, id: FileId, canonical: Option<&Path>) -> bool {
+        self.file_id == id && canonical.is_none_or(|dir| self.canonical == dir)
+    }
+
+    /// The live store for the file `id` (in `canonical`, if given), with one more handle registered
+    /// on it, or None. A live store already has its pin, so the claim takes none and hands none back.
+    fn claim_live(stores: &MutexGuard<'_, Vec<Weak<Self>>>, id: FileId, canonical: Option<&Path>) -> Option<Arc<Self>> {
+        let store = stores.iter().filter_map(Weak::upgrade).find(|s| s.is_for(id, canonical) && !s.is_retired())?;
         let (_, unused) = store.claim(stores, None);
         debug_assert!(unused.is_none(), "a live store handed back a pin it was never given");
         Some(store)
@@ -611,14 +628,20 @@ impl Store {
         }
     }
 
-    /// The store for `file_id` in `stores`: a live one, else a retired one for the same directory
-    /// (`canonical`, resolved). A retired store no longer pins its inode, so a file elsewhere may
-    /// have reused the number; only the same directory makes it the same cache.
+    /// The store for `file_id` in `stores`: a live one (in the same directory too, on Windows; see
+    /// [`directory_check`]), else a retired one for the same directory (`canonical`, resolved). A
+    /// retired store no longer pins its inode, so a file elsewhere may have reused the number; only
+    /// the same directory makes it the same cache.
     fn find(stores: &[Weak<Self>], file_id: FileId, canonical: &Path) -> Option<Arc<Self>> {
         let mut retired = None;
+        let live_directory = directory_check(canonical);
         for store in stores.iter().filter_map(Weak::upgrade).filter(|s| s.file_id == file_id) {
             if !store.is_retired() {
-                return Some(store);
+                if store.is_for(file_id, live_directory) {
+                    return Some(store);
+                }
+                // Windows only: another directory's file with the same 64-bit index (R-M6).
+                continue;
             }
             // Prefer one still in use by path (handles > 0), so it isn't left serving the file
             // beside another.
@@ -1067,12 +1090,24 @@ impl Store {
     /// interpreter back can wait out the switch interval behind busy threads (a one-file `delete`
     /// measured 27 ms detached against 4 spinning threads).
     /// A name that isn't one `spill` writes (a damaged row) unlinks nothing ([`spill::value_path`]).
+    ///
+    /// Windows: another program holding a file for a moment (antivirus, the indexer, a backup) makes
+    /// its unlink a sharing violation. Those are tried again, together, within about 50 ms for the whole call, always with the
+    /// interpreter released (R-M7). A file still left, there or for any other reason, is counted
+    /// ([`Store::left_files`]).
     pub(crate) fn unlink(&self, files: impl IntoIterator<Item = String>) {
         let paths: Vec<PathBuf> =
             files.into_iter().filter_map(|relative| spill::value_path(&self.directory, &relative)).collect();
+        let blocked = Mutex::new(Vec::new());
         let work = || {
             for path in &paths {
-                let _ = std::fs::remove_file(path);
+                match std::fs::remove_file(path) {
+                    Err(e) if crate::os_error::is_sharing_violation(&e) => {
+                        blocked.lock().unwrap_or_else(PoisonError::into_inner).push(path);
+                    }
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => self.count_left_file(),
+                    _ => {}
+                }
             }
         };
         if paths.len() < UNLINK_DETACH_AT {
@@ -1080,6 +1115,32 @@ impl Store {
         } else {
             gate::run_blocking(&work);
         }
+        let blocked = blocked.into_inner().unwrap_or_else(PoisonError::into_inner);
+        if !blocked.is_empty() {
+            // One budget for the whole batch: a `clear()` over many held files waits about 50 ms, not
+            // 50 ms for each.
+            gate::run_blocking(&|| {
+                for (_, e) in
+                    crate::os_error::retry_sharing_violations_each(&blocked, |path| std::fs::remove_file(path))
+                {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        self.count_left_file();
+                    }
+                }
+            });
+        }
+    }
+
+    fn count_left_file(&self) {
+        self.left_files.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How many value files this store's unlinks couldn't remove: on Windows, another program still
+    /// holding one after about 50 ms of retries (plan 25, R-M7), or any other failed unlink. Each is
+    /// left with no row until `check(fix=True)`.
+    #[must_use]
+    pub fn left_files(&self) -> u64 {
+        self.left_files.load(Ordering::Relaxed)
     }
 
     /// The write path outside a held transaction, after step 0 of `Store::write_files`.
@@ -2035,24 +2096,64 @@ enum Opening {
     },
 }
 
-/// The `(dev, ino)` of the file at `path` now, or None if there's none.
-fn file_id_at(path: &Path) -> Option<FileId> {
-    std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
+/// The identity of the file at `path`, the only place a [`FileId`] is made. Unix: `(st_dev,
+/// st_ino)`. Windows: the volume serial number and the 64-bit file index from
+/// `GetFileInformationByHandle` (std's accessors for them are unstable). On NTFS the index carries
+/// a sequence number, so it's stronger than an inode; on `ReFS` it isn't promised unique, which is
+/// why Windows also matches a store's directory (see [`directory_check`]).
+fn file_id(path: &Path) -> std::io::Result<FileId> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(path)?;
+        Ok((metadata.dev(), metadata.ino()))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Opened as std's `metadata` opens it: no data access, so no sharing conflict with SQLite's
+        // handles, and std shares delete, so this never blocks one.
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        let file = std::fs::OpenOptions::new().access_mode(0).custom_flags(FILE_FLAG_BACKUP_SEMANTICS).open(path)?;
+        let info = winapi_util::file::information(&file)?;
+        Ok((info.volume_serial_number(), info.file_index()))
+    }
 }
 
-/// Opens a store's pin on its database file, and the file's id. The pin is a SQLite connection that
-/// never runs a statement, not a plain `File`: closing any descriptor on a file drops every POSIX
-/// lock the process holds on it, SQLite's included. SQLite's own descriptors share its per-file
-/// lock record, so it defers closing one while another connection holds a lock; a `File` it doesn't
-/// know about would drop them. The id is read before and after the open, so it's the file the pin
-/// holds. Opened under the gate (`_gate` is the proof), like every connection; a read-only open
-/// that runs no statement takes no lock and never waits.
+/// The id of the file at `path` now, or None if there's none.
+fn file_id_at(path: &Path) -> Option<FileId> {
+    file_id(path).ok()
+}
+
+/// The directory a live store must also match to serve a database whose file id matches: none on
+/// Unix, where a live store pins its inode so the number can't be reused; `canonical` on Windows,
+/// since `ReFS` (Dev Drive) doesn't promise the 64-bit file index is unique (R-M6, plan 25). The
+/// cost on Windows: a database hard-linked into two directories gets a store per directory, which
+/// SQLite's file locks still serialize.
+fn directory_check(canonical: &Path) -> Option<&Path> {
+    cfg!(windows).then_some(canonical)
+}
+
+/// The directory's canonical path, as a store records it and a Windows lookup matches it, or the
+/// path as given if it can't be canonicalized (it may not exist yet). Windows falls back to the
+/// absolute path first: some filesystems there can't canonicalize at all (some RAM disks, VM shared
+/// folders, network redirectors), and a store and its lookups must still agree on one spelling.
+fn canonical_directory(directory: &Path) -> PathBuf {
+    std::fs::canonicalize(directory)
+        .or_else(|e| if cfg!(windows) { std::path::absolute(directory) } else { Err(e) })
+        .unwrap_or_else(|_| directory.to_path_buf())
+}
+
+/// Opens a store's pin on its database file, and the file's id. On Unix the pin must be a SQLite
+/// connection that never runs a statement, not a plain `File`: closing any descriptor on a file
+/// drops every POSIX lock the process holds on it, SQLite's included. SQLite's own descriptors
+/// share its per-file lock record, so it defers closing one while another connection holds a lock;
+/// a `File` it doesn't know about would drop them. (Windows locks belong to a handle, so there it
+/// just holds the file.) The id is read before and after the open, so it's the file the pin holds.
+/// Opened under the gate (`_gate` is the proof), like every connection; a read-only open that runs
+/// no statement takes no lock and never waits.
 fn open_pin(_gate: &SharedGuard<'_>, db_path: &Path) -> Result<(FilePin, FileId)> {
-    let id = || {
-        std::fs::metadata(db_path)
-            .map(|m| (m.dev(), m.ino()))
-            .map_err(|source| Error::Io { path: db_path.to_path_buf(), source })
-    };
+    let id = || file_id(db_path).map_err(|source| Error::Io { path: db_path.to_path_buf(), source });
     let before = id()?;
     let pin = sqlite::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
         .map_err(|e| Error::from_sqlite(e, Duration::ZERO))?;
@@ -2176,6 +2277,29 @@ mod tests {
                 })
             })
             .unwrap();
+    }
+
+    /// R-L10: a directory whose `-wal` path passes Windows's 260-character `MAX_PATH`. A test binary
+    /// has no long-path-aware manifest, so this is the default Windows machine's case
+    /// (`LongPathsEnabled` off), where only a `\\?\` path reaches past it. 2,000 is past the default
+    /// `win32` VFS's own 1,040-byte limit, which `win32-longpath` lifts.
+    #[test]
+    fn a_store_whose_wal_path_passes_max_path_opens_and_writes() {
+        // macOS caps a whole path at PATH_MAX, 1,024 bytes, so 2,000 can't even be created there.
+        let lengths: &[usize] = if cfg!(target_os = "macos") { &[300] } else { &[300, 2_000] };
+        for &length in lengths {
+            let tmp = TempDir::new("store-long-path");
+            let mut dir = tmp.path().to_path_buf();
+            while dir.join(crate::schema::DB_FILENAME).as_os_str().len() < length {
+                dir.push("a-directory-name-of-forty-characters-xx");
+            }
+            std::fs::create_dir_all(&dir).unwrap();
+            let store = Store::open(&options(&dir)).unwrap();
+            put(&store, "k", &[7; 100]);
+            assert_eq!(count(&store), 1, "{length}");
+            assert!(dir.join(format!("{}-wal", crate::schema::DB_FILENAME)).exists(), "{length}");
+            store.release_handle();
+        }
     }
 
     fn add_handle(store: &Store) {
@@ -2384,10 +2508,7 @@ mod tests {
     fn old_empty_dir(dir: &Path, name: &str) {
         let path = dir.join(name);
         std::fs::create_dir(&path).unwrap();
-        std::fs::File::open(&path)
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() - Duration::from_secs(120))
-            .unwrap();
+        crate::testutil::set_mtime(&path, std::time::SystemTime::now() - Duration::from_secs(120));
     }
 
     #[test]
@@ -2631,6 +2752,19 @@ mod tests {
         let elsewhere = tmp.path().join("elsewhere");
         assert!(Store::find(&stores, first.file_id, &elsewhere).is_none(), "an inode number reused elsewhere");
         assert!(Store::find(&stores, first.file_id, &first.canonical).is_some());
+    }
+
+    #[test]
+    fn a_live_store_is_found_by_file_id_alone_only_on_unix() {
+        // On Windows a 64-bit file index can repeat across directories on ReFS (R-M6, plan 25), so
+        // a live store there must be in the same directory too.
+        let tmp = TempDir::new("store-live-other");
+        let first = Store::open(&options(tmp.path())).unwrap();
+        let stores = [Arc::downgrade(&first)];
+        let elsewhere = tmp.path().join("elsewhere");
+        assert_eq!(Store::find(&stores, first.file_id, &elsewhere).is_some(), cfg!(unix));
+        assert!(Store::find(&stores, first.file_id, &first.canonical).is_some());
+        first.release_handle();
     }
 
     #[test]

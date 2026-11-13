@@ -10,6 +10,7 @@ across a `FanoutCache`'s shards.
 from __future__ import annotations
 
 import signal
+import sys
 import threading
 import time
 from collections.abc import Generator
@@ -68,16 +69,20 @@ class Interrupted(Exception):
     pass
 
 
+# Windows has no SIGUSR1; SIGINT is the signal a Windows user sends (Ctrl+C), restored after each test.
+INTERRUPT = signal.SIGINT if sys.platform == 'win32' else signal.SIGUSR1
+
+
 def test_a_signal_ends_a_retry_that_would_never_get_through(tmp_path: Path) -> None:
     def interrupt(signum: int, frame: Any) -> None:
         raise Interrupted
 
-    previous = signal.signal(signal.SIGUSR1, interrupt)
+    previous = signal.signal(INTERRUPT, interrupt)
     try:
         with Cache(tmp_path, timeout=0.05) as cache, SqlitePeer(tmp_path / DB) as peer:
             cache.set('k', 'v')
             peer.begin('IMMEDIATE')
-            timer = threading.Timer(0.3, signal.raise_signal, (signal.SIGUSR1,))
+            timer = threading.Timer(0.3, signal.raise_signal, (INTERRUPT,))
             timer.start()
             start = time.monotonic()
             with pytest.raises(Interrupted):
@@ -86,7 +91,7 @@ def test_a_signal_ends_a_retry_that_would_never_get_through(tmp_path: Path) -> N
             timer.join()
             peer.rollback()
     finally:
-        signal.signal(signal.SIGUSR1, previous)
+        signal.signal(INTERRUPT, previous)
 
 
 def test_a_retry_with_no_timeout_does_not_spin(tmp_path: Path) -> None:

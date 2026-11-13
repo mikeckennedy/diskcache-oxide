@@ -29,6 +29,7 @@ import inspect
 import math
 import os
 import random
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -55,8 +56,10 @@ def _renew_nonce() -> None:
     _NONCE = _new_nonce()
 
 
-# A forked child is another owner: it can neither re-enter nor release its parent's RLock.
-os.register_at_fork(after_in_child=_renew_nonce)
+# A forked child is another owner: it can neither re-enter nor release its parent's RLock. Windows
+# has no fork (or `register_at_fork`); a spawned child imports this module afresh and draws its own.
+if sys.platform != 'win32':
+    os.register_at_fork(after_in_child=_renew_nonce)
 
 
 def _coordinating(cache: Any, what: str) -> None:

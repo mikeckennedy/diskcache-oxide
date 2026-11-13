@@ -9,11 +9,17 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-# SQLite's mutex methods (src/sqlite_mutex.rs) are pthread mutexes.
-libc.workspace = true
+getrandom.workspace = true
 rusqlite.workspace = true
 thiserror.workspace = true
 xxhash-rust.workspace = true
+
+# SQLite's mutex methods (src/sqlite_mutex.rs) are pthread mutexes; Windows uses SQLite's own.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winapi-util.workspace = true
 
 # Only under `--cfg shuttle`, which swaps the gate's and the write lock's primitives for shuttle's
 # (src/sync.rs); see scripts/model-check.sh.

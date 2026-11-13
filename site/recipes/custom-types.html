@@ -680,7 +680,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="the-standard-librarys-types" class="level1">
 <h1>The standard library’s types</h1>
 <p><code>uuid.UUID</code>, <code>datetime.timedelta</code> and <code>pathlib.Path</code> aren’t built-in types to the codec. Each needs an <code>encode</code> that turns an instance into something storable and a <code>decode</code> that turns it back:</p>
-<div id="b17e3710" class="cell" data-execution_count="1">
+<div id="8d48e248" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> datetime</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pathlib</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
@@ -705,7 +705,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="enums" class="level1">
 <h1>Enums</h1>
 <p>Store the value, and let the enum class turn it back into a member. A <code>StrEnum</code> or <code>IntEnum</code> is a subclass of <code>str</code> or <code>int</code>, and a subclass is never stored as its base, so it needs this too:</p>
-<div id="bfa5c3be" class="cell" data-execution_count="2">
+<div id="695c98af" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> enum</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Plan(enum.StrEnum):</span>
@@ -724,7 +724,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="dataclasses" class="level1">
 <h1>Dataclasses</h1>
 <p>A dataclass needs only a name. Its fields are stored and it’s rebuilt with <code>cls(**fields)</code>, so defaults and <code>__post_init__</code> run. Fields can hold other registered types, nested as deep as you like:</p>
-<div id="fba23d16" class="cell" data-execution_count="3">
+<div id="42931fe5" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> dataclasses</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclasses.dataclass</span></span>
@@ -759,7 +759,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="values-only-never-keys" class="level1">
 <h1>Values only, never keys</h1>
 <p>A registration teaches the codec to store a type as a value. Keys, tags and the arguments of a <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>d function are a separate, fixed set of types (<code>str</code>, <code>bytes</code>, <code>int</code>, <code>float</code>, <code>bool</code>, <code>None</code> and tuples of those), compared by exact type, and registering a class doesn’t add it to that set. A <code>UUID</code>, a <code>Plan</code> member (even though it’s a <code>StrEnum</code>) or an <code>Invoice</code> as a key raises <code>TypeError</code>. Convert at the edge, to the identifier the key needs:</p>
-<div id="eaec5da7" class="cell" data-execution_count="4">
+<div id="920be90d" class="cell" data-execution_count="4">
 <div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>invoice <span class="op">=</span> cache.get(<span class="st">'invoice:latest'</span>)</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span>:</span>
