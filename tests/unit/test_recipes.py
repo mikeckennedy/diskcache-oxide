@@ -26,6 +26,8 @@ from diskcache_oxide import (
     throttle,
 )
 
+from tests.platforms import unix_only
+
 COORDINATION = [
     pytest.param(lambda c: Lock(c, 'k'), id='Lock'),
     pytest.param(lambda c: RLock(c, 'k'), id='RLock'),
@@ -171,6 +173,7 @@ def test_mutual_exclusion_across_processes(tmp_path: Path, recipe: str) -> None:
     assert seen == ['done'] * 4, seen
 
 
+@unix_only('fork')
 def test_an_rlock_held_by_the_parent_is_not_the_childs(tmp_path: Path) -> None:
     proc = subprocess.run(
         [sys.executable, '-m', 'tests.unit.fork_scenarios', 'rlock-after-fork', str(tmp_path / 'c')],

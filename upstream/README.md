@@ -102,3 +102,7 @@ Both read the head in a loop: if the value file can't be read they `continue`, b
 ## 18. Nested queue prefixes cross
 
 `'q-1-500000000000000'`, an item of the queue `'q-1'`, lies between `'q-000000000000000'` and `'q-999999999999999'`, so `pull(prefix='q')` takes it. Found with bug 16; repro: `repros/queue_nested_prefixes_cross.py`. **Impact:** consumers of one queue silently take another queue's items.
+
+## 19. On Windows, a value file deleted or overwritten under a reader is leaked
+
+`Disk.remove` suppresses every `OSError` from `os.remove` (core.py, `Disk.remove`: two caches deleting the same file at once is the case it means). On Windows, Python's `open()` doesn't share delete, so while any reader has the value file open (another thread's or process's `get`, or a `get(..., read=True)` handle) the remove fails with `PermissionError`, and the row is deleted or replaced while its file stays with nothing pointing at it. Found by the conformance suite's first Windows run (2026-11-12): `test_spill_files_concurrent_overwrite_and_delete` left 154 value files for 6 live rows. Repro: `repros/windows_delete_under_a_reader_leaks_value_file.py` (Windows only). The community fork (5.8.1) fails the same test on Windows. diskcache-oxide isn't affected (D-058). **Impact:** on Windows, disk use grows with read concurrency, invisibly to `volume()` and `size_limit`, until `check(fix=True)`.

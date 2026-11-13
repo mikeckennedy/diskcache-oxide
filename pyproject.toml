@@ -51,6 +51,8 @@ dev = [
     "xxhash>=3.5",
     # Python line coverage in scripts/coverage.sh; the Rust side comes from cargo-llvm-cov.
     "coverage>=7.10",
+    # Windows has no system time-zone database for zoneinfo, which the value cases use.
+    "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
 # The docs site (`make docs`). Quarto is installed separately and must be on PATH.

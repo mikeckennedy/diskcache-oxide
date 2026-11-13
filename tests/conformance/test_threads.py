@@ -23,6 +23,7 @@ import pytest
 
 from tests.conformance.backends import OXIDE_FD_BUDGET, Backend
 from tests.conformance.proc_workers import REPO_ROOT
+from tests.platforms import unix_only
 
 THREADS = 16
 INCR_OPS = 1000
@@ -282,11 +283,13 @@ def _peak_fds(make_cache: Callable[..., Any], cache_dir: Path) -> int:
         return _stable_fds_inside(cache_dir)
 
 
+@unix_only('counts file descriptors; Windows has handles')
 def test_peak_fds_within_the_backend_budget(make_cache: Callable[..., Any], cache_dir: Path, backend: Backend) -> None:
     # Pins the adapter's budget to what the backend actually does.
     assert _peak_fds(make_cache, cache_dir) <= backend.fd_budget(FD_THREADS)
 
 
+@unix_only('counts file descriptors; Windows has handles')
 @pytest.mark.diverges(
     backend='diskcache',
     ref='D-017',
@@ -298,6 +301,7 @@ def test_peak_fds_bounded_by_the_pool(make_cache: Callable[..., Any], cache_dir:
     assert peak <= OXIDE_FD_BUDGET, f'{peak} fds open inside the cache directory with {FD_THREADS} threads'
 
 
+@unix_only('counts file descriptors; Windows has handles')
 @pytest.mark.diverges(
     backend='diskcache',
     ref='D-018',
@@ -321,6 +325,7 @@ def test_close_releases_every_fd(make_cache: Callable[..., Any], cache_dir: Path
     assert remaining == 0, f'{remaining} fds still open inside the cache directory after close()'
 
 
+@unix_only('counts file descriptors; Windows has handles')
 @pytest.mark.backend_only('oxide')
 @pytest.mark.covers('D-017')
 def test_a_closed_handle_used_again_beside_a_live_one_adds_no_fd(
@@ -349,6 +354,7 @@ def test_a_closed_handle_used_again_beside_a_live_one_adds_no_fd(
 RACING_OPENERS = 16
 
 
+@unix_only('counts file descriptors; Windows has handles')
 @pytest.mark.backend_only('oxide')
 @pytest.mark.covers('D-017')
 def test_racing_first_opens_all_read_the_seed_and_close_leaves_no_fd(

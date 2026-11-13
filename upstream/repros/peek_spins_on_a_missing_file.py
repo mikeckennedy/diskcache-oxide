@@ -2,9 +2,13 @@
 
 import os
 import signal
+import sys
 import tempfile
 
 import diskcache
+
+# Bounds the spin with SIGALRM, which Windows lacks.
+assert sys.platform != 'win32'
 
 
 def hang(*_):

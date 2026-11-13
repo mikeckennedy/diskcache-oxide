@@ -486,6 +486,7 @@ def _fork_child_entry(cache: Any, barrier: Barrier, child: int, size: int) -> No
 
 def _os_fork(body: Any) -> int:
     """os.fork() and run `body()` in the child, which exits 0 on success and 1 on any exception."""
+    assert sys.platform != 'win32'
     pid = os.fork()
     if pid == 0:
         # No set_title() here: setproctitle hangs in a child forked from a multi-threaded process.
@@ -503,6 +504,7 @@ def _os_fork(body: Any) -> int:
 
 def _wait_or_kill(pid: int, deadline: float = CHILD_DEADLINE) -> int | None:
     """The child's exit code, or None if it was still running at the deadline (it is then killed)."""
+    assert sys.platform != 'win32'
     end = time.monotonic() + deadline
     while time.monotonic() < end:
         done, status = os.waitpid(pid, os.WNOHANG)
@@ -516,6 +518,7 @@ def _wait_or_kill(pid: int, deadline: float = CHILD_DEADLINE) -> int | None:
 
 def _fork_children(cache: Any, backend: Backend, mode: str) -> tuple[list[int | None], list[str]]:
     """The original check: two children and the parent incr together; children write a spilled value."""
+    assert sys.platform != 'win32'
     size = spill_min(backend)
     ctx = multiprocessing.get_context('fork')
     barrier = ctx.Barrier(FORK_CHILDREN + 1)

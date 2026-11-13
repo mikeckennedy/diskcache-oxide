@@ -9,12 +9,18 @@ from pathlib import Path
 
 import pytest
 
+from tests.platforms import unix_only
 from tests.unit.stack_scenarios import SCENARIOS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# Windows gives every thread its executable's stack (2 MB for python.exe): threading.stack_size only
+# sets how much is committed up front. The others pass there without a small stack to stand on.
+SMALL_STACK_ONLY = unix_only('a small thread stack; threading.stack_size does not shrink one on Windows')
 
 
-@pytest.mark.parametrize('scenario', sorted(SCENARIOS))
+@pytest.mark.parametrize(
+    'scenario', [pytest.param(s, marks=SMALL_STACK_ONLY) if s == 'the-deepest-row' else s for s in sorted(SCENARIOS)]
+)
 def test_scenario(scenario: str, tmp_path: Path) -> None:
     proc = subprocess.run(
         [

@@ -18,6 +18,7 @@ import pytest
 
 from tests.conformance.backends import Backend
 from tests.conformance.conftest import FakeClock
+from tests.platforms import unix_only
 
 KEYS = 12
 
@@ -250,6 +251,7 @@ def test_a_dead_writers_temp_file_goes_with_the_sweep(
     assert young_tmp.exists() and orphan_val.exists(), 'a young .tmp and any .val stay'
 
 
+@unix_only('deleting an open cache directory, which Windows refuses while SQLite has the database open')
 @pytest.mark.backend_only('oxide')
 @pytest.mark.covers('D-043')
 def test_a_large_write_into_a_deleted_cache_directory_fails_and_recreates_nothing(

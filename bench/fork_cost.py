@@ -46,6 +46,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+# Measures fork(), which Windows lacks.
+assert sys.platform != 'win32'
+
 
 class Slow:
     """Unpickling it holds the reader's connection for 5 ms, with the interpreter free."""

@@ -10,7 +10,6 @@ from __future__ import annotations
 import gc
 import os
 import random
-import resource
 import signal
 import subprocess
 import sys
@@ -28,8 +27,12 @@ from diskcache_oxide import Cache, FanoutCache, Key, Timeout
 
 from tests.conformance.proc_workers import SqlitePeer
 from tests.keys import str_keys
+from tests.platforms import unix_only
 from tests.unit.fork_timeout_scenarios import fds_inside
 from tests.unit.spawn_race import race
+
+if sys.platform != 'win32':
+    import resource
 
 MiB = 1 << 20
 GiB = 1 << 30
@@ -64,6 +67,9 @@ def fd_room() -> Iterator[tuple[int, ...]]:
     """The shard counts this process can open: raises the soft open-file limit (to at most 4,096) for
     the 256-shard cache, restores it afterwards, and leaves 256 out only when the hard limit can't fit it
     (`ulimit -n` in a shell lowers both)."""
+    if sys.platform == 'win32':  # Win32 handles, which SQLite uses, have no per-process limit
+        yield SHARD_COUNTS
+        return
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     wanted = 4096 if hard == resource.RLIM_INFINITY else min(hard, 4096)
     resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, wanted), hard))
@@ -73,7 +79,7 @@ def fd_room() -> Iterator[tuple[int, ...]]:
 
 def _skip_if_short(counts: tuple[int, ...]) -> None:
     """Called after every count that fits was checked: says so when 256 couldn't be."""
-    if counts != SHARD_COUNTS:
+    if counts != SHARD_COUNTS and sys.platform != 'win32':
         hard = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
         pytest.skip(f'256 shards need about {FDS_FOR_256} fds; the hard limit is {hard}')
 
@@ -156,7 +162,9 @@ def test_a_new_root_has_a_manifest_and_eight_shard_directories(tmp_path: Path) -
     with FanoutCache(root) as cache:
         assert cache.shards == 8
         assert cache.directory == str(root)
-        assert repr(cache) == f'FanoutCache("{root}", shards=8)'
+        # The path is quoted with its backslashes escaped (Windows), so the repr is a valid literal.
+        quoted = str(root).replace('\\', '\\\\')
+        assert repr(cache) == f'FanoutCache("{quoted}", shards=8)'
     assert sorted(p.name for p in root.iterdir()) == [f'{i:03d}' for i in range(8)] + [MANIFEST]
     assert (root / MANIFEST).read_text() == (
         'diskcache-oxide fanout\nformat = 1\nshards = 8\nhash = xxh3-64 seed=0 range=mulhi\n'
@@ -255,6 +263,7 @@ def test_a_plain_cache_on_a_live_shard_raises_and_leaves_the_count_alone(tmp_pat
         assert cache._handle_counts() == before
 
 
+@unix_only('RLIMIT_NOFILE; Windows has no per-process handle limit')
 def test_too_few_file_descriptors_for_every_shard_names_the_numbers(tmp_path: Path) -> None:
     # A fresh process, so the lowered limit and the fd count are this test's alone.
     script = """
@@ -287,6 +296,7 @@ print(before, fds())
 FD_THREADS = 64
 
 
+@unix_only('counts file descriptors; Windows has handles')
 @pytest.mark.parametrize(('shards', 'max_connections'), [(8, None), (4, 16), (16, None), (8, 24)])
 def test_many_threads_stay_within_the_fd_budget_and_close_leaves_none(
     tmp_path: Path, shards: int, max_connections: int | None
@@ -351,6 +361,7 @@ def test_many_threads_stay_within_the_fd_budget_and_close_leaves_none(
     assert after == 0, f'{after} fds still open inside the root after close()'
 
 
+@unix_only('counts file descriptors; Windows has handles')
 def test_a_closed_handle_used_again_beside_a_live_one_adds_no_fd_on_any_shard(tmp_path: Path) -> None:
     """The plain-Cache case of tests/conformance/test_threads.py, once per shard: a closed FanoutCache
     used again rejoins each shard's store, and beside a live handle that must open nothing. Before the
@@ -375,6 +386,7 @@ def test_a_closed_handle_used_again_beside_a_live_one_adds_no_fd_on_any_shard(tm
     assert fds_inside(root) == 0
 
 
+@unix_only('counts file descriptors; Windows has handles')
 def test_reopening_under_a_running_iteration_stays_within_the_fd_budget(tmp_path: Path) -> None:
     """The soak's shape (soak/worker.py, `reopen_fan` beside `walk`): one thread iterates the keys
     while another opens a new handle on the root and closes the old one, over and over. The
@@ -577,8 +589,13 @@ def test_a_signal_after_a_shard_failed_carries_the_partial_failure(tmp_path: Pat
     def interrupt(*_: object) -> None:
         raise KeyboardInterrupt
 
-    previous = signal.signal(signal.SIGUSR1, interrupt)
-    sender = threading.Timer(0.1, os.kill, (os.getpid(), signal.SIGUSR1))
+    # Windows has no SIGUSR1 and its os.kill terminates; there, SIGINT raised from the timer thread.
+    interrupt_signal = signal.SIGINT if sys.platform == 'win32' else signal.SIGUSR1
+    previous = signal.signal(interrupt_signal, interrupt)
+    if sys.platform == 'win32':
+        sender = threading.Timer(0.1, signal.raise_signal, (interrupt_signal,))
+    else:
+        sender = threading.Timer(0.1, os.kill, (os.getpid(), interrupt_signal))
     try:
         with _locked(tmp_path, [1]):
             sender.start()
@@ -587,7 +604,7 @@ def test_a_signal_after_a_shard_failed_carries_the_partial_failure(tmp_path: Pat
     finally:
         sender.cancel()
         sender.join()
-        signal.signal(signal.SIGUSR1, previous)
+        signal.signal(interrupt_signal, previous)
     error: Any = raised.value
     assert error.failed_shards == (0, 1)
     assert error.removed == 0

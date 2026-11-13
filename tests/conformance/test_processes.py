@@ -24,6 +24,7 @@ import pytest
 
 from tests.conformance import proc_workers
 from tests.conformance.backends import Backend
+from tests.platforms import unix_only
 
 REPO_ROOT = proc_workers.REPO_ROOT
 JOIN_TIMEOUT = 30.0
@@ -175,6 +176,7 @@ def _fork_check(backend: Backend, cache_dir: Path, mode: str) -> None:
     assert proc_workers.integrity(backend.db_path(cache_dir)) == 'ok'
 
 
+@unix_only('fork')
 @pytest.mark.parametrize('mode', ['os-fork', 'fork-context'])
 def test_fork_safety(backend: Backend, make_cache: Callable[..., Any], cache_dir: Path, mode: str) -> None:
     # Parent uses the cache, forks two children that keep using the inherited Cache object, and all
@@ -184,6 +186,7 @@ def test_fork_safety(backend: Backend, make_cache: Callable[..., Any], cache_dir
     assert reopened.get('counter') == (proc_workers.FORK_CHILDREN + 1) * proc_workers.FORK_OPS
 
 
+@unix_only('fork')
 def test_fork_while_another_thread_reads_the_cache(
     backend: Backend, make_cache: Callable[..., Any], cache_dir: Path
 ) -> None:
@@ -194,6 +197,7 @@ def test_fork_while_another_thread_reads_the_cache(
     assert make_cache(cache_dir).get('from-child') == 'child'
 
 
+@unix_only('fork')
 @pytest.mark.diverges(
     backend='diskcache',
     ref='D-012',
@@ -209,6 +213,7 @@ def test_fork_while_another_thread_holds_a_write_transaction(
     assert make_cache(cache_dir).get('from-child') == 'child'
 
 
+@unix_only('fork')
 @pytest.mark.covers('D-012')
 @pytest.mark.backend_only('oxide')
 def test_fork_while_another_thread_writes_the_cache(
@@ -221,6 +226,7 @@ def test_fork_while_another_thread_writes_the_cache(
     assert make_cache(cache_dir).get('from-child') == 'child'
 
 
+@unix_only('fork')
 def test_forked_child_closing_the_cache_does_not_break_the_parent(
     backend: Backend, make_cache: Callable[..., Any], cache_dir: Path
 ) -> None:
@@ -283,6 +289,20 @@ def _spill_run(backend: Backend, cache: Any, cache_dir: Path, writers: int, read
     return live
 
 
+@pytest.mark.diverges(
+    backend='diskcache',
+    ref='D-058',
+    platform='win32',
+    reason='a value file deleted under a reader is leaked on Windows',
+    raises=AssertionError,
+)
+@pytest.mark.diverges(
+    backend='community',
+    ref='D-058',
+    platform='win32',
+    reason='a value file deleted under a reader is leaked on Windows',
+    raises=AssertionError,
+)
 def test_spill_files_concurrent_overwrite_and_delete(backend: Backend, cache: Any, cache_dir: Path) -> None:
     live = _spill_run(backend, cache, cache_dir, writers=4, readers=3, ops=400)
     # Every value is at least twice the spill threshold, so each live row has exactly one value file
@@ -290,6 +310,20 @@ def test_spill_files_concurrent_overwrite_and_delete(backend: Backend, cache: An
     assert len(backend.spill_files(cache_dir)) == len(live)
 
 
+@pytest.mark.diverges(
+    backend='diskcache',
+    ref='D-058',
+    platform='win32',
+    reason='a value file deleted under a reader is leaked on Windows',
+    raises=AssertionError,
+)
+@pytest.mark.diverges(
+    backend='community',
+    ref='D-058',
+    platform='win32',
+    reason='a value file deleted under a reader is leaked on Windows',
+    raises=AssertionError,
+)
 @pytest.mark.slow
 @pytest.mark.timeout(300)
 def test_spill_files_concurrent_overwrite_and_delete_heavy(backend: Backend, cache: Any, cache_dir: Path) -> None:
@@ -413,6 +447,7 @@ def test_many_openers_racing_to_create_a_new_directory(
     assert {k: reopened.get(k) for k in reopened.iterkeys()} == {f'worker-{w}': w for w in range(OPENERS)}
 
 
+@unix_only("mode bits; a Windows directory takes its parent's ACL")
 @pytest.mark.backend_only('oxide', 'community')
 def test_racing_creators_still_make_an_owner_only_directory(backend: Backend, cache_dir: Path) -> None:
     # Test B, D-015 side: the 0700 mode holds even when eight processes create the directory at once.
@@ -420,6 +455,7 @@ def test_racing_creators_still_make_an_owner_only_directory(backend: Backend, ca
     assert stat.S_IMODE(cache_dir.stat().st_mode) == 0o700
 
 
+@unix_only('fork')
 def test_two_caches_on_one_directory_survive_an_idle_fork(
     backend: Backend, make_cache: Callable[..., Any], cache_dir: Path
 ) -> None:
@@ -429,6 +465,7 @@ def test_two_caches_on_one_directory_survive_an_idle_fork(
     assert make_cache(cache_dir).get('counter') == 2 * proc_workers.FORK_OPS
 
 
+@unix_only('fork')
 @pytest.mark.covers('D-012')
 @pytest.mark.backend_only('oxide', 'community')
 def test_fork_while_another_thread_writes_through_a_second_cache(
@@ -444,6 +481,7 @@ def test_fork_while_another_thread_writes_through_a_second_cache(
     assert reopened.get('from-child-b') == 'child'
 
 
+@unix_only('fork')
 def test_forked_child_can_open_and_use_a_new_cache(
     backend: Backend, make_cache: Callable[..., Any], cache_dir: Path
 ) -> None:
@@ -484,7 +522,8 @@ def _kill_writers_mid_spill(backend: Backend, make_cache: Callable[..., Any], ca
         time.sleep(rng.uniform(0, 0.05))
         writer.kill()
         writer.join(JOIN_TIMEOUT)
-        assert writer.exitcode == -signal.SIGKILL
+        # kill() is TerminateProcess on Windows, which multiprocessing reports as -SIGTERM.
+        assert writer.exitcode == -(signal.SIGTERM if sys.platform == 'win32' else signal.SIGKILL)
 
     assert proc_workers.integrity(backend.db_path(cache_dir)) == 'ok'
     cache = make_cache(cache_dir)

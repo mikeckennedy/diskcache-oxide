@@ -17,10 +17,12 @@ import pytest
 from diskcache_oxide import Cache, FanoutCache, Timeout, TransactionAborted, TransactionBusy
 
 from tests.conformance.proc_workers import SqlitePeer
+from tests.platforms import unix_only
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+@unix_only('fork')
 @pytest.mark.parametrize(
     'scenario',
     [
@@ -373,6 +375,7 @@ assert CACHE.get('before') == 1
 """
 
 
+@unix_only('fork')
 def test_an_earlier_after_fork_hook_sees_the_child_side_reset(tmp_path: Path) -> None:
     # The child-side reset ran in our own after_in_child hook, so a hook registered earlier saw the
     # parent's state: here, the transaction the parent forked inside, not yet poisoned, which the
@@ -421,6 +424,7 @@ assert CACHE.get('k') == 'inside'
 """
 
 
+@unix_only('fork')
 def test_an_earlier_after_fork_hook_cant_end_the_inherited_transaction(
     tmp_path: Path,
 ) -> None:
@@ -457,6 +461,7 @@ def _another_process_sees_shared_held(db: Path) -> bool:
     return subprocess.run([sys.executable, '-c', SHARED_LOCK_PROBE, str(db)], timeout=30).returncode == 0
 
 
+@unix_only('POSIX locks (fcntl), which closing any descriptor drops; Windows locks belong to a handle')
 def test_reusing_a_closed_handle_keeps_this_processs_sqlite_locks(
     tmp_path: Path,
 ) -> None:

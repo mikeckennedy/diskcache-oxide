@@ -76,10 +76,13 @@ import traceback
 import warnings
 import zlib
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import diskcache_oxide
 from diskcache_oxide import Cache, FanoutCache, Timeout, _core
+
+# The soak needs fork, SIGKILL, SIGUSR1/2 and the load average: Unix only (plan 25 leaves its port for later).
+assert sys.platform != 'win32'
 
 STATS_EVERY = 5.0
 CHAOS_KEYS = 20_000
@@ -1242,8 +1245,8 @@ class LaneWorker(Worker):
         """A bug isn't an outage: these raise whatever the store is doing, before it's reached."""
         self.count('durable_bug_checks')
         for what, work in (
-            ('a key of no key type to set', lambda: self.durable.set([123], 'v')),  # ty: ignore[invalid-argument-type]
-            ('a key of no key type to get', lambda: self.durable.get([123])),  # ty: ignore[invalid-argument-type]
+            ('a key of no key type to set', lambda: self.durable.set(cast(Any, [123]), 'v')),
+            ('a key of no key type to get', lambda: self.durable.get(cast(Any, [123]))),
         ):
             try:
                 work()

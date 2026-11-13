@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import math
 import multiprocessing
 import os
 import platform
@@ -264,7 +265,8 @@ def worker_main(args: argparse.Namespace) -> None:
 
 
 def loadavg() -> float:
-    return os.getloadavg()[0]
+    # Windows has no load average.
+    return math.nan if sys.platform == 'win32' else os.getloadavg()[0]
 
 
 def busy_processes() -> list[str]:

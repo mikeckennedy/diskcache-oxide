@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import statistics
 import subprocess
@@ -20,6 +21,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def load1() -> float:
+    """The one-minute load average; Windows has none."""
+    return math.nan if sys.platform == 'win32' else os.getloadavg()[0]
 
 
 def main() -> None:
@@ -37,7 +43,7 @@ def main() -> None:
     loads = []
     for r in range(a.rounds):
         order = arms[r % len(arms) :] + arms[: r % len(arms)]
-        loads.append(round(os.getloadavg()[0], 2))
+        loads.append(round(load1(), 2))
         for name, python in order:
             path = a.out / f'{name}-r{r + 1}.json'
             cmd = [python, '-m', 'bench.fanout', '--rounds', '1', '--out', str(path), '--variant-list', *a.variants]
@@ -45,7 +51,7 @@ def main() -> None:
             for variant, cases in json.loads(path.read_text())['results'].items():
                 for case, cell in cases.items():
                     samples[name].setdefault(variant, {}).setdefault(case, []).append(cell['median'])
-            print(f'round {r + 1}/{a.rounds}: {name} done (load {os.getloadavg()[0]:.1f})', file=sys.stderr, flush=True)
+            print(f'round {r + 1}/{a.rounds}: {name} done (load {load1():.1f})', file=sys.stderr, flush=True)
     names = [name for name, _ in arms]
     print(f'\nMedian (min-max) of {a.rounds} rounds, thousands of ops/s; 1-min load before each round: {loads}')
     for variant in a.variants:

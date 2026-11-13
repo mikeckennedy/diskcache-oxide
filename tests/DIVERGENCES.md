@@ -469,6 +469,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: a queue must never overwrite one of the caller's own keys (Michael, decision 24); `ValueError` is the error for a bad argument value.
 - Tests: `tests/conformance/test_queue.py`, `tests/unit/test_queue.py`
 
+## D-058 On Windows, a value file deleted or overwritten under a reader isn't leaked
+
+- Kind: test-visible, Windows only
+- diskcache: on Windows, Python's `open()` doesn't share delete, so while any reader (another thread, another process, or a `get(..., read=True)` handle) has a value file open, `os.remove` of it fails, and `Disk.remove` suppresses the `OSError`. The row is gone or replaced and the file stays, with nothing pointing at it, outside `volume()` and `size_limit` until `check(fix=True)`. In `test_spill_files_concurrent_overwrite_and_delete` (4 writers, 3 readers, 400 operations) 154 value files were left for 6 live rows on the first Windows run (2026-11-12). On Unix the same test passes on diskcache, since an unlink there never waits for readers. The diskcache-community fork (5.8.1) fails it on Windows too. Upstream bug 19.
+- oxide: Rust's `std::fs::File` opens with delete sharing, so a reader never blocks the delete, and the test leaves exactly one file per live row on Windows as on Unix. Another program holding a value file (antivirus, the indexer, a backup) can still block a delete for a moment; that is plan 25's R-M7.
+- Why: a leak that grows with read concurrency and hides from `size_limit` is a bug, not behavior to keep.
+- Tests: `tests/conformance/test_processes.py` (`test_spill_files_concurrent_overwrite_and_delete` and its `slow` heavy variant, a strict xfail on diskcache and the community fork, on Windows only).
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.
@@ -486,4 +494,5 @@ How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 
 - **D-037 (FanoutCache connections per thread per shard):** the fork also keeps one connection per thread per shard: 264 fds inside the root with 64 threads on 8 shards, the same as 5.6.3, so `test_peak_fds_bounded_by_the_shard_budget` fails on community.
 - **D-018 on a FanoutCache:** fixed in the fork, as for `Cache`. After 64 threads and `close()`, no fds remain inside the root, so `test_close_releases_every_fd_on_every_shard` passes on community.
 - **D-040 (FanoutCache.transact() locks every shard):** the fork has the same code: a write from another thread to another shard during a transaction waits out the timeout and gives False, so `test_a_write_to_another_shard_doesnt_wait_for_a_transaction` fails on community.
+- **D-058 (Windows: a value file deleted under a reader is leaked):** the fork has the same `Disk.remove`, so both `test_spill_files_concurrent_overwrite_and_delete` tests fail on community on Windows. They carry their own `diverges(backend='community', platform='win32')` marker rather than a `KNOWN_COMMUNITY_DIFFERENCES` entry, which would apply on every platform.
 - Everything else in the suite passes on the fork unchanged.

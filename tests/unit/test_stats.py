@@ -15,6 +15,7 @@ from pathlib import Path
 
 from diskcache_oxide import Cache, FanoutCache, NullCache
 
+from tests.platforms import unix_only
 from tests.unit.test_durable import peer_holding_the_write_lock
 
 
@@ -88,6 +89,7 @@ def test_a_null_cache_reports_nothing() -> None:
     assert null.stats() == (0, 0)
 
 
+@unix_only('fork')
 def test_a_forked_child_starts_from_zero(tmp_path: Path) -> None:
     # In a fresh process: never fork pytest itself (fork_scenarios.py's rule).
     proc = subprocess.run(

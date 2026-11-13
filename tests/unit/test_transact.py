@@ -24,6 +24,7 @@ import pytest
 from diskcache_oxide import Cache, Timeout, TransactionAborted, TransactionBusy
 from diskcache_oxide._core import Transaction
 
+from tests.platforms import unix_only
 from tests.unit.test_durable import BIG, NOT_AS_ROOT, SHORT, _value_file, peer_holding_the_write_lock, unreadable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -280,6 +281,7 @@ def test_retry_never_retries_the_cross_cache_refusal(tmp_path: Path) -> None:
 # -- forks (D-020) -------------------------------------------------------------------------------------------
 
 
+@unix_only('fork')
 @pytest.mark.parametrize(
     'scenario',
     ['transact-fork-from-the-owner', 'transact-fork-from-another-thread', 'transact-inherited-mid-operation'],

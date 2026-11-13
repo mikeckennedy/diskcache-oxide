@@ -14,6 +14,7 @@ subprocess anyway, under their own timeouts.
 from __future__ import annotations
 
 import functools
+import multiprocessing
 import os
 import threading
 import time
@@ -28,8 +29,12 @@ ORPHANED = 70
 
 
 def _watch(parent: int) -> None:
+    # The spawned child's view of its parent waits on the parent's sentinel, which works everywhere.
+    # Reparenting (getppid changing) is Unix only: on Windows getppid keeps the dead parent's pid.
+    watched = multiprocessing.parent_process()
     while True:
-        if os.getppid() != parent:  # reparented: the parent died
+        gone = not watched.is_alive() if watched is not None else os.getppid() != parent
+        if gone:
             os._exit(ORPHANED)
         time.sleep(POLL)
 

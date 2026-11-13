@@ -6,6 +6,7 @@ tests/conformance/conftest.py.
 """
 
 import os
+import sys
 
 import pytest
 
@@ -23,7 +24,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_configure(config: pytest.Config) -> None:
+    # Windows has no SIGALRM, so pyproject's signal method would raise in every test. Runs before
+    # pytest-timeout reads its settings, and leaves an explicit --timeout_method alone.
+    if sys.platform == 'win32' and config.option.timeout_method is None:
+        config.option.timeout_method = 'thread'
     name = config.getoption('--backend')
     set_title(f'pytest[{name}]')
     orphan_guard.install()

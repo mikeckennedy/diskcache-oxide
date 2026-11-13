@@ -91,6 +91,7 @@ class StuckFork:
         self.done = threading.Event()
 
     def _fork(self) -> None:
+        assert sys.platform != 'win32'
         pid = os.fork()
         if pid == 0:
             code = 0
