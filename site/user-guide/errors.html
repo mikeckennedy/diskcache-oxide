@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
-<link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html">
 
 <meta charset="utf-8">
 <meta name="generator" content="quarto-1.11.9">
@@ -51,7 +50,7 @@ ul.task-list li input[type="checkbox"] {
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-63b5708e65d6cd79cd7618c58d0c21e7.css" rel="stylesheet" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-4c995cf1e5ce428d9c201124d003f5da.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-9411a706d08770b9e0c434f3159337ed.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
 <script id="quarto-search-options" type="application/json">{
   "location": "navbar",
   "copy-button": false,
@@ -405,6 +404,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script async="" src="https://uma.mkennedy.codes/script.js" data-website-id="fc9b6770-3b44-4073-944e-4a4f0e79f66a"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'termshow.css'}));</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-compare.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-compare.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-annotate.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-annotate.js';s.defer=true;document.head.appendChild(s);})();</script>
 <meta name="gd-logo-dark" content="diskcache-oxide-logo-dark.png">
 <link rel="icon" type="image/x-icon" href="https://mkennedy.codes/docs/diskcache-oxide/favicon.ico" sizes="48x48">
 <link rel="icon" type="image/png" sizes="32x32" href="https://mkennedy.codes/docs/diskcache-oxide/favicon-32x32.png">
@@ -413,6 +418,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script src="../theme-init.js"></script>
 
 
+  <link rel="alternate" type="text/markdown" href="errors.md">
+  <link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Errors and what to do about them – diskcache-oxide | diskcache-oxide">
   <meta property="og:description" content="Every exception diskcache-oxide raises, what it means, and what to do about it.">
@@ -437,7 +444,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-12">v0.2.3</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.3.5</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -465,7 +472,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -624,6 +631,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#runtimeerror-from-a-transaction" id="toc-runtimeerror-from-a-transaction" class="nav-link" data-scroll-target="#runtimeerror-from-a-transaction"><code>RuntimeError</code> from a transaction</a></li>
   <li><a href="#unsafevalueerror-a-pickled-value-read-without-pickletrue" id="toc-unsafevalueerror-a-pickled-value-read-without-pickletrue" class="nav-link" data-scroll-target="#unsafevalueerror-a-pickled-value-read-without-pickletrue"><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>: a pickled value, read without <code>pickle=True</code></a></li>
   <li><a href="#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" id="toc-corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" class="nav-link" data-scroll-target="#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded"><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> and <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>: a value that can’t be decoded</a></li>
+  <li><a href="#a-cache-in-another-format-a-warning-not-an-error" id="toc-a-cache-in-another-format-a-warning-not-an-error" class="nav-link" data-scroll-target="#a-cache-in-another-format-a-warning-not-an-error">A cache in another format: a warning, not an error</a></li>
   <li><a href="#formatmismatcherror-a-database-this-version-cant-read" id="toc-formatmismatcherror-a-database-this-version-cant-read" class="nav-link" data-scroll-target="#formatmismatcherror-a-database-this-version-cant-read"><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>: a database this version can’t read</a></li>
   <li><a href="#layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory" id="toc-layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory" class="nav-link" data-scroll-target="#layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory"><a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a>: the wrong kind of cache for the directory</a></li>
   <li><a href="#runtimeerror-the-filesystem-cant-run-sqlite-in-wal-mode" id="toc-runtimeerror-the-filesystem-cant-run-sqlite-in-wal-mode" class="nav-link" data-scroll-target="#runtimeerror-the-filesystem-cant-run-sqlite-in-wal-mode"><code>RuntimeError</code>: the filesystem can’t run SQLite in WAL mode</a></li>
@@ -712,7 +720,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <tr class="even">
 <td><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a></td>
 <td><code>RuntimeError</code></td>
-<td>opening a database or manifest this version can’t read</td>
+<td>a database or manifest this version can’t read, where the versioned subdirectory can’t help</td>
 </tr>
 <tr class="odd">
 <td><a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a></td>
@@ -801,13 +809,19 @@ CorruptValueError: ...</code></pre>
 <p>The full table of what each policy does with each failure is in <a href="../user-guide/getting-started.html#values-that-cant-be-read">Values that can’t be read</a>.</p>
 <p><code>CorruptKeyError</code>, another subclass, comes from iterating a cache (<code>for key in cache</code>, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>) when a stored key’s bytes are damaged, which takes a damaged database page or file. Iteration raises rather than skip the key. Run <code>cache.check()</code> to see what else is damaged, or delete the directory: a cache can always start cold.</p>
 </section>
+<section id="a-cache-in-another-format-a-warning-not-an-error" class="level1">
+<h1>A cache in another format: a warning, not an error</h1>
+<p>Since 0.3.5, a cache directory that holds a cache in another on-disk format doesn’t raise. The cache opens in the subdirectory <code>diskcache-oxide-format-N</code> (N being this release’s format) and logs a warning on the <code>diskcache_oxide</code> logger, once per process:</p>
+<pre class="text"><code>/var/cache/my-app holds a cache made by an older diskcache-oxide (format 2), so this build (format 3) is using /var/cache/my-app/diskcache-oxide-format-3 instead; once no older process uses it, call remove_old_formats() or delete the old files there, keeping diskcache-oxide-format-3</code></pre>
+<p>Later processes log it worded as “still holds” until the old files are removed. When the cache was made by a newer release (a rollback), the warning says so and suggests upgrading this process. Nothing needs fixing: it’s how an upgrade across a format change works. See <a href="../recipes/upgrading.html">Upgrading across a format change</a> for cleaning up.</p>
+</section>
 <section id="formatmismatcherror-a-database-this-version-cant-read" class="level1">
 <h1><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>: a database this version can’t read</h1>
-<pre class="text"><code>FormatMismatchError: cache format version 2 is not supported (this build uses version 3) (in /var/cache/my-app/diskcache-oxide.sqlite): it was made by an older diskcache-oxide: delete the cache's directory (a FanoutCache's whole root) with every process using it stopped, and it will be recreated empty</code></pre>
-<p>The directory holds a database, or a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> manifest, written in a format this build doesn’t know. Nothing is read or changed. The message says which way the versions differ:</p>
+<pre class="text"><code>FormatMismatchError: cache format version 4 is not supported (this build uses version 3) (in /var/cache/my-app/diskcache-oxide-format-3/diskcache-oxide.sqlite): it was made by a newer diskcache-oxide: upgrade this process</code></pre>
+<p>A database, or a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> manifest, in a format this build doesn’t know, where opening the versioned subdirectory can’t help. Nothing is read or changed. You’ll see it in two cases:</p>
 <ul>
-<li><strong>Made by an older diskcache-oxide</strong>, as every cache made by 0.1.2 is after an upgrade to a release with format 3. Stop every process using the cache, delete the directory (for a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, the whole root: one shard deleted alone would be recreated beside shards in the old format), and the next open creates it empty. A cache starts cold without harm. Don’t delete only the <code>.sqlite</code> file: its value files would be left behind.</li>
-<li><strong>Made by a newer diskcache-oxide:</strong> upgrade this process to match the writer, or point it at a different directory.</li>
+<li><strong>Inside the versioned subdirectory itself.</strong> Most often, the subdirectory was opened directly, from a saved <code>cache.directory</code>, by a release with another format. Open its parent directory instead: the original directory picks the right subdirectory for each release. If the parent fails too, <code>diskcache-oxide-format-3</code> holds a format something else put there: with every process using it stopped, delete that subdirectory and it’s recreated empty.</li>
+<li><strong>From 0.2.3 or earlier, meeting a cache made by a newer release.</strong> Those releases don’t know about the subdirectory. Upgrade the process, or point it at a different directory.</li>
 </ul>
 </section>
 <section id="layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory" class="level1">
@@ -1325,9 +1339,9 @@ CorruptValueError: ...</code></pre>
 <script src="../details.js"></script>
 <script src="../mermaid-renderer.js"></script>
 <script src="../tooltips.js"></script>
-<script>(function(){var s=document.createElement('script');s.src=(document.querySelector('link[rel="canonical"]')||{href:location.href}).href.replace(/\/[^\/]*$/,'').replace(/\/[^\/]*$/,'')+'/color-swatch.js';var h=document.currentScript;h.parentNode.insertBefore(s,h.nextSibling);})()</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'color-swatch.js';document.body.appendChild(s);})();</script>
 <script src="../responsive-tables.js"></script>
-<script src="video-embed.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'video-embed.js';document.body.appendChild(s);})();</script>
 <script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'termshow.js';document.body.appendChild(s);})();</script>
 <script src="../navbar-widgets.js"></script>
 

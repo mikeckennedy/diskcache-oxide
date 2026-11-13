@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import sqlite3
 import stat
 import time
 from collections.abc import Callable
@@ -179,6 +180,40 @@ def test_oxide_cache_is_always_truthy(cache: Any) -> None:
     assert cache.enabled is True
     cache.set('k', 'v')
     assert cache
+
+
+def _database_in_another_format(directory: Path) -> None:
+    """Leaves a SQLite file named like diskcache-oxide's database, stamped as format 2."""
+    directory.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(directory / 'diskcache-oxide.sqlite')
+    con.execute('CREATE TABLE old (x)')
+    con.execute('PRAGMA user_version = 2')
+    con.commit()
+    con.close()
+
+
+@pytest.mark.diverges(
+    backend='oxide',
+    ref='D-059',
+    reason='a directory holding another format opens its diskcache-oxide-format-N subdirectory',
+    raises=AssertionError,
+)
+def test_directory_is_the_one_passed(make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    _database_in_another_format(cache_dir)
+    cache = make_cache(cache_dir)
+    assert Path(cache.directory) == cache_dir
+
+
+@pytest.mark.backend_only('oxide')
+@pytest.mark.covers('D-059')
+def test_oxide_opens_its_format_subdirectory_beside_another_format(
+    make_cache: Callable[..., Any], cache_dir: Path
+) -> None:
+    _database_in_another_format(cache_dir)
+    cache = make_cache(cache_dir)
+    assert Path(cache.directory) == cache_dir / 'diskcache-oxide-format-3'
+    cache.set('k', 'v')
+    assert make_cache(cache_dir).get('k') == 'v'
 
 
 def test_two_caches_on_one_directory_see_each_others_writes(make_cache: Callable[..., Any], cache_dir: Path) -> None:

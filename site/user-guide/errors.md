@@ -11,7 +11,7 @@ Sooner or later a traceback ends in `diskcache_oxide`, and the question is wheth
 | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | `ValueError` | reading a value no build could decode |
 | [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError) | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | reading a value another version or host could decode |
 | `CorruptKeyError` | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | iterating over a stored key that can't be read |
-| [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) | `RuntimeError` | opening a database or manifest this version can't read |
+| [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) | `RuntimeError` | a database or manifest this version can't read, where the versioned subdirectory can't help |
 | [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) | [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError), `ValueError` | opening a directory as the wrong kind of cache |
 | `TypeError`, `ValueError`, `KeyError`, `RuntimeError`, `OSError`, `OverflowError`, `AssertionError`, `MemoryError` | built-in | described below |
 
@@ -129,16 +129,27 @@ The full table of what each policy does with each failure is in [Values that can
 `CorruptKeyError`, another subclass, comes from iterating a cache (`for key in cache`, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)) when a stored key's bytes are damaged, which takes a damaged database page or file. Iteration raises rather than skip the key. Run `cache.check()` to see what else is damaged, or delete the directory: a cache can always start cold.
 
 
+# A cache in another format: a warning, not an error
+
+Since 0.3.5, a cache directory that holds a cache in another on-disk format doesn't raise. The cache opens in the subdirectory `diskcache-oxide-format-N` (N being this release's format) and logs a warning on the `diskcache_oxide` logger, once per process:
+
+``` text
+/var/cache/my-app holds a cache made by an older diskcache-oxide (format 2), so this build (format 3) is using /var/cache/my-app/diskcache-oxide-format-3 instead; once no older process uses it, call remove_old_formats() or delete the old files there, keeping diskcache-oxide-format-3
+```
+
+Later processes log it worded as "still holds" until the old files are removed. When the cache was made by a newer release (a rollback), the warning says so and suggests upgrading this process. Nothing needs fixing: it's how an upgrade across a format change works. See [Upgrading across a format change](../recipes/upgrading.md) for cleaning up.
+
+
 # [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError): a database this version can't read
 
 ``` text
-FormatMismatchError: cache format version 2 is not supported (this build uses version 3) (in /var/cache/my-app/diskcache-oxide.sqlite): it was made by an older diskcache-oxide: delete the cache's directory (a FanoutCache's whole root) with every process using it stopped, and it will be recreated empty
+FormatMismatchError: cache format version 4 is not supported (this build uses version 3) (in /var/cache/my-app/diskcache-oxide-format-3/diskcache-oxide.sqlite): it was made by a newer diskcache-oxide: upgrade this process
 ```
 
-The directory holds a database, or a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) manifest, written in a format this build doesn't know. Nothing is read or changed. The message says which way the versions differ:
+A database, or a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) manifest, in a format this build doesn't know, where opening the versioned subdirectory can't help. Nothing is read or changed. You'll see it in two cases:
 
-- **Made by an older diskcache-oxide**, as every cache made by 0.1.2 is after an upgrade to a release with format 3. Stop every process using the cache, delete the directory (for a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache), the whole root: one shard deleted alone would be recreated beside shards in the old format), and the next open creates it empty. A cache starts cold without harm. Don't delete only the `.sqlite` file: its value files would be left behind.
-- **Made by a newer diskcache-oxide:** upgrade this process to match the writer, or point it at a different directory.
+- **Inside the versioned subdirectory itself.** Most often, the subdirectory was opened directly, from a saved `cache.directory`, by a release with another format. Open its parent directory instead: the original directory picks the right subdirectory for each release. If the parent fails too, `diskcache-oxide-format-3` holds a format something else put there: with every process using it stopped, delete that subdirectory and it's recreated empty.
+- **From 0.2.3 or earlier, meeting a cache made by a newer release.** Those releases don't know about the subdirectory. Upgrade the process, or point it at a different directory.
 
 
 # [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError): the wrong kind of cache for the directory

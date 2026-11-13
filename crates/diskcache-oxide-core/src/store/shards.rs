@@ -43,34 +43,47 @@ impl Store {
     /// `base` is the root's settings: `directory` is the root, and `max_connections`,
     /// `requested.size_limit` and `default_size_limit` are totals for the whole cache, split here
     /// (see `split_connections` and `split_size_limit`). Every other setting applies to each
-    /// shard as is; `role` is set per shard. If shard k fails to open, shards `0..k` are released
-    /// before its error is returned, without waiting (the open has used its budget). A timeout's
-    /// number is left for the caller, as for [`Store::open_until`].
+    /// shard as is; `role` is set per shard. If a shard fails to open, the shards opened before it
+    /// are released before its error is returned, without waiting (the open has used its budget). A
+    /// timeout's number is left for the caller, as for [`Store::open_until`].
+    ///
+    /// Shards whose database already has content open first, and only then are missing or empty
+    /// ones created (plan 26, M4). So a root in another format is refused, and redirected, before
+    /// anything is created inside it: a missing shard ahead of an old one would otherwise be made in
+    /// this build's format, in the old build's root. The stores come back in shard order either way.
     pub fn open_shards(base: &OpenOptions, manifest: Manifest, deadline: Instant) -> Result<Vec<Arc<Self>>> {
         let count = manifest.shards();
         let connections = split_connections(base.max_connections, count)?;
         let size_limit =
             base.requested.size_limit.map(|total| split_size_limit("size_limit", total, count)).transpose()?;
         let default_size_limit = split_size_limit("the default size_limit", base.default_size_limit, count)?;
-        let mut opened: Vec<Arc<Self>> = Vec::with_capacity(connections.len());
-        for (index, max_connections) in (0..count).zip(connections) {
-            let options = OpenOptions {
+        let options: Vec<OpenOptions> = (0..count)
+            .zip(connections)
+            .map(|(index, max_connections)| OpenOptions {
                 directory: base.directory.join(shard_dirname(index as usize)),
                 requested: Requested { size_limit, ..base.requested },
                 max_connections,
                 role: Role::Shard { index, count },
                 default_size_limit,
                 ..base.clone()
-            };
-            match Self::open_until(&options, deadline) {
-                Ok(store) => opened.push(store),
+            })
+            .collect();
+        let has_content = |o: &OpenOptions| {
+            std::fs::metadata(crate::open::db_path(&o.directory)).is_ok_and(|meta| meta.is_file() && meta.len() > 0)
+        };
+        let (existing, new): (Vec<usize>, Vec<usize>) = (0..options.len()).partition(|&i| has_content(&options[i]));
+        let mut opened: Vec<Option<Arc<Self>>> = vec![None; options.len()];
+        for index in existing.into_iter().chain(new) {
+            match Self::open_until(&options[index], deadline) {
+                Ok(store) => opened[index] = Some(store),
                 Err(error) => {
+                    let opened: Vec<Arc<Self>> = opened.into_iter().flatten().collect();
                     release_all(&opened, GATE.try_enter_shared());
                     return Err(error);
                 }
             }
         }
-        Ok(opened)
+        Ok(opened.into_iter().flatten().collect())
     }
 
     /// Releases one handle on each of `stores`, as `FanoutCache.close()` does: with

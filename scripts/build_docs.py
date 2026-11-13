@@ -17,6 +17,11 @@ exists, so the badge would show the previous version (or nothing, before the fir
 ``main`` installs it in place of the GitHub fetch, so the badge and the Changelog page always
 describe this checkout. ``_check_outputs`` fails the build if no page got the badge.
 
+The sources live in ``docs-source/`` (``index.qmd``, ``user_guide/``, ``recipes/``, ``assets/``, ``skills/``),
+not at the repo root where great-docs 0.13.0 looks for the home page, the ordered User Guide, the assets and
+section directories. ``_read_sources_from_docs_source`` runs exactly those lookups with ``docs-source/`` as
+the root, so the published URLs and the build directory (``great-docs/``) stay where they were.
+
 Great Docs writes ``llms-full.txt`` by importing the package and reading each object's
 ``__doc__`` and signature. The compiled extension carries one-line docstrings and bare
 signatures; the full ones live in ``_core.pyi``, which the reference pages already use through
@@ -45,9 +50,14 @@ if TYPE_CHECKING:
 _SCRIPTS = Path(__file__).resolve().parent
 PKG_DIR = _SCRIPTS.parent  # dir holding pyproject.toml + great-docs.yml
 REPO_ROOT = PKG_DIR  # the package lives at the git root (single-tier)
+DOCS_SOURCE = PKG_DIR / 'docs-source'  # index.qmd, user_guide/, recipes/, assets/, skills/
 SITE = PKG_DIR / 'great-docs' / '_site'
 DEST = REPO_ROOT / 'site'
-SKILL = PKG_DIR / 'skills' / 'diskcache-oxide' / 'SKILL.md'
+SKILL = DOCS_SOURCE / 'skills' / 'diskcache-oxide' / 'SKILL.md'
+# The GreatDocs methods that find the sources by joining a name to the repo root: the home page and the User
+# Guide go through the package root (`_find_package_root`), the assets and sections through `project_root`.
+# `_read_sources_from_docs_source` runs each with both roots set to DOCS_SOURCE.
+SOURCE_LOOKUPS = ('_find_index_source_file', '_find_user_guide_dir', '_copy_assets', '_process_sections')
 # The files an agent reads, and the paths Great Docs publishes the skill to. Each must exist after
 # a build, and each skill copy must be the hand-written file, or the build failed quietly.
 REQUIRED = ('llms.txt', 'llms-full.txt', 'skill.md')
@@ -164,7 +174,7 @@ def _frontmatter(qmd: Path) -> dict[str, str]:
 def _source_qmd(rel: str) -> Path:
     """The source page for a site path such as ``user-guide/caches`` or ``recipes/counters``."""
     section, _, name = rel.partition('/')
-    return PKG_DIR / section.replace('-', '_') / f'{name}.qmd'
+    return DOCS_SOURCE / section.replace('-', '_') / f'{name}.qmd'
 
 
 def _page_entry(base: str, rel: str, title: str) -> str:
@@ -202,10 +212,10 @@ def _clean_quarto(text: str) -> str:
 
 def _recipe_order() -> list[str]:
     """Recipe page names in the order the recipes index presents them."""
-    index = PKG_DIR / 'recipes' / 'index.qmd'
+    index = DOCS_SOURCE / 'recipes' / 'index.qmd'
     names = re.findall(r'\]\(([\w-]+)\.qmd\)', index.read_text(encoding='utf-8')) if index.is_file() else []
     seen = list(dict.fromkeys(n for n in names if n != 'index'))
-    for qmd in sorted((PKG_DIR / 'recipes').glob('*.qmd')):
+    for qmd in sorted((DOCS_SOURCE / 'recipes').glob('*.qmd')):
         if qmd.stem != 'index' and qmd.stem not in seen:
             seen.append(qmd.stem)
     return seen
@@ -221,7 +231,7 @@ def _fix_llms_full(dest: Path) -> None:
     if '\n## Recipes\n' not in text:
         parts = ['', '## Recipes', '']
         for name in _recipe_order():
-            qmd = PKG_DIR / 'recipes' / f'{name}.qmd'
+            qmd = DOCS_SOURCE / 'recipes' / f'{name}.qmd'
             fm = _frontmatter(qmd)
             body = _FRONTMATTER.sub('', qmd.read_text(encoding='utf-8'), count=1)
             parts.append(f'### {fm.get("title", name)}')
@@ -602,6 +612,37 @@ def _stub_extension() -> griffe.Extension:
     return StubFixes()
 
 
+def _read_sources_from_docs_source(great_docs: type) -> bool:
+    """Make great-docs read ``index.qmd``, ``user_guide/``, ``assets/`` and the sections from ``docs-source/``.
+
+    Each method in ``SOURCE_LOOKUPS`` runs with ``project_root`` and the package root both set to
+    ``DOCS_SOURCE`` and gets them back when it returns. The build directory (``project_path``) is fixed at
+    construction, so the copies still land in ``great-docs/``. Returns False, after saying which, if a method is
+    gone, so a great-docs upgrade fails the build instead of quietly falling back to the repo root.
+    """
+    missing = [name for name in SOURCE_LOOKUPS if not callable(getattr(great_docs, name, None))]
+    if missing:
+        print(f'great-docs no longer has GreatDocs.{", ".join(missing)}; update SOURCE_LOOKUPS', file=sys.stderr)
+        return False
+
+    def from_docs_source(method: Any) -> Any:
+        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            saved = self.project_root
+            self.project_root = DOCS_SOURCE
+            self._find_package_root = lambda: DOCS_SOURCE
+            try:
+                return method(self, *args, **kwargs)
+            finally:
+                self.project_root = saved
+                del self._find_package_root
+
+        return wrapper
+
+    for name in SOURCE_LOOKUPS:
+        setattr(great_docs, name, from_docs_source(getattr(great_docs, name)))
+    return True
+
+
 def main() -> int:
     # Ensure GriffeLoader runs in pure static mode for compiled PyO3 classes
     # so that .pyi stubs are parsed without cyclic alias errors between
@@ -644,6 +685,9 @@ def main() -> int:
         return _local_releases(f'https://github.com/{owner}/{repo}', max_releases)
 
     GreatDocs._fetch_github_releases = _releases_from_checkout  # type: ignore[method-assign]
+
+    if not _read_sources_from_docs_source(GreatDocs):
+        return 1
 
     from great_docs.cli import main as gd_main
 

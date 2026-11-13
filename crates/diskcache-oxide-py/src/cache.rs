@@ -15,12 +15,13 @@ use std::cell::Cell;
 use std::collections::{HashSet, VecDeque};
 
 use diskcache_oxide_core::key::{Key, OwnedKey};
+use diskcache_oxide_core::layout::{self, Redirect};
 use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, Snapshot};
 use diskcache_oxide_core::open::{Requested, Role};
 use diskcache_oxide_core::ops::{Hit, Number, Pop, Value, Version, VersionDelete};
 use diskcache_oxide_core::queue::{QueueRange, Side};
 use diskcache_oxide_core::rows::Tag;
-use diskcache_oxide_core::schema::{DEFAULT_SIZE_LIMIT, EvictionPolicy};
+use diskcache_oxide_core::schema::{DEFAULT_SIZE_LIMIT, EvictionPolicy, FORMAT_VERSION};
 use diskcache_oxide_core::store::{
     DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, HeldTransaction, OpenOptions, Store,
 };
@@ -61,8 +62,11 @@ struct StoreHandle {
 /// Embedded by value, so an operation reaches it with no indirection. The operations that run
 /// against one store take that store explicitly, so a handle over several stores shares them.
 struct HandleConfig {
-    /// The directory the handle was opened on: shown in `repr` and named in failure reports.
+    /// The directory the cache is in: shown in `repr` and named in failure reports. The directory
+    /// passed, or its versioned subdirectory (plan 26).
     directory: String,
+    /// The directory as passed: where `remove_old_formats()` looks.
+    root: PathBuf,
     timeout: Duration,
     codec: Codec,
     clock: Option<Py<PyAny>>,
@@ -148,11 +152,27 @@ impl Cache {
             wal_checkpoint,
         )?;
         let max_connections = settings.max_connections.unwrap_or(DEFAULT_MAX_CONNECTIONS);
-        let options = settings.options(directory.clone(), max_connections, Role::Plain);
-        let store = crate::detach(py, || Store::open(&options)).map_err(to_py_err)?;
+        let options = settings.options(directory, max_connections, Role::Plain);
+        // In the directory, or its versioned subdirectory when that holds another format (plan
+        // 26). The pickle keeps the directory as passed (`reopen`), so an unpickled copy resolves
+        // afresh.
+        let resolved = crate::detach(py, || Store::open_resolving(&options)).map_err(to_py_err)?;
+        if let Some(redirect) = &resolved.redirect {
+            report_redirect(py, redirect);
+        }
         Ok(Self {
-            handle: StoreHandle { store, shard: 0, closed: AtomicBool::new(false) },
-            config: HandleConfig::new(&directory, &settings, pickle, types, clock, on_decode_error, durable, reopen),
+            handle: StoreHandle { store: resolved.value, shard: 0, closed: AtomicBool::new(false) },
+            config: HandleConfig::new(
+                &options.directory,
+                &resolved.directory,
+                &settings,
+                pickle,
+                types,
+                clock,
+                on_decode_error,
+                durable,
+                reopen,
+            ),
         })
     }
 
@@ -284,6 +304,11 @@ impl Cache {
             }
         }
         findings_to_warnings(py, found)
+    }
+
+    /// Removes the caches an older diskcache-oxide format left in this cache's directory (plan 26).
+    fn remove_old_formats(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        remove_old_formats(py, &self.config)
     }
 
     /// `(hits, misses)` of `get` and `cache[key]` in this process, as they were; then resets them
@@ -922,6 +947,7 @@ pub(crate) fn pause_before_retry(py: Python<'_>, started: Instant) -> PyResult<(
 impl HandleConfig {
     #[allow(clippy::too_many_arguments)]
     fn new(
+        root: &std::path::Path,
         directory: &std::path::Path,
         settings: &Settings,
         pickle: bool,
@@ -934,6 +960,7 @@ impl HandleConfig {
         let timeout = settings.timeout;
         Self {
             directory: directory.to_string_lossy().into_owned(),
+            root: root.to_path_buf(),
             timeout,
             codec: Codec { serializer: settings.serializer, pickle, types },
             clock,
@@ -2387,6 +2414,103 @@ fn classify(py: Python<'_>, mode: i64, e: &PyErr) -> Failure {
     } else {
         Failure::Passthrough
     }
+}
+
+/// `remove_old_formats()` for a handle on `config.root` (plan 26): removes, logs, and returns the
+/// paths removed. Logs what it removed at `INFO` and what it left, with why, at `WARNING` (the first
+/// 20 entries). Raises only if the directory can't be listed.
+fn remove_old_formats(py: Python<'_>, config: &HandleConfig) -> PyResult<Vec<String>> {
+    let root = config.root.clone();
+    let timeout = config.timeout;
+    let cleanup = crate::detach(py, || {
+        let deadline = lockwait::deadline_after(Instant::now(), timeout);
+        diskcache_oxide_core::cleanup::remove_old_formats(&root, timeout, deadline)
+    })
+    .map_err(to_py_err)?;
+    let removed: Vec<String> = cleanup.removed.iter().map(|p| p.display().to_string()).collect();
+    let _ = (|| -> PyResult<()> {
+        let log = logger(py)?;
+        let directory = root.display().to_string();
+        if !removed.is_empty() {
+            log.call_method1("info", ("removed old-format caches from %s: %s", &directory, removed.join(", ")))?;
+        }
+        if !cleanup.left.is_empty() {
+            const SHOWN: usize = 20;
+            let mut lines: Vec<String> =
+                cleanup.left.iter().take(SHOWN).map(|(path, why)| format!("{}: {why}", path.display())).collect();
+            if cleanup.left.len() > SHOWN {
+                lines.push(format!("and {} more", cleanup.left.len() - SHOWN));
+            }
+            log.call_method1(
+                "warning",
+                ("remove_old_formats() left %s entries in %s: %s", cleanup.left.len(), &directory, lines.join("; ")),
+            )?;
+        }
+        Ok(())
+    })();
+    Ok(removed)
+}
+
+/// Logs that a cache opened in its versioned subdirectory because its directory holds a cache in
+/// another format (plan 26), at `WARNING` on the `diskcache_oxide` logger, once per process per
+/// subdirectory. The dedupe is a Python dict's `setdefault`, atomic with or without the GIL, with no
+/// lock a thread could hold at `fork()` (plan 26, H3); a forked child inherits it and stays quiet.
+/// The message is a template with `%s` arguments, so an error tracker groups every report into one
+/// issue. Never fails: a logging error is dropped.
+pub(crate) fn report_redirect(py: Python<'_>, redirect: &Redirect) {
+    static REPORTED: PyOnceLock<Py<pyo3::types::PyDict>> = PyOnceLock::new();
+    let Ok(reported) = REPORTED.get_or_try_init(py, || Ok::<_, PyErr>(pyo3::types::PyDict::new(py).unbind())) else {
+        return;
+    };
+    let key = std::fs::canonicalize(&redirect.to).unwrap_or_else(|_| redirect.to.clone());
+    // A new object each time, so `is` tells whether this call's went in (an empty tuple wouldn't do:
+    // CPython shares one).
+    let mine = pyo3::types::PyDict::new(py);
+    let first = reported.bind(py).call_method1("setdefault", (key, &mine)).is_ok_and(|stored| stored.is(&mine));
+    if !first {
+        return;
+    }
+    let found = match &redirect.found {
+        layout::Found::Database { version, .. } => format!("format {version}"),
+        layout::Found::Manifest { format, .. } => format!("FanoutCache manifest format {format}"),
+    };
+    let message = match (redirect.existing, redirect.found.is_newer()) {
+        (false, false) => {
+            "%s holds a cache made by an older diskcache-oxide (%s), so this build (format %s) is using %s instead; \
+             once no older process uses it, call remove_old_formats() or delete the old files there, keeping %s"
+        }
+        (true, false) => {
+            "%s still holds a cache made by an older diskcache-oxide (%s) beside the one this build (format %s) \
+             uses, %s; once no older process uses it, call remove_old_formats() or delete the old files there, \
+             keeping %s"
+        }
+        (false, true) => {
+            "%s holds a cache made by a newer diskcache-oxide (%s), so this build (format %s) is using %s instead; \
+             upgrade this process to share that cache (%s holds this build's)"
+        }
+        (true, true) => {
+            "%s also holds a cache made by a newer diskcache-oxide (%s); this build (format %s) keeps using %s; \
+             upgrade this process to share the newer cache (%s holds this build's)"
+        }
+    };
+    let name = layout::format_dir_name(FORMAT_VERSION);
+    let from = redirect.from.display().to_string();
+    let to = redirect.to.display().to_string();
+    let _ = (|| -> PyResult<()> {
+        let extra = pyo3::types::PyDict::new(py);
+        extra.set_item("directory", &from)?;
+        extra.set_item("using", &to)?;
+        extra.set_item("found", &found)?;
+        extra.set_item("found_in", redirect.found.path())?;
+        let kwargs = pyo3::types::PyDict::new(py);
+        kwargs.set_item("extra", extra)?;
+        logger(py)?.call_method(
+            "warning",
+            (message, from.as_str(), found, FORMAT_VERSION, to.as_str(), name),
+            Some(&kwargs),
+        )?;
+        Ok(())
+    })();
 }
 
 /// The `diskcache_oxide` logger, looked up once.

@@ -112,7 +112,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: test-visible
 - diskcache: new cache directories follow the process umask (typically 0755). Upstream PR #375 keeps the umask; the diskcache-community fork uses 0700.
-- oxide: a cache directory that diskcache-oxide creates, and any subdirectories it creates for value files (D-042), are 0700, including one a sweep removed and a later write re-created. Intermediate parents follow the umask, like `os.makedirs`. An existing directory's permissions are never changed.
+- oxide: a cache directory that diskcache-oxide creates, any subdirectories it creates for value files (D-042), and the `diskcache-oxide-format-N` subdirectory a format change opens (D-059), are 0700, including one a sweep removed and a later write re-created. Intermediate parents follow the umask, like `os.makedirs`. An existing directory's permissions are never changed.
 - Why: a cache directory is a security boundary. Anyone who can write to it can poison the cache, and its contents (e.g. keys containing IP addresses) can be private.
 - Tests: `test_basic.py`
 
@@ -144,7 +144,7 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 
 - Kind: test-visible
 - diskcache: opening an existing cache with the same settings commits a write transaction (from outside it looks like the Settings rows being rewritten with the same values), so a peer connection's `PRAGMA data_version` goes from 2 to 3 on open, even when every operation afterwards is a read. The main database file's bytes don't change, so only `data_version` catches it.
-- oxide: opening with unchanged settings, then `get`, `in`, `len`, `iterkeys` and `volume`, never write: a peer's `data_version` is unchanged, and so are the main database file's hash and mtime.
+- oxide: opening with unchanged settings, then `get`, `in`, `len`, `iterkeys` and `volume`, never write: a peer's `data_version` is unchanged, and so are the main database file's hash and mtime. A directory holding another format is read for its format only (D-059), and its contents never change, before the cache opens in the versioned subdirectory (if that read is the last connection to close on it, SQLite may checkpoint its WAL into the database file). `remove_old_formats()` is the one call that deletes database files, and only older formats'.
 - Why: a read-mostly service (or a read-only replica of the directory) shouldn't take the write lock or dirty the WAL just by opening its cache.
 - Tests: `test_basic.py` (`test_open_and_read_never_write` is a strict xfail on diskcache)
 
@@ -476,6 +476,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - oxide: Rust's `std::fs::File` opens with delete sharing, so a reader never blocks the delete, and the test leaves exactly one file per live row on Windows as on Unix. Another program holding a value file (antivirus, the indexer, a backup) can still block a delete for a moment; that is plan 25's R-M7.
 - Why: a leak that grows with read concurrency and hides from `size_limit` is a bug, not behavior to keep.
 - Tests: `tests/conformance/test_processes.py` (`test_spill_files_concurrent_overwrite_and_delete` and its `slow` heavy variant, a strict xfail on diskcache and the community fork, on Windows only).
+
+## D-059 A directory holding another on-disk format opens a versioned subdirectory
+
+- Kind: test-visible
+- diskcache: `Cache(directory).directory` is always the directory passed (expanded). diskcache has one database format and never looks at another program's files, so a foreign `diskcache-oxide.sqlite` there means nothing to it.
+- oxide: when the directory holds a cache in another diskcache-oxide format (its database's `user_version`, or for a `FanoutCache` its manifest or a shard's database), older or newer, the cache opens in the subdirectory `diskcache-oxide-format-N` (N is this build's format, 3 since 0.2.3), creating it owner-only, and logs a `WARNING` on the `diskcache_oxide` logger once per process. Once that subdirectory exists, every open uses it, whatever the root holds. `directory` then reports the subdirectory. A `FanoutCache` moves as a whole; a plain `Cache` on a shard directory of any format still raises `LayoutMismatchError`. A database in another format inside the subdirectory raises `FormatMismatchError`, and a directory named like the subdirectory is never redirected again, and never creates its parent (a missing parent is `FileNotFoundError`, so a cache directory deleted mid-move doesn't come back with umask permissions). `remove_old_formats()` removes older formats' caches (only files diskcache-oxide wrote, never following links, never a database this process has open) and returns what it removed; it doesn't check for other processes. A pickled handle carries the directory as passed, and resolves it again when unpickled.
+- Why: refusing to open (0.2.3's behavior) made every format change a coordinated stop-delete-start across all workers, and an old straggler could recreate the old format in between (plan 26). Opening a cache of its own keeps the app running, never reads or writes the other format, and leaves cleanup to a call made once the old workers are gone.
+- Tests: `test_basic.py` (`test_directory_is_the_one_passed` is a strict xfail on oxide; `test_oxide_opens_its_format_subdirectory_beside_another_format`), and oxide-only in `tests/unit/test_format_fallback.py`, `tests/unit/test_mixed_versions.py` and the core's `layout` and `cleanup` tests.
 
 # Community fork differences
 

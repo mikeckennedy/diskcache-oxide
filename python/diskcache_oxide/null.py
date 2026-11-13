@@ -279,6 +279,10 @@ class NullCache:
         _check_retry(retry)
         return []
 
+    def remove_old_formats(self) -> list[str]:
+        """Always `[]`: a `NullCache` has no directory to clean up."""
+        return []
+
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """Always `(0, 0)`: nothing is looked up."""
         return (0, 0)

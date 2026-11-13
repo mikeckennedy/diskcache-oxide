@@ -397,6 +397,29 @@ impl Store {
         })
     }
 
+    /// [`Store::open`] for a plain `Cache`, in `options.directory` or, when that holds a cache in
+    /// another format, its versioned subdirectory ([`crate::layout::resolve`], plan 26). The result
+    /// says which, and why.
+    pub fn open_resolving(options: &OpenOptions) -> Result<crate::layout::Resolved<Arc<Self>>> {
+        debug_assert_eq!(options.role, Role::Plain, "a shard never redirects");
+        let deadline = lockwait::deadline_after(Instant::now(), options.timeout);
+        crate::layout::resolve(
+            &options.directory,
+            crate::layout::Kind::Plain,
+            options.timeout,
+            deadline,
+            |directory| {
+                let options = OpenOptions { directory: directory.to_path_buf(), ..options.clone() };
+                Self::open_until(&options, deadline)
+            },
+            |store| store.release_handle(),
+        )
+        .map_err(|error| match error {
+            Error::Timeout { .. } => Error::Timeout { seconds: options.timeout.as_secs_f64() },
+            other => other,
+        })
+    }
+
     /// [`Store::open`] under a deadline the caller already took, so a `FanoutCache` opens all its
     /// shards under one `timeout`. A timeout's number is left for the caller, who knows the budget.
     ///
@@ -574,6 +597,16 @@ impl Store {
         // Seed the pool with the connection the open sequence used.
         store.adopt(&gate, conn, generation, options.max_connections);
         Ok(store)
+    }
+
+    /// Whether a store in this process, live or retired, has `db_path`'s database, so
+    /// `remove_old_formats()` never removes one (plan 26, H2). Matched by file id, as an open is. A
+    /// retired store's file id may since have been reused; that only ever leaves a file in place.
+    pub fn is_open_in_process(db_path: &Path, deadline: Instant) -> Result<bool> {
+        let Ok(id) = file_id(db_path) else { return Ok(false) };
+        let gate = enter_until(deadline)?;
+        let stores = registry(&gate);
+        Ok(stores.iter().filter_map(Weak::upgrade).any(|store| store.file_id == id))
     }
 
     /// A live store for `db_path`, with one more handle registered on it. A retired one is left to

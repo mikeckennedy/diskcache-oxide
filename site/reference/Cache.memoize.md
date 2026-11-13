@@ -35,7 +35,7 @@ Seconds until a stored result expires; `None` never. Zero or negative never stor
 `tag: Key = None`  
 The tag every stored result gets, for `evict(tag)`: a key type, checked here.
 
-`ignore: Iterable[int | str] = ()`\  
+`ignore: Iterable[int | str] = ()`  
 Positions and keyword names left out of the key.
 
 

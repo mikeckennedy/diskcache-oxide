@@ -1,114 +1,104 @@
 # Upgrading across a format change
 
-You bump diskcache-oxide in `requirements.txt`, deploy, and the app won't start: opening the cache raises [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError). Or, with a [Caches](../reference/Caches.md#diskcache_oxide.Caches) registry, it starts and the log fills with the error while every request runs uncached. The new release stores its data differently, and it won't read a database written the old way. For a cache that's a cold start and nothing more, as long as you know which directories to delete and which data in them wasn't really cache.
+You bump diskcache-oxide in `requirements.txt`, deploy, and restart. Most of the time that's all: a release that keeps the on-disk format opens your caches as they were, warm. When a release changes the format, it can't read a cache written the old way, and it won't write into one either. Instead of failing, it opens a new, empty cache in a subdirectory named for its format and logs a warning. Your app keeps running, and the old cache stays put until you remove it.
 
 
-# Which releases need this
+# Which releases change the format
 
-Before 1.0, a release that changes the on-disk format bumps the minor version and says so first in its [changelog](https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md) entry. The last number goes up with every release, a minor bump included, so 0.1.2 is followed by 0.2.3. A release that keeps the format needs nothing: install it and restart.
+Before 1.0, a release that changes the on-disk format bumps the minor version and says so first in its [changelog](https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md) entry. A minor bump doesn't always mean a format change, though: 0.3.5 keeps format 3 from 0.2.3, so moving from 0.2.3 to 0.3.5 keeps every cache warm. The format number belongs to the data, not to the library version: 0.1.2 wrote format 2, and 0.2.3 and later write format 3.
 
-0.2.3 is a format change. It adds tags and the eviction policy to the database (format 3), so a cache made by 0.1.2 can't be opened by 0.2.3, and 0.1.2 refuses a cache made by 0.2.3 the same way. Neither version reads or changes anything in the other's database. Opening the other version's cache raises [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError), naming the file:
+
+# What happens at the upgrade
+
+Say a cache lives at `/var/cache/my-app`, made by 0.1.2 (format 2), and you deploy 0.3.5 (format 3). The first time 0.3.5 opens `Cache('/var/cache/my-app')`, it reads the database's format, sees 2, and opens `/var/cache/my-app/diskcache-oxide-format-3` instead, creating it empty. It logs this at `WARNING` on the `diskcache_oxide` logger:
 
 ``` text
-FormatMismatchError: cache format version 2 is not supported (this build uses version 3) (in /var/cache/my-app/diskcache-oxide.sqlite): it was made by an older diskcache-oxide: delete the cache's directory (a FanoutCache's whole root) with every process using it stopped, and it will be recreated empty
+/var/cache/my-app holds a cache made by an older diskcache-oxide (format 2), so this build (format 3) is using /var/cache/my-app/diskcache-oxide-format-3 instead; once no older process uses it, call remove_old_formats() or delete the old files there, keeping diskcache-oxide-format-3
 ```
 
-A [`Caches`](../user-guide/caches.md) registry doesn't raise. It logs the error at `ERROR` on the `diskcache_oxide` logger (or passes it to your `on_open_error`), hands out a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) so requests carry on uncached, and tries to open the directory again every `retry_open_after` seconds (10 by default). Once you've deleted the old directory, the next retry creates a fresh cache and caching comes back without a restart.
+0.3.5 never reads the old cache's entries or changes its contents: it reads only its format. (If that read is the last connection to close on the old database, SQLite may checkpoint its write-ahead log into the database file, which changes no data.) Your code doesn't change: it still says `Cache('/var/cache/my-app')`, and the handle's [directory](../reference/Cache.directory.md#diskcache_oxide.Cache.directory) attribute reports where the cache really is, `/var/cache/my-app/diskcache-oxide-format-3`. To open the same cache again, pass the original directory, not [directory](../reference/Cache.directory.md#diskcache_oxide.Cache.directory): the original picks the right subdirectory for whichever release opens it, and a versioned subdirectory opened directly never moves on the next format change.
+
+- **Every later open uses the subdirectory.** Once `diskcache-oxide-format-3` exists, every 0.3.5 worker opens it, whatever the root holds. So all your new workers share one cache, even after the old files are gone.
+- **The warning comes once per process.** Each worker logs it on its first open of that cache, worded as "still holds" once the subdirectory already exists, until the old files are removed. Then it stops.
+- **A [`Caches`](../user-guide/caches.md) registry** opens the cache the same way, with no [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and no retry: a format change isn't an open error any more.
+- **A [`FanoutCache`](../user-guide/fanoutcache.md) moves as a whole.** If its root's manifest or any of its shards is in another format, the whole root opens in `diskcache-oxide-format-3`, as a new root with its own shards. Never one shard alone.
+- **Both directions.** If you roll back from a newer release to 0.3.5 and the root holds the newer format, 0.3.5 opens `diskcache-oxide-format-3` the same way, and the warning says the cache was made by a newer diskcache-oxide. Releases before 0.3.5 don't know this rule: 0.2.3 and 0.1.2 raise [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) when they meet a newer format, as they always did.
 
 
-# The simple path: stop, delete, start
+# While old and new workers both run
 
-If you can stop every worker for a moment, this is all there is to it:
+A rolling deploy runs old and new workers side by side for a while. With a format change they don't share a cache: old workers keep theirs at the root, new workers use the subdirectory. For the length of the overlap:
 
-1.  Stop every process that uses the cache: web workers, Celery workers, cron jobs, a REPL someone left open.
-2.  Delete the cache's directory. For a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache), delete the whole root, never one shard: a shard deleted alone would be re-created next to shards still in the old format.
-3.  Deploy the new release and start the workers. The directory is re-created empty on the first open.
+- **Invalidation reaches one side only.** A worker that deletes a key after a database update deletes it from its own format's cache. The other side keeps serving the old value until it expires. Keep the overlap short, and keep an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) on cached values, so it can't last long.
+- **Coordination splits in two.** A [job claim](run-once.md) made on one side doesn't stop the other, so a scheduled job can run once per side. A [rate limit](rate-limiting.md) counts each side separately, so a client can get up to twice its limit. Locks and semaphores from the [Coordination](../user-guide/coordination.md) guide don't exclude workers on the other side.
 
-``` bash
-systemctl stop my-app my-app-worker
-rm -rf /var/cache/my-app
-pip install --upgrade diskcache-oxide
-systemctl start my-app my-app-worker
-```
-
-Delete the directory, not just `diskcache-oxide.sqlite`: values of 64 KiB or more live in files beside the database, and they'd be left behind. With a [Caches](../reference/Caches.md#diskcache_oxide.Caches) registry, each registered cache is a directory under the base directory (unless you gave it `directory=`), so deleting the base directory clears them all.
-
-If a 0.1.2 worker is still running when you delete its cache and 0.2.3 re-creates it, the old worker can't damage the new database. Its writes go to the deleted file through the connections it already holds, and once it opens the new file, its writes, deletes and maintenance calls fail with "no such table" (only [touch](../reference/Cache.touch.md#diskcache_oxide.Cache.touch) gets through). Stop every worker before deleting anyway: this only keeps a straggler from doing harm.
+If any of that is a problem for your app, stop every old worker before starting the new ones. The new release still opens its own subdirectory and leaves the old cache alone.
 
 
-# Rolling deploys: one directory per format
+# Cleaning up the old cache
 
-A rolling deploy runs old and new workers side by side for a while, and they can't share a cache across a format change. Give each minor version its own directory, so new workers start on an empty one while old workers finish on theirs. A directory named after the first two parts of `diskcache_oxide.__version__` changes exactly when the format can:
-
+The old cache stays at the root, taking disk space, until something removes it. [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats) does that. Call it on any handle once no older worker is left:
 
 ``` python
-import diskcache_oxide
+from diskcache_oxide import Cache
 
-def format_series(version: str = diskcache_oxide.__version__) -> str:
-    major, minor = version.split('.')[:2]
-    return f'v{major}.{minor}'
-
-print('this build:', diskcache_oxide.__version__, '->', format_series())
-print('0.1.2 ->', format_series('0.1.2'), '| 0.2.3 ->', format_series('0.2.3'))
+cache = Cache('/var/cache/my-app')
+removed = cache.remove_old_formats()
+print(removed)  # the database files, manifests and directories it removed
 ```
 
+With a registry, `caches.remove_old_formats()` runs it for every registered cache and returns what each removed (or `None`, logged, for one it couldn't open or clean).
 
-    this build: 0.2.3 -> v0.2
-    0.1.2 -> v0.1 | 0.2.3 -> v0.2
+> **Warning: It doesn't check whether an old worker is still running**
+>
+> [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats) removes the old cache the moment you call it. It has no way to tell whether a process running an older diskcache-oxide still uses those files, so stop or replace every old worker first, and drain any [work queue](work-queues.md) they share.
+>
+> If an old worker is still running when you call it, on Linux and macOS its cache can be corrupted until that worker restarts: errors such as "database disk image is malformed", or wrong results, not just misses. That's the same as running `rm -rf` on the directory under it. Everything that worker kept in its cache is gone: queued items, counters, sessions. The damage stays inside the old-format files, though: new workers never read them. On Windows, a file an old worker still has open can't be deleted: it's left in place, named in a warning, and the next call removes it once that worker is gone.
 
+Good places to call it: from your deploy script after the old workers have stopped, from a job [one worker claims](run-once.md) after the deploy, or at every startup if your deploys never run old and new workers at the same time. Calling it again is harmless: with nothing old left, it returns `[]`.
 
-Use it wherever the app opens its caches:
+What it removes:
 
-``` python
-from diskcache_oxide import Caches
+- The root's own cache when its format is older than the running release's: the database (`diskcache-oxide.sqlite` and its `-wal`, `-shm` and `-journal` files) and its value files, or for a FanoutCache its shard directories and manifest.
+- Any `diskcache-oxide-format-M` subdirectory holding a cache in a format older than the running release's.
 
-caches = Caches(f'/var/cache/my-app/{format_series()}', timeout=1.0)
-caches.register('general')
-caches.register('pages', size_limit=2 * 2**30)
-```
+What it never removes:
 
-A release that only bumps the last number (0.2.3 to a later 0.2 release) keeps the same directory and keeps its cache. A minor bump starts cold even on the rare occasion it doesn't change the format, which is a small price for never having to check.
+- A cache in the running release's format, or a newer one. A rolled-back release can't wipe the newer release's warm cache.
+- Anything diskcache-oxide didn't write. Other files in the directory stay, and a directory is removed only once it's empty.
+- Anything behind a symbolic link.
+- An empty database file that may still be being created: one in a versioned subdirectory, a shard, or one at the root less than 10 minutes old. An older empty one at the root holds nothing and is removed: it's what an old worker leaves behind when it reopens a removed cache.
+- A database this process has open.
+- A cache whose format it can't read. That one is left and logged.
 
-After the deploy, once every old worker has stopped, delete the directories the old versions used. Run this from the deploy script, or from a job [one worker claims](run-once.md):
+It logs what it removed at `INFO`, and anything it left, with the reason, at `WARNING`.
 
-``` python
-import shutil
-from pathlib import Path
+If you'd rather clean up by hand, with every old worker stopped: delete `diskcache-oxide.sqlite*` and the two-character hex directories at the root (for a FanoutCache root, the `000`, `001` … shard directories and the `diskcache-oxide-fanout` file), and keep `diskcache-oxide-format-3`. Don't delete the whole directory: that deletes the new cache too.
 
-def remove_old_caches(root: str = '/var/cache/my-app') -> None:
-    keep = format_series()
-    for path in Path(root).glob('v*'):
-        if path.is_dir() and path.name != keep:
-            shutil.rmtree(path)
-```
+After the cleanup the cache stays in `diskcache-oxide-format-3`. It never moves back to the root on its own, because moving it would mean starting cold.
 
-A rollback works either way. If the old directory is gone, the old version re-creates it empty. If it's still there, the old version opens it as it was left, and nothing the new version deleted while it ran ever reached it, so values without an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) may be stale. Delete it before rolling back unless every entry expires soon.
-
-The first time you adopt this pattern, the old workers' cache is wherever they had it before, and that's the directory to delete once they're gone. If they used a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) at `/var/cache/my-app`, that directory is itself a cache, so put the versioned directories under another root (`/var/cache/my-app-caches/v0.2`) instead of inside it. A [Caches](../reference/Caches.md#diskcache_oxide.Caches) base directory isn't a cache itself, so `v0.2/` can sit beside the old registry's cache directories.
-
-
-## While both versions run
-
-For the length of the overlap, old and new workers each have a cache the other can't see:
-
-- **Invalidation reaches one side only.** A worker that deletes a key after a database update deletes it from its own version's cache. The other side keeps serving the old value until it expires. Keep the overlap short, and keep an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) on cached values, so it can't last long.
-- **Coordination splits in two.** A [job claim](run-once.md) made on one side doesn't stop the other, so a scheduled job can run once per version. A [rate limit](rate-limiting.md) counts each side separately, so a client can get up to twice its limit. Locks and semaphores from the [Coordination](../user-guide/coordination.md) guide don't exclude workers on the other version.
-
-If any of that is a problem for your app, use the simple path instead.
+> **Note: 0.2.3 workers and the subdirectory**
+>
+> 0.2.3 writes format 3 too, but it doesn't know about `diskcache-oxide-format-3`. If 0.2.3 workers still run after the root's old cache is removed, they find an empty root and create a format-3 cache there, while 0.3.5 and later workers keep using the subdirectory.
+>
+> That's safe: both caches work, and nothing is corrupted or lost. It's not ideal: the two sets of workers no longer share a cache, so invalidation, locks, job claims and rate limits don't cross between them, as during any overlap. If that matters for your app, upgrade the 0.2.3 workers, or clean up after they're gone. Otherwise it's fine to leave. Once the last 0.2.3 worker is gone, the root's cache is just unused: delete it by hand if you like. [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats) leaves it, because it's in the current format.
 
 
 # State that isn't really cache
 
-A cache entry can be rebuilt from somewhere else. Some of what apps keep in a cache directory can't be, and deleting the directory for a format change loses it. Deal with each kind before you upgrade:
+A cache entry can be rebuilt from somewhere else. Some of what apps keep in a cache directory can't be, and a format change starts that state over in the new cache. Deal with each kind before you upgrade, or at least before you clean up:
 
-- **[Work queues](work-queues.md).** Items still queued are lost. Stop pushing new work, let the workers drain the queue until `peek(prefix=...)` returns `(None, None)`, then upgrade. With one directory per format, old workers can drain the old queue while new producers fill the new one; check that the old queue is empty before deleting its directory.
-- **[Counters](counters.md).** Counts since the last flush are lost. Run the flush job once more with the old release, after its last worker stops and before you delete the directory. If that isn't practical, a once-a-minute flush loses under a minute of counts.
-- **[Sessions](sessions.md).** Everyone is logged out. Upgrade at a quiet hour, or tell users ahead of time. During a rolling deploy with one directory per format, a user who lands on a new worker looks logged out, and after signing in again can bounce back to an old worker where that session doesn't exist. An app that keeps sessions in the cache is better served by the simple path.
+- **[Work queues](work-queues.md).** Items queued by old workers stay in the old cache, where new workers never see them. Let the old workers drain the queue until `peek(prefix=...)` returns `(None, None)` before you stop them, and before you call [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats).
+- **[Counters](counters.md).** New workers count from zero in the new cache. Run the flush job once more with the old release before its last worker stops. If that isn't practical, a once-a-minute flush loses under a minute of counts.
+- **[Sessions](sessions.md).** Everyone is logged out. Upgrade at a quiet hour, or tell users ahead of time. During a rolling deploy, a user who lands on a new worker looks logged out, and after signing in again can bounce back to an old worker where that session doesn't exist. If your app keeps sessions in the cache, stop the old workers before starting the new ones.
 - **[Job claims](run-once.md), rate limits and [single-use keys](single-use-keys.md).** These expire on their own anyway. After the upgrade, a claimed job may run again and a client's rate limit starts over. A one-time token issued before the upgrade stops working, so a password reset link from just before the deploy has to be requested again.
 
 
 # Things to know
 
-- **Settings stored in the cache go with it.** [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) and [eviction_policy](../reference/Cache.eviction_policy.md#diskcache_oxide.Cache.eviction_policy) are stored in the database. The new cache takes them from the constructor, or the defaults. A value you changed at runtime with [reset()](../reference/Cache.reset.md#diskcache_oxide.Cache.reset) has to be set again, so pass it to the constructor or to [register()](../reference/Caches.register.md#diskcache_oxide.Caches.register) instead.
-- **A cache made by a newer release** raises [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) too, saying it was made by a newer diskcache-oxide. That's an old worker meeting a new cache: upgrade it, or point it at another directory.
-- **It's always safe to start cold.** Deleting a cache's directory with every worker stopped loses what was in it and nothing else. If a cache is ever in doubt, that's the fix. See [Errors and what to do about them](../user-guide/errors.md#formatmismatcherror-a-database-this-version-cant-read).
+- **Settings stored in the cache don't carry over.** [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) and [eviction_policy](../reference/Cache.eviction_policy.md#diskcache_oxide.Cache.eviction_policy) are stored in the database. The new cache takes them from the constructor, or the defaults. A value you changed at runtime with [reset()](../reference/Cache.reset.md#diskcache_oxide.Cache.reset) has to be set again, so pass it to the constructor or to [register()](../reference/Caches.register.md#diskcache_oxide.Caches.register) instead.
+- **A rare race at the first open.** If the old cache is deleted at the very moment the first new worker moves to the subdirectory, another new worker starting in that instant can create its cache at the root instead. Both caches work, but they're separate until those workers restart. Deleting old files only after the warning has shown the new workers are up, as above, avoids it.
+- **The same goes for a FanoutCache created twice at once.** An old and a new release creating the same new FanoutCache root at the same moment can each win some of its shards. The new release then moves to the subdirectory, and the old one fails on the shards it lost.
+- **A cache made by a newer release** gives 0.2.3 and earlier a [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError), saying it was made by a newer diskcache-oxide. That's an old worker meeting a new cache: upgrade it, or point it at another directory. See [Errors and what to do about them](../user-guide/errors.md#formatmismatcherror-a-database-this-version-cant-read).
+- **If you used a directory per version before.** Earlier versions of this page suggested putting each minor version's caches in a directory of its own, such as `/var/cache/my-app/v0.2`. That still works, but it starts cold on every minor bump, format change or not. To keep a warm cache across upgrades, point your app at one directory and let a format change use the subdirectory. Delete the old per-version directories once nothing uses them.
+- **It's always safe to start cold.** Deleting a cache's directory with every worker stopped loses what was in it and nothing else. If a cache is ever in doubt, that's the fix.

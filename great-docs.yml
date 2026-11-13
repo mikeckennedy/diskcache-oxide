@@ -3,20 +3,27 @@
 #
 # Build with `make docs` (or `python scripts/build_docs.py`), preview with
 # `make docs-serve`. The site is mirrored into site/ (committed), not docs/.
+#
+# The sources (index.qmd, user_guide/, recipes/, assets/, skills/) live in docs-source/. Great Docs
+# 0.13.0 looks for index.qmd, the ordered user_guide/, assets/ and section dirs at the repo root (and
+# a section's `dir` doubles as its URL), so scripts/build_docs.py runs those lookups against
+# docs-source/: `dir: recipes` below means docs-source/recipes, published at recipes/. The logo,
+# favicon, skill and header-include paths are read by Great Docs itself, so they name docs-source/.
 
 display_name: diskcache-oxide
 
 # The original logo has dark strokes; the -dark navbar copy lightens them so they show on
 # the dark theme. The orange block is unchanged.
 logo:
-  light: assets/diskcache-oxide-logo.png
-  dark: assets/diskcache-oxide-logo-dark.png
+  light: docs-source/assets/diskcache-oxide-logo.png
+  dark: docs-source/assets/diskcache-oxide-logo-dark.png
   alt: diskcache-oxide
   show_title: true
-favicon: assets/diskcache-oxide-logo.png
+favicon: docs-source/assets/diskcache-oxide-logo.png
 
 hero:
   enabled: true
+  # A URL in the built site, where assets/ is copied, not a source path.
   logo: assets/diskcache-oxide-slogan.jpg
   logo_height: 480px
 
@@ -82,18 +89,18 @@ sections:
     index: true
     navbar_after: User Guide
 
-# The agent skill is hand-written (skills/diskcache-oxide/SKILL.md). Great Docs copies it verbatim to
+# The agent skill is hand-written (docs-source/skills/diskcache-oxide/SKILL.md). Great Docs copies it verbatim to
 # skill.md, .well-known/agent-skills/diskcache-oxide/SKILL.md (with index.json from its frontmatter)
 # and .well-known/skills/default/SKILL.md, so every link in it is absolute. scripts/build_docs.py
 # fails the build if the copy isn't the hand-written file.
 skill:
-  file: skills/diskcache-oxide/SKILL.md
+  file: docs-source/skills/diskcache-oxide/SKILL.md
 
 include_in_header:
   - text: |
       <script async src="https://uma.mkennedy.codes/script.js" data-website-id="fc9b6770-3b44-4073-944e-4a4f0e79f66a"></script>
   # Charts drawn from the markdown tables wrapped in a `.dco-chart` fenced div (the numbers live only in the table).
-  - file: ../assets/dco-charts.html
+  - file: ../docs-source/assets/dco-charts.html
 
 jupyter: python3
 

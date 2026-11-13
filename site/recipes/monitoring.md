@@ -129,7 +129,7 @@ for name, stat in caches.stats().items():
     {'name': 'pages', 'directory': '...', 'enabled': True, 'count': 0, 'volume': 40960, 'error': None}
 
 
-A cache that can't open shows up here with `count` and [volume](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) at 0 and the reason in `error`, for example `FormatMismatchError: cache format version 2 is not supported (this build uses version 3) ...` after an upgrade that changed the format (see [Upgrading across a format change](upgrading.md)).
+A cache that can't open shows up here with `count` and [volume](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) at 0 and the reason in `error`, for example `LayoutMismatchError: ...` for a directory that holds the other kind of cache. An upgrade that changed the on-disk format doesn't: the cache opens in its versioned subdirectory. Watch for that with the warning instead. A `diskcache_oxide` record at `WARNING` saying a directory "holds a cache made by an older diskcache-oxide" (or "still holds") means old files are waiting for [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats), and "made by a newer diskcache-oxide" means a process is running an older release than the one that wrote the cache (see [Upgrading across a format change](upgrading.md)).
 
 As an endpoint, with each cache's hit counts added. Every cache in this registry is a plain one; read a sharded one with `caches.fanout(name)` instead, since `caches[name]` raises `TypeError` for it:
 
@@ -177,7 +177,7 @@ print('repaired:', len(damaged.check(fix=True)), '| after:', damaged.check(), '|
 ```
 
 
-    UserWarning file not found: .../13/13b7f3815bb2bf7d68b39cdde27e0ab6.val
+    UserWarning file not found: .../ab/abd825082ff889a281f1cba0e2460e0b.val
     repaired: 1 | after: [] | entries: 1
 
 

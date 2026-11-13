@@ -1,13 +1,12 @@
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
-<link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/recipes/upgrading.html">
 
 <meta charset="utf-8">
 <meta name="generator" content="quarto-1.11.9">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
-<meta name="description" content="What to do when a release changes the on-disk format: delete the cache with every worker stopped, or give each format its own directory for a rolling deploy, and what happens to sessions, counters and queues.">
+<meta name="description" content="What happens when a release changes the on-disk format: the new release opens a cache of its own in a versioned subdirectory, old and new workers run side by side, and remove_old_formats() cleans up once the old workers are gone.">
 
 <title>Upgrading across a format change – diskcache-oxide | diskcache-oxide</title>
 <style>
@@ -86,7 +85,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-63b5708e65d6cd79cd7618c58d0c21e7.css" rel="stylesheet" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-4c995cf1e5ce428d9c201124d003f5da.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-9411a706d08770b9e0c434f3159337ed.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
 <script id="quarto-search-options" type="application/json">{
   "location": "navbar",
   "copy-button": false,
@@ -440,6 +439,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script async="" src="https://uma.mkennedy.codes/script.js" data-website-id="fc9b6770-3b44-4073-944e-4a4f0e79f66a"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'termshow.css'}));</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-compare.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-compare.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-annotate.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-annotate.js';s.defer=true;document.head.appendChild(s);})();</script>
 <meta name="gd-logo-dark" content="diskcache-oxide-logo-dark.png">
 <link rel="icon" type="image/x-icon" href="https://mkennedy.codes/docs/diskcache-oxide/favicon.ico" sizes="48x48">
 <link rel="icon" type="image/png" sizes="32x32" href="https://mkennedy.codes/docs/diskcache-oxide/favicon-32x32.png">
@@ -448,15 +453,17 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script src="../theme-init.js"></script>
 
 
+  <link rel="alternate" type="text/markdown" href="upgrading.md">
+  <link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/recipes/upgrading.html">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Upgrading across a format change – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="What to do when a release changes the on-disk format: delete the cache with every worker stopped, or give each format its own directory for a rolling deploy, and what happens to sessions, counters and queues.">
+  <meta property="og:description" content="What happens when a release changes the on-disk format: the new release opens a cache of its own in a versioned subdirectory, old and new workers run side by side, and remove_old_formats() cleans up once the old workers are gone.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/recipes/upgrading.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Upgrading across a format change – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="What to do when a release changes the on-disk format: delete the cache with every worker stopped, or give each format its own directory for a rolling deploy, and what happens to sessions, counters and queues.">
+  <meta name="twitter:description" content="What happens when a release changes the on-disk format: the new release opens a cache of its own in a versioned subdirectory, old and new workers run side by side, and remove_old_formats() cleans up once the old workers are gone.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -472,7 +479,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-12">v0.2.3</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.3.5</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -500,7 +507,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -639,12 +646,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#which-releases-need-this" id="toc-which-releases-need-this" class="nav-link active" data-scroll-target="#which-releases-need-this">Which releases need this</a></li>
-  <li><a href="#the-simple-path-stop-delete-start" id="toc-the-simple-path-stop-delete-start" class="nav-link" data-scroll-target="#the-simple-path-stop-delete-start">The simple path: stop, delete, start</a></li>
-  <li><a href="#rolling-deploys-one-directory-per-format" id="toc-rolling-deploys-one-directory-per-format" class="nav-link" data-scroll-target="#rolling-deploys-one-directory-per-format">Rolling deploys: one directory per format</a>
-  <ul class="collapse">
-  <li><a href="#while-both-versions-run" id="toc-while-both-versions-run" class="nav-link" data-scroll-target="#while-both-versions-run">While both versions run</a></li>
-  </ul></li>
+  <li><a href="#which-releases-change-the-format" id="toc-which-releases-change-the-format" class="nav-link active" data-scroll-target="#which-releases-change-the-format">Which releases change the format</a></li>
+  <li><a href="#what-happens-at-the-upgrade" id="toc-what-happens-at-the-upgrade" class="nav-link" data-scroll-target="#what-happens-at-the-upgrade">What happens at the upgrade</a></li>
+  <li><a href="#while-old-and-new-workers-both-run" id="toc-while-old-and-new-workers-both-run" class="nav-link" data-scroll-target="#while-old-and-new-workers-both-run">While old and new workers both run</a></li>
+  <li><a href="#cleaning-up-the-old-cache" id="toc-cleaning-up-the-old-cache" class="nav-link" data-scroll-target="#cleaning-up-the-old-cache">Cleaning up the old cache</a></li>
   <li><a href="#state-that-isnt-really-cache" id="toc-state-that-isnt-really-cache" class="nav-link" data-scroll-target="#state-that-isnt-really-cache">State that isn’t really cache</a></li>
   <li><a href="#things-to-know" id="toc-things-to-know" class="nav-link" data-scroll-target="#things-to-know">Things to know</a></li>
   </ul>
@@ -660,7 +665,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 <div>
   <div class="description">
-    What to do when a release changes the on-disk format: delete the cache with every worker stopped, or give each format its own directory for a rolling deploy, and what happens to sessions, counters and queues.
+    What happens when a release changes the on-disk format: the new release opens a cache of its own in a versioned subdirectory, old and new workers run side by side, and remove_old_formats() cleans up once the old workers are gone.
   </div>
 </div>
 
@@ -677,90 +682,108 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </header>
 
 
-<p>You bump diskcache-oxide in <code>requirements.txt</code>, deploy, and the app won’t start: opening the cache raises <a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>. Or, with a <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry, it starts and the log fills with the error while every request runs uncached. The new release stores its data differently, and it won’t read a database written the old way. For a cache that’s a cold start and nothing more, as long as you know which directories to delete and which data in them wasn’t really cache.</p>
-<section id="which-releases-need-this" class="level1">
-<h1>Which releases need this</h1>
-<p>Before 1.0, a release that changes the on-disk format bumps the minor version and says so first in its <a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md">changelog</a> entry. The last number goes up with every release, a minor bump included, so 0.1.2 is followed by 0.2.3. A release that keeps the format needs nothing: install it and restart.</p>
-<p>0.2.3 is a format change. It adds tags and the eviction policy to the database (format 3), so a cache made by 0.1.2 can’t be opened by 0.2.3, and 0.1.2 refuses a cache made by 0.2.3 the same way. Neither version reads or changes anything in the other’s database. Opening the other version’s cache raises <a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>, naming the file:</p>
-<pre class="text"><code>FormatMismatchError: cache format version 2 is not supported (this build uses version 3) (in /var/cache/my-app/diskcache-oxide.sqlite): it was made by an older diskcache-oxide: delete the cache's directory (a FanoutCache's whole root) with every process using it stopped, and it will be recreated empty</code></pre>
-<p>A <a href="../user-guide/caches.html"><code>Caches</code></a> registry doesn’t raise. It logs the error at <code>ERROR</code> on the <code>diskcache_oxide</code> logger (or passes it to your <code>on_open_error</code>), hands out a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> so requests carry on uncached, and tries to open the directory again every <code>retry_open_after</code> seconds (10 by default). Once you’ve deleted the old directory, the next retry creates a fresh cache and caching comes back without a restart.</p>
+<p>You bump diskcache-oxide in <code>requirements.txt</code>, deploy, and restart. Most of the time that’s all: a release that keeps the on-disk format opens your caches as they were, warm. When a release changes the format, it can’t read a cache written the old way, and it won’t write into one either. Instead of failing, it opens a new, empty cache in a subdirectory named for its format and logs a warning. Your app keeps running, and the old cache stays put until you remove it.</p>
+<section id="which-releases-change-the-format" class="level1">
+<h1>Which releases change the format</h1>
+<p>Before 1.0, a release that changes the on-disk format bumps the minor version and says so first in its <a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md">changelog</a> entry. A minor bump doesn’t always mean a format change, though: 0.3.5 keeps format 3 from 0.2.3, so moving from 0.2.3 to 0.3.5 keeps every cache warm. The format number belongs to the data, not to the library version: 0.1.2 wrote format 2, and 0.2.3 and later write format 3.</p>
 </section>
-<section id="the-simple-path-stop-delete-start" class="level1">
-<h1>The simple path: stop, delete, start</h1>
-<p>If you can stop every worker for a moment, this is all there is to it:</p>
-<ol type="1">
-<li>Stop every process that uses the cache: web workers, Celery workers, cron jobs, a REPL someone left open.</li>
-<li>Delete the cache’s directory. For a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, delete the whole root, never one shard: a shard deleted alone would be re-created next to shards still in the old format.</li>
-<li>Deploy the new release and start the workers. The directory is re-created empty on the first open.</li>
-</ol>
-<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">systemctl</span> stop my-app my-app-worker</span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">rm</span> <span class="at">-rf</span> /var/cache/my-app</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="at">--upgrade</span> diskcache-oxide</span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="ex">systemctl</span> start my-app my-app-worker</span></code></pre></div>
-<p>Delete the directory, not just <code>diskcache-oxide.sqlite</code>: values of 64 KiB or more live in files beside the database, and they’d be left behind. With a <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry, each registered cache is a directory under the base directory (unless you gave it <code>directory=</code>), so deleting the base directory clears them all.</p>
-<p>If a 0.1.2 worker is still running when you delete its cache and 0.2.3 re-creates it, the old worker can’t damage the new database. Its writes go to the deleted file through the connections it already holds, and once it opens the new file, its writes, deletes and maintenance calls fail with “no such table” (only <a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a> gets through). Stop every worker before deleting anyway: this only keeps a straggler from doing harm.</p>
-</section>
-<section id="rolling-deploys-one-directory-per-format" class="level1">
-<h1>Rolling deploys: one directory per format</h1>
-<p>A rolling deploy runs old and new workers side by side for a while, and they can’t share a cache across a format change. Give each minor version its own directory, so new workers start on an empty one while old workers finish on theirs. A directory named after the first two parts of <code>diskcache_oxide.__version__</code> changes exactly when the format can:</p>
-<div id="fdbb580c" class="cell" data-execution_count="1">
-<div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> diskcache_oxide</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> format_series(version: <span class="bu">str</span> <span class="op">=</span> diskcache_oxide.__version__) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    major, minor <span class="op">=</span> version.split(<span class="st">'.'</span>)[:<span class="dv">2</span>]</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="ss">f'v</span><span class="sc">{</span>major<span class="sc">}</span><span class="ss">.</span><span class="sc">{</span>minor<span class="sc">}</span><span class="ss">'</span></span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'this build:'</span>, diskcache_oxide.__version__, <span class="st">'-&gt;'</span>, format_series())</span>
-<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'0.1.2 -&gt;'</span>, format_series(<span class="st">'0.1.2'</span>), <span class="st">'| 0.2.3 -&gt;'</span>, format_series(<span class="st">'0.2.3'</span>))</span></code></pre></div>
-<div class="cell-output cell-output-stdout">
-<pre><code>this build: 0.2.3 -&gt; v0.2
-0.1.2 -&gt; v0.1 | 0.2.3 -&gt; v0.2</code></pre>
-</div>
-</div>
-<p>Use it wherever the app opens its caches:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Caches</span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>caches <span class="op">=</span> Caches(<span class="ss">f'/var/cache/my-app/</span><span class="sc">{</span>format_series()<span class="sc">}</span><span class="ss">'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)</span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'general'</span>)</span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'pages'</span>, size_limit<span class="op">=</span><span class="dv">2</span> <span class="op">*</span> <span class="dv">2</span><span class="op">**</span><span class="dv">30</span>)</span></code></pre></div>
-<p>A release that only bumps the last number (0.2.3 to a later 0.2 release) keeps the same directory and keeps its cache. A minor bump starts cold even on the rare occasion it doesn’t change the format, which is a small price for never having to check.</p>
-<p>After the deploy, once every old worker has stopped, delete the directories the old versions used. Run this from the deploy script, or from a job <a href="../recipes/run-once.html">one worker claims</a>:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> shutil</span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> remove_old_caches(root: <span class="bu">str</span> <span class="op">=</span> <span class="st">'/var/cache/my-app'</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
-<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>    keep <span class="op">=</span> format_series()</span>
-<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> path <span class="kw">in</span> Path(root).glob(<span class="st">'v*'</span>):</span>
-<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> path.is_dir() <span class="kw">and</span> path.name <span class="op">!=</span> keep:</span>
-<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>            shutil.rmtree(path)</span></code></pre></div>
-<p>A rollback works either way. If the old directory is gone, the old version re-creates it empty. If it’s still there, the old version opens it as it was left, and nothing the new version deleted while it ran ever reached it, so values without an <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> may be stale. Delete it before rolling back unless every entry expires soon.</p>
-<p>The first time you adopt this pattern, the old workers’ cache is wherever they had it before, and that’s the directory to delete once they’re gone. If they used a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at <code>/var/cache/my-app</code>, that directory is itself a cache, so put the versioned directories under another root (<code>/var/cache/my-app-caches/v0.2</code>) instead of inside it. A <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> base directory isn’t a cache itself, so <code>v0.2/</code> can sit beside the old registry’s cache directories.</p>
-<section id="while-both-versions-run" class="level2">
-<h2 class="anchored" data-anchor-id="while-both-versions-run">While both versions run</h2>
-<p>For the length of the overlap, old and new workers each have a cache the other can’t see:</p>
+<section id="what-happens-at-the-upgrade" class="level1">
+<h1>What happens at the upgrade</h1>
+<p>Say a cache lives at <code>/var/cache/my-app</code>, made by 0.1.2 (format 2), and you deploy 0.3.5 (format 3). The first time 0.3.5 opens <code>Cache('/var/cache/my-app')</code>, it reads the database’s format, sees 2, and opens <code>/var/cache/my-app/diskcache-oxide-format-3</code> instead, creating it empty. It logs this at <code>WARNING</code> on the <code>diskcache_oxide</code> logger:</p>
+<pre class="text"><code>/var/cache/my-app holds a cache made by an older diskcache-oxide (format 2), so this build (format 3) is using /var/cache/my-app/diskcache-oxide-format-3 instead; once no older process uses it, call remove_old_formats() or delete the old files there, keeping diskcache-oxide-format-3</code></pre>
+<p>0.3.5 never reads the old cache’s entries or changes its contents: it reads only its format. (If that read is the last connection to close on the old database, SQLite may checkpoint its write-ahead log into the database file, which changes no data.) Your code doesn’t change: it still says <code>Cache('/var/cache/my-app')</code>, and the handle’s <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a> attribute reports where the cache really is, <code>/var/cache/my-app/diskcache-oxide-format-3</code>. To open the same cache again, pass the original directory, not <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a>: the original picks the right subdirectory for whichever release opens it, and a versioned subdirectory opened directly never moves on the next format change.</p>
 <ul>
-<li><strong>Invalidation reaches one side only.</strong> A worker that deletes a key after a database update deletes it from its own version’s cache. The other side keeps serving the old value until it expires. Keep the overlap short, and keep an <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> on cached values, so it can’t last long.</li>
-<li><strong>Coordination splits in two.</strong> A <a href="../recipes/run-once.html">job claim</a> made on one side doesn’t stop the other, so a scheduled job can run once per version. A <a href="../recipes/rate-limiting.html">rate limit</a> counts each side separately, so a client can get up to twice its limit. Locks and semaphores from the <a href="../user-guide/coordination.html">Coordination</a> guide don’t exclude workers on the other version.</li>
+<li><strong>Every later open uses the subdirectory.</strong> Once <code>diskcache-oxide-format-3</code> exists, every 0.3.5 worker opens it, whatever the root holds. So all your new workers share one cache, even after the old files are gone.</li>
+<li><strong>The warning comes once per process.</strong> Each worker logs it on its first open of that cache, worded as “still holds” once the subdirectory already exists, until the old files are removed. Then it stops.</li>
+<li><strong>A <a href="../user-guide/caches.html"><code>Caches</code></a> registry</strong> opens the cache the same way, with no <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and no retry: a format change isn’t an open error any more.</li>
+<li><strong>A <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> moves as a whole.</strong> If its root’s manifest or any of its shards is in another format, the whole root opens in <code>diskcache-oxide-format-3</code>, as a new root with its own shards. Never one shard alone.</li>
+<li><strong>Both directions.</strong> If you roll back from a newer release to 0.3.5 and the root holds the newer format, 0.3.5 opens <code>diskcache-oxide-format-3</code> the same way, and the warning says the cache was made by a newer diskcache-oxide. Releases before 0.3.5 don’t know this rule: 0.2.3 and 0.1.2 raise <a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a> when they meet a newer format, as they always did.</li>
 </ul>
-<p>If any of that is a problem for your app, use the simple path instead.</p>
 </section>
+<section id="while-old-and-new-workers-both-run" class="level1">
+<h1>While old and new workers both run</h1>
+<p>A rolling deploy runs old and new workers side by side for a while. With a format change they don’t share a cache: old workers keep theirs at the root, new workers use the subdirectory. For the length of the overlap:</p>
+<ul>
+<li><strong>Invalidation reaches one side only.</strong> A worker that deletes a key after a database update deletes it from its own format’s cache. The other side keeps serving the old value until it expires. Keep the overlap short, and keep an <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> on cached values, so it can’t last long.</li>
+<li><strong>Coordination splits in two.</strong> A <a href="../recipes/run-once.html">job claim</a> made on one side doesn’t stop the other, so a scheduled job can run once per side. A <a href="../recipes/rate-limiting.html">rate limit</a> counts each side separately, so a client can get up to twice its limit. Locks and semaphores from the <a href="../user-guide/coordination.html">Coordination</a> guide don’t exclude workers on the other side.</li>
+</ul>
+<p>If any of that is a problem for your app, stop every old worker before starting the new ones. The new release still opens its own subdirectory and leaves the old cache alone.</p>
+</section>
+<section id="cleaning-up-the-old-cache" class="level1">
+<h1>Cleaning up the old cache</h1>
+<p>The old cache stays at the root, taking disk space, until something removes it. <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a> does that. Call it on any handle once no older worker is left:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>)</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>removed <span class="op">=</span> cache.remove_old_formats()</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(removed)  <span class="co"># the database files, manifests and directories it removed</span></span></code></pre></div>
+<p>With a registry, <code>caches.remove_old_formats()</code> runs it for every registered cache and returns what each removed (or <code>None</code>, logged, for one it couldn’t open or clean).</p>
+<div class="callout callout-style-default callout-warning callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">Warning</span>It doesn’t check whether an old worker is still running
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a> removes the old cache the moment you call it. It has no way to tell whether a process running an older diskcache-oxide still uses those files, so stop or replace every old worker first, and drain any <a href="../recipes/work-queues.html">work queue</a> they share.</p>
+<p>If an old worker is still running when you call it, on Linux and macOS its cache can be corrupted until that worker restarts: errors such as “database disk image is malformed”, or wrong results, not just misses. That’s the same as running <code>rm -rf</code> on the directory under it. Everything that worker kept in its cache is gone: queued items, counters, sessions. The damage stays inside the old-format files, though: new workers never read them. On Windows, a file an old worker still has open can’t be deleted: it’s left in place, named in a warning, and the next call removes it once that worker is gone.</p>
+</div>
+</div>
+<p>Good places to call it: from your deploy script after the old workers have stopped, from a job <a href="../recipes/run-once.html">one worker claims</a> after the deploy, or at every startup if your deploys never run old and new workers at the same time. Calling it again is harmless: with nothing old left, it returns <code>[]</code>.</p>
+<p>What it removes:</p>
+<ul>
+<li>The root’s own cache when its format is older than the running release’s: the database (<code>diskcache-oxide.sqlite</code> and its <code>-wal</code>, <code>-shm</code> and <code>-journal</code> files) and its value files, or for a FanoutCache its shard directories and manifest.</li>
+<li>Any <code>diskcache-oxide-format-M</code> subdirectory holding a cache in a format older than the running release’s.</li>
+</ul>
+<p>What it never removes:</p>
+<ul>
+<li>A cache in the running release’s format, or a newer one. A rolled-back release can’t wipe the newer release’s warm cache.</li>
+<li>Anything diskcache-oxide didn’t write. Other files in the directory stay, and a directory is removed only once it’s empty.</li>
+<li>Anything behind a symbolic link.</li>
+<li>An empty database file that may still be being created: one in a versioned subdirectory, a shard, or one at the root less than 10 minutes old. An older empty one at the root holds nothing and is removed: it’s what an old worker leaves behind when it reopens a removed cache.</li>
+<li>A database this process has open.</li>
+<li>A cache whose format it can’t read. That one is left and logged.</li>
+</ul>
+<p>It logs what it removed at <code>INFO</code>, and anything it left, with the reason, at <code>WARNING</code>.</p>
+<p>If you’d rather clean up by hand, with every old worker stopped: delete <code>diskcache-oxide.sqlite*</code> and the two-character hex directories at the root (for a FanoutCache root, the <code>000</code>, <code>001</code> … shard directories and the <code>diskcache-oxide-fanout</code> file), and keep <code>diskcache-oxide-format-3</code>. Don’t delete the whole directory: that deletes the new cache too.</p>
+<p>After the cleanup the cache stays in <code>diskcache-oxide-format-3</code>. It never moves back to the root on its own, because moving it would mean starting cold.</p>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">Note</span>0.2.3 workers and the subdirectory
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p>0.2.3 writes format 3 too, but it doesn’t know about <code>diskcache-oxide-format-3</code>. If 0.2.3 workers still run after the root’s old cache is removed, they find an empty root and create a format-3 cache there, while 0.3.5 and later workers keep using the subdirectory.</p>
+<p>That’s safe: both caches work, and nothing is corrupted or lost. It’s not ideal: the two sets of workers no longer share a cache, so invalidation, locks, job claims and rate limits don’t cross between them, as during any overlap. If that matters for your app, upgrade the 0.2.3 workers, or clean up after they’re gone. Otherwise it’s fine to leave. Once the last 0.2.3 worker is gone, the root’s cache is just unused: delete it by hand if you like. <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a> leaves it, because it’s in the current format.</p>
+</div>
+</div>
 </section>
 <section id="state-that-isnt-really-cache" class="level1">
 <h1>State that isn’t really cache</h1>
-<p>A cache entry can be rebuilt from somewhere else. Some of what apps keep in a cache directory can’t be, and deleting the directory for a format change loses it. Deal with each kind before you upgrade:</p>
+<p>A cache entry can be rebuilt from somewhere else. Some of what apps keep in a cache directory can’t be, and a format change starts that state over in the new cache. Deal with each kind before you upgrade, or at least before you clean up:</p>
 <ul>
-<li><strong><a href="../recipes/work-queues.html">Work queues</a>.</strong> Items still queued are lost. Stop pushing new work, let the workers drain the queue until <code>peek(prefix=...)</code> returns <code>(None, None)</code>, then upgrade. With one directory per format, old workers can drain the old queue while new producers fill the new one; check that the old queue is empty before deleting its directory.</li>
-<li><strong><a href="../recipes/counters.html">Counters</a>.</strong> Counts since the last flush are lost. Run the flush job once more with the old release, after its last worker stops and before you delete the directory. If that isn’t practical, a once-a-minute flush loses under a minute of counts.</li>
-<li><strong><a href="../recipes/sessions.html">Sessions</a>.</strong> Everyone is logged out. Upgrade at a quiet hour, or tell users ahead of time. During a rolling deploy with one directory per format, a user who lands on a new worker looks logged out, and after signing in again can bounce back to an old worker where that session doesn’t exist. An app that keeps sessions in the cache is better served by the simple path.</li>
+<li><strong><a href="../recipes/work-queues.html">Work queues</a>.</strong> Items queued by old workers stay in the old cache, where new workers never see them. Let the old workers drain the queue until <code>peek(prefix=...)</code> returns <code>(None, None)</code> before you stop them, and before you call <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a>.</li>
+<li><strong><a href="../recipes/counters.html">Counters</a>.</strong> New workers count from zero in the new cache. Run the flush job once more with the old release before its last worker stops. If that isn’t practical, a once-a-minute flush loses under a minute of counts.</li>
+<li><strong><a href="../recipes/sessions.html">Sessions</a>.</strong> Everyone is logged out. Upgrade at a quiet hour, or tell users ahead of time. During a rolling deploy, a user who lands on a new worker looks logged out, and after signing in again can bounce back to an old worker where that session doesn’t exist. If your app keeps sessions in the cache, stop the old workers before starting the new ones.</li>
 <li><strong><a href="../recipes/run-once.html">Job claims</a>, rate limits and <a href="../recipes/single-use-keys.html">single-use keys</a>.</strong> These expire on their own anyway. After the upgrade, a claimed job may run again and a client’s rate limit starts over. A one-time token issued before the upgrade stops working, so a password reset link from just before the deploy has to be requested again.</li>
 </ul>
 </section>
 <section id="things-to-know" class="level1">
 <h1>Things to know</h1>
 <ul>
-<li><strong>Settings stored in the cache go with it.</strong> <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> and <a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="gdls-link gdls-code">eviction_policy</a> are stored in the database. The new cache takes them from the constructor, or the defaults. A value you changed at runtime with <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset()</a> has to be set again, so pass it to the constructor or to <a href="../reference/Caches.register.html#diskcache_oxide.Caches.register" class="gdls-link gdls-code">register()</a> instead.</li>
-<li><strong>A cache made by a newer release</strong> raises <a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a> too, saying it was made by a newer diskcache-oxide. That’s an old worker meeting a new cache: upgrade it, or point it at another directory.</li>
-<li><strong>It’s always safe to start cold.</strong> Deleting a cache’s directory with every worker stopped loses what was in it and nothing else. If a cache is ever in doubt, that’s the fix. See <a href="../user-guide/errors.html#formatmismatcherror-a-database-this-version-cant-read">Errors and what to do about them</a>.</li>
+<li><strong>Settings stored in the cache don’t carry over.</strong> <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> and <a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="gdls-link gdls-code">eviction_policy</a> are stored in the database. The new cache takes them from the constructor, or the defaults. A value you changed at runtime with <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset()</a> has to be set again, so pass it to the constructor or to <a href="../reference/Caches.register.html#diskcache_oxide.Caches.register" class="gdls-link gdls-code">register()</a> instead.</li>
+<li><strong>A rare race at the first open.</strong> If the old cache is deleted at the very moment the first new worker moves to the subdirectory, another new worker starting in that instant can create its cache at the root instead. Both caches work, but they’re separate until those workers restart. Deleting old files only after the warning has shown the new workers are up, as above, avoids it.</li>
+<li><strong>The same goes for a FanoutCache created twice at once.</strong> An old and a new release creating the same new FanoutCache root at the same moment can each win some of its shards. The new release then moves to the subdirectory, and the old one fails on the shards it lost.</li>
+<li><strong>A cache made by a newer release</strong> gives 0.2.3 and earlier a <a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>, saying it was made by a newer diskcache-oxide. That’s an old worker meeting a new cache: upgrade it, or point it at another directory. See <a href="../user-guide/errors.html#formatmismatcherror-a-database-this-version-cant-read">Errors and what to do about them</a>.</li>
+<li><strong>If you used a directory per version before.</strong> Earlier versions of this page suggested putting each minor version’s caches in a directory of its own, such as <code>/var/cache/my-app/v0.2</code>. That still works, but it starts cold on every minor bump, format change or not. To keep a warm cache across upgrades, point your app at one directory and let a format change use the subdirectory. Delete the old per-version directories once nothing uses them.</li>
+<li><strong>It’s always safe to start cold.</strong> Deleting a cache’s directory with every worker stopped loses what was in it and nothing else. If a cache is ever in doubt, that’s the fix.</li>
 </ul>
 
 
@@ -1214,9 +1237,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script src="../details.js"></script>
 <script src="../mermaid-renderer.js"></script>
 <script src="../tooltips.js"></script>
-<script>(function(){var s=document.createElement('script');s.src=(document.querySelector('link[rel="canonical"]')||{href:location.href}).href.replace(/\/[^\/]*$/,'').replace(/\/[^\/]*$/,'')+'/color-swatch.js';var h=document.currentScript;h.parentNode.insertBefore(s,h.nextSibling);})()</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'color-swatch.js';document.body.appendChild(s);})();</script>
 <script src="../responsive-tables.js"></script>
-<script src="video-embed.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'video-embed.js';document.body.appendChild(s);})();</script>
 <script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'termshow.js';document.body.appendChild(s);})();</script>
 <script src="../navbar-widgets.js"></script>
 

@@ -59,7 +59,9 @@ FanoutCache('/var/cache/my-app-rate-limits', shards=16)
 
 ### Plain `Cache` and `FanoutCache` directories don't mix
 
-A `Cache` opened on a `FanoutCache`'s directory, or on one of its shard directories, raises `LayoutMismatchError`, and so does a `FanoutCache` opened on a plain `Cache`'s directory. The refused open creates nothing, so a typo doesn't leave a directory that neither kind can open. `LayoutMismatchError` is both a `ValueError` and a `FormatMismatchError`. If a registry hits it, the lookup returns a [`NullCache`](null-cache.qmd) and reports it like any failed open. A registry that meets another shard count than its registration's opens the folder with the count on disk and warns instead ([Caches](caches.qmd)).
+A `Cache` opened on a `FanoutCache`'s directory, or on one of its shard directories, raises `LayoutMismatchError`, and so does a `FanoutCache` opened on a plain `Cache`'s directory. The refused open creates nothing, so a typo doesn't leave a directory that neither kind can open. `LayoutMismatchError` is both a `ValueError` and a `FormatMismatchError`. If a registry hits it, the lookup returns a [`NullCache`](null-cache.qmd) and reports it like any failed open. That holds for a shard directory in any on-disk format.
+
+A root in another on-disk format, whether its manifest or any of its shards, opens as a whole in the root's `diskcache-oxide-format-N` subdirectory, a new root with its own shards and the count you ask for (or 8), and logs a warning, as a plain `Cache` does. One shard never moves on its own. `remove_old_formats()` removes the old root's shards, highest first, and its manifest last. See [Upgrading across a format change](../recipes/upgrading.qmd). A registry that meets another shard count than its registration's opens the folder with the count on disk and warns instead ([Caches](caches.qmd)).
 
 ## Choosing `shards` and `max_connections`
 

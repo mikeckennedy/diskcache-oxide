@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
-<link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/recipes/">
 
 <meta charset="utf-8">
 <meta name="generator" content="quarto-1.11.9">
@@ -49,7 +48,7 @@ ul.task-list li input[type="checkbox"] {
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-63b5708e65d6cd79cd7618c58d0c21e7.css" rel="stylesheet" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-4c995cf1e5ce428d9c201124d003f5da.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-9411a706d08770b9e0c434f3159337ed.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
 <script id="quarto-search-options" type="application/json">{
   "location": "navbar",
   "copy-button": false,
@@ -403,6 +402,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script async="" src="https://uma.mkennedy.codes/script.js" data-website-id="fc9b6770-3b44-4073-944e-4a4f0e79f66a"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'termshow.css'}));</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-compare.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-compare.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-annotate.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-annotate.js';s.defer=true;document.head.appendChild(s);})();</script>
 <meta name="gd-logo-dark" content="diskcache-oxide-logo-dark.png">
 <link rel="icon" type="image/x-icon" href="https://mkennedy.codes/docs/diskcache-oxide/favicon.ico" sizes="48x48">
 <link rel="icon" type="image/png" sizes="32x32" href="https://mkennedy.codes/docs/diskcache-oxide/favicon-32x32.png">
@@ -411,6 +416,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script src="../theme-init.js"></script>
 
 
+  <link rel="alternate" type="text/markdown" href="index.md">
+  <link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/recipes/">
   <meta name="description" content="A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was...">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Recipes – diskcache-oxide | diskcache-oxide">
@@ -436,7 +443,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-12">v0.2.3</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.3.5</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -464,7 +471,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -660,7 +667,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p><strong><a href="../recipes/web-workers.html">Sharing a cache across web workers</a>.</strong> Where to put the cache directory, when to open it with gunicorn, uvicorn, FastAPI, Flask, Django and Celery, how to keep a busy cache from slowing requests, and what to do at shutdown.</p>
 <p><strong><a href="../recipes/asyncio.html">Using the cache from asyncio</a>.</strong> Read inline, write off the loop, and keep transactions on one thread, in FastAPI, Starlette or aiohttp.</p>
 <p><strong><a href="../recipes/monitoring.html">Watching a cache in production</a>.</strong> A health check and an admin endpoint: entries, bytes on disk, hit ratio across workers, the size limit, the write-ahead log, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> for damage, and the log lines worth alerting on.</p>
-<p><strong><a href="../recipes/upgrading.html">Upgrading across a format change</a>.</strong> When a release changes the on-disk format: stop, delete and start, or give each format its own directory for a rolling deploy, and what to do first about queues, counters and sessions.</p>
+<p><strong><a href="../recipes/upgrading.html">Upgrading across a format change</a>.</strong> When a release changes the on-disk format: the new release opens its own cache in a versioned subdirectory, old and new workers run side by side, <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a> cleans up afterwards, and what to do first about queues, counters and sessions.</p>
 <p><strong><a href="../recipes/testing.html">Testing code that uses a cache</a>.</strong> pytest fixtures for a real cache in a temporary directory, a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> for tests that shouldn’t cache at all, and a fake clock for testing expiry without sleeping.</p>
 </section>
 <section id="in-the-user-guide" class="level1">
@@ -1115,9 +1122,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script src="../details.js"></script>
 <script src="../mermaid-renderer.js"></script>
 <script src="../tooltips.js"></script>
-<script>(function(){var s=document.createElement('script');s.src=(document.querySelector('link[rel="canonical"]')||{href:location.href}).href.replace(/\/[^\/]*$/,'').replace(/\/[^\/]*$/,'')+'/color-swatch.js';var h=document.currentScript;h.parentNode.insertBefore(s,h.nextSibling);})()</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'color-swatch.js';document.body.appendChild(s);})();</script>
 <script src="../responsive-tables.js"></script>
-<script src="video-embed.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'video-embed.js';document.body.appendChild(s);})();</script>
 <script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'termshow.js';document.body.appendChild(s);})();</script>
 <script src="../navbar-widgets.js"></script>
 

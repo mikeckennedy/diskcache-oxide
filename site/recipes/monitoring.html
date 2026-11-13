@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
-<link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/recipes/monitoring.html">
 
 <meta charset="utf-8">
 <meta name="generator" content="quarto-1.11.9">
@@ -86,7 +85,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-63b5708e65d6cd79cd7618c58d0c21e7.css" rel="stylesheet" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-4c995cf1e5ce428d9c201124d003f5da.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-9411a706d08770b9e0c434f3159337ed.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
 <script id="quarto-search-options" type="application/json">{
   "location": "navbar",
   "copy-button": false,
@@ -440,6 +439,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script async="" src="https://uma.mkennedy.codes/script.js" data-website-id="fc9b6770-3b44-4073-944e-4a4f0e79f66a"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'termshow.css'}));</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-compare.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-compare.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-annotate.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-annotate.js';s.defer=true;document.head.appendChild(s);})();</script>
 <meta name="gd-logo-dark" content="diskcache-oxide-logo-dark.png">
 <link rel="icon" type="image/x-icon" href="https://mkennedy.codes/docs/diskcache-oxide/favicon.ico" sizes="48x48">
 <link rel="icon" type="image/png" sizes="32x32" href="https://mkennedy.codes/docs/diskcache-oxide/favicon-32x32.png">
@@ -448,6 +453,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script src="../theme-init.js"></script>
 
 
+  <link rel="alternate" type="text/markdown" href="monitoring.md">
+  <link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/recipes/monitoring.html">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Watching a cache in production – diskcache-oxide | diskcache-oxide">
   <meta property="og:description" content="A health check and an admin endpoint for a cache: entries, bytes on disk, hit ratio, the size limit, the write-ahead log, check() for damage, and the log lines worth alerting on.">
@@ -472,7 +479,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-12">v0.2.3</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.3.5</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -500,7 +507,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -681,7 +688,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-health-check" class="level1">
 <h1>A health check</h1>
 <p>Everything here reads a few numbers and never waits on writers, so it’s fine to call on every health probe:</p>
-<div id="72ed477b" class="cell" data-execution_count="1">
+<div id="898db21b" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> os</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -745,7 +752,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Hits and misses across workers</h1>
 <p>The counts live in each process’s memory and are never written to the database, so reading them costs nothing. That also means a health probe that lands on one gunicorn worker sees that worker’s counts only, since its last restart; a forked child starts from zero. Every handle on one directory in a process shares one set of counts, and they survive closing the last handle.</p>
 <p>For a total across workers, have each worker add its counts to a shared counter now and then, from a timer or after every few hundred requests. Keep those counters in a small cache of their own, so reading the totals doesn’t count as lookups in the cache you’re measuring:</p>
-<div id="f97d0562" class="cell" data-execution_count="2">
+<div id="b7fe4c95" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>counters <span class="op">=</span> Cache(tempfile.mkdtemp())</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> publish_stats(cache: Cache, counters: Cache) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
@@ -768,7 +775,7 @@ this worker since: (0, 0)</code></pre>
 <section id="an-admin-page-for-every-cache" class="level1">
 <h1>An admin page for every cache</h1>
 <p>A <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry gives you one row per cache with <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>. It opens each registered cache, and never raises: a cache that can’t be opened gets its <code>error</code> set, with the exception’s type and message.</p>
-<div id="bb4d24ca" class="cell" data-execution_count="3">
+<div id="1d5eb3d8" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> dataclasses</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Caches</span>
@@ -785,7 +792,7 @@ this worker since: (0, 0)</code></pre>
 {'name': 'pages', 'directory': '...', 'enabled': True, 'count': 0, 'volume': 40960, 'error': None}</code></pre>
 </div>
 </div>
-<p>A cache that can’t open shows up here with <code>count</code> and <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume</a> at 0 and the reason in <code>error</code>, for example <code>FormatMismatchError: cache format version 2 is not supported (this build uses version 3) ...</code> after an upgrade that changed the format (see <a href="../recipes/upgrading.html">Upgrading across a format change</a>).</p>
+<p>A cache that can’t open shows up here with <code>count</code> and <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume</a> at 0 and the reason in <code>error</code>, for example <code>LayoutMismatchError: ...</code> for a directory that holds the other kind of cache. An upgrade that changed the on-disk format doesn’t: the cache opens in its versioned subdirectory. Watch for that with the warning instead. A <code>diskcache_oxide</code> record at <code>WARNING</code> saying a directory “holds a cache made by an older diskcache-oxide” (or “still holds”) means old files are waiting for <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a>, and “made by a newer diskcache-oxide” means a process is running an older release than the one that wrote the cache (see <a href="../recipes/upgrading.html">Upgrading across a format change</a>).</p>
 <p>As an endpoint, with each cache’s hit counts added. Every cache in this registry is a plain one; read a sharded one with <code>caches.fanout(name)</code> instead, since <code>caches[name]</code> raises <code>TypeError</code> for it:</p>
 <div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="at">@app.get</span>(<span class="st">'/admin/caches'</span>)</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> admin_caches() <span class="op">-&gt;</span> <span class="bu">dict</span>:</span>
@@ -808,7 +815,7 @@ this worker since: (0, 0)</code></pre>
 <section id="checking-for-damage" class="level1">
 <h1>Checking for damage</h1>
 <p><a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> compares the database with the value files and returns what it found as a list of <code>warnings.WarningMessage</code>, without issuing any warnings. An empty list means nothing is wrong. Here a value file is deleted behind the cache’s back:</p>
-<div id="998a766e" class="cell" data-execution_count="4">
+<div id="44a2ea4d" class="cell" data-execution_count="4">
 <div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> glob</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>damaged <span class="op">=</span> Cache(tempfile.mkdtemp())</span>
@@ -821,7 +828,7 @@ this worker since: (0, 0)</code></pre>
 <span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(warning.category.<span class="va">__name__</span>, <span class="bu">str</span>(warning.message).replace(damaged.directory, <span class="st">'...'</span>))</span>
 <span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'repaired:'</span>, <span class="bu">len</span>(damaged.check(fix<span class="op">=</span><span class="va">True</span>)), <span class="st">'| after:'</span>, damaged.check(), <span class="st">'| entries:'</span>, <span class="bu">len</span>(damaged))</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>UserWarning file not found: .../13/13b7f3815bb2bf7d68b39cdde27e0ab6.val
+<pre><code>UserWarning file not found: .../ab/abd825082ff889a281f1cba0e2460e0b.val
 repaired: 1 | after: [] | entries: 1</code></pre>
 </div>
 </div>
@@ -1308,9 +1315,9 @@ repaired: 1 | after: [] | entries: 1</code></pre>
 <script src="../details.js"></script>
 <script src="../mermaid-renderer.js"></script>
 <script src="../tooltips.js"></script>
-<script>(function(){var s=document.createElement('script');s.src=(document.querySelector('link[rel="canonical"]')||{href:location.href}).href.replace(/\/[^\/]*$/,'').replace(/\/[^\/]*$/,'')+'/color-swatch.js';var h=document.currentScript;h.parentNode.insertBefore(s,h.nextSibling);})()</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'color-swatch.js';document.body.appendChild(s);})();</script>
 <script src="../responsive-tables.js"></script>
-<script src="video-embed.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'video-embed.js';document.body.appendChild(s);})();</script>
 <script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'termshow.js';document.body.appendChild(s);})();</script>
 <script src="../navbar-widgets.js"></script>
 

@@ -19,7 +19,9 @@ survives restarts. The entry points:
   dataclass needs only a name. `registry` is the process-wide `TypeRegistry` behind it.
 - Exceptions: `Timeout` (a `TimeoutError`), `TransactionBusy` (a `Timeout`), `TransactionAborted`,
   `FormatMismatchError` and `LayoutMismatchError` (`RuntimeError`s), `UnsafeValueError` (a
-  `TypeError`), `CorruptValueError`, `CorruptKeyError` and `ForeignValueError` (`ValueError`s).
+  `TypeError`), `CorruptValueError`, `CorruptKeyError` and `ForeignValueError` (`ValueError`s). A
+  cache directory holding another on-disk format isn't an error: the cache opens in its
+  `diskcache-oxide-format-N` subdirectory and `remove_old_formats()` cleans up later.
 
 There is no command-line interface and no environment variable to set. Warnings and swallowed
 failures go to the `diskcache_oxide` logger.
