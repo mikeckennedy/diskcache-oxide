@@ -73,6 +73,11 @@ The concurrency core is where serious bugs hide, so it got its own phase before 
 Tags and the eviction policy changed the on-disk format, so caches made by 0.1.2 have to be deleted when you upgrade (see [Upgrading diskcache-oxide](switching-from-diskcache.md#upgrading-diskcache-oxide)).
 
 
+## Done: Windows (0.2.4)
+
+0.2.4 adds Windows on x86_64, with wheels for all four Pythons. Everything but the fork guarantees works the same there; [Getting started](getting-started.md#windows) lists what differs. Nothing changed on disk.
+
+
 ## Next
 
 In roughly this order:
@@ -82,7 +87,6 @@ In roughly this order:
 | **Django cache backend** | A diskcache-oxide backend for Django's cache framework, tested against Django's own cache test suite. It's a big job, so it gets a phase of its own. |
 | **Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
 | **`AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. It starts as an experiment and ships only if it earns its place; if it doesn't, this page will say why. |
-| **Windows** | Supported as a development platform, as a plan of its own. |
 | **Network server** | Stage 3, above. Speculative, and a separate product if it happens. |
 
 

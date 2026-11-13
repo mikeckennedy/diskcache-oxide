@@ -628,6 +628,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#done-concurrency-review-and-soak" id="toc-done-concurrency-review-and-soak" class="nav-link" data-scroll-target="#done-concurrency-review-and-soak">Done: concurrency review and soak</a></li>
   <li><a href="#done-the-first-release" id="toc-done-the-first-release" class="nav-link" data-scroll-target="#done-the-first-release">Done: the first release</a></li>
   <li><a href="#done-parity-with-diskcache-0.2.3" id="toc-done-parity-with-diskcache-0.2.3" class="nav-link" data-scroll-target="#done-parity-with-diskcache-0.2.3">Done: parity with diskcache (0.2.3)</a></li>
+  <li><a href="#done-windows-0.2.4" id="toc-done-windows-0.2.4" class="nav-link" data-scroll-target="#done-windows-0.2.4">Done: Windows (0.2.4)</a></li>
   <li><a href="#next" id="toc-next" class="nav-link" data-scroll-target="#next">Next</a></li>
   <li><a href="#decided-against-and-why" id="toc-decided-against-and-why" class="nav-link" data-scroll-target="#decided-against-and-why">Decided against, and why</a></li>
   </ul></li>
@@ -746,6 +747,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </ul>
 <p>Tags and the eviction policy changed the on-disk format, so caches made by 0.1.2 have to be deleted when you upgrade (see <a href="../user-guide/switching-from-diskcache.html#upgrading-diskcache-oxide">Upgrading diskcache-oxide</a>).</p>
 </section>
+<section id="done-windows-0.2.4" class="level2">
+<h2 class="anchored" data-anchor-id="done-windows-0.2.4">Done: Windows (0.2.4)</h2>
+<p>0.2.4 adds Windows on x86_64, with wheels for all four Pythons. Everything but the fork guarantees works the same there; <a href="../user-guide/getting-started.html#windows">Getting started</a> lists what differs. Nothing changed on disk.</p>
+</section>
 <section id="next" class="level2">
 <h2 class="anchored" data-anchor-id="next">Next</h2>
 <p>In roughly this order:</p>
@@ -770,10 +775,6 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>An async API for asyncio frameworks that can’t slow down the sync one, including <code>transact_async()</code>. It starts as an experiment and ships only if it earns its place; if it doesn’t, this page will say why.</td>
 </tr>
 <tr class="even">
-<td><strong>Windows</strong></td>
-<td>Supported as a development platform, as a plan of its own.</td>
-</tr>
-<tr class="odd">
 <td><strong>Network server</strong></td>
 <td>Stage 3, above. Speculative, and a separate product if it happens.</td>
 </tr>

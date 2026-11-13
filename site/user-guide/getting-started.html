@@ -675,6 +675,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   </ul></li>
   <li><a href="#more-than-one-process-writing" id="toc-more-than-one-process-writing" class="nav-link" data-scroll-target="#more-than-one-process-writing">More than one process writing</a></li>
   <li><a href="#shutting-down" id="toc-shutting-down" class="nav-link" data-scroll-target="#shutting-down">Shutting down</a></li>
+  <li><a href="#windows" id="toc-windows" class="nav-link" data-scroll-target="#windows">Windows</a></li>
   <li><a href="#testing-code-that-uses-a-cache" id="toc-testing-code-that-uses-a-cache" class="nav-link" data-scroll-target="#testing-code-that-uses-a-cache">Testing code that uses a cache</a></li>
   </ul>
 </nav>
@@ -712,7 +713,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install diskcache-oxide</span></code></pre></div>
 <ul>
 <li><strong>Python:</strong> CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).</li>
-<li><strong>Platforms:</strong> macOS and Linux. Wheels cover macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. Windows support is planned.</li>
+<li><strong>Platforms:</strong> macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. <a href="#windows">Windows</a> below says what differs there.</li>
 <li><strong>Dependencies:</strong> none at runtime. SQLite is bundled and compiled in, so your system’s SQLite version doesn’t matter (<a href="../reference/sqlite_version.html#diskcache_oxide.sqlite_version" class="gdls-link gdls-code">diskcache_oxide.sqlite_version()</a> reports the one in use).</li>
 </ul>
 </section>
@@ -1014,6 +1015,17 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Shutting down</h1>
 <p>Call <code>cache.checkpoint()</code> at shutdown if you can. It isn’t required. With readers in other processes, a burst of writes (a big fill, or a <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>) can leave SQLite’s write-ahead log much larger than the database, and SQLite only shrinks it when it gets a moment with no readers. <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> makes that moment: it waits briefly for in-flight reads, copies the log into the database, and truncates it. It returns <code>False</code> instead of raising if other processes keep it busy.</p>
 <p><a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> does the same by default, but only when the log is large, and it waits at most a second, so closing stays cheap. <a href="../user-guide/storage-and-wal.html">Storage and WAL</a> has the details.</p>
+</section>
+<section id="windows" class="level1">
+<h1>Windows</h1>
+<p>The API and the guarantees are the same on Windows, with these differences:</p>
+<ul>
+<li><strong>No <code>fork()</code>.</strong> Windows has no fork, so <code>multiprocessing</code> starts each worker fresh and each opens its own handle. The <a href="../user-guide/concurrency-and-forks.html">fork guarantees</a> are Unix-only; threads and processes are safe everywhere.</li>
+<li><strong>An open cache’s directory can’t be deleted.</strong> Windows won’t delete a file a process has open, and SQLite keeps the database open for as long as any handle is. <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> every handle first: a closed cache’s directory deletes cleanly. A delete attempted while it’s open fails with <code>PermissionError</code>, and may still remove some large values’ files on the way, which then read as misses.</li>
+<li><strong>New directories take their parent’s permissions.</strong> On macOS and Linux a cache directory is created owner-only (0700); on Windows it inherits its parent’s access control list.</li>
+<li><strong>Other programs holding a file.</strong> Antivirus, the search indexer and backup tools can hold a large value’s file for a moment. A read or a delete waits that out for about 50 ms. A read still blocked after that raises (or, on a <code>durable=True</code> cache, is a miss, and the entry stays); a file a delete couldn’t remove is left on disk with no entry, outside <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, until <code>check(fix=True)</code> removes it (it removes a file no entry names once the file is an hour old). Excluding cache directories from real-time antivirus scanning avoids this and can make them faster.</li>
+<li><strong>Long paths work.</strong> A cache directory can be deeper than Windows’s 260-character limit, whether or not the machine enables long paths.</li>
+</ul>
 </section>
 <section id="testing-code-that-uses-a-cache" class="level1">
 <h1>Testing code that uses a cache</h1>
