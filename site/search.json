@@ -216,11 +216,11 @@
     ]
   },
   {
-    "objectID": "user-guide/roadmap.html#done-windows-0.2.4",
-    "href": "user-guide/roadmap.html#done-windows-0.2.4",
+    "objectID": "user-guide/roadmap.html#done-windows-0.3.5",
+    "href": "user-guide/roadmap.html#done-windows-0.3.5",
     "title": "Vision and roadmap",
-    "section": "Done: Windows (0.2.4)",
-    "text": "Done: Windows (0.2.4)\n0.2.4 adds Windows on x86_64, with wheels for all four Pythons. Everything but the fork guarantees works the same there; Getting started lists what differs. Nothing changed on disk.",
+    "section": "Done: Windows (0.3.5)",
+    "text": "Done: Windows (0.3.5)\n0.3.5 adds Windows on x86_64, with wheels for all four Pythons. Everything but the fork guarantees works the same there; Getting started lists what differs. Nothing changed on disk.",
     "crumbs": [
       "User Guide",
       "Get started",

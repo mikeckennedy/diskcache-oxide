@@ -73,9 +73,9 @@ The concurrency core is where serious bugs hide, so it got its own phase before 
 Tags and the eviction policy changed the on-disk format. 0.2.3 refuses a cache made by 0.1.2; since 0.3.5 such a cache opens in a versioned subdirectory instead, and [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats) cleans up the old one (see [Upgrading across a format change](../recipes/upgrading.md)).
 
 
-## Done: Windows (0.2.4)
+## Done: Windows (0.3.5)
 
-0.2.4 adds Windows on x86_64, with wheels for all four Pythons. Everything but the fork guarantees works the same there; [Getting started](getting-started.md#windows) lists what differs. Nothing changed on disk.
+0.3.5 adds Windows on x86_64, with wheels for all four Pythons. Everything but the fork guarantees works the same there; [Getting started](getting-started.md#windows) lists what differs. Nothing changed on disk.
 
 
 ## Done: upgrades across a format change (0.3.5)
