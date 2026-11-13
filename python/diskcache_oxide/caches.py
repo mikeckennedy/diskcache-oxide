@@ -17,10 +17,12 @@ settings. Plain caches are read with `caches[name]` (typed `TransactionalCacheLi
 **Lookups.** A cache opens on its first lookup and the same object comes back every time after
 that. A lookup is one dict read, with no lock, so it's cheap enough to do on every request.
 
-**When a cache can't open** (a permissions problem, a database in a format this version can't read,
-a directory that holds the other kind of cache (`LayoutMismatchError`), another process holding the
-lock past `timeout`), the lookup returns a `NullCache` instead of raising, reports the error through
-`on_open_error`, and tries again after `retry_open_after` seconds.
+**When a cache can't open** (a permissions problem, a directory that holds the other kind of cache
+(`LayoutMismatchError`), another process holding the lock past `timeout`), the lookup returns a
+`NullCache` instead of raising, reports the error through `on_open_error`, and tries again after
+`retry_open_after` seconds. A directory holding another on-disk format isn't a failure: the cache
+opens in its `diskcache-oxide-format-N` subdirectory with a warning, and `remove_old_formats()`
+cleans up the old one later.
 
 **A sharded cache keeps the shard count it was created with.** If its folder already has another
 count than `register(..., shards=n)` says, the registry opens it with the count on disk, logs a
@@ -73,8 +75,9 @@ _CACHE_SETTINGS = _public_settings(Cache)
 _FANOUT_SETTINGS = _public_settings(FanoutCache)
 
 # Errors that mean "this cache can't open right now", as opposed to a bug in its settings.
-# `Timeout` is an `OSError`. `RuntimeError` covers `FormatMismatchError` and its subclass
-# `LayoutMismatchError` (a directory that holds another kind of cache, a moved shard directory, or
+# `Timeout` is an `OSError`. `RuntimeError` covers `FormatMismatchError` (now only where the versioned
+# subdirectory can't help, plan 26: another format opens `diskcache-oxide-format-N` instead) and its
+# subclass `LayoutMismatchError` (a directory that holds another kind of cache, a moved shard directory, or
 # settings that fit the registered shard count but not the stored one), the not-WAL error, and a
 # child forked mid-transaction that can't write the file (D-020): a NullCache is right for all. A
 # different shard count alone is not an error here: the stored count is used (plan 15).
@@ -275,7 +278,9 @@ class Caches[N: str = str]:
         return len(self._specs)
 
     def directory(self, name: N) -> str:
-        """Where the named cache lives."""
+        """The directory the named cache is registered at. After a format change the cache itself
+        is in that directory's `diskcache-oxide-format-N` subdirectory; its handle's `directory`
+        says where."""
         return self._spec(name)[0]
 
     # -- lookup ----------------------------------------------------------------------------------
@@ -509,6 +514,23 @@ class Caches[N: str = str]:
                 result[name] = self._open(name).expire(timeout=timeout)
             except Exception:
                 log.exception('could not expire cache %r', name)
+                result[name] = None
+        return result
+
+    def remove_old_formats(self) -> dict[N, list[str] | None]:
+        """Run `remove_old_formats()` on every registered cache, opening each one, even while it's
+        disabled. Returns what each removed, or None for a cache that couldn't be opened or cleaned
+        (logged; the rest still run).
+
+        It doesn't check whether an older diskcache-oxide still uses those files: call it once no
+        older worker is left. See `Cache.remove_old_formats()`.
+        """
+        result: dict[N, list[str] | None] = {}
+        for name in list(self._specs):
+            try:
+                result[name] = self._open(name).remove_old_formats()
+            except Exception:
+                log.exception('could not remove old formats for cache %r', name)
                 result[name] = None
         return result
 

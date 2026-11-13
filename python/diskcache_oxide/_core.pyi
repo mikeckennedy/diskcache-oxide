@@ -73,7 +73,10 @@ class ForeignValueError(CorruptValueError):
     it), or a time zone missing from this host."""
 
 class FormatMismatchError(RuntimeError):
-    """The cache directory holds a database in a format this version doesn't support."""
+    """A database or manifest in a format this version doesn't support, where opening the cache's
+    versioned subdirectory can't help: inside that subdirectory itself, or (from 0.2.3 and earlier)
+    any cache made by a newer release. A cache directory that merely holds another format opens in
+    its `diskcache-oxide-format-N` subdirectory instead (see the upgrading recipe)."""
 
 class LayoutMismatchError(FormatMismatchError, ValueError):
     """The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
@@ -151,7 +154,11 @@ class Cache:
     `diskcache.Cache`; the deliberate differences are listed in the Divergences guide.
 
     Args:
-        directory: The cache directory. It's created (owner-only, `0700`) if it doesn't exist.
+        directory: The cache directory. It's created (owner-only, `0700`) if it doesn't exist. If
+            it holds a cache in another on-disk format (an older or newer release's), the cache
+            opens in its subdirectory `diskcache-oxide-format-N` instead, N being this release's
+            format, and logs a warning on the `diskcache_oxide` logger once per process. Once that
+            subdirectory exists, every later open uses it. See the upgrading recipe.
         timeout: Seconds a call waits for a lock or a pending fork before raising `Timeout`
             (default 60). It has to exceed work in flight plus a fork: see the Concurrency and
             Forks guide.
@@ -214,9 +221,10 @@ class Cache:
     Raises:
         ValueError: A setting is out of range, such as a `size_limit` under 1 MiB.
         TypeError: An argument has the wrong type, including a `bool` for `timeout`.
-        FormatMismatchError: The directory holds a database in a format this version can't read.
-        LayoutMismatchError: The directory is a `FanoutCache` root or one of its shards. Also a
-            `ValueError`, and a `FormatMismatchError`.
+        FormatMismatchError: The versioned subdirectory holds a database in a format this version
+            can't read (another format in the directory itself opens the subdirectory instead).
+        LayoutMismatchError: The directory is a `FanoutCache` root or one of its shards, in any
+            format. Also a `ValueError`, and a `FormatMismatchError`.
         Timeout: Another process held the database locked, or a fork stayed pending, for longer
             than `timeout`.
 
@@ -256,7 +264,10 @@ class Cache:
     ) -> Cache: ...
     @property
     def directory(self) -> str:
-        """The cache directory, as given to the constructor."""
+        """The directory the cache is in: the one given to the constructor, or its
+        `diskcache-oxide-format-N` subdirectory when the given one holds another format. To open the
+        same cache again, pass the original directory, not this one: it picks the right subdirectory
+        for whichever release opens it."""
     @property
     def timeout(self) -> float:
         """Seconds a call waits for a lock or a pending fork before raising `Timeout`."""
@@ -589,6 +600,29 @@ class Cache:
 
             cache.delete(episode.__cache_key__(42))  # forget one call
             ```
+        """
+    def remove_old_formats(self) -> list[str]:
+        """Remove the caches an older diskcache-oxide format left in this cache's directory: the
+        directory's own cache, when it's in an older format than this release's, and any
+        `diskcache-oxide-format-M` subdirectory holding one. Returns the database files, manifests
+        and directories removed (value files inside a removed value folder aren't listed one by
+        one); `[]` when there's nothing old.
+
+        Warning: it doesn't check whether a process running an older diskcache-oxide still uses
+        those files. Call it once every old worker has stopped, after draining any work queue they
+        share. If an old worker is still running, on Linux and macOS its cache can be corrupted
+        until it restarts (errors such as "database disk image is malformed", or wrong results,
+        not just misses), as with `rm -rf` under it, and everything it kept there is lost. On
+        Windows, files an old worker has open are left, with a warning, for a later call.
+
+        Never removed: a cache in this release's format or a newer one, anything diskcache-oxide
+        didn't write, anything behind a symbolic link, a database this process has open, a cache
+        whose format can't be read, and an empty database that may still be being created (one in a
+        subdirectory or a shard, or at the root under 10 minutes old). What was removed is logged at
+        `INFO`, and what was left, with why, at `WARNING`, on the `diskcache_oxide` logger.
+
+        Raises:
+            OSError: The directory can't be listed.
         """
     def check(self, fix: bool = False, retry: bool = False) -> list[warnings.WarningMessage]:
         """Check the database and the value files against each other, as diskcache's `check()`.
@@ -1042,7 +1076,9 @@ class FanoutCache:
 
     Args:
         directory: The root directory. It holds the manifest (`diskcache-oxide-fanout`) and one
-            directory per shard, `000` to `NNN`. It must not be a plain `Cache`'s directory.
+            directory per shard, `000` to `NNN`. It must not be a plain `Cache`'s directory. If its
+            manifest or any shard is in another on-disk format, the whole cache opens in the root's
+            `diskcache-oxide-format-N` subdirectory instead, as for `Cache`, never one shard alone.
         timeout: As for `Cache` (default 60). Opening, `len()`, `volume()`, `clear()`, `expire()`,
             `cull()`, `checkpoint()` and `close()` share one `timeout` across every shard, not one
             each.
@@ -1074,8 +1110,9 @@ class FanoutCache:
         LayoutMismatchError: `shards` differs from the root's, or the directory belongs to a plain
             `Cache` (or a shard of it does). Also a `ValueError`, and a `FormatMismatchError`.
         TypeError: An argument has the wrong type, including a `bool` for `timeout` or `shards`.
-        FormatMismatchError: The root's manifest, or a shard's database, is in a format this version
-            can't read.
+        FormatMismatchError: Inside the versioned subdirectory, the manifest or a shard's database
+            is in a format this version can't read (another format at the root itself opens the
+            subdirectory instead).
         OSError: The filesystem doesn't support hard links, which creating the manifest needs, or
             the process can't open enough files for every shard (`ulimit -n`).
         Timeout: A shard stayed locked, or a fork stayed pending, for longer than `timeout`.
@@ -1114,7 +1151,8 @@ class FanoutCache:
     ) -> FanoutCache: ...
     @property
     def directory(self) -> str:
-        """The root directory, as given to the constructor."""
+        """The root directory: the one given to the constructor, or its
+        `diskcache-oxide-format-N` subdirectory when the given one holds another format."""
     @property
     def timeout(self) -> float:
         """Seconds a call waits for a lock or a pending fork before raising `Timeout`."""
@@ -1404,6 +1442,9 @@ class FanoutCache:
             cache.delete(episode.__cache_key__(42))  # forget one call
             ```
         """
+    def remove_old_formats(self) -> list[str]:
+        """As `Cache.remove_old_formats()`, for this cache's root directory: an older format's
+        FanoutCache there goes as a whole, its shards highest first and the manifest last."""
     def check(self, fix: bool = False, retry: bool = False) -> list[warnings.WarningMessage]:
         """Check the database and the value files against each other, as diskcache's `check()`.
 

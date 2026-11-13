@@ -44,7 +44,7 @@ For locks, semaphores and a throttle that hold across every process, see the [Co
 
 **[Watching a cache in production](monitoring.md).** A health check and an admin endpoint: entries, bytes on disk, hit ratio across workers, the size limit, the write-ahead log, [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check) for damage, and the log lines worth alerting on.
 
-**[Upgrading across a format change](upgrading.md).** When a release changes the on-disk format: stop, delete and start, or give each format its own directory for a rolling deploy, and what to do first about queues, counters and sessions.
+**[Upgrading across a format change](upgrading.md).** When a release changes the on-disk format: the new release opens its own cache in a versioned subdirectory, old and new workers run side by side, [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats) cleans up afterwards, and what to do first about queues, counters and sessions.
 
 **[Testing code that uses a cache](testing.md).** pytest fixtures for a real cache in a temporary directory, a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) for tests that shouldn't cache at all, and a fake clock for testing expiry without sleeping.
 

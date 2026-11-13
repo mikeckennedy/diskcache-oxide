@@ -4,3 +4,7 @@ User-agent: *
 Allow: /
 
 Sitemap: https://mkennedy.codes/docs/diskcache-oxide/sitemap.xml
+
+# AI agent context files
+Llms-txt: https://mkennedy.codes/docs/diskcache-oxide/llms.txt
+Llms-txt: https://mkennedy.codes/docs/diskcache-oxide/llms-full.txt

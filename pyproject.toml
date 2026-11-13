@@ -58,7 +58,7 @@ dev = [
 
 # The docs site (`make docs`). Quarto is installed separately and must be on PATH.
 docs = [
-    "great-docs==0.13.0",
+    "great-docs>=0.17.0",
     "ipykernel",
 ]
 

@@ -18,10 +18,12 @@ use std::time::{Duration, Instant};
 
 use diskcache_oxide_core::fanout::{self, Manifest, ShardRequest};
 use diskcache_oxide_core::key::{Key, OwnedKey};
+use diskcache_oxide_core::layout::{self, Resolved};
 use diskcache_oxide_core::maintenance::{Cursor, Interrupted, Order, PAGE, Snapshot};
 use diskcache_oxide_core::open::{Requested, Role};
 use diskcache_oxide_core::ops::Number;
 use diskcache_oxide_core::rows::Tag;
+use diskcache_oxide_core::schema::FORMAT_VERSION;
 use diskcache_oxide_core::store::Store;
 use diskcache_oxide_core::{Error, lockwait};
 use pyo3::PyTraverseError;
@@ -202,6 +204,11 @@ impl FanoutCache {
     /// As `Cache._in_transaction`: whether this thread holds a transaction on any of the shards.
     fn _in_transaction(&self) -> bool {
         self.shards.iter().any(|h| h.store.held_by_this_thread())
+    }
+
+    /// As `Cache.remove_old_formats`, for this cache's root directory (plan 26).
+    fn remove_old_formats(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        super::remove_old_formats(py, &self.config)
     }
 
     /// As `Cache.check`, over every shard in turn, each with the cache's `timeout`.
@@ -674,9 +681,13 @@ impl FanoutCache {
             (Some(manifest), false) => ShardRequest::Exactly(manifest),
             (Some(manifest), true) => ShardRequest::ForNewRoot(manifest),
         };
-        let stores = crate::detach(py, || open(&directory, &settings, request))
+        let resolved = crate::detach(py, || open(&directory, &settings, request))
             .map_err(|(e, shards)| open_error(py, e, shards))?;
-        let shards: Box<[StoreHandle]> = stores
+        if let Some(redirect) = &resolved.redirect {
+            super::report_redirect(py, redirect);
+        }
+        let shards: Box<[StoreHandle]> = resolved
+            .value
             .into_iter()
             .enumerate()
             .map(|(shard, store)| StoreHandle { store, shard, closed: AtomicBool::new(false) })
@@ -685,7 +696,17 @@ impl FanoutCache {
         reopen.bind(py).set_item("shards", shards.len())?;
         Ok(Self {
             shards,
-            config: HandleConfig::new(&directory, &settings, pickle, types, clock, on_decode_error, durable, reopen),
+            config: HandleConfig::new(
+                &directory,
+                &resolved.directory,
+                &settings,
+                pickle,
+                types,
+                clock,
+                on_decode_error,
+                durable,
+                reopen,
+            ),
         })
     }
 
@@ -1284,6 +1305,9 @@ fn shard_count(shards: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Manifest>> 
     }
 }
 
+/// Every shard's store, in shard order.
+type Shards = Vec<std::sync::Arc<Store>>;
+
 /// Opens the root's manifest, then every shard under one deadline of the handle's `timeout`. With
 /// no `max_connections`, the total is two per shard, and never fewer than a plain cache's default.
 /// A failure comes with the shard count once the manifest has given it, for [`open_error`].
@@ -1292,32 +1316,63 @@ fn shard_count(shards: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Manifest>> 
 /// before anything touches disk, so a setting that's wrong for the registration raises as a bad
 /// setting always has, whatever is on disk. If the root keeps another count and the settings fit
 /// `n` but not it, the open is `StoredShardsRefuseSettings`, a layout error the registry reports.
+///
+/// The root is `root`, or its versioned subdirectory when `root` holds a `FanoutCache` in another
+/// format, as a whole: the manifest's format or any shard database's (plan 26). The result says which.
 fn open(
     root: &std::path::Path,
     settings: &Settings,
     request: ShardRequest,
-) -> Result<Vec<std::sync::Arc<Store>>, (Error, Option<u32>)> {
+) -> Result<Resolved<Shards>, (Error, Option<u32>)> {
     let deadline = lockwait::deadline_after(Instant::now(), settings.timeout);
-    let base_for = |shards: u32| {
+    let base_for = |root: &std::path::Path, shards: u32| {
         let total = settings.max_connections.unwrap_or_else(|| Store::default_total_connections(shards));
         // The role is set per shard by `open_shards`.
         settings.options(root.to_path_buf(), total, Role::Plain)
     };
     if let ShardRequest::ForNewRoot(wanted) = request {
-        Store::check_shard_settings(&base_for(wanted.shards()), wanted.shards()).map_err(|e| (e, None))?;
+        Store::check_shard_settings(&base_for(root, wanted.shards()), wanted.shards()).map_err(|e| (e, None))?;
     }
-    let manifest: Manifest = fanout::open_manifest(root, request).map_err(|e| (e, None))?;
-    let base = base_for(manifest.shards());
-    if let ShardRequest::ForNewRoot(wanted) = request
-        && wanted != manifest
-        && let Err(Error::InvalidSetting(reason)) = Store::check_shard_settings(&base, manifest.shards())
-    {
-        let refused =
-            Error::StoredShardsRefuseSettings { stored: manifest.shards(), requested: wanted.shards(), reason };
-        return Err((refused, None));
-    }
-    Store::open_shards(&base, manifest, deadline).map_err(|error| match error {
-        Error::Timeout { .. } => (Error::Timeout { seconds: settings.timeout.as_secs_f64() }, None),
-        other => (other, Some(manifest.shards())),
+    // The shard count once a manifest has given it, for `open_error`'s file-descriptor message.
+    let opening = std::cell::Cell::new(None);
+    let attempt = |root: &std::path::Path| {
+        opening.set(None);
+        let manifest: Manifest = fanout::open_manifest(root, request)?;
+        let base = base_for(root, manifest.shards());
+        if let ShardRequest::ForNewRoot(wanted) = request
+            && wanted != manifest
+        {
+            // A root in another format is redirected, not judged by settings for a cache this open
+            // won't use: its shard 0 is looked at before the stored count is.
+            if let Some(version) =
+                layout::read_format(&root.join(fanout::shard_dirname(0)), settings.timeout, deadline)?
+                && version != 0
+                && version != FORMAT_VERSION
+            {
+                let path = Some(diskcache_oxide_core::open::db_path(&root.join(fanout::shard_dirname(0))));
+                return Err(Error::FormatMismatch { found: version, expected: FORMAT_VERSION, path });
+            }
+            if let Err(Error::InvalidSetting(reason)) = Store::check_shard_settings(&base, manifest.shards()) {
+                return Err(Error::StoredShardsRefuseSettings {
+                    stored: manifest.shards(),
+                    requested: wanted.shards(),
+                    reason,
+                });
+            }
+        }
+        opening.set(Some(manifest.shards()));
+        Store::open_shards(&base, manifest, deadline).inspect_err(|error| {
+            // Redirected: the next attempt's count, not this root's, is the one an error should name.
+            if matches!(error, Error::FormatMismatch { .. }) {
+                opening.set(None);
+            }
+        })
+    };
+    let release = |stores: Vec<std::sync::Arc<Store>>| Store::close_all(&stores.iter().collect::<Vec<_>>(), None);
+    layout::resolve(root, layout::Kind::Fanout, settings.timeout, deadline, attempt, release).map_err(|error| {
+        match error {
+            Error::Timeout { .. } => (Error::Timeout { seconds: settings.timeout.as_secs_f64() }, None),
+            other => (other, opening.get()),
+        }
     })
 }

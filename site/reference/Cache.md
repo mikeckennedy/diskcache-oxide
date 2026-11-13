@@ -35,7 +35,7 @@ Every thread and process that opens the same directory shares one cache. The API
 
 
 `directory: str | os.PathLike[str]`  
-The cache directory. It's created (owner-only, `0700`) if it doesn't exist.
+The cache directory. It's created (owner-only, `0700`) if it doesn't exist. If it holds a cache in another on-disk format (an older or newer release's), the cache opens in its subdirectory `diskcache-oxide-format-N` instead, N being this release's format, and logs a warning on the `diskcache_oxide` logger once per process. Once that subdirectory exists, every later open uses it. See the upgrading recipe.
 
 `timeout: float | None = None`  
 Seconds a call waits for a lock or a pending fork before raising [Timeout](Timeout.md#diskcache_oxide.Timeout) (default 60). It has to exceed work in flight plus a fork: see the Concurrency and Forks guide.
@@ -90,10 +90,10 @@ A setting is out of range, such as a [size_limit](Cache.size_limit.md#diskcache_
 An argument has the wrong type, including a `bool` for [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
 
 `FormatMismatchError`  
-The directory holds a database in a format this version can't read.
+The versioned subdirectory holds a database in a format this version can't read (another format in the directory itself opens the subdirectory instead).
 
 `LayoutMismatchError`  
-The directory is a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache) root or one of its shards. Also a `ValueError`, and a [FormatMismatchError](FormatMismatchError.md#diskcache_oxide.FormatMismatchError).
+The directory is a [FanoutCache](FanoutCache.md#diskcache_oxide.FanoutCache) root or one of its shards, in any format. Also a `ValueError`, and a [FormatMismatchError](FormatMismatchError.md#diskcache_oxide.FormatMismatchError).
 
 `Timeout`  
 Another process held the database locked, or a fork stayed pending, for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).

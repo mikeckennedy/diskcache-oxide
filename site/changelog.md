@@ -3,14 +3,24 @@
 This changelog is generated automatically from [GitHub Releases](https://github.com/mikeckennedy/diskcache-oxide/releases).
 
 
-# v0.2.4 (unreleased)
+# v0.3.5 (unreleased)
 
 [GitHub](https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md)
+
+**Upgrades across a format change no longer fail.** A cache directory that holds a cache in another on-disk format (made by an older release, or by a newer one before a rollback) now opens a new, empty cache in its subdirectory `diskcache-oxide-format-N`, N being this release's format (3), instead of raising [FormatMismatchError](reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError), and logs a warning on the `diskcache_oxide` logger once per process. Of the other format's cache, only its format is read, and its contents are never changed (if that read is the last connection to close on it, SQLite may checkpoint its write-ahead log into the database file, which changes no data). Once the subdirectory exists, every later open uses it. A [FanoutCache](reference/FanoutCache.html#diskcache_oxide.FanoutCache) moves as a whole. This release keeps format 3, so caches made by 0.2.3 open where they are, warm; a cache still at format 2 (0.1.2) opens `diskcache-oxide-format-3` beside it. See "Upgrading across a format change" in the recipes.
 
 
 ### Added
 
+- [remove_old_formats()](reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats) on [Cache](reference/Cache.html#diskcache_oxide.Cache), [FanoutCache](reference/FanoutCache.html#diskcache_oxide.FanoutCache) and [NullCache](reference/NullCache.html#diskcache_oxide.NullCache) (where it returns `[]`), and on [Caches](reference/Caches.html#diskcache_oxide.Caches) for every registered cache: removes caches in an older format from the cache's directory, only files diskcache-oxide wrote, never following links, never a newer or the current format, and returns what it removed. It doesn't check whether an older worker still uses those files: call it once they've all stopped.
+
 - Windows on x86_64, with wheels for CPython 3.14, 3.14t, 3.15 and 3.15t. The API and the on-disk format are the same; caches made on macOS or Linux aren't affected. Windows has no `fork()`, so the fork guarantees are Unix-only. Getting started has a new Windows section: an open cache's directory can't be deleted, new directories inherit their parent's permissions, and a value file another program holds past about 50 ms of retries is left until `check(fix=True)` removes it, an hour after it was written. SQLite uses its own Win32 mutexes there (`_sqlite_mutex_status()` reports `'native'`).
+
+
+### Changed
+
+- A cache directory holding another on-disk format opens the `diskcache-oxide-format-N` subdirectory with a warning instead of raising [FormatMismatchError](reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError) (D-059). [FormatMismatchError](reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError) is now raised only for another format inside that subdirectory. [directory](reference/Cache.directory.html#diskcache_oxide.Cache.directory) on [Cache](reference/Cache.html#diskcache_oxide.Cache) and [FanoutCache](reference/FanoutCache.html#diskcache_oxide.FanoutCache) reports where the cache really is, the subdirectory after such a move; a pickled handle keeps the directory as passed and resolves it again. A [Caches](reference/Caches.html#diskcache_oxide.Caches) registry no longer hands out a [NullCache](reference/NullCache.html#diskcache_oxide.NullCache) for a format change.
+- A plain [Cache](reference/Cache.html#diskcache_oxide.Cache) opened on a [FanoutCache](reference/FanoutCache.html#diskcache_oxide.FanoutCache) shard directory in an older format raises [LayoutMismatchError](reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError), as it always did for a current one, rather than [FormatMismatchError](reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError).
 
 
 ### Fixed

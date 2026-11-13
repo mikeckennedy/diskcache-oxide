@@ -216,6 +216,14 @@ fn write_into(mut file: File, path: &Path, data: &[u8]) -> std::io::Result<()> {
     })
 }
 
+/// Whether `name` is a value or temp file oxide writes in the value directory named `prefix`:
+/// `<32 hex>.val` or `<32 hex>.tmp`, starting with `prefix` (the rule [`value_path`] applies).
+#[must_use]
+pub fn is_value_file_name(name: &str, prefix: &str) -> bool {
+    let stem = name.strip_suffix(".val").or_else(|| name.strip_suffix(".tmp"));
+    stem.is_some_and(|stem| is_hex(stem, 32) && stem.starts_with(prefix))
+}
+
 /// The path of a value file named `relative` in the database, or `None` if the name isn't one this
 /// module writes: exactly `aa/<32 hex>.val`, lowercase, with `aa` the hex's first two characters.
 /// `Path::join` follows absolute paths and `..`, so a damaged row must never reach it unchecked.

@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "diskcache-oxide-core"
-version = "0.2.4"
+version = "0.3.5"
 dependencies = [
  "getrandom",
  "libc",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "diskcache-oxide-py"
-version = "0.2.4"
+version = "0.3.5"
 dependencies = [
  "arc-swap",
  "base64",

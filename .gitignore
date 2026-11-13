@@ -258,6 +258,8 @@ soak.out
 
 # Great Docs' build directory; the deployable site is mirrored into site/ (committed).
 /great-docs/
+# Quarto's execution cache, which great-docs 0.17 leaves at the root.
+/_freeze/
 
 # LLVM coverage and instrumentation output.
 *.profraw

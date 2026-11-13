@@ -43,7 +43,7 @@ Each key lives in exactly one shard, chosen by a hash that is part of the on-dis
 
 
 `directory: str | os.PathLike[str]`  
-The root directory. It holds the manifest (`diskcache-oxide-fanout`) and one directory per shard, `000` to `NNN`. It must not be a plain [Cache](Cache.md#diskcache_oxide.Cache)'s directory.
+The root directory. It holds the manifest (`diskcache-oxide-fanout`) and one directory per shard, `000` to `NNN`. It must not be a plain [Cache](Cache.md#diskcache_oxide.Cache)'s directory. If its manifest or any shard is in another on-disk format, the whole cache opens in the root's `diskcache-oxide-format-N` subdirectory instead, as for [Cache](Cache.md#diskcache_oxide.Cache), never one shard alone.
 
 `timeout: float | None = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache) (default 60). Opening, `len()`, [volume()](Cache.volume.md#diskcache_oxide.Cache.volume), [clear()](Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](Cache.expire.md#diskcache_oxide.Cache.expire), [cull()](Cache.cull.md#diskcache_oxide.Cache.cull), [checkpoint()](Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) and [close()](Cache.close.md#diskcache_oxide.Cache.close) share one [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) across every shard, not one each.
@@ -101,7 +101,7 @@ A setting is out of range, or `max_connections` is below [shards](FanoutCache.sh
 An argument has the wrong type, including a `bool` for [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) or [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards).
 
 `FormatMismatchError`  
-The root's manifest, or a shard's database, is in a format this version can't read.
+Inside the versioned subdirectory, the manifest or a shard's database is in a format this version can't read (another format at the root itself opens the subdirectory instead).
 
 `OSError`  
 The filesystem doesn't support hard links, which creating the manifest needs, or the process can't open enough files for every shard (`ulimit -n`).

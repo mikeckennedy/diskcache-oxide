@@ -76,7 +76,7 @@ pip install diskcache-oxide
 - **Platforms:** macOS, Linux and Windows. Windows has no `fork()`, so the fork guarantees are Unix-only; threads and processes are safe everywhere. On Windows a cache directory can't be deleted while any process has the cache open, and excluding cache directories from real-time antivirus scanning can make them faster.
 - **Wheels:** macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64, for each of those four Pythons. Anywhere else pip builds from source, which needs the latest stable Rust toolchain.
 - **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter.
-- **Upgrading:** before 1.0, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. Delete your caches when you upgrade to it; until you do, opening one raises `FormatMismatchError`, which names the file. It's a cache, so the cost is a cold start.
+- **Upgrading:** before 1.0, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. A release that meets a cache in another format opens a new one in a subdirectory named for its format (`diskcache-oxide-format-3`) and logs a warning, so old and new workers run side by side; `remove_old_formats()` removes the old cache once the old workers are gone. A release that keeps the format keeps your caches warm.
 
 [Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html) walks through the everyday operations and what changes once several processes share a cache.
 

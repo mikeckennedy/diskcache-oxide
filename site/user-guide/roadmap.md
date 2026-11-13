@@ -70,12 +70,17 @@ The concurrency core is where serious bugs hide, so it got its own phase before 
 - [Tags](../recipes/invalidating-groups.md#option-2-tags) with `evict(tag)`, and `eviction_policy='none'`.
 - The queue calls [push](../reference/Cache.push.md#diskcache_oxide.Cache.push), [pull](../reference/Cache.pull.md#diskcache_oxide.Cache.pull), [peek](../reference/Cache.peek.md#diskcache_oxide.Cache.peek) and [peekitem](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem) on [Cache](../reference/Cache.md#diskcache_oxide.Cache) (see [Work queues](../recipes/work-queues.md)).
 
-Tags and the eviction policy changed the on-disk format, so caches made by 0.1.2 have to be deleted when you upgrade (see [Upgrading diskcache-oxide](switching-from-diskcache.md#upgrading-diskcache-oxide)).
+Tags and the eviction policy changed the on-disk format. 0.2.3 refuses a cache made by 0.1.2; since 0.3.5 such a cache opens in a versioned subdirectory instead, and [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats) cleans up the old one (see [Upgrading across a format change](../recipes/upgrading.md)).
 
 
 ## Done: Windows (0.2.4)
 
 0.2.4 adds Windows on x86_64, with wheels for all four Pythons. Everything but the fork guarantees works the same there; [Getting started](getting-started.md#windows) lists what differs. Nothing changed on disk.
+
+
+## Done: upgrades across a format change (0.3.5)
+
+A release that meets a cache in another on-disk format opens a cache of its own in a versioned subdirectory and logs a warning, instead of refusing to open, so old and new workers keep running side by side during a deploy. [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats) cleans up the old cache once its workers are gone. See [Upgrading across a format change](../recipes/upgrading.md).
 
 
 ## Next

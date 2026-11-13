@@ -301,10 +301,30 @@ def test_close_all_forgets_a_failed_open(base: Path) -> None:
     caches.close_all()
 
 
-def test_a_future_format_is_a_null_cache_reported_by_the_default_logger(
+def test_a_future_format_root_opens_in_its_versioned_subdirectory(base: Path, caplog: pytest.LogCaptureFixture) -> None:
+    # Plan 26: another format at the root redirects instead of failing, so the registry hands out
+    # a working cache and never calls on_open_error.
+    _future_format(base / 'a')
+    reported: list[str] = []
+    caches = Caches(base, on_open_error=lambda name, exc: reported.append(name))
+    caches.register('a')
+    with caplog.at_level(logging.WARNING, logger='diskcache_oxide'):
+        cache = caches['a']
+    assert isinstance(cache, Cache)
+    assert Path(cache.directory) == base / 'a' / 'diskcache-oxide-format-3'
+    cache['k'] = 'v'
+    assert cache['k'] == 'v'
+    assert reported == []
+    caches.close_all()
+
+
+def test_an_open_error_a_redirect_cannot_fix_is_a_null_cache_reported_by_the_default_logger(
     base: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    _future_format(base / 'a')
+    # Another format inside the versioned subdirectory is never redirected again: still an error. (A
+    # versioned subdirectory never creates its parent, so the parent comes first.)
+    (base / 'a').mkdir(parents=True)
+    _future_format(base / 'a' / 'diskcache-oxide-format-3')
     caches = Caches(base)
     caches.register('a')
     with caplog.at_level(logging.ERROR, logger='diskcache_oxide'):

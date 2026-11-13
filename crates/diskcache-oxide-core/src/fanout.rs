@@ -25,7 +25,8 @@ use crate::open::ensure_directory;
 /// The manifest's file name inside a root directory.
 pub const MANIFEST_FILENAME: &str = "diskcache-oxide-fanout";
 
-/// The manifest format version.
+/// The manifest format version. A change to it also raises [`crate::schema::FORMAT_VERSION`]: the
+/// versioned subdirectory a format change opens is named for that one number (plan 26).
 pub const MANIFEST_FORMAT: i64 = 1;
 
 /// The hash identity line of the manifest. A new scheme gets a new identity and a new format,

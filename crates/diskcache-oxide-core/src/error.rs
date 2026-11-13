@@ -161,12 +161,28 @@ pub enum Error {
 }
 
 /// The " (in <path>)" suffix of a [`Error::FormatMismatch`] that came from a file other than the database.
-/// [`Error::FormatMismatch`]'s message: what was found, and what to do, by direction.
+/// [`Error::FormatMismatch`]'s message: what was found, and what to do, by direction. Raised only
+/// where opening the versioned subdirectory can't help (plan 26): inside that subdirectory itself.
 fn format_mismatch(found: i64, expected: i64, path: Option<&PathBuf>) -> String {
     let note = path.map_or_else(String::new, |p| format!(" (in {})", p.display()));
+    // Inside a versioned subdirectory (plan 26, review M5): most likely the subdirectory was opened
+    // directly, from a saved `cache.directory`, where its parent would have redirected.
+    let in_format_dir = path
+        .and_then(|p| p.parent())
+        .and_then(|dir| dir.file_name())
+        .and_then(|name| name.to_str())
+        .and_then(crate::layout::format_of_dir_name)
+        .is_some();
+    if in_format_dir {
+        return format!(
+            "cache format version {found} is not supported (this build uses version {expected}){note}: this is a \
+             versioned subdirectory diskcache-oxide made for one format; open its parent directory instead, \
+             which picks the right subdirectory for this build"
+        );
+    }
     let remedy = if found < expected {
-        "it was made by an older diskcache-oxide: delete the cache's directory (a FanoutCache's whole root) \
-         with every process using it stopped, and it will be recreated empty"
+        "it was made by an older diskcache-oxide: with every process using it stopped, delete the directory \
+         holding it (a FanoutCache's whole root), and it will be recreated empty"
     } else {
         "it was made by a newer diskcache-oxide: upgrade this process"
     };

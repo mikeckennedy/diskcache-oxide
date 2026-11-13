@@ -1,8 +1,16 @@
 //! The on-disk format, version 3 (04-design.md section 3; plan 24, release 3).
 //!
 //! A format change never migrates in place: it keeps the database filename and raises
-//! `user_version`, so an older cache is refused with `FormatMismatch`, and caches are deleted when
-//! upgrading, with every worker stopped (Michael, 2026-11-06, and decision 22 of plan 24). Version 2
+//! `user_version`. A build never reads or writes another format's database: since plan 26 it opens a
+//! cache of its own in the directory's `diskcache-oxide-format-N` subdirectory instead
+//! ([`crate::layout`]), and `remove_old_formats()` ([`crate::cleanup`]) removes the old one once
+//! its workers are gone. (Before plan 26 the other format was refused and caches were deleted on
+//! upgrade, with every worker stopped: Michael, 2026-11-06, and decision 22 of plan 24.)
+//!
+//! Frozen in every future format, or builds of two formats would disagree about where a cache
+//! lives: [`DB_FILENAME`], `PRAGMA user_version` as the format, the manifest's first two lines,
+//! the subdirectory's name and the rule in [`crate::layout::resolve`]. A change to the manifest's
+//! format also raises [`FORMAT_VERSION`], so the subdirectory names one format for both. Version 2
 //! moved value files one level deep (plan 17); version 3 adds tags and the eviction policy. A new
 //! filename is no option even for a change confined to the database: two databases in one directory
 //! would share its value folders, and `check(fix=True)` removes value files its own database doesn't

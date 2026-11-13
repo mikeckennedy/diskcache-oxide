@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
-<link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/recipes/work-queues.html">
 
 <meta charset="utf-8">
 <meta name="generator" content="quarto-1.11.9">
@@ -85,7 +84,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-63b5708e65d6cd79cd7618c58d0c21e7.css" rel="stylesheet" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-4c995cf1e5ce428d9c201124d003f5da.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-9411a706d08770b9e0c434f3159337ed.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
 <script id="quarto-search-options" type="application/json">{
   "location": "navbar",
   "copy-button": false,
@@ -439,6 +438,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script async="" src="https://uma.mkennedy.codes/script.js" data-website-id="fc9b6770-3b44-4073-944e-4a4f0e79f66a"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'termshow.css'}));</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-compare.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-compare.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-annotate.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-annotate.js';s.defer=true;document.head.appendChild(s);})();</script>
 <meta name="gd-logo-dark" content="diskcache-oxide-logo-dark.png">
 <link rel="icon" type="image/x-icon" href="https://mkennedy.codes/docs/diskcache-oxide/favicon.ico" sizes="48x48">
 <link rel="icon" type="image/png" sizes="32x32" href="https://mkennedy.codes/docs/diskcache-oxide/favicon-32x32.png">
@@ -447,6 +452,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <script src="../theme-init.js"></script>
 
 
+  <link rel="alternate" type="text/markdown" href="work-queues.md">
+  <link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/recipes/work-queues.html">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Work queues – diskcache-oxide | diskcache-oxide">
   <meta property="og:description" content="A queue every worker on the machine shares: push() at one end, pull() from the other, each item delivered to exactly one worker, with no Redis.">
@@ -471,7 +478,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.4</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.3.5</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -499,7 +506,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -676,7 +683,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 
 <p>A web request needs a thumbnail rendered, an email sent or a transcript cleaned up, and none of it should make the user wait. The usual answer is a queue and a worker, and the usual queue is Redis. On one machine a cache directory does the job: <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push()</a> adds an item at one end, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> takes one from the other, and every process that opens the directory shares the queue.</p>
-<div id="0749e95a" class="cell" data-execution_count="1">
+<div id="42ce7010" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -700,7 +707,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>Nothing is lost to a reader that can’t read it.</strong> An item this process can’t decode stays at the front for a worker that can. A pickled item on a <code>pickle=False</code> cache raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>. A value of a type only a newer deploy has registered raises too, or with <code>on_decode_error='miss'</code>, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> returns the default. Either way this worker can take nothing behind that item until a worker that can read it pulls it. An item no build could read (damaged bytes) is removed: by default <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> then raises <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a>, and with <code>on_decode_error='miss'</code> it logs the item and moves on to the next one.</li>
 <li><strong><a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek()</a> looks without taking.</strong> It takes no lock in the normal case, so any number of processes can watch a queue at once. <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem()</a> gives the newest or oldest entry of the whole cache, queue or not.</li>
 </ul>
-<div id="0b1c14e5" class="cell" data-execution_count="2">
+<div id="9b989143" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(jobs.peek(prefix<span class="op">=</span><span class="st">'transcode'</span>))                <span class="co"># the next item, left in place</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(jobs.peek(prefix<span class="op">=</span><span class="st">'transcode'</span>, side<span class="op">=</span><span class="st">'back'</span>))   <span class="co"># the newest</span></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="bu">len</span>(jobs))                                    <span class="co"># every entry in the cache</span></span></code></pre></div>
@@ -714,7 +721,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-worker-loop" class="level1">
 <h1>A worker loop</h1>
 <p><a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> returns <code>(None, None)</code> when the queue is empty, or the <code>default</code> you pass.</p>
-<div id="ff05dab1" class="cell" data-execution_count="3">
+<div id="f1edce7d" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> work(job: <span class="bu">dict</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
@@ -742,7 +749,7 @@ transcoding 512</code></pre>
 <section id="jobs-that-must-survive-a-crash" class="level1">
 <h1>Jobs that must survive a crash</h1>
 <p>A pulled item is gone as soon as <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> returns, so a worker that crashes halfway through <code>work()</code> loses it. If a job must survive that, give each job an id of its own and move it to a running record in the same transaction as the pull, so no crash can fall between the two. Delete the record when the work is done, and have a sweeper push back any record older than its lease:</p>
-<div id="1b205a8c" class="cell" data-execution_count="4">
+<div id="5eec052c" class="cell" data-execution_count="4">
 <div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> uuid</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> enqueue(cache: Cache, episode: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
@@ -785,7 +792,7 @@ transcoding 512</code></pre>
 <span id="cb7-40"><a href="#cb7-40" aria-hidden="true" tabindex="-1"></a>    finish(jobs, job)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>transcoding 513
-1 requeued: ('transcode-500000000000000', {'id': 'd8b953012152436285cd81c5ffa140f7', 'episode': 514, 'step': 'transcode'})
+1 requeued: ('transcode-500000000000000', {'id': 'b83ed81f362942c286e7f48c0e117c14', 'episode': 514, 'step': 'transcode'})
 transcoding 514</code></pre>
 </div>
 </div>
@@ -794,7 +801,7 @@ transcoding 514</code></pre>
 <section id="several-queues-and-priorities" class="level1">
 <h1>Several queues, and priorities</h1>
 <p>Each prefix is its own queue, in the same directory. A worker that serves more than one, or serves urgent work first, tries them in order:</p>
-<div id="e7600a0a" class="cell" data-execution_count="5">
+<div id="b2e67c6d" class="cell" data-execution_count="5">
 <div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>jobs.push({<span class="st">'to'</span>: <span class="st">'sam@example.com'</span>, <span class="st">'template'</span>: <span class="st">'welcome'</span>}, prefix<span class="op">=</span><span class="st">'email'</span>)</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>jobs.push({<span class="st">'episode'</span>: <span class="dv">515</span>, <span class="st">'step'</span>: <span class="st">'transcode'</span>}, prefix<span class="op">=</span><span class="st">'transcode'</span>)</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>jobs.push({<span class="st">'episode'</span>: <span class="dv">516</span>, <span class="st">'step'</span>: <span class="st">'transcode'</span>}, prefix<span class="op">=</span><span class="st">'urgent'</span>)</span>
@@ -819,7 +826,7 @@ transcoding 514</code></pre>
 <section id="cancelling-and-expiring-jobs" class="level1">
 <h1>Cancelling and expiring jobs</h1>
 <p>A job pushed with <code>tag=</code> can be cancelled with the rest of its group, wherever they are in the queue, by <code>evict(tag)</code>. A job that’s pointless after a deadline, a “your export is ready” email, say, can be pushed with <code>expire=</code>, and <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> passes over it once it has expired.</p>
-<div id="ec5d3abc" class="cell" data-execution_count="6">
+<div id="c6f962cf" class="cell" data-execution_count="6">
 <div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> episode <span class="kw">in</span> (<span class="dv">520</span>, <span class="dv">521</span>):</span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>    jobs.push({<span class="st">'episode'</span>: episode, <span class="st">'step'</span>: <span class="st">'transcode'</span>}, prefix<span class="op">=</span><span class="st">'transcode'</span>, tag<span class="op">=</span><span class="st">'upload:batch-7'</span>)</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>jobs.push({<span class="st">'episode'</span>: <span class="dv">522</span>, <span class="st">'step'</span>: <span class="st">'transcode'</span>}, prefix<span class="op">=</span><span class="st">'transcode'</span>)</span>
@@ -1299,9 +1306,9 @@ transcoding 514</code></pre>
 <script src="../details.js"></script>
 <script src="../mermaid-renderer.js"></script>
 <script src="../tooltips.js"></script>
-<script>(function(){var s=document.createElement('script');s.src=(document.querySelector('link[rel="canonical"]')||{href:location.href}).href.replace(/\/[^\/]*$/,'').replace(/\/[^\/]*$/,'')+'/color-swatch.js';var h=document.currentScript;h.parentNode.insertBefore(s,h.nextSibling);})()</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'color-swatch.js';document.body.appendChild(s);})();</script>
 <script src="../responsive-tables.js"></script>
-<script src="video-embed.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'video-embed.js';document.body.appendChild(s);})();</script>
 <script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'termshow.js';document.body.appendChild(s);})();</script>
 <script src="../navbar-widgets.js"></script>
 

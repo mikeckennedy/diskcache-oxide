@@ -28,7 +28,7 @@ Reads and decodes the item first, then deletes exactly that stored version, as [
 `prefix: str | None = None`  
 The queue's name, or None for the int queue.
 
-`default: Any = (None, None)`\  
+`default: Any = (None, None)`  
 Returned when the queue is empty (default `(None, None)`).
 
 `side: Literal[``"front", `<span class="st">`"back"``]`</span>` = ``"front"`  

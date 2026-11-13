@@ -7,11 +7,13 @@
 #![deny(unsafe_code)]
 
 pub mod check;
+pub mod cleanup;
 mod error;
 pub mod fanout;
 pub mod gate;
 pub mod genlock;
 pub mod key;
+pub mod layout;
 pub mod lockwait;
 pub mod maintenance;
 pub mod open;

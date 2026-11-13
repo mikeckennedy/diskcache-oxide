@@ -10,7 +10,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
 use crate::fanout::{HASH_IDENTITY, MAX_SHARDS, MIN_SHARDS, parse_decimal};
 use crate::schema::{
@@ -198,8 +198,15 @@ pub fn ensure_shard_directory(directory: &Path) -> Result<()> {
 /// Creates `directory` as owner-only (0700 on Unix) if it doesn't exist (D-015). Missing parents are
 /// created with the process umask, like `os.makedirs`; an existing directory is left alone. For a
 /// plain cache's directory or a `FanoutCache` root; a shard uses [`ensure_shard_directory`].
+///
+/// A versioned subdirectory (`diskcache-oxide-format-N`, plan 26) never creates its parent: a cache
+/// directory deleted while a cache was moving into it gives `NotFound`, rather than coming back with
+/// umask permissions in place of the owner-only ones it had.
 pub fn ensure_directory(directory: &Path) -> Result<()> {
     let io = |source| Error::Io { path: directory.to_path_buf(), source };
+    if crate::layout::is_format_dir(directory) {
+        return ensure_shard_directory(directory);
+    }
     if let Some(parent) = directory.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -234,6 +241,22 @@ pub fn connect(directory: &Path, timeout: Duration) -> Result<Connection> {
     Ok(conn)
 }
 
+/// A connection to `directory`'s database if it exists, as [`connect`] makes but without its
+/// statement-cache and planner settings, and never creating the file: `Ok(None)` if there's no
+/// database to open (plan 26, review M2). For reading another cache's format, which must never leave
+/// a database behind.
+pub fn connect_existing(directory: &Path, timeout: Duration) -> Result<Option<Connection>> {
+    let path = db_path(directory);
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI;
+    let mut conn = match sqlite::open_with_flags(&path, flags) {
+        Ok(conn) => conn,
+        Err(e) if e.sqlite_error_code() == Some(rusqlite::ErrorCode::CannotOpen) => return Ok(None),
+        Err(e) => return Err(Error::from_sqlite(e, timeout)),
+    };
+    lockwait::install(&mut conn).map_err(|e| Error::from_sqlite(e, timeout))?;
+    Ok(Some(conn))
+}
+
 /// Brings the database to the current format version ([`FORMAT_VERSION`]) with the requested settings, writing only what differs,
 /// after checking that its stamp matches `role` (see [`Role`]). A new database gets `role`'s stamp;
 /// a refused open writes nothing. Returns the limits in effect.
@@ -260,17 +283,23 @@ pub fn prepare_creating(
     role.validate()?;
     let sqlite = |e| Error::from_sqlite(e, timeout);
 
-    ensure_wal(conn, timeout)?;
-
+    // The format first, before `ensure_wal` can touch the file: a database in another format is
+    // refused having run nothing but this read, so a newer format that isn't in WAL mode is never
+    // switched to it, nor waited on for the lock the switch would need (plan 26, M2). A new database
+    // reads 0 and is still created in WAL mode, because `ensure_wal` runs before the schema.
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).map_err(sqlite)?;
-    if version == 0 {
-        create_if_new(conn, requested, role, new_size_limit, timeout)?;
-    } else if version != FORMAT_VERSION {
+    if version != 0 && version != FORMAT_VERSION {
         return Err(Error::FormatMismatch {
             found: version,
             expected: FORMAT_VERSION,
             path: Some(database_path(conn)),
         });
+    }
+
+    ensure_wal(conn, timeout)?;
+
+    if version == 0 {
+        create_if_new(conn, requested, role, new_size_limit, timeout)?;
     }
     // On every open, not only a new one: a database another creator won the race for, or one made
     // by a plain `Cache` before this shard opened (which has no stamp, and is never adopted).
@@ -505,8 +534,32 @@ mod tests {
     }
 
     #[test]
+    fn a_newer_format_outside_wal_mode_is_refused_without_being_switched_to_wal() {
+        // An older build meeting a newer cache must refuse it (and so redirect) before `ensure_wal`
+        // runs `PRAGMA journal_mode = WAL` on a file it can't read (plan 26, M2).
+        let tmp = TempDir::new("open-newer-not-wal");
+        drop(open(tmp.path(), Requested::default()));
+        {
+            let raw = connect(tmp.path(), T).unwrap();
+            let mode: String = raw.query_row("PRAGMA journal_mode = DELETE", [], |r| r.get(0)).unwrap();
+            assert_eq!(mode, "delete");
+            raw.execute_batch("PRAGMA user_version = 4").unwrap();
+        }
+        let db = db_path(tmp.path());
+        let before = std::fs::read(&db).unwrap();
+        let mut conn = connect(tmp.path(), T).unwrap();
+        let err = prepare(&mut conn, Requested::default(), Role::Plain, T).unwrap_err();
+        assert!(matches!(err, Error::FormatMismatch { found: 4, expected: 3, .. }), "{err:?}");
+        let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+        assert_eq!(mode, "delete", "a refused open must not switch the database to WAL");
+        drop(conn);
+        assert!(!db.with_extension("sqlite-wal").exists(), "a refused open must not create a WAL");
+        assert_eq!(std::fs::read(&db).unwrap(), before, "a refused open must not write");
+    }
+
+    #[test]
     fn a_format_1_cache_is_refused() {
-        // Format 1 kept value files two levels deep (plan 17); such a cache is deleted on upgrade.
+        // Format 1 kept value files two levels deep (plan 17). Refused here; the caller redirects (plan 26).
         let tmp = TempDir::new("open-format-1");
         drop(open(tmp.path(), Requested::default()));
         connect(tmp.path(), T).unwrap().execute_batch("PRAGMA user_version = 1").unwrap();
@@ -517,7 +570,8 @@ mod tests {
 
     #[test]
     fn a_format_2_cache_is_refused_with_a_message_saying_what_to_do() {
-        // Format 2 had no tag or eviction policy columns (plan 24, decision 22): deleted on upgrade.
+        // Format 2 had no tag or eviction policy columns (plan 24, decision 22). Refused here; the
+        // caller redirects (plan 26).
         let tmp = TempDir::new("open-format-2");
         drop(open(tmp.path(), Requested::default()));
         connect(tmp.path(), T).unwrap().execute_batch("PRAGMA user_version = 2").unwrap();

@@ -21,7 +21,7 @@ Methods for the Cache class
 
 
 [Cache.directory](Cache.directory.md#diskcache_oxide.Cache.directory)  
-The cache directory, as given to the constructor.
+The directory the cache is in: the one given to the constructor, or its
 
 [Cache.timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout)  
 Seconds a call waits for a lock or a pending fork before raising `Timeout`.
@@ -58,6 +58,9 @@ Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 
 [Cache.memoize()](Cache.memoize.md#diskcache_oxide.Cache.memoize)  
 Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
+
+[Cache.remove_old_formats()](Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats)  
+Remove the caches an older diskcache-oxide format left in this cache's directory: the
 
 [Cache.check()](Cache.check.md#diskcache_oxide.Cache.check)  
 Check the database and the value files against each other, as diskcache's `check()`.
@@ -164,7 +167,7 @@ Methods for the FanoutCache class
 
 
 [FanoutCache.directory](FanoutCache.directory.md#diskcache_oxide.FanoutCache.directory)  
-The root directory, as given to the constructor.
+The root directory: the one given to the constructor, or its
 
 [FanoutCache.timeout](FanoutCache.timeout.md#diskcache_oxide.FanoutCache.timeout)  
 Seconds a call waits for a lock or a pending fork before raising `Timeout`.
@@ -228,6 +231,9 @@ Checkpoint every shard's write-ahead log and truncate it to zero, as `Cache.chec
 
 [FanoutCache.memoize()](FanoutCache.memoize.md#diskcache_oxide.FanoutCache.memoize)  
 Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
+
+[FanoutCache.remove_old_formats()](FanoutCache.remove_old_formats.md#diskcache_oxide.FanoutCache.remove_old_formats)  
+As `Cache.remove_old_formats()`, for this cache's root directory: an older format's
 
 [FanoutCache.check()](FanoutCache.check.md#diskcache_oxide.FanoutCache.check)  
 Check the database and the value files against each other, as diskcache's `check()`.
@@ -335,6 +341,9 @@ Always False: a `NullCache` has no outages to answer.
 
 [NullCache.check()](NullCache.check.md#diskcache_oxide.NullCache.check)  
 Always `[]`: there is nothing to check.
+
+[NullCache.remove_old_formats()](NullCache.remove_old_formats.md#diskcache_oxide.NullCache.remove_old_formats)  
+Always `[]`: a `NullCache` has no directory to clean up.
 
 [NullCache.stats()](NullCache.stats.md#diskcache_oxide.NullCache.stats)  
 Always `(0, 0)`: nothing is looked up.
@@ -493,6 +502,9 @@ True for a `durable=True` handle (always False on a `NullCache`).
 [CacheLike.check()](CacheLike.check.md#diskcache_oxide.CacheLike.check)  
 Check the database and value files against each other; `[]` on a `NullCache`.
 
+[CacheLike.remove_old_formats()](CacheLike.remove_old_formats.md#diskcache_oxide.CacheLike.remove_old_formats)  
+Remove caches an older format left in this cache's directory; `[]` on a `NullCache`.
+
 [CacheLike.stats()](CacheLike.stats.md#diskcache_oxide.CacheLike.stats)  
 `(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`.
 
@@ -592,7 +604,7 @@ The registered names, in registration order.
 How many caches are registered.
 
 [Caches.directory()](Caches.directory.md#diskcache_oxide.Caches.directory)  
-Where the named cache lives.
+The directory the named cache is registered at. After a format change the cache itself
 
 [Caches.__getitem__()](Caches.__getitem__.md#diskcache_oxide.Caches.__getitem__)  
 The named plain cache: opened on first use, then the same object every time.
@@ -617,6 +629,9 @@ Clear the real cache, even while it's disabled. Returns how many entries were re
 
 [Caches.expire_all()](Caches.expire_all.md#diskcache_oxide.Caches.expire_all)  
 Remove expired entries from every cache. Returns how many each removed, or None for a
+
+[Caches.remove_old_formats()](Caches.remove_old_formats.md#diskcache_oxide.Caches.remove_old_formats)  
+Run `remove_old_formats()` on every registered cache, opening each one, even while it's
 
 [Caches.close_all()](Caches.close_all.md#diskcache_oxide.Caches.close_all)  
 Close every opened cache and forget it; a later lookup opens it again.
@@ -650,7 +665,7 @@ A stored value couldn't be decoded: an unknown mode, or bytes that don't parse.
 A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote
 
 [FormatMismatchError](FormatMismatchError.md#diskcache_oxide.FormatMismatchError)  
-The cache directory holds a database in a format this version doesn't support.
+A database or manifest in a format this version doesn't support, where opening the cache's
 
 [LayoutMismatchError](LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError)  
 The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
