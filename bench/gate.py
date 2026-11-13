@@ -4,6 +4,9 @@ Usage (from the repo root, on AC power):
     venv/bin/python -m bench.gate            # 3.14
     .venv-ft/bin/python -m bench.gate        # 3.14t
 
+On Windows the gate of record runs on the PGO wheel from scripts/build_pgo.ps1, installed in a venv
+of its own with diskcache 5.6.3 and pytest, from the repo root (plan 25, decision 4).
+
 Each round runs bench.baseline in a fresh process for diskcache, then for each oxide variant,
 alternating (ABAB...), so drift in machine state hits every backend equally. The verdict uses the
 median p50 across rounds. Oxide passes a latency workload if its median p50 <= diskcache's x

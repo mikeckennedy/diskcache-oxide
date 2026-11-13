@@ -12,7 +12,7 @@ A cache that is a directory: every thread and process that opens the same path s
 
 ## Install
 
-Install with `pip install diskcache-oxide` (CPython 3.14 or 3.15, GIL or free-threaded; wheels for macOS arm64 and Linux x86_64/aarch64, elsewhere a source build that needs the latest stable Rust). The import is `diskcache_oxide`. During 0.x a release that changes the on-disk format bumps the minor version, and caches from the older format must be deleted. 0.2.3 writes format 3: a cache made by 0.1.2 raises `FormatMismatchError` naming the file (in a `Caches` registry, the lookup returns a `NullCache` until it's fixed). Stop every worker, delete the cache's directory (a `FanoutCache`'s whole root, never one shard, never only the `.sqlite`), and it's recreated empty on the next open. 0.1.2 refuses a format-3 cache the same way, so old and new workers can't share a cache.
+Install with `pip install diskcache-oxide` (CPython 3.14 or 3.15, GIL or free-threaded; wheels for macOS arm64, Linux x86_64/aarch64 and Windows x86_64, elsewhere a source build that needs the latest stable Rust). The import is `diskcache_oxide`. During 0.x a release that changes the on-disk format bumps the minor version, and caches from the older format must be deleted. 0.2.3 writes format 3: a cache made by 0.1.2 raises `FormatMismatchError` naming the file (in a `Caches` registry, the lookup returns a `NullCache` until it's fixed). Stop every worker, delete the cache's directory (a `FanoutCache`'s whole root, never one shard, never only the `.sqlite`), and it's recreated empty on the next open. 0.1.2 refuses a format-3 cache the same way, so old and new workers can't share a cache.
 
 ## Use
 
