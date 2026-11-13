@@ -472,7 +472,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-12">v0.2.3</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.4</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -676,7 +676,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>The page takes 900 ms, and 850 of them are one query that returns the same ten rows it returned a second ago. Everyone has met this page. Caching is how you stop paying for the same answer twice: before doing something slow (a database query, an API call, rendering a big page), ask the cache. If it knows, you’re done in a microsecond or two. If not, do the work and leave the answer for whoever asks next, which with a shared directory means every worker process on the machine, today and after the next restart.</p>
 <section id="cache-aside" class="level1">
 <h1>Cache-aside</h1>
-<div id="1eac9615" class="cell" data-execution_count="1">
+<div id="a145ebcc" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -704,8 +704,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>    popular_episodes()</span>
 <span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f'cached:      </span><span class="sc">{</span>(time.perf_counter() <span class="op">-</span> start) <span class="op">*</span> <span class="dv">1000</span><span class="sc">:.1f}</span><span class="ss"> µs per call'</span>)  <span class="co"># 1000 calls, so ms total = µs each</span></span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>first call:  299.4 ms
-cached:      6.4 µs per call</code></pre>
+<pre><code>first call:  202.8 ms
+cached:      1.2 µs per call</code></pre>
 </div>
 </div>
 <p>Always give cached values an <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>. It bounds how stale a value can get if an invalidation is ever missed.</p>
@@ -723,7 +723,7 @@ cached:      6.4 µs per call</code></pre>
 <section id="a-caching-decorator-memoize" class="level1">
 <h1>A caching decorator: <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a></h1>
 <p>The same pattern wrapped up for reuse. <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> keys each call on the function’s full name and its arguments, and caches <code>None</code> results too.</p>
-<div id="99cc9d6f" class="cell" data-execution_count="2">
+<div id="0a2de77c" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>calls <span class="op">=</span> <span class="dv">0</span></span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="at">@cache.memoize</span>(expire<span class="op">=</span><span class="dv">600</span>)</span>
@@ -763,7 +763,7 @@ cached:      6.4 µs per call</code></pre>
 <section id="thundering-herds" class="level1">
 <h1>Thundering herds</h1>
 <p>When a popular entry expires, every worker that asks for it in the next moment misses at the same time, and all of them recompute it. For most values that’s harmless. When the computation is expensive enough that doing it eight times at once hurts, <code>memoize_stampede</code> keeps the herd from forming. It’s <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> with early recomputation: as a result gets close to its expiry, each call has a growing chance of recomputing it, and the first caller to do so starts the work in a background thread while every caller, that one included, keeps getting the cached result. The chance grows with how long the function took last time, so a slow function starts its refresh earlier.</p>
-<div id="56b8da8b" class="cell" data-execution_count="3">
+<div id="89c86ec2" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> memoize_stampede</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>renders <span class="op">=</span> <span class="dv">0</span></span>

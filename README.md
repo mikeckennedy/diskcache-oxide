@@ -15,7 +15,7 @@ import os
 
 from diskcache_oxide import Cache
 
-cache = Cache('/tmp/my-app-cache')  # every worker opens the same directory
+cache = Cache('/tmp/my-app-cache', durable=True)  # every worker opens the same directory
 
 popular = cache.get('episodes:popular')
 if popular is None:

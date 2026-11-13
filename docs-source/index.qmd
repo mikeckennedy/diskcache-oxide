@@ -21,7 +21,7 @@ import os
 from diskcache_oxide import Cache
 
 # Every worker process opens the same directory and sees the same cache.
-cache = Cache('/var/cache/my-app')
+cache = Cache('/var/cache/my-app', durable=True)
 
 def popular_episodes() -> list[dict]:
     if (episodes := cache.get('episodes:popular')) is not None:

@@ -3,6 +3,22 @@
 This changelog is generated automatically from [GitHub Releases](https://github.com/mikeckennedy/diskcache-oxide/releases).
 
 
+# v0.2.4 (unreleased)
+
+[GitHub](https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md)
+
+
+### Added
+
+- Windows on x86_64, with wheels for CPython 3.14, 3.14t, 3.15 and 3.15t. The API and the on-disk format are the same; caches made on macOS or Linux aren't affected. Windows has no `fork()`, so the fork guarantees are Unix-only. Getting started has a new Windows section: an open cache's directory can't be deleted, new directories inherit their parent's permissions, and a value file another program holds past about 50 ms of retries is left until `check(fix=True)` removes it, an hour after it was written. SQLite uses its own Win32 mutexes there (`_sqlite_mutex_status()` reports `'native'`).
+
+
+### Fixed
+
+- `import diskcache_oxide` no longer calls `os.register_at_fork` where it doesn't exist.
+- A value file that hits a full quota (`EDQUOT`) now raises `OSError` with `errno.ENOSPC`, as a full disk does, since a full disk is recognized by the error's kind rather than one Unix error number.
+
+
 # v0.2.3
 
 *2026-11-12* · [GitHub](https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.2.3)

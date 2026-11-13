@@ -53,7 +53,7 @@ print('0.1.2 ->', format_series('0.1.2'), '| 0.2.3 ->', format_series('0.2.3'))
 ```
 
 
-    this build: 0.2.3 -> v0.2
+    this build: 0.2.4 -> v0.2
     0.1.2 -> v0.1 | 0.2.3 -> v0.2
 
 

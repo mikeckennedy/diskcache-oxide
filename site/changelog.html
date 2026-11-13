@@ -435,7 +435,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="./diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="./index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-12">v0.2.3</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.4</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -483,7 +483,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#v0.2.3" id="toc-v0.2.3" class="nav-link active" data-scroll-target="#v0.2.3">v0.2.3</a></li>
+  <li><a href="#v0.2.4-unreleased" id="toc-v0.2.4-unreleased" class="nav-link active" data-scroll-target="#v0.2.4-unreleased">v0.2.4 (unreleased)</a></li>
+  <li><a href="#v0.2.3" id="toc-v0.2.3" class="nav-link" data-scroll-target="#v0.2.3">v0.2.3</a></li>
   <li><a href="#v0.1.2" id="toc-v0.1.2" class="nav-link" data-scroll-target="#v0.1.2">v0.1.2</a></li>
   </ul>
 </nav>
@@ -511,12 +512,29 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 
 <p>This changelog is the repository's <a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md">CHANGELOG.md</a>, rendered at build time.</p>
+<section id="v0.2.4-unreleased" class="level1 changelog-version">
+<h1 class="changelog-version">v0.2.4 (unreleased)</h1>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md">GitHub</a></p>
+<section id="added" class="level3">
+<h3 class="anchored" data-anchor-id="added">Added</h3>
+<ul>
+<li>Windows on x86_64, with wheels for CPython 3.14, 3.14t, 3.15 and 3.15t. The API and the on-disk format are the same; caches made on macOS or Linux aren’t affected. Windows has no <code>fork()</code>, so the fork guarantees are Unix-only. Getting started has a new Windows section: an open cache’s directory can’t be deleted, new directories inherit their parent’s permissions, and a value file another program holds past about 50 ms of retries is left until <code>check(fix=True)</code> removes it, an hour after it was written. SQLite uses its own Win32 mutexes there (<code>_sqlite_mutex_status()</code> reports <code>'native'</code>).</li>
+</ul>
+</section>
+<section id="fixed" class="level3">
+<h3 class="anchored" data-anchor-id="fixed">Fixed</h3>
+<ul>
+<li><code>import diskcache_oxide</code> no longer calls <code>os.register_at_fork</code> where it doesn’t exist.</li>
+<li>A value file that hits a full quota (<code>EDQUOT</code>) now raises <code>OSError</code> with <code>errno.ENOSPC</code>, as a full disk does, since a full disk is recognized by the error’s kind rather than one Unix error number.</li>
+</ul>
+</section>
+</section>
 <section id="v0.2.3" class="level1 changelog-version">
 <h1 class="changelog-version">v0.2.3</h1>
 <p><em>2026-11-12</em> · <a href="https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.2.3">GitHub</a></p>
 <p><strong>Delete your caches when you upgrade.</strong> This release changes the on-disk format (format 3, for tags and the eviction policy). Opening a cache made by 0.1.2 raises <a href="reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>, naming the database: stop every process using the cache, delete its directory (a FanoutCache’s whole root, never one shard), and it’s recreated empty on the next open. 0.1.2 refuses a format-3 cache the same way, and neither version writes anything into the other’s. A 0.1.2 worker still running when its cache is deleted and recreated can’t change the new one either: once it opens the new file, its writes, deletes and maintenance calls fail with “no such table” (only a <a href="reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a> gets through), because format 3 renames the table they all use.</p>
-<section id="added" class="level3">
-<h3 class="anchored" data-anchor-id="added">Added</h3>
+<section id="added-1" class="level3">
+<h3 class="anchored" data-anchor-id="added-1">Added</h3>
 <ul>
 <li>Keys of every native type: <code>bytes</code>, <code>int</code> (64-bit), <code>float</code>, <code>bool</code>, <code>None</code>, and tuples of those, nested up to 32 deep, beside <code>str</code>. They’re never pickled and compare by exact type, so <code>1</code>, <code>1.0</code> and <code>True</code> are three keys. <a href="reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> lists <code>str</code> keys first, then the other types in a fixed order; <code>iterkeys(prefix=...)</code> lists <code>str</code> keys only. A FanoutCache routes every key type. Type checkers see <code>diskcache_oxide.Key</code>.</li>
 <li><code>memoize(name=None, typed=False, expire=None, tag=None, ignore=())</code> on <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> and <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, as diskcache’s, with the same keys, so <code>f.__cache_key__(...)</code> returns the tuple diskcache would. Every argument must be a key type, checked before the function runs; <code>typed=True</code> stores type names. <code>Memoized</code> and <code>Memoizer</code> type the wrapper.</li>
@@ -548,8 +566,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1 class="changelog-version">v0.1.2</h1>
 <p><em>2026-11-09</em> · <a href="https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.1.2">GitHub</a></p>
 <p>The first release: diskcache’s <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> API on a Rust engine and SQLite storage, shared safely by threads, processes and <code>fork()</code>, on CPython 3.14 and 3.15 including the free-threaded builds. Wheels for macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64.</p>
-<section id="added-1" class="level3">
-<h3 class="anchored" data-anchor-id="added-1">Added</h3>
+<section id="added-2" class="level3">
+<h3 class="anchored" data-anchor-id="added-2">Added</h3>
 <ul>
 <li><a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, API compatible with diskcache 5.6.3’s <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>: <a href="reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>, <a href="reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>/<a href="reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr</a>, <a href="reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a>, <a href="reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, <a href="reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a>, <a href="reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>, <a href="reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull</a>, <a href="reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear</a>, <a href="reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys</a>, <code>len</code>, <a href="reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume</a>, size limits with least-recently-stored eviction, and the mapping methods. It passes a conformance suite run against diskcache itself, apart from the <a href="https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html">documented divergences</a>.</li>
 <li><a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, which shards keys over several databases so many writing processes don’t queue on one write lock.</li>

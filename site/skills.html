@@ -471,7 +471,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="./diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="./index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-12">v0.2.3</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.2.4</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -582,7 +582,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="fu">## Install</span></span>
 <span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>Install with <span class="in">`pip install diskcache-oxide`</span> (CPython 3.14 or 3.15, GIL or free-threaded; wheels for macOS arm64 and Linux x86_64/aarch64, elsewhere a source build that needs the latest stable Rust). The import is <span class="in">`diskcache_oxide`</span>. During 0.x a release that changes the on-disk format bumps the minor version, and caches from the older format must be deleted. 0.2.3 writes format 3: a cache made by 0.1.2 raises <span class="in">`FormatMismatchError`</span> naming the file (in a <span class="in">`Caches`</span> registry, the lookup returns a <span class="in">`NullCache`</span> until it's fixed). Stop every worker, delete the cache's directory (a <span class="in">`FanoutCache`</span>'s whole root, never one shard, never only the <span class="in">`.sqlite`</span>), and it's recreated empty on the next open. 0.1.2 refuses a format-3 cache the same way, so old and new workers can't share a cache.</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>Install with <span class="in">`pip install diskcache-oxide`</span> (CPython 3.14 or 3.15, GIL or free-threaded; wheels for macOS arm64, Linux x86_64/aarch64 and Windows x86_64, elsewhere a source build that needs the latest stable Rust). The import is <span class="in">`diskcache_oxide`</span>. During 0.x a release that changes the on-disk format bumps the minor version, and caches from the older format must be deleted. 0.2.3 writes format 3: a cache made by 0.1.2 raises <span class="in">`FormatMismatchError`</span> naming the file (in a <span class="in">`Caches`</span> registry, the lookup returns a <span class="in">`NullCache`</span> until it's fixed). Stop every worker, delete the cache's directory (a <span class="in">`FanoutCache`</span>'s whole root, never one shard, never only the <span class="in">`.sqlite`</span>), and it's recreated empty on the next open. 0.1.2 refuses a format-3 cache the same way, so old and new workers can't share a cache.</span>
 <span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a><span class="fu">## Use</span></span>
 <span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a></span>
