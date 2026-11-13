@@ -6,6 +6,8 @@
 # (the oracle) and against diskcache-oxide in each.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# dco_env: environments are built with `uv pip install`, never `uv sync`.
+source scripts/uv_env.sh
 
 SLOW=0
 COVERAGE=0
@@ -48,7 +50,7 @@ for spec in "${ENVS[@]}"; do
     python="${spec##*:}"
 
     step "build + test on Python $python ($env)"
-    UV_PROJECT_ENVIRONMENT="$env" uv sync --quiet --locked --python "$python"
+    dco_env "$env" "$python"
 
     # -W error also catches CPython's warning if the extension ever re-enables the GIL.
     "$env/bin/python" -W error -c '
@@ -84,7 +86,7 @@ done
 # its own target dir keeps the two SQLite builds from evicting each other.
 step 'memory-instrumented build (3.14t, SQLITE_DEFAULT_MEMSTATUS=1)'
 LIBSQLITE3_FLAGS="$(memstatus_flags)" CARGO_TARGET_DIR="$PWD/target/memstatus" \
-    UV_PROJECT_ENVIRONMENT=.venv-mem uv sync --quiet --locked --no-editable --python 3.14t
+    DCO_EDITABLE=0 dco_env .venv-mem 3.14t
 DCO_REQUIRE_MEMSTATUS=1 .venv-mem/bin/pytest -q -p no:cacheprovider tests/unit/test_memory.py
 # Memory numbers only; its throughput column is informational (take performance from bench.gate).
 .venv-mem/bin/python -m bench.memory --threads 1,8,32 --seconds 1

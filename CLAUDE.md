@@ -17,7 +17,7 @@ Start here when orienting: [README.md](README.md), [plans/00-roadmap.md](plans/0
 
 ## Environments
 
-uv manages one environment per Python. Always set `UV_PROJECT_ENVIRONMENT`; a bare `uv sync` would create an unused `.venv`.
+One environment per Python, built and refreshed with `uv pip install`, **never `uv sync`**: it uninstalls whatever isn't in the groups it syncs (the docs tooling, ipykernel, anything installed by hand). `scripts/uv_env.sh`'s `dco_env <env> <python>` is how every script builds one: it creates the venv if needed, installs the dependencies at the versions `uv.lock` pins (`uv export --locked`), then the project, editable. `uv lock` is fine; it never touches a venv.
 
 | Dir | Python | Use |
 |---|---|---|
@@ -28,11 +28,13 @@ uv manages one environment per Python. Always set `UV_PROJECT_ENVIRONMENT`; a ba
 | `.venv-soak/`, `.venv-soak-ft/` | 3.14, 3.14t | created by `soak/run.sh` |
 
 ```bash
-UV_PROJECT_ENVIRONMENT=venv uv sync --locked --python 3.14        # builds the extension (editable) into venv/
-UV_PROJECT_ENVIRONMENT=.venv-ft uv sync --locked --python 3.14t
+bash -c 'source scripts/uv_env.sh && dco_env venv 3.14'        # a new or refreshed venv/: locked deps, then the project (editable)
+bash -c 'source scripts/uv_env.sh && dco_env .venv-ft 3.14t'
+uv pip install --python venv/bin/python -e .                     # rebuild the extension after a Rust change
+uv pip install --python venv/bin/python --group docs             # the docs tooling (Great Docs, ipykernel)
 ```
 
-`uv` rebuilds the extension when any `.rs`, `Cargo.toml`, `Cargo.lock` or `.cargo/config.toml` changes (`tool.uv.cache-keys`). The Rust toolchain is pinned in `rust-toolchain.toml` and tracks the latest stable; `rust-version` in `Cargo.toml` moves with it. No older MSRV, so use new std APIs freely. Quarto must be on `PATH` for docs; `cargo-deny` and the pinned nightly (for Miri) are separate installs.
+`uv pip install -e .` rebuilds the extension when any `.rs`, `Cargo.toml`, `Cargo.lock` or `.cargo/config.toml` changes (`tool.uv.cache-keys`); add `--reinstall-package diskcache-oxide` to force it. The Rust toolchain is pinned in `rust-toolchain.toml` and tracks the latest stable; `rust-version` in `Cargo.toml` moves with it. No older MSRV, so use new std APIs freely. Quarto must be on `PATH` for docs; `cargo-deny` and the pinned nightly (for Miri) are separate installs.
 
 ## Commands
 
@@ -63,7 +65,8 @@ scripts/check.sh
 venv/bin/python -m bench.gate            # latency and throughput gate vs diskcache, 3.14
 .venv-ft/bin/python -m bench.gate        # 3.14t
 
-# Docs: builds with Quarto + Great Docs and mirrors into site/ (committed). Needs `uv sync --group docs`.
+# Docs: builds with Quarto + Great Docs (>=0.17) and mirrors into site/ (committed). Needs the docs group in venv/:
+# `uv pip install --python venv/bin/python --group docs` (Great Docs runs the docs' code cells in venv/).
 make docs
 make docs-serve
 

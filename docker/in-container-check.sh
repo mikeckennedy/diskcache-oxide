@@ -65,6 +65,8 @@ with tarfile.open(fileobj=sys.stdin.buffer, mode="r|") as archive:
 ' "$REPO" || { echo "snapshot failed" >&2; exit 1; }
 [[ -f "$REPO/Cargo.toml" ]] || { echo "snapshot is missing Cargo.toml" >&2; exit 1; }
 cd "$REPO" || exit 1
+# dco_env: environments are built with `uv pip install`, never `uv sync`.
+source scripts/uv_env.sh
 printf '%s, %s CPUs, kernel %s, user %s\n' "$(. /etc/os-release && echo "$PRETTY_NAME")" "$(nproc)" "$(uname -r)" "$(id -un)"
 
 # The workspace build. Per-Python extension builds get their own target dirs below, so switching
@@ -86,8 +88,7 @@ if [[ "$RUST" == 1 && -z "${DCO_EXEC:-}" ]]; then
 fi
 
 sync_env() {  # sync_env <python> <env>
-    CARGO_TARGET_DIR="/cache/target/py-$1" UV_PROJECT_ENVIRONMENT="$2" \
-        uv sync --quiet --locked --python "$1" || return 1
+    CARGO_TARGET_DIR="/cache/target/py-$1" dco_env "$2" "$1" || return 1
     # Optional: lets tests/proctitle.py name the processes (dco-pytest[...], dco-bench[...]).
     uv pip install --quiet --python "$2/bin/python" setproctitle || true
 }
@@ -107,7 +108,7 @@ for py in "${PYS[@]}"; do
     env="$(env_dir "$py")"
     step "build on Python $py ($env)"
     if ! sync_env "$py" "$env"; then
-        FAILED+=("uv sync $py")
+        FAILED+=("build env $py")
         continue
     fi
 
@@ -154,12 +155,12 @@ if [[ "$TESTS" == 1 && -z "${DCO_EXEC:-}" ]]; then
     step 'memory-instrumented build (3.14t, SQLITE_DEFAULT_MEMSTATUS=1)'
     # The shipped SQLite flags from .cargo/config.toml, with memory statistics turned back on.
     mem_flags="$(sed -n 's/^LIBSQLITE3_FLAGS = "\(.*\)"$/\1/p' .cargo/config.toml | sed 's/DEFAULT_MEMSTATUS=0/DEFAULT_MEMSTATUS=1/')"
-    if LIBSQLITE3_FLAGS="$mem_flags" CARGO_TARGET_DIR=/cache/target/py-3.14t-memstatus \
-        UV_PROJECT_ENVIRONMENT=.venv-mem uv sync --quiet --locked --no-editable --python 3.14t; then
+    if LIBSQLITE3_FLAGS="$mem_flags" CARGO_TARGET_DIR=/cache/target/py-3.14t-memstatus DCO_EDITABLE=0 \
+        dco_env .venv-mem 3.14t; then
         run 'memory tests' env DCO_REQUIRE_MEMSTATUS=1 .venv-mem/bin/pytest -q -p no:cacheprovider tests/unit/test_memory.py
         run 'memory report' .venv-mem/bin/python -m bench.memory --threads 1,8,32 --seconds 1
     else
-        FAILED+=('uv sync .venv-mem')
+        FAILED+=('build env .venv-mem')
     fi
 fi
 
@@ -167,7 +168,7 @@ if [[ "$BENCH" == 1 ]]; then
     for py in 3.14 3.14t; do
         env="$(env_dir "$py")"
         if [[ ! -x "$env/bin/python" ]] && ! sync_env "$py" "$env"; then
-            FAILED+=("uv sync $py (bench)")
+            FAILED+=("build env $py (bench)")
             continue
         fi
         step "bench.gate --rounds $ROUNDS on Python $py"

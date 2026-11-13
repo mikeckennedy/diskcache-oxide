@@ -5,6 +5,8 @@
 #        With no duration, runs for 24 hours.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# dco_env: environments are built with `uv pip install`, never `uv sync`.
+source scripts/uv_env.sh
 
 need() {  # need <command> <how to install it>
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -33,7 +35,7 @@ for spec in "${ENVS[@]}"; do
     env="${spec%%:*}"
     py="${spec##*:}"
     echo "==> build for Python $py ($env)"
-    UV_PROJECT_ENVIRONMENT="$env" uv sync --quiet --locked --python "$py"
+    dco_env "$env" "$py"
     uv pip install --quiet --python "$env/bin/python" psutil
     "$env/bin/python" -W error -c '
 import sys

@@ -41,7 +41,7 @@ done
 py="$PWD/$env_dir/bin/python"
 [[ -x "$py" ]] || { echo "$env_dir/ is missing: see CLAUDE.md's Environments" >&2; exit 1; }
 cargo llvm-cov --version >/dev/null 2>&1 || { echo "cargo-llvm-cov is missing: cargo install --locked cargo-llvm-cov" >&2; exit 1; }
-"$py" -c 'import coverage' 2>/dev/null || { echo "coverage is missing from $env_dir/: uv sync --locked into it" >&2; exit 1; }
+"$py" -c 'import coverage' 2>/dev/null || { echo "coverage is missing from $env_dir/: build it with dco_env (scripts/uv_env.sh)" >&2; exit 1; }
 
 export CARGO_TARGET_DIR="$target"
 export PYO3_PYTHON="$py"

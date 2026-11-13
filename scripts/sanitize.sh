@@ -26,6 +26,8 @@
 # Long runs belong on the mini, one soak or sanitize run at a time.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# dco_env: environments are built with `uv pip install`, never `uv sync`.
+source scripts/uv_env.sh
 
 LANES='A,B,C,D,E' QUICK=0 SLOW=0
 NIGHTLY="${DCO_SAN_NIGHTLY:-nightly-2026-11-04}"  # rustc 708c94ef0, the build plan 14's probes used
@@ -412,7 +414,7 @@ lane_E() {
         # --reinstall-package: uv rebuilds the editable extension only when a source file changed
         # (tool.uv.cache-keys), never for an environment variable, so without this it hands the lane
         # the extension it already built uninstrumented for another venv; the first run was vacuous.
-        UV_PROJECT_ENVIRONMENT="$venv" uv sync --locked --python "$py" --reinstall-package diskcache-oxide
+        dco_env "$venv" "$py" --reinstall-package diskcache-oxide
     ) >"$build" 2>&1; then
         note "E  FAIL  setup: building the extension under AddressSanitizer failed; see $build"; FAILED+=(E); return
     fi
@@ -564,7 +566,7 @@ lane_D() {
         fi
         export RUSTFLAGS="$rustflags"
         export "CFLAGS_${target//-/_}=-fsanitize=thread -g"
-        UV_PROJECT_ENVIRONMENT="$venv" uv sync --locked --python "$prefix/bin/python3.14t" --reinstall-package diskcache-oxide
+        dco_env "$venv" "$prefix/bin/python3.14t" --reinstall-package diskcache-oxide
     ) >"$build" 2>&1; then
         note "D  FAIL  setup: building the extension under ThreadSanitizer failed; see $build"; FAILED+=(D); return
     fi
