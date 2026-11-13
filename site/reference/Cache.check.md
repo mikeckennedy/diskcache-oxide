@@ -14,7 +14,7 @@ Cache.check(
 ```
 
 
-Reports, as a list of `warnings.WarningMessage` (nothing is issued through `warnings`): lines of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size (`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache directory, that no entry names and that is over an hour old (`unknown file: ...`, an `UnknownFileWarning`; a younger one may be a writer's in flight); and stored totals that don't match the rows. Empty value folders aren't reported: they're normal on an open cache. Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and `VACUUM`.
+Reports, as a list of `warnings.WarningMessage` (nothing is issued through `warnings`): lines of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size (`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache directory, that no entry names and that is over an hour old (`unknown file: ...`, an [UnknownFileWarning](UnknownFileWarning.md#diskcache_oxide.UnknownFileWarning); a younger one may be a writer's in flight); and stored totals that don't match the rows. Empty value folders aren't reported: they're normal on an open cache. Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and `VACUUM`.
 
 
 ## Parameters

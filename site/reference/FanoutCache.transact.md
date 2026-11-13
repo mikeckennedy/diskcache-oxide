@@ -21,7 +21,7 @@ Inside the block, a call on this thread for a key on any other shard raises `Val
 
 The check costs one atomic load while no transaction is open anywhere in the process; while one is (any thread's, any cache's), keyed calls, calls over every shard and iterator `next()`s also look at each shard that holds one.
 
-As on [Cache](Cache.md#diskcache_oxide.Cache), a transaction belongs to a thread, not an asyncio task, a block that didn't commit raises `TransactionAborted` at its exit, and under `durable=True` a failure to begin, or inside the block, raises.
+As on [Cache](Cache.md#diskcache_oxide.Cache), a transaction belongs to a thread, not an asyncio task, a block that didn't commit raises [TransactionAborted](TransactionAborted.md#diskcache_oxide.TransactionAborted) at its exit, and under `durable=True` a failure to begin, or inside the block, raises.
 
 
 ## Parameters

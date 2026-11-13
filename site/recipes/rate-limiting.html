@@ -742,7 +742,7 @@ True</code></pre>
 <ul>
 <li><strong>Don’t rate limit with a cache that might be a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>.</strong> Its <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> always returns <code>default + delta</code>, so every request would be allowed. That’s often what you want with caching switched off, but make it a deliberate choice.</li>
 </ul>
-<p>When the caller should wait for its turn instead of getting a 429, as for outgoing webhooks or calls to a partner API, use <code>throttle</code> from <a href="../user-guide/coordination.html#throttle">Coordination</a>: a decorator that holds a function to <code>count</code> calls every <code>seconds</code>, across every process.</p>
+<p>When the caller should wait for its turn instead of getting a 429, as for outgoing webhooks or calls to a partner API, use <a href="../reference/throttle.html#diskcache_oxide.throttle" class="gdls-link gdls-code">throttle</a> from <a href="../user-guide/coordination.html#throttle">Coordination</a>: a decorator that holds a function to <code>count</code> calls every <code>seconds</code>, across every process.</p>
 
 
 </section>

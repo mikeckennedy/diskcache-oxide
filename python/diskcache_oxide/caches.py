@@ -27,7 +27,9 @@ cleans up the old one later.
 **A sharded cache keeps the shard count it was created with.** If its folder already has another
 count than `register(..., shards=n)` says, the registry opens it with the count on disk, logs a
 WARNING saying so (and one ERROR per process, for an error tracker), and carries on. `n` applies only
-to a new folder: to change the count, delete the folder while no process has it open.
+to a new folder: to change the count, delete the folder while no process has it open. With
+`register(..., raise_on_mismatch=True)` another count is an open failure instead (a reported
+`NullCache`).
 A bad setting (`size_limit=True`) is a bug, not an outage, so that still raises. With `durable=True`
 among the settings, the handle a lookup returns doesn't raise for an outage either, so the two together
 keep a cache failure out of a request: the registry covers opening, and `durable` everything after.
@@ -222,7 +224,8 @@ class Caches[N: str = str]:
                 `on_decode_error` is called as `(name, key, exc)`, as at the registry level. Adding
                 `shards=` registers a `FanoutCache` instead, which takes the same settings; read it with
                 `fanout(name)`. `shards=n` is the count for a new folder: an existing one keeps the
-                count it was created with, and the registry warns when that isn't `n`. Passing the key
+                count it was created with, and the registry warns when that isn't `n` (with
+                `raise_on_mismatch=True`, it's an open failure instead). Passing the key
                 at all is what picks the kind, so `shards=None` is NOT "not sharded": it is a
                 `FanoutCache` with the stored shard count, or 8 for a new root. Leave `shards` out for a
                 plain cache (a config file that writes `shards: null` for "none" would register a

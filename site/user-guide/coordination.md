@@ -20,9 +20,9 @@ with lock:
     build_the_report()
 ```
 
-One holder at a time, in any thread of any process. `acquire()` waits, polling every millisecond, until it gets the lock; `release()` gives it back; `locked()` says whether anyone holds it. It isn't reentrant: the holder taking it again waits for itself. Give it an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), so a holder that crashes without releasing doesn't keep the lock forever.
+One holder at a time, in any thread of any process. [acquire()](../reference/Lock.md#diskcache_oxide.Lock.acquire) waits, polling every millisecond, until it gets the lock; [release()](../reference/Lock.md#diskcache_oxide.Lock.release) gives it back; [locked()](../reference/Lock.md#diskcache_oxide.Lock.locked) says whether anyone holds it. It isn't reentrant: the holder taking it again waits for itself. Give it an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), so a holder that crashes without releasing doesn't keep the lock forever.
 
-`RLock` is the reentrant one: the thread holding it may take it again, and must release it as many times. Its owner is the process and thread, with a per-process nonce, so another thread, another process, a forked child, or a container on the same volume that happens to have the same pid can never release or re-enter it. Releasing a lock you don't hold raises `AssertionError`.
+[RLock](../reference/RLock.md#diskcache_oxide.RLock) is the reentrant one: the thread holding it may take it again, and must release it as many times. Its owner is the process and thread, with a per-process nonce, so another thread, another process, a forked child, or a container on the same volume that happens to have the same pid can never release or re-enter it. Releasing a lock you don't hold raises `AssertionError`.
 
 
 # BoundedSemaphore
@@ -54,7 +54,7 @@ At most `count` calls every `seconds`, across every process: a token bucket stor
 def migrate(): ...
 ```
 
-Runs the function under a lock made by the factory you pass (`Lock`, `RLock`, `BoundedSemaphore`, or your own), keyed by the function's qualified name: one caller at a time.
+Runs the function under a lock made by the factory you pass ([Lock](../reference/Lock.md#diskcache_oxide.Lock), [RLock](../reference/RLock.md#diskcache_oxide.RLock), [BoundedSemaphore](../reference/BoundedSemaphore.md#diskcache_oxide.BoundedSemaphore), or your own), keyed by the function's qualified name: one caller at a time.
 
 
 # Averager
@@ -80,4 +80,4 @@ A running average whose total and count are updated together in one transaction,
 - **Not on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) or a `durable=True` cache.** The recipes refuse them with `TypeError`: with caching off every caller would hold the lock at once, and a durable cache could drop the [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) that releases one, leaving it held forever.
 - **Not while waiting inside your own transaction.** A recipe that would have to wait inside a [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) block on its own cache raises `RuntimeError`: waiting there holds the cache's write lock, so no other process could ever release the lock you're waiting for. Inside a transaction on a different cache, a contended recipe raises [TransactionBusy](../reference/TransactionBusy.md#diskcache_oxide.TransactionBusy) at once rather than waiting ([D-030](divergences.md)).
 - **On a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)** each recipe locks only its key's shard.
-- `tag=` tags every entry a recipe writes, so `evict(tag)` releases them all at once. `barrier` passes it to the lock factory only when it isn't `None`.
+- `tag=` tags every entry a recipe writes, so `evict(tag)` releases them all at once. [barrier](../reference/barrier.md#diskcache_oxide.barrier) passes it to the lock factory only when it isn't `None`.

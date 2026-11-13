@@ -845,6 +845,7 @@ Args:
     eviction_policy: As for `Cache`, on every shard.
     serializer: As for `Cache`.
     pickle: As for `Cache`.
+    types: As for `Cache`.
     clock: As for `Cache`.
     max_connections: The most SQLite connections this process opens for the whole cache, split
         across the shards (the first `max_connections % shards` get one more). At least `shards`.
@@ -862,8 +863,9 @@ Args:
 
 Raises:
     ValueError: A setting is out of range, or `max_connections` is below `shards`.
-    LayoutMismatchError: `shards` differs from the root's and `raise_on_mismatch` is True, or the
-        directory belongs to a plain
+    LayoutMismatchError: `shards` differs from the root's and `raise_on_mismatch` is True; or it
+        differs, and a `size_limit` or `max_connections` that fits `shards` doesn't split over the
+        root's count; or the directory belongs to a plain
         `Cache` (or a shard of it does). Also a `ValueError`, and a `FormatMismatchError`.
     TypeError: An argument has the wrong type, including a `bool` for `timeout` or `shards`.
     FormatMismatchError: Inside the versioned subdirectory, the manifest or a shard's database
@@ -1803,7 +1805,8 @@ Args:
         `on_decode_error` is called as `(name, key, exc)`, as at the registry level. Adding
         `shards=` registers a `FanoutCache` instead, which takes the same settings; read it with
         `fanout(name)`. `shards=n` is the count for a new folder: an existing one keeps the
-        count it was created with, and the registry warns when that isn't `n`. Passing the key
+        count it was created with, and the registry warns when that isn't `n` (with
+        `raise_on_mismatch=True`, it's an open failure instead). Passing the key
         at all is what picks the kind, so `shards=None` is NOT "not sharded": it is a
         `FanoutCache` with the stored shard count, or 8 for a new root. Leave `shards` out for a
         plain cache (a config file that writes `shards: null` for "none" would register a
@@ -1982,6 +1985,186 @@ LayoutMismatchError
 The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
 `FanoutCache` on a plain `Cache`'s directory, a shard opened as another index or count than it records, or a
 `shards=` that differs from the stored count. Also a `ValueError`, which is what these raised before.
+
+TransactionAborted
+
+A held transaction didn't commit and can't: it was rolled back (after an error inside it, or by another thread
+or an earlier exit), so nothing written in it will be committed. Raised by a write inside a transaction SQLite
+already rolled back (a full disk, an I/O error), and by a `with` block's exit, with no exception passing, when the
+block didn't commit. A `RuntimeError`, so code that catches that keeps working.
+
+CorruptKeyError
+
+A stored key couldn't be read: its bytes aren't a key this build wrote (a damaged page or file). Raised by
+iteration, which never skips a key it can't read.
+
+UnknownFileWarning
+
+`check()` found a file in a cache directory that no entry names (removed with `fix=True` when
+it's in a value folder and over an hour old).
+
+EmptyDirWarning
+
+diskcache's warning for an empty folder. Kept for code that imports it: `check()` never issues
+it, since empty value folders are normal on an open cache (`check(fix=True)` sweeps them).
+
+
+## Types and serialization
+
+Storing your own types without pickle, and the key type.
+
+
+register_type(cls: type[T], *, name: str, encode: collections.abc.Callable[[T], object] | None = None, decode: collections.abc.Callable[[Any], T] | None = None) -> None
+
+Register `cls` in the process-wide `registry`, so every cache can store it without pickle.
+
+`encode(instance)` must return a value the codec can already store and `decode(value)` must give the
+instance back. A dataclass needs neither: its `init=True` fields are stored and it is rebuilt with
+`cls(**fields)`. See `TypeRegistry.register` for the rules. Call it at import time, in every process
+that opens the cache.
+
+Examples:
+    ```python
+    from bson import ObjectId
+    import diskcache_oxide
+
+    diskcache_oxide.register_type(ObjectId, name='bson.ObjectId', encode=str, decode=ObjectId)
+    diskcache_oxide.register_type(Episode, name='tp.Episode')  # a dataclass
+    ```
+
+unregister_type(cls: type) -> bool
+
+Remove `cls` from the process-wide `registry`. Returns whether it was registered.
+
+registered_types() -> dict[str, type]
+
+The process-wide registrations, as `{name: cls}`.
+
+registry
+
+A registry of types the codecs can store without pickle: per-type `encode` and `decode`
+functions, or a dataclass's fields. One global instance (`diskcache_oxide.registry`) serves every
+cache in the process; a cache opened with `types=` consults its own first.
+
+TypeRegistry() -> 'TypeRegistry'
+
+Types the codecs can store without pickle: per-type `encode` and `decode` functions, or a dataclass's
+fields.
+
+A registered value is stored as a tagged map, `{"$t:<name>": body}`, in both serializers. Reads look the
+name up in the registry of the reading process: an unregistered name is a `ForeignValueError`, and the row
+is left in place. Nothing is ever imported by name, which is what keeps this safe where pickle isn't.
+
+`diskcache_oxide.registry` is the process-wide instance, used by every cache; `register_type()` and its
+siblings act on it. A `Cache(types=TypeRegistry())` consults its own registry first, then the global one.
+
+Examples:
+    ```python
+    from bson import ObjectId
+    import diskcache_oxide
+
+    diskcache_oxide.register_type(ObjectId, name='bson.ObjectId', encode=str, decode=ObjectId)
+    diskcache_oxide.register_type(Episode, name='tp.Episode')   # a dataclass: no functions needed
+
+    cache.set('session', {'id': ObjectId(), 'episode': Episode(491, 'Rust and Python')})
+    cache.get('session')['id']   # an ObjectId again
+    ```
+
+Key
+
+Type alias.
+
+Type aliases are created through the type statement::
+
+    type Alias = int
+
+In this example, Alias and int will be treated equivalently by static
+type checkers.
+
+At runtime, Alias is an instance of TypeAliasType. The __name__
+attribute holds the name of the type alias. The value of the type alias
+is stored in the __value__ attribute. It is evaluated lazily, so the
+value is computed only if the attribute is accessed.
+
+Type aliases can also be generic::
+
+    type ListOrSet[T] = list[T] | set[T]
+
+In this case, the type parameters of the alias are stored in the
+__type_params__ attribute.
+
+See PEP 695 for more information.
+
+
+## Memoize
+
+The typed wrapper memoize() returns, and its sentinels.
+
+
+Memoized(*args, **kwargs)
+
+A function wrapped by `memoize`: called as the function was, plus `__cache_key__`.
+
+Memoizer(*args, **kwargs)
+
+What `cache.memoize(...)` returns: a decorator.
+
+ENOVAL
+
+UNKNOWN
+
+
+## Coordination
+
+Locks, semaphores, throttles and other recipes that hold across every process on the machine.
+
+
+Lock(cache: 'Any', key: 'Key', expire: 'float | None' = None, tag: 'Key' = None) -> 'None'
+
+A lock shared by every thread and process on the cache: `acquire()`, `release()`, `locked()`,
+or `with lock:`. Not reentrant (see `RLock`); any holder of the key can release it.
+
+`acquire()` polls every millisecond until it gets the lock. Give it an `expire` so a holder that
+dies without releasing doesn't keep it forever.
+
+RLock(cache: 'Any', key: 'Key', expire: 'float | None' = None, tag: 'Key' = None) -> 'None'
+
+A reentrant lock shared by every thread and process on the cache: the thread holding it may
+take it again, and must release it as many times. Another thread or process waits.
+
+BoundedSemaphore(cache: 'Any', key: 'Key', value: 'int' = 1, expire: 'float | None' = None, tag: 'Key' = None) -> 'None'
+
+A semaphore shared by every thread and process on the cache: at most `value` holders at once.
+Releasing more than were acquired raises `AssertionError`.
+
+throttle(cache: 'Any', count: 'int', seconds: 'float', name: 'str | None' = None, expire: 'float | None' = None, tag: 'Key' = None, time_func: 'Callable[[], float]' = <built-in function time>, sleep_func: 'Callable[[float], object]' = <built-in function sleep>) -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'
+
+A decorator allowing at most `count` calls every `seconds`, across every thread and process on
+the cache: a token bucket stored under `name` (the function's qualified name by default). A call
+with no token waits (`sleep_func`) until one is due.
+
+barrier(cache: 'Any', lock_factory: 'Callable[..., Any]', name: 'str | None' = None, expire: 'float | None' = None, tag: 'Key' = None) -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'
+
+A decorator running the function under a lock made by `lock_factory(cache, key, expire=...)`
+(`Lock`, `RLock`, `BoundedSemaphore`, or one of your own): one caller at a time, everywhere.
+
+Averager(cache: 'Any', key: 'Key', expire: 'float | None' = None, tag: 'Key' = None) -> 'None'
+
+A running average stored under `key`: `add(value)`, `get()`, `pop()`.
+
+The total and count are updated together in one transaction, so every thread and process adding
+to it agrees. `None` while nothing has been added.
+
+memoize_stampede(cache: 'Any', expire: 'float', name: 'str | None' = None, typed: 'bool' = False, tag: 'Key' = None, beta: 'float' = 1, ignore: 'Any' = ()) -> 'Callable[[Callable[..., Any]], Any]'
+
+`memoize` with cache stampede protection, as diskcache's: a result close to expiry is
+recomputed early, in a background thread, by one caller (Vattani et al., VLDB 2015), while every
+caller keeps getting the cached result. Results are stored as `(result, seconds it took)`.
+
+Keys, `typed`, `ignore` and the argument rules are `memoize`'s (D-048). It works on a `NullCache`
+(every call runs) and a durable handle (an outage runs the function), as `memoize` does. The
+time left is measured with `time.time()`, as diskcache's, so a cache opened with a `clock=` that
+isn't wall time recomputes on that clock's expiry but judges "close to expiring" by wall time.
 
 
 ## SQLite and System
@@ -2530,7 +2713,7 @@ Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples 
 `FanoutCache` is covered in full in [FanoutCache: sharded caches](fanoutcache.qmd). The differences from diskcache's, each with an entry in [Divergences](divergences.qmd):
 
 - **`shards` is keyword-only** (`FanoutCache(path, shards=4)`). `FanoutCache(path, 4)` is a four-second `timeout` here. The constructor is `FanoutCache(directory, timeout=None, *, shards=None, ...)`, and `directory` is required (D-039).
-- **The shard count is recorded**, and a different `shards=` raises `LayoutMismatchError` instead of silently sending keys to other shards. `shards=None` uses the stored count, or creates 8 (D-032).
+- **The shard count is recorded**, and a different `shards=` never silently sends keys to other shards: the cache opens with the stored count and logs a warning, or raises `LayoutMismatchError` if you pass `raise_on_mismatch=True`. `shards=None` uses the stored count, or creates 8 (D-032).
 - **A plain `Cache` and a `FanoutCache` refuse each other's directories** with `LayoutMismatchError`, and nothing is created by the refused open (D-038).
 - **Shards are chosen by XXH3, not adler32**, so which shard a key lands in differs from diskcache's, and `shard_of(key)` tells you. Iteration goes shard by shard, and `iterkeys(prefix=, reverse=)` gives the merged sorted order (D-033).
 - **A busy shard raises `Timeout`** after `timeout` (60 seconds by default) instead of silently giving False or the default after 10 ms. `durable=True` gives the miss answers, and logs them (D-034).
@@ -2728,7 +2911,7 @@ A database, or a `FanoutCache` manifest, in a format this build doesn't know, wh
 LayoutMismatchError: this FanoutCache has 8 shards but shards=16 was requested; changing the count needs a new directory
 ```
 
-The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or one of its shard directories, a `FanoutCache` on a plain `Cache`'s directory, or, with `raise_on_mismatch=True`, a `shards=` count that differs from the one the root records. (Without `raise_on_mismatch`, another count opens with the root's own and logs a warning.) The refused open creates nothing, so a typo doesn't leave a directory neither kind can open. It's both a `ValueError` and a `FormatMismatchError`.
+The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or one of its shard directories, a `FanoutCache` on a plain `Cache`'s directory, or, with `raise_on_mismatch=True`, a `shards=` count that differs from the one the root records. (Without `raise_on_mismatch`, another count opens with the root's own and logs a warning, unless a `size_limit` or `max_connections` that fits your count can't be split over the root's: then it raises `this FanoutCache has 8 shards but shards=4 was asked for, and its settings don't fit 8 shards: ...`, from a plain `FanoutCache` or a registry alike.) The refused open creates nothing, so a typo doesn't leave a directory neither kind can open. It's both a `ValueError` and a `FormatMismatchError`.
 
 Use the class the directory was created with, and for a `FanoutCache` with `raise_on_mismatch=True` either leave `shards` out (the stored count is used) or pass the stored one. A different shard count means a new directory: the count decides where every key lives, so it can't change in place. See [The layout and the hash](fanoutcache.qmd#the-layout-and-the-hash). In a [`Caches`](caches.qmd) registry, a lookup that hits a role mismatch returns a `NullCache` and reports it like any failed open. Another shard count is not an error there: the registry opens the folder with the count on disk and logs a warning (below). It still fails with `LayoutMismatchError`, and so a `NullCache`, when a `size_limit` or `max_connections` that fits the registered count is too small to split over the folder's count; delete the folder or raise the setting.
 
@@ -3410,7 +3593,7 @@ FanoutCache('/var/cache/my-app-rate-limits', shards=16, raise_on_mismatch=True)
 # LayoutMismatchError: this FanoutCache has 8 shards but shards=16 was requested; changing the count needs a new directory
 ```
 
-`shards=None` (the default) uses the stored count, or creates 8. Changing the count means a new directory. `raise_on_mismatch` covers the count only: a root in another on-disk format opens in its versioned subdirectory either way (below). Creating the manifest uses a hard link, so a filesystem without them (FAT, exFAT, SMB, some FUSE mounts) raises `OSError` saying so.
+`shards=None` (the default) uses the stored count, or creates 8. Changing the count means a new directory. One case still raises without `raise_on_mismatch`: a `size_limit` or `max_connections` that fits the count you asked for but can't be split over the stored one (each shard needs at least 1 MiB and one connection), which gives `LayoutMismatchError: this FanoutCache has 8 shards but shards=4 was asked for, and its settings don't fit 8 shards: ...`. Raise the setting, or leave `shards` out. `raise_on_mismatch` covers the count only: a root in another on-disk format opens in its versioned subdirectory either way (below). Creating the manifest uses a hard link, so a filesystem without them (FAT, exFAT, SMB, some FUSE mounts) raises `OSError` saying so.
 
 ### Plain `Cache` and `FanoutCache` directories don't mix
 
@@ -3900,27 +4083,27 @@ A microsecond is nothing until you multiply it. Web apps call their cache on alm
 
 ## The numbers
 
-Measured with `bench/gate.py`, which runs python-diskcache 5.6.3 (its last release, from August 2023; the project has had no commits since) and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from Linux (Ubuntu 26.04 LTS) in a container on an Apple Silicon Mac. Both libraries ran in the same container, so the ratios compare like with like, but the absolute numbers on an x86-64 server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
+Measured with `bench/gate.py`, which runs python-diskcache 5.6.3 (its last release, from August 2023; the project has had no commits since) and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from an 18-core Apple M5 Max on macOS 27.2, on AC power with nothing else heavy running, measuring the 0.3.5 code on 2026-11-13 (`bench/results/macos/gate-3.14.txt` and `gate-3.14t.txt` in the repository). Both libraries ran in the same session, so the ratios compare like with like; the absolute numbers on an x86-64 Linux server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
 
 | Workload | 3.14 | 3.14t (free-threaded) |
 |---|---|---|
-| `get`, small value, hit | **0.76 µs** (0.42×) | **0.75 µs** (0.46×) |
-| `get`, miss | **0.65 µs** (0.45×) | **0.62 µs** (0.46×) |
-| `get`, small dict | **1.18 µs** (0.47×) | **1.26 µs** (0.54×) |
-| `get`, random keys over a large database | **2.21 µs** (0.65×) | **2.41 µs** (0.79×) |
-| `set`, small value | **22.6 µs** (0.77×) | **24.0 µs** (0.82×) |
+| `get`, small value, hit | **0.90 µs** (0.49×) | **0.88 µs** (0.54×) |
+| `get`, miss | **0.76 µs** (0.54×) | **0.76 µs** (0.57×) |
+| `get`, small dict | **1.32 µs** (0.52×) | **1.36 µs** (0.57×) |
+| `get`, random keys over a large database | **2.64 µs** (0.79×) | **2.68 µs** (0.85×) |
+| `set`, small value | **18.5 µs** (0.75×) | **18.3 µs** (0.76×) |
 
 Threaded throughput, every thread sharing one `Cache`, in operations per second at 1/2/4/8 threads (ratios are oxide's throughput over diskcache's, so higher is better):
 
 | Mix | 3.14 | 3.14t (free-threaded) |
 |---|---|---|
-| 99:1 reads to writes | **750k / 745k / 723k / 723k** (2.0-16.5×) | **701k / 639k / 680k / 729k** (1.7-1.8×) |
-| 1,000:1 reads to writes | **900k / 886k / 876k / 875k** (2.1-18.9×) | **903k / 680k / 1,181k / 1,416k** (1.25-2.2×) |
+| 99:1 reads to writes | **687k / 682k / 675k / 670k** (1.6-34.8×) | **690k / 766k / 951k / 753k** (1.5-2.1×) |
+| 1,000:1 reads to writes | **770k / 762k / 758k / 758k** (1.7-39.7×) | **777k / 1,054k / 1,294k / 915k** (1.5-2.5×) |
 
 Two things stand out:
 
-- **On GIL builds, diskcache collapses as threads are added and oxide doesn't.** At 99:1, diskcache drops from about 375k to 44k operations per second going from 1 to 8 threads; oxide stays flat around 720-750k. diskcache's per-thread connections end up fighting over the GIL and SQLite's locks.
-- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** 8 threads reach about 1.4M operations per second at 1,000:1, only 1.6× one thread. That's what the free-threaded work below is for.
+- **On GIL builds, diskcache collapses as threads are added and oxide doesn't.** At 99:1, diskcache drops from about 419k to 19k operations per second going from 1 to 8 threads; oxide stays flat around 670-690k. diskcache's per-thread connections end up fighting over the GIL and SQLite's locks.
+- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** At 1,000:1 throughput peaks at about 1.3M operations per second at 4 threads, 1.7× one thread, and falls back to about 0.9M at 8. That's what the free-threaded work below is for.
 
 Run them yourself with `python -m bench.gate`. Numbers vary by machine; the ratios are what the gate enforces.
 
@@ -5760,6 +5943,8 @@ Where diskcache-oxide has been told not to raise, it logs on the `diskcache_oxid
 - A `Caches` cache that can't open logs at `ERROR` with the traceback, once per retry, and hands out a `NullCache` meanwhile. An open that only timed out logs at `WARNING`.
 - `durable=True` logs swallowed failures at most once a minute per cache handle, with counts by operation: `WARNING` for a busy lock, `ERROR` for a full disk, an I/O error or a failed `delete`.
 - `on_decode_error='miss'` logs a warning for a stored value it couldn't read.
+- A cache whose directory holds another on-disk format logs a `WARNING` once per process: "holds a cache made by an older diskcache-oxide" (or "still holds", while the old files remain), or "made by a newer diskcache-oxide" when a process runs an older release than the one that wrote it. The record carries `directory`, `using`, `found` and `found_in`. See [Upgrading across a format change](upgrading.qmd).
+- A `FanoutCache` whose folder has another shard count than `shards=` logs a `WARNING` once per process (the record carries `directory`, `stored_shards` and `requested_shards`), and a `Caches` registry logs its own `WARNING` and one `ERROR` per process.
 
 The exact messages, and what to do about each, are in [Errors and what to do about them](../user-guide/errors.qmd#log-lines-when-the-library-was-told-not-to-raise).
 

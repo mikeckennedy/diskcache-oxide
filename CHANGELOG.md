@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to diskcache-oxide are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org/). During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its entry. Since 0.3.5, a cache in another format opens a new cache in a versioned subdirectory instead of failing, and `remove_old_formats()` cleans up the old one (see the upgrading recipe). The last number goes up with every release, a minor bump included, so 0.1.2 is followed by 0.2.3.
+All notable changes to diskcache-oxide are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions are MAJOR.MINOR.BUILD, which isn't semantic versioning: MINOR goes up for new features and behavior changes, MAJOR for breaking ones, and BUILD counts releases and never resets. During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its entry. Since 0.3.5, a cache in another format opens a new cache in a versioned subdirectory instead of failing, and `remove_old_formats()` cleans up the old one (see [Upgrading across a format change](https://mkennedy.codes/docs/diskcache-oxide/recipes/upgrading.html)). The last number goes up with every release, a minor bump included, so 0.1.2 is followed by 0.2.3.
 
 ## [Unreleased]
 
@@ -16,7 +16,7 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 - A cache directory holding another on-disk format opens the `diskcache-oxide-format-N` subdirectory with a warning instead of raising `FormatMismatchError` (D-059). `FormatMismatchError` is now raised only for another format inside that subdirectory. `directory` on `Cache` and `FanoutCache` reports where the cache really is, the subdirectory after such a move; a pickled handle keeps the directory as passed and resolves it again. A `Caches` registry no longer hands out a `NullCache` for a format change.
 - A plain `Cache` opened on a `FanoutCache` shard directory in an older format raises `LayoutMismatchError`, as it always did for a current one, rather than `FormatMismatchError`.
-- `FanoutCache(directory, shards=n)` on a root that records another count no longer raises: it opens with the stored count and logs a `WARNING` once per process. The new keyword `raise_on_mismatch=True` restores the `LayoutMismatchError`. A root in another on-disk format redirects to its versioned subdirectory either way. The `LayoutMismatchError` for settings that don't fit the stored count now says `shards=n was asked for` rather than `is registered with`, since a plain `FanoutCache` raises it too.
+- `FanoutCache(directory, shards=n)` on a root that records another count no longer raises: it opens with the stored count and logs a `WARNING` once per process. The new keyword `raise_on_mismatch=True` restores the `LayoutMismatchError`, and `Caches.register(..., raise_on_mismatch=True)` turns it into an open failure (a reported `NullCache`). A root in another on-disk format redirects to its versioned subdirectory either way. The `LayoutMismatchError` for settings that don't fit the stored count now says `shards=n was asked for` rather than `is registered with`, since a plain `FanoutCache` raises it too.
 
 ### Fixed
 

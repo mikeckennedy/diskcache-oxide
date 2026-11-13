@@ -766,7 +766,7 @@ the next reader gets the fresh page from t=1000061</code></pre>
 <p>Readers do a plain <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get()</a> and never miss; a missed run or two costs nothing because the entries outlive several intervals. The cost is that the job renders pages nobody may be asking for, which is fine for a handful of keys and wrong for a long tail. Stale-while-revalidate handles the tail, since it only refreshes what’s being read.</p>
 </section>
 <section id="or-use-memoize_stampede" class="level1">
-<h1>Or use <code>memoize_stampede</code></h1>
+<h1>Or use <a href="../reference/memoize_stampede.html#diskcache_oxide.memoize_stampede" class="gdls-link gdls-code">memoize_stampede</a></h1>
 <p>When the value comes from a function whose arguments are key types, <a href="../recipes/caching-expensive-calls.html#thundering-herds"><code>memoize_stampede</code></a> does most of this for you: as a result nears its expiry, one caller recomputes it in a background thread while every caller keeps getting the cached one. Unlike the recipe above, it refreshes only before the entry expires and never serves a value past its expiry, so if no call arrives during the refresh window (a page read once an hour with a five-minute <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>), the next call is a real miss and computes inline. The recipe above keeps serving the stale value for the whole <code>grace</code> period, which suits values that are read rarely but are slow to build.</p>
 
 

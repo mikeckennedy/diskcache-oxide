@@ -205,7 +205,19 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/Averager.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/BUNDLED_SQLITE_VERSION.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/BoundedSemaphore.html</loc>
     <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -829,7 +841,25 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/CorruptKeyError.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/CorruptValueError.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/ENOVAL.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/EmptyDirWarning.html</loc>
     <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1099,7 +1129,31 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/Key.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/LayoutMismatchError.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/Lock.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/Memoized.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/Memoizer.html</loc>
     <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1375,6 +1429,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/RLock.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/ShardedCacheLike.html</loc>
     <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
@@ -1382,6 +1442,12 @@
   </url>
   <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/Timeout.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/TransactionAborted.html</loc>
     <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1399,7 +1465,55 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/TypeRegistry.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/UNKNOWN.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/UnknownFileWarning.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/UnsafeValueError.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/barrier.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/memoize_stampede.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/register_type.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/registered_types.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/registry.html</loc>
     <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1412,6 +1526,18 @@
   </url>
   <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/sqlite_version.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/throttle.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/unregister_type.html</loc>
     <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>

@@ -66,10 +66,10 @@ REQUIRED = ('llms.txt', 'llms-full.txt', 'skill.md')
 WHY_CHOOSE_IT = (
     'Measured against the defunct python-diskcache 5.6.3 (last release August 2023), same machine, same session:',
     '',
-    '- A cached `get` in 0.76 µs at p50 (0.42× diskcache), a `set` in 22.6 µs (0.77×), on Python 3.14; the '
+    '- A cached `get` in 0.90 µs at p50 (0.49× diskcache), a `set` in 18.5 µs (0.75×), on Python 3.14; the '
     'free-threaded build is within a few percent. See [Performance]({base}user-guide/performance.html).',
-    '- Eight threads sharing one `Cache` at a 99:1 read:write mix: about 650,000 operations a second, flat from 1 to 8 '
-    'threads, where diskcache falls from 406,000 to 19,000 (Apple M5 Pro, Python 3.14 with the GIL; '
+    '- Eight threads sharing one `Cache` at a 99:1 read:write mix: about 670,000 operations a second, flat from 1 to 8 '
+    'threads, where diskcache falls from 419,000 to 19,000 (Apple M5 Max, Python 3.14 with the GIL; '
     '`bench/results/macos/gate-3.14.txt`). See the chart on the [home page]({base}).',
     '- Eight worker processes writing to a `FanoutCache(shards=8)`: about 1.5 million operations a second, against '
     "262,000 for a plain `Cache` and 1.24 million for diskcache's own `FanoutCache`. See "

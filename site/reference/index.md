@@ -1,7 +1,7 @@
 # API Reference
 
 
-The public API of diskcache-oxide: Cache, FanoutCache, NullCache, the CacheLike, TransactionalCacheLike and ShardedCacheLike protocols, the Caches registry, exceptions, and SQLite utilities.
+The public API of diskcache-oxide: Cache, FanoutCache, NullCache, the CacheLike, TransactionalCacheLike and ShardedCacheLike protocols, the Caches registry, exceptions, types and serialization, memoize, the coordination recipes, and SQLite utilities.
 
 
 ## Cache
@@ -669,6 +669,90 @@ A database or manifest in a format this version doesn't support, where opening t
 
 [LayoutMismatchError](LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError)  
 The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
+
+[TransactionAborted](TransactionAborted.md#diskcache_oxide.TransactionAborted)  
+A held transaction didn't commit and can't: it was rolled back (after an error inside it, or by another thread
+
+[CorruptKeyError](CorruptKeyError.md#diskcache_oxide.CorruptKeyError)  
+A stored key couldn't be read: its bytes aren't a key this build wrote (a damaged page or file). Raised by
+
+[UnknownFileWarning](UnknownFileWarning.md#diskcache_oxide.UnknownFileWarning)  
+`check()` found a file in a cache directory that no entry names (removed with `fix=True` when
+
+[EmptyDirWarning](EmptyDirWarning.md#diskcache_oxide.EmptyDirWarning)  
+diskcache's warning for an empty folder. Kept for code that imports it: `check()` never issues
+
+
+## Types and serialization
+
+
+Storing your own types without pickle, and the key type.
+
+
+[register_type()](register_type.md#diskcache_oxide.register_type)  
+Register `cls` in the process-wide `registry`, so every cache can store it without pickle.
+
+[unregister_type()](unregister_type.md#diskcache_oxide.unregister_type)  
+Remove `cls` from the process-wide `registry`. Returns whether it was registered.
+
+[registered_types()](registered_types.md#diskcache_oxide.registered_types)  
+The process-wide registrations, as `{name: cls}`.
+
+[registry](registry.md#diskcache_oxide.registry)  
+The process-wide `TypeRegistry`, consulted by every cache after the one passed as `types=`.
+
+[TypeRegistry](TypeRegistry.md#diskcache_oxide.TypeRegistry)  
+Types the codecs can store without pickle: per-type `encode` and `decode` functions, or a dataclass's
+
+[Key](Key.md#diskcache_oxide.Key)  
+A cache key: `str`, `bytes`, `int` (64-bit), `float` (not NaN), `bool`, `None`, or a tuple of those,
+
+
+## Memoize
+
+
+The typed wrapper memoize() returns, and its sentinels.
+
+
+[Memoized](Memoized.md#diskcache_oxide.Memoized)  
+A function wrapped by `memoize`: called as the function was, plus `__cache_key__`.
+
+[Memoizer](Memoizer.md#diskcache_oxide.Memoizer)  
+What `cache.memoize(...)` returns: a decorator.
+
+[ENOVAL](ENOVAL.md#diskcache_oxide.ENOVAL)  
+diskcache's "no value" sentinel. Pass it as `default=` to tell a miss from a stored `None`
+
+[UNKNOWN](UNKNOWN.md#diskcache_oxide.UNKNOWN)  
+diskcache's "unknown value" sentinel, kept for code written against diskcache. A singleton that
+
+
+## Coordination
+
+
+Locks, semaphores, throttles and other recipes that hold across every process on the machine.
+
+
+[Lock](Lock.md#diskcache_oxide.Lock)  
+A lock shared by every thread and process on the cache: `acquire()`, `release()`, `locked()`,
+
+[RLock](RLock.md#diskcache_oxide.RLock)  
+A reentrant lock shared by every thread and process on the cache: the thread holding it may
+
+[BoundedSemaphore](BoundedSemaphore.md#diskcache_oxide.BoundedSemaphore)  
+A semaphore shared by every thread and process on the cache: at most `value` holders at once.
+
+[throttle()](throttle.md#diskcache_oxide.throttle)  
+A decorator allowing at most `count` calls every `seconds`, across every thread and process on
+
+[barrier()](barrier.md#diskcache_oxide.barrier)  
+A decorator running the function under a lock made by `lock_factory(cache, key, expire=...)`
+
+[Averager](Averager.md#diskcache_oxide.Averager)  
+A running average stored under `key`: `add(value)`, `get()`, `pop()`.
+
+[memoize_stampede()](memoize_stampede.md#diskcache_oxide.memoize_stampede)  
+`memoize` with cache stampede protection, as diskcache's: a result close to expiry is
 
 
 ## SQLite and System

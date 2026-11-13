@@ -67,6 +67,9 @@ As for [Cache](Cache.md#diskcache_oxide.Cache).
 `pickle: bool = ``False`  
 As for [Cache](Cache.md#diskcache_oxide.Cache).
 
+`types: TypeRegistry | None = None`  
+As for [Cache](Cache.md#diskcache_oxide.Cache).
+
 `clock: Callable[[], float] | None = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache).
 
@@ -99,7 +102,7 @@ Raise [LayoutMismatchError](LayoutMismatchError.md#diskcache_oxide.LayoutMismatc
 A setting is out of range, or `max_connections` is below [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards).
 
 `LayoutMismatchError`  
-[shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) differs from the root's and `raise_on_mismatch` is True, or the directory belongs to a plain [Cache](Cache.md#diskcache_oxide.Cache) (or a shard of it does). Also a `ValueError`, and a [FormatMismatchError](FormatMismatchError.md#diskcache_oxide.FormatMismatchError).
+[shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) differs from the root's and `raise_on_mismatch` is True; or it differs, and a [size_limit](Cache.size_limit.md#diskcache_oxide.Cache.size_limit) or `max_connections` that fits [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) doesn't split over the root's count; or the directory belongs to a plain [Cache](Cache.md#diskcache_oxide.Cache) (or a shard of it does). Also a `ValueError`, and a [FormatMismatchError](FormatMismatchError.md#diskcache_oxide.FormatMismatchError).
 
 `TypeError`  
 An argument has the wrong type, including a `bool` for [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) or [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards).

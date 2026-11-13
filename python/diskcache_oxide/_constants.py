@@ -22,4 +22,10 @@ class _Constant:
 
 
 ENOVAL = _Constant('ENOVAL')
+"""diskcache's "no value" sentinel. Pass it as `default=` to tell a miss from a stored `None`
+(`cache.get(key, ENOVAL) is ENOVAL` only on a miss); `reset(key)` without a value reads the setting.
+A singleton that pickles by reference, and can't be stored as a value."""
+
 UNKNOWN = _Constant('UNKNOWN')
+"""diskcache's "unknown value" sentinel, kept for code written against diskcache. A singleton that
+pickles by reference, and can't be stored as a value."""

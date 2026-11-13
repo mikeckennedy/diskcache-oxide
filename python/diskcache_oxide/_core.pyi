@@ -1097,6 +1097,7 @@ class FanoutCache:
         eviction_policy: As for `Cache`, on every shard.
         serializer: As for `Cache`.
         pickle: As for `Cache`.
+        types: As for `Cache`.
         clock: As for `Cache`.
         max_connections: The most SQLite connections this process opens for the whole cache, split
             across the shards (the first `max_connections % shards` get one more). At least `shards`.
@@ -1114,8 +1115,9 @@ class FanoutCache:
 
     Raises:
         ValueError: A setting is out of range, or `max_connections` is below `shards`.
-        LayoutMismatchError: `shards` differs from the root's and `raise_on_mismatch` is True, or the
-            directory belongs to a plain
+        LayoutMismatchError: `shards` differs from the root's and `raise_on_mismatch` is True; or it
+            differs, and a `size_limit` or `max_connections` that fits `shards` doesn't split over the
+            root's count; or the directory belongs to a plain
             `Cache` (or a shard of it does). Also a `ValueError`, and a `FormatMismatchError`.
         TypeError: An argument has the wrong type, including a `bool` for `timeout` or `shards`.
         FormatMismatchError: Inside the versioned subdirectory, the manifest or a shard's database

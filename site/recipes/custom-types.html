@@ -795,7 +795,7 @@ pro</code></pre>
 <span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(Plan, name<span class="op">=</span><span class="st">'app.Plan'</span>, encode<span class="op">=</span><span class="kw">lambda</span> p: p.value, decode<span class="op">=</span>Plan)</span>
 <span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(Invoice, name<span class="op">=</span><span class="st">'app.Invoice'</span>)</span>
 <span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>diskcache_oxide.register_type(User, name<span class="op">=</span><span class="st">'app.User'</span>, encode<span class="op">=</span><span class="kw">lambda</span> u: u.model_dump(mode<span class="op">=</span><span class="st">'json'</span>), decode<span class="op">=</span>User.model_validate)</span></code></pre></div>
-<p>A cache that needs its own encoding of a type can take a <code>diskcache_oxide.TypeRegistry</code> as <code>types=</code>, which it consults before the process-wide registry. The same rule applies: every process that opens that directory needs the same registrations.</p>
+<p>A cache that needs its own encoding of a type can take a <a href="../reference/TypeRegistry.html#diskcache_oxide.TypeRegistry" class="gdls-link gdls-code">diskcache_oxide.TypeRegistry</a> as <code>types=</code>, which it consults before the process-wide registry. The same rule applies: every process that opens that directory needs the same registrations.</p>
 </section>
 <section id="when-the-shape-changes" class="level1">
 <h1>When the shape changes</h1>

@@ -139,7 +139,7 @@ diskcache_oxide.register_type(Invoice, name='app.Invoice')
 diskcache_oxide.register_type(User, name='app.User', encode=lambda u: u.model_dump(mode='json'), decode=User.model_validate)
 ```
 
-A cache that needs its own encoding of a type can take a `diskcache_oxide.TypeRegistry` as `types=`, which it consults before the process-wide registry. The same rule applies: every process that opens that directory needs the same registrations.
+A cache that needs its own encoding of a type can take a [diskcache_oxide.TypeRegistry](../reference/TypeRegistry.md#diskcache_oxide.TypeRegistry) as `types=`, which it consults before the process-wide registry. The same rule applies: every process that opens that directory needs the same registrations.
 
 
 # When the shape changes

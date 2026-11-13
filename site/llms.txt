@@ -6,8 +6,8 @@
 
 Measured against the defunct python-diskcache 5.6.3 (last release August 2023), same machine, same session:
 
-- A cached `get` in 0.76 µs at p50 (0.42× diskcache), a `set` in 22.6 µs (0.77×), on Python 3.14; the free-threaded build is within a few percent. See [Performance](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html).
-- Eight threads sharing one `Cache` at a 99:1 read:write mix: about 650,000 operations a second, flat from 1 to 8 threads, where diskcache falls from 406,000 to 19,000 (Apple M5 Pro, Python 3.14 with the GIL; `bench/results/macos/gate-3.14.txt`). See the chart on the [home page](https://mkennedy.codes/docs/diskcache-oxide/).
+- A cached `get` in 0.90 µs at p50 (0.49× diskcache), a `set` in 18.5 µs (0.75×), on Python 3.14; the free-threaded build is within a few percent. See [Performance](https://mkennedy.codes/docs/diskcache-oxide/user-guide/performance.html).
+- Eight threads sharing one `Cache` at a 99:1 read:write mix: about 670,000 operations a second, flat from 1 to 8 threads, where diskcache falls from 419,000 to 19,000 (Apple M5 Max, Python 3.14 with the GIL; `bench/results/macos/gate-3.14.txt`). See the chart on the [home page](https://mkennedy.codes/docs/diskcache-oxide/).
 - Eight worker processes writing to a `FanoutCache(shards=8)`: about 1.5 million operations a second, against 262,000 for a plain `Cache` and 1.24 million for diskcache's own `FanoutCache`. See [FanoutCache](https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html).
 - A prefix scan over 400,000 keys in about 10 ms, against about 25 seconds in diskcache, because `iterkeys(prefix=)` is an indexed range scan. See [Getting started](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html#list-keys).
 - Beyond speed: safe across `fork()` and on free-threaded CPython, no pickle on disk unless asked for, bounded connections, memory and write-ahead log, and three diskcache bugs fixed (`clear()` losing concurrent writes, `expire()` leaving entries behind, spurious misses during an overwrite). See [Divergences](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html).
@@ -254,6 +254,39 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [ForeignValueError](https://mkennedy.codes/docs/diskcache-oxide/reference/ForeignValueError.html): A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote
 - [FormatMismatchError](https://mkennedy.codes/docs/diskcache-oxide/reference/FormatMismatchError.html): A database or manifest in a format this version doesn't support, where opening the cache's
 - [LayoutMismatchError](https://mkennedy.codes/docs/diskcache-oxide/reference/LayoutMismatchError.html): The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
+- [TransactionAborted](https://mkennedy.codes/docs/diskcache-oxide/reference/TransactionAborted.html): A held transaction didn't commit and can't: it was rolled back (after an error inside it, or by another thread
+- [CorruptKeyError](https://mkennedy.codes/docs/diskcache-oxide/reference/CorruptKeyError.html): A stored key couldn't be read: its bytes aren't a key this build wrote (a damaged page or file). Raised by
+- [UnknownFileWarning](https://mkennedy.codes/docs/diskcache-oxide/reference/UnknownFileWarning.html): `check()` found a file in a cache directory that no entry names (removed with `fix=True` when
+- [EmptyDirWarning](https://mkennedy.codes/docs/diskcache-oxide/reference/EmptyDirWarning.html): diskcache's warning for an empty folder. Kept for code that imports it: `check()` never issues
+
+#### Types and serialization
+> Storing your own types without pickle, and the key type.
+
+- [register_type](https://mkennedy.codes/docs/diskcache-oxide/reference/register_type.html): Register `cls` in the process-wide `registry`, so every cache can store it without pickle
+- [unregister_type](https://mkennedy.codes/docs/diskcache-oxide/reference/unregister_type.html): Remove `cls` from the process-wide `registry`. Returns whether it was registered
+- [registered_types](https://mkennedy.codes/docs/diskcache-oxide/reference/registered_types.html): The process-wide registrations, as `{name: cls}`
+- [registry](https://mkennedy.codes/docs/diskcache-oxide/reference/registry.html): A registry of types the codecs can store without pickle: per-type `encode` and `decode`
+- [TypeRegistry](https://mkennedy.codes/docs/diskcache-oxide/reference/TypeRegistry.html): Types the codecs can store without pickle: per-type `encode` and `decode` functions, or a dataclass's
+- [Key](https://mkennedy.codes/docs/diskcache-oxide/reference/Key.html): Type alias
+
+#### Memoize
+> The typed wrapper memoize() returns, and its sentinels.
+
+- [Memoized](https://mkennedy.codes/docs/diskcache-oxide/reference/Memoized.html): A function wrapped by `memoize`: called as the function was, plus `__cache_key__`
+- [Memoizer](https://mkennedy.codes/docs/diskcache-oxide/reference/Memoizer.html): What `cache.memoize(...)` returns: a decorator
+- [ENOVAL](https://mkennedy.codes/docs/diskcache-oxide/reference/ENOVAL.html)
+- [UNKNOWN](https://mkennedy.codes/docs/diskcache-oxide/reference/UNKNOWN.html)
+
+#### Coordination
+> Locks, semaphores, throttles and other recipes that hold across every process on the machine.
+
+- [Lock](https://mkennedy.codes/docs/diskcache-oxide/reference/Lock.html): A lock shared by every thread and process on the cache: `acquire()`, `release()`, `locked()`,
+- [RLock](https://mkennedy.codes/docs/diskcache-oxide/reference/RLock.html): A reentrant lock shared by every thread and process on the cache: the thread holding it may
+- [BoundedSemaphore](https://mkennedy.codes/docs/diskcache-oxide/reference/BoundedSemaphore.html): A semaphore shared by every thread and process on the cache: at most `value` holders at once
+- [throttle](https://mkennedy.codes/docs/diskcache-oxide/reference/throttle.html): A decorator allowing at most `count` calls every `seconds`, across every thread and process on
+- [barrier](https://mkennedy.codes/docs/diskcache-oxide/reference/barrier.html): A decorator running the function under a lock made by `lock_factory(cache, key, expire=...)`
+- [Averager](https://mkennedy.codes/docs/diskcache-oxide/reference/Averager.html): A running average stored under `key`: `add(value)`, `get()`, `pop()`
+- [memoize_stampede](https://mkennedy.codes/docs/diskcache-oxide/reference/memoize_stampede.html): `memoize` with cache stampede protection, as diskcache's: a result close to expiry is
 
 #### SQLite and System
 > Information about the bundled SQLite and environment.

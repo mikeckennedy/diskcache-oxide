@@ -53,10 +53,10 @@ How many least-recently-stored entries a [set()](Cache.set.md#diskcache_oxide.Ca
 `'msgpack'` (the default) or `'json'`, for values that aren't plain `str` or `bytes`.
 
 `pickle: bool = ``False`  
-Allow pickle for values the serializer can't represent exactly. Without it, such values raise `TypeError` and pickled values are never read. Once the encoder has used a registration (`types`, or the global `registry`) for any part of a value, that value is never pickled: it is stored through the registration, or raises.
+Allow pickle for values the serializer can't represent exactly. Without it, such values raise `TypeError` and pickled values are never read. Once the encoder has used a registration (`types`, or the global [registry](registry.md#diskcache_oxide.registry)) for any part of a value, that value is never pickled: it is stored through the registration, or raises.
 
 `types: TypeRegistry | None = None`  
-A `TypeRegistry` consulted before the process-wide `diskcache_oxide.registry`, for a cache that needs its own encoding of a type. Register types at import time, in every process that opens the directory, since a row written through a registration can only be read where it is registered.
+A [TypeRegistry](TypeRegistry.md#diskcache_oxide.TypeRegistry) consulted before the process-wide [diskcache_oxide.registry](registry.md#diskcache_oxide.registry), for a cache that needs its own encoding of a type. Register types at import time, in every process that opens the directory, since a row written through a registration can only be read where it is registered.
 
 `clock: Callable[[], float] | None = None`  
 A function returning the current time in seconds, used instead of the native clock. Tests pass `clock=lambda: time.time()` to follow a patched `time.time`.

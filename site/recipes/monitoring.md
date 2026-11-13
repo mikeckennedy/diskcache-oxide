@@ -177,7 +177,7 @@ print('repaired:', len(damaged.check(fix=True)), '| after:', damaged.check(), '|
 ```
 
 
-    UserWarning file not found: .../ab/abd825082ff889a281f1cba0e2460e0b.val
+    UserWarning file not found: .../bc/bc8becbf5a9e3218779302278d8566c5.val
     repaired: 1 | after: [] | entries: 1
 
 
@@ -206,6 +206,8 @@ Where diskcache-oxide has been told not to raise, it logs on the `diskcache_oxid
 - A [Caches](../reference/Caches.md#diskcache_oxide.Caches) cache that can't open logs at `ERROR` with the traceback, once per retry, and hands out a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) meanwhile. An open that only timed out logs at `WARNING`.
 - `durable=True` logs swallowed failures at most once a minute per cache handle, with counts by operation: `WARNING` for a busy lock, `ERROR` for a full disk, an I/O error or a failed [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete).
 - `on_decode_error='miss'` logs a warning for a stored value it couldn't read.
+- A cache whose directory holds another on-disk format logs a `WARNING` once per process: "holds a cache made by an older diskcache-oxide" (or "still holds", while the old files remain), or "made by a newer diskcache-oxide" when a process runs an older release than the one that wrote it. The record carries [directory](../reference/Cache.directory.md#diskcache_oxide.Cache.directory), `using`, `found` and `found_in`. See [Upgrading across a format change](upgrading.md).
+- A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) whose folder has another shard count than `shards=` logs a `WARNING` once per process (the record carries [directory](../reference/Cache.directory.md#diskcache_oxide.Cache.directory), `stored_shards` and `requested_shards`), and a [Caches](../reference/Caches.md#diskcache_oxide.Caches) registry logs its own `WARNING` and one `ERROR` per process.
 
 The exact messages, and what to do about each, are in [Errors and what to do about them](../user-guide/errors.md#log-lines-when-the-library-was-told-not-to-raise).
 

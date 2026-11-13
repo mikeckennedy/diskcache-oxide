@@ -706,8 +706,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> lock:</span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    build_the_report()</span></code></pre></div>
-<p>One holder at a time, in any thread of any process. <code>acquire()</code> waits, polling every millisecond, until it gets the lock; <code>release()</code> gives it back; <code>locked()</code> says whether anyone holds it. It isn’t reentrant: the holder taking it again waits for itself. Give it an <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>, so a holder that crashes without releasing doesn’t keep the lock forever.</p>
-<p><code>RLock</code> is the reentrant one: the thread holding it may take it again, and must release it as many times. Its owner is the process and thread, with a per-process nonce, so another thread, another process, a forked child, or a container on the same volume that happens to have the same pid can never release or re-enter it. Releasing a lock you don’t hold raises <code>AssertionError</code>.</p>
+<p>One holder at a time, in any thread of any process. <a href="../reference/Lock.html#diskcache_oxide.Lock.acquire" class="gdls-link gdls-code">acquire()</a> waits, polling every millisecond, until it gets the lock; <a href="../reference/Lock.html#diskcache_oxide.Lock.release" class="gdls-link gdls-code">release()</a> gives it back; <a href="../reference/Lock.html#diskcache_oxide.Lock.locked" class="gdls-link gdls-code">locked()</a> says whether anyone holds it. It isn’t reentrant: the holder taking it again waits for itself. Give it an <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>, so a holder that crashes without releasing doesn’t keep the lock forever.</p>
+<p><a href="../reference/RLock.html#diskcache_oxide.RLock" class="gdls-link gdls-code">RLock</a> is the reentrant one: the thread holding it may take it again, and must release it as many times. Its owner is the process and thread, with a per-process nonce, so another thread, another process, a forked child, or a container on the same volume that happens to have the same pid can never release or re-enter it. Releasing a lock you don’t hold raises <code>AssertionError</code>.</p>
 </section>
 <section id="boundedsemaphore" class="level1">
 <h1>BoundedSemaphore</h1>
@@ -727,7 +727,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>barrier</h1>
 <div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="at">@barrier</span>(locks, Lock)</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> migrate(): ...</span></code></pre></div>
-<p>Runs the function under a lock made by the factory you pass (<code>Lock</code>, <code>RLock</code>, <code>BoundedSemaphore</code>, or your own), keyed by the function’s qualified name: one caller at a time.</p>
+<p>Runs the function under a lock made by the factory you pass (<a href="../reference/Lock.html#diskcache_oxide.Lock" class="gdls-link gdls-code">Lock</a>, <a href="../reference/RLock.html#diskcache_oxide.RLock" class="gdls-link gdls-code">RLock</a>, <a href="../reference/BoundedSemaphore.html#diskcache_oxide.BoundedSemaphore" class="gdls-link gdls-code">BoundedSemaphore</a>, or your own), keyed by the function’s qualified name: one caller at a time.</p>
 </section>
 <section id="averager" class="level1">
 <h1>Averager</h1>
@@ -748,7 +748,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>Not on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> or a <code>durable=True</code> cache.</strong> The recipes refuse them with <code>TypeError</code>: with caching off every caller would hold the lock at once, and a durable cache could drop the <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> that releases one, leaving it held forever.</li>
 <li><strong>Not while waiting inside your own transaction.</strong> A recipe that would have to wait inside a <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block on its own cache raises <code>RuntimeError</code>: waiting there holds the cache’s write lock, so no other process could ever release the lock you’re waiting for. Inside a transaction on a different cache, a contended recipe raises <a href="../reference/TransactionBusy.html#diskcache_oxide.TransactionBusy" class="gdls-link gdls-code">TransactionBusy</a> at once rather than waiting (<a href="../user-guide/divergences.html">D-030</a>).</li>
 <li><strong>On a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a></strong> each recipe locks only its key’s shard.</li>
-<li><code>tag=</code> tags every entry a recipe writes, so <code>evict(tag)</code> releases them all at once. <code>barrier</code> passes it to the lock factory only when it isn’t <code>None</code>.</li>
+<li><code>tag=</code> tags every entry a recipe writes, so <code>evict(tag)</code> releases them all at once. <a href="../reference/barrier.html#diskcache_oxide.barrier" class="gdls-link gdls-code">barrier</a> passes it to the lock factory only when it isn’t <code>None</code>.</li>
 </ul>
 
 

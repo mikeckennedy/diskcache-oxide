@@ -42,7 +42,7 @@ The same Rust core, served over HTTP to many clients: a Redis-style central cach
 - Maintenance: [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull), [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume), [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check), and [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) for the write-ahead log.
 - Least-recently-stored eviction with [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) and [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit), or `eviction_policy='none'` for a cache that must never drop a live entry.
 - Large values spilled to files, with readers that never see a spurious miss during an overwrite.
-- msgpack (default) and JSON serializers with exact type tags, `register_type()` for your own types, and pickle only when you opt in.
+- msgpack (default) and JSON serializers with exact type tags, [register_type()](../reference/register_type.md#diskcache_oxide.register_type) for your own types, and pickle only when you opt in.
 - Thread-, process- and fork-safe, on GIL and free-threaded builds of 3.14 and 3.15.
 - Bounded connections and memory, and a target size for the write-ahead log.
 - [`durable=True`](getting-started.md#a-cache-that-cant-take-a-request-down), [`NullCache`](null-cache.md), the [`Caches`](caches.md) registry, the [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) protocols and `py.typed`.
@@ -66,7 +66,7 @@ The concurrency core is where serious bugs hide, so it got its own phase before 
 - Keys of every native type: `bytes`, `int`, `float`, `bool`, `None` and tuples, beside `str`.
 - [`memoize`](../recipes/caching-expensive-calls.md#a-caching-decorator-memoize) and `retry=`.
 - `reversed()`, `pop(expire_time=True)`, pickling a cache, [reset()](../reference/Cache.reset.md#diskcache_oxide.Cache.reset), per-process [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) and [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check).
-- The [coordination recipes](coordination.md): `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, `Averager` and `memoize_stampede`.
+- The [coordination recipes](coordination.md): [Lock](../reference/Lock.md#diskcache_oxide.Lock), [RLock](../reference/RLock.md#diskcache_oxide.RLock), [BoundedSemaphore](../reference/BoundedSemaphore.md#diskcache_oxide.BoundedSemaphore), [throttle](../reference/throttle.md#diskcache_oxide.throttle), [barrier](../reference/barrier.md#diskcache_oxide.barrier), [Averager](../reference/Averager.md#diskcache_oxide.Averager) and [memoize_stampede](../reference/memoize_stampede.md#diskcache_oxide.memoize_stampede).
 - [Tags](../recipes/invalidating-groups.md#option-2-tags) with `evict(tag)`, and `eviction_policy='none'`.
 - The queue calls [push](../reference/Cache.push.md#diskcache_oxide.Cache.push), [pull](../reference/Cache.pull.md#diskcache_oxide.Cache.pull), [peek](../reference/Cache.peek.md#diskcache_oxide.Cache.peek) and [peekitem](../reference/Cache.peekitem.md#diskcache_oxide.Cache.peekitem) on [Cache](../reference/Cache.md#diskcache_oxide.Cache) (see [Work queues](../recipes/work-queues.md)).
 
@@ -99,7 +99,7 @@ In roughly this order:
 
 - **Least-recently-used and least-frequently-used eviction.** diskcache implements them by writing to the database on every [get](../reference/Cache.get.md#diskcache_oxide.Cache.get). Reads that never write are what let many processes read at once without queueing, so these stay out unless a design keeps reads write-free. Least-recently-stored stays the default, and `eviction_policy='none'` turns eviction off.
 - **`Deque` and `Index`, until someone asks.** If you need one, open an issue. An `Index` is only as general as the key types, and both default to a temporary directory, which diskcache-oxide doesn't do.
-- **`disk=` and `Disk` subclasses.** A Python class on every read and write would undo the Rust engine; `serializer=` and `register_type()` cover what people used them for.
+- **`disk=` and `Disk` subclasses.** A Python class on every read and write would undo the Rust engine; `serializer=` and [register_type()](../reference/register_type.md#diskcache_oxide.register_type) cover what people used them for.
 - **Pickled keys.** Keys are never pickled, so listing keys never runs pickle and a key's identity doesn't depend on pickle's bytes.
 - **`read=True` and `read()`** (streaming a file in and out). Folded into the large-file cache idea below.
 - **Persisted statistics.** [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) counts per process, in memory, because diskcache's persisted counters make every [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) a write.

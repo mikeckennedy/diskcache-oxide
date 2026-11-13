@@ -97,7 +97,7 @@ Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples 
 `FanoutCache` is covered in full in [FanoutCache: sharded caches](fanoutcache.qmd). The differences from diskcache's, each with an entry in [Divergences](divergences.qmd):
 
 - **`shards` is keyword-only** (`FanoutCache(path, shards=4)`). `FanoutCache(path, 4)` is a four-second `timeout` here. The constructor is `FanoutCache(directory, timeout=None, *, shards=None, ...)`, and `directory` is required (D-039).
-- **The shard count is recorded**, and a different `shards=` raises `LayoutMismatchError` instead of silently sending keys to other shards. `shards=None` uses the stored count, or creates 8 (D-032).
+- **The shard count is recorded**, and a different `shards=` never silently sends keys to other shards: the cache opens with the stored count and logs a warning, or raises `LayoutMismatchError` if you pass `raise_on_mismatch=True`. `shards=None` uses the stored count, or creates 8 (D-032).
 - **A plain `Cache` and a `FanoutCache` refuse each other's directories** with `LayoutMismatchError`, and nothing is created by the refused open (D-038).
 - **Shards are chosen by XXH3, not adler32**, so which shard a key lands in differs from diskcache's, and `shard_of(key)` tells you. Iteration goes shard by shard, and `iterkeys(prefix=, reverse=)` gives the merged sorted order (D-033).
 - **A busy shard raises `Timeout`** after `timeout` (60 seconds by default) instead of silently giving False or the default after 10 ms. `durable=True` gives the miss answers, and logs them (D-034).

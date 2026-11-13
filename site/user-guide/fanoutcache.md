@@ -55,7 +55,7 @@ FanoutCache('/var/cache/my-app-rate-limits', shards=16, raise_on_mismatch=True)
 # LayoutMismatchError: this FanoutCache has 8 shards but shards=16 was requested; changing the count needs a new directory
 ```
 
-`shards=None` (the default) uses the stored count, or creates 8. Changing the count means a new directory. `raise_on_mismatch` covers the count only: a root in another on-disk format opens in its versioned subdirectory either way (below). Creating the manifest uses a hard link, so a filesystem without them (FAT, exFAT, SMB, some FUSE mounts) raises `OSError` saying so.
+`shards=None` (the default) uses the stored count, or creates 8. Changing the count means a new directory. One case still raises without `raise_on_mismatch`: a [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) or `max_connections` that fits the count you asked for but can't be split over the stored one (each shard needs at least 1 MiB and one connection), which gives `LayoutMismatchError: this FanoutCache has 8 shards but shards=4 was asked for, and its settings don't fit 8 shards: ...`. Raise the setting, or leave [shards](../reference/FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) out. `raise_on_mismatch` covers the count only: a root in another on-disk format opens in its versioned subdirectory either way (below). Creating the manifest uses a hard link, so a filesystem without them (FAT, exFAT, SMB, some FUSE mounts) raises `OSError` saying so.
 
 
 ## Plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) and [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) directories don't mix

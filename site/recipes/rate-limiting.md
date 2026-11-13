@@ -74,4 +74,4 @@ except Timeout:
 
 - **Don't rate limit with a cache that might be a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache).** Its [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) always returns `default + delta`, so every request would be allowed. That's often what you want with caching switched off, but make it a deliberate choice.
 
-When the caller should wait for its turn instead of getting a 429, as for outgoing webhooks or calls to a partner API, use `throttle` from [Coordination](../user-guide/coordination.md#throttle): a decorator that holds a function to `count` calls every `seconds`, across every process.
+When the caller should wait for its turn instead of getting a 429, as for outgoing webhooks or calls to a partner API, use [throttle](../reference/throttle.md#diskcache_oxide.throttle) from [Coordination](../user-guide/coordination.md#throttle): a decorator that holds a function to `count` calls every `seconds`, across every process.
