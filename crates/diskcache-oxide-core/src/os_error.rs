@@ -100,6 +100,60 @@ pub(crate) fn retry_sharing_violations<T>(mut op: impl FnMut() -> io::Result<T>)
     op()
 }
 
+/// [`retry_sharing_violations`] for a caller that may hold the interpreter: the first try runs as it
+/// is, and only a sharing violation takes the retries, and their sleeps, to [`crate::gate::run_blocking`],
+/// so a GIL build's other threads keep running. On Unix it's `op()`.
+pub(crate) fn retry_sharing_violations_detached<T: Send>(op: impl Fn() -> io::Result<T> + Sync) -> io::Result<T> {
+    match op() {
+        Err(e) if is_sharing_violation(&e) => {
+            let outcome = std::sync::Mutex::new(Err(e));
+            crate::gate::run_blocking(&|| {
+                let result = retry_sharing_violations(&op);
+                *outcome.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = result;
+            });
+            outcome.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner)
+        }
+        other => other,
+    }
+}
+
+/// Runs `op` on each of `items`, and on Windows retries the ones that meet a sharing violation
+/// together, in rounds, within one budget of about 50 ms for the whole batch (R-M7), rather than 50
+/// ms for each. Returns every item whose last try failed, with its error. On Unix each is tried once.
+pub(crate) fn retry_sharing_violations_each<I>(
+    items: &[I],
+    mut op: impl FnMut(&I) -> io::Result<()>,
+) -> Vec<(&I, io::Error)> {
+    let mut failed = Vec::new();
+    let pending: Vec<&I> = items.iter().collect();
+    #[cfg(windows)]
+    let pending = {
+        let mut pending = pending;
+        for &ms in SHARING_RETRY_SLEEPS_MS {
+            let mut blocked = Vec::new();
+            for item in pending {
+                match op(item) {
+                    Ok(()) => {}
+                    Err(e) if is_sharing_violation(&e) => blocked.push(item),
+                    Err(e) => failed.push((item, e)),
+                }
+            }
+            if blocked.is_empty() {
+                return failed;
+            }
+            pending = blocked;
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
+        pending
+    };
+    for item in pending {
+        if let Err(e) = op(item) {
+            failed.push((item, e));
+        }
+    }
+    failed
+}
+
 /// Tests only: a create error no write retries: `EACCES` on Unix, `ERROR_WRITE_PROTECT` on Windows
 /// (where `ERROR_ACCESS_DENIED` can mean a delete-pending directory, so a write retries it).
 #[cfg(all(test, unix))]

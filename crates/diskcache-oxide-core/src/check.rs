@@ -237,7 +237,8 @@ impl Store {
                 continue;
             }
             // Windows: another program holding the file for a moment is waited out (plan 25, R-M7).
-            let fixed = fix && crate::os_error::retry_sharing_violations(|| std::fs::remove_file(&path)).is_ok();
+            let fixed =
+                fix && crate::os_error::retry_sharing_violations_detached(|| std::fs::remove_file(&path)).is_ok();
             merge(found, Finding::UnknownFile { path, fixed });
         }
         Ok(())

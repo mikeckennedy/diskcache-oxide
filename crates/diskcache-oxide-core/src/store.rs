@@ -460,7 +460,7 @@ impl Store {
         }
 
         // Before the retry, so the gate level below isn't kept across it.
-        let canonical = std::fs::canonicalize(&options.directory).unwrap_or_else(|_| options.directory.clone());
+        let canonical = canonical_directory(&options.directory);
 
         // Open outside the registry lock (the open sequence may wait on other processes). Then, if
         // another thread registered a live store for the file meanwhile (two first opens racing),
@@ -580,10 +580,9 @@ impl Store {
     /// the slow path, which has the pinned file to revive it with. Times out with no handle claimed.
     fn lookup(db_path: &Path, deadline: Instant) -> Result<Option<Arc<Self>>> {
         let Ok(id) = file_id(db_path) else { return Ok(None) };
-        // Windows matches on the directory too (see `directory_check`); a path that won't resolve
-        // takes the slow path.
+        // Windows matches on the directory too (see `directory_check`).
         #[cfg(windows)]
-        let Some(canonical) = db_path.parent().and_then(|dir| std::fs::canonicalize(dir).ok()) else {
+        let Some(canonical) = db_path.parent().map(canonical_directory) else {
             return Ok(None);
         };
         #[cfg(windows)]
@@ -1093,7 +1092,7 @@ impl Store {
     /// A name that isn't one `spill` writes (a damaged row) unlinks nothing ([`spill::value_path`]).
     ///
     /// Windows: another program holding a file for a moment (antivirus, the indexer, a backup) makes
-    /// its unlink a sharing violation. Those are tried again over about 50 ms, always with the
+    /// its unlink a sharing violation. Those are tried again, together, within about 50 ms for the whole call, always with the
     /// interpreter released (R-M7). A file still left, there or for any other reason, is counted
     /// ([`Store::left_files`]).
     pub(crate) fn unlink(&self, files: impl IntoIterator<Item = String>) {
@@ -1118,11 +1117,14 @@ impl Store {
         }
         let blocked = blocked.into_inner().unwrap_or_else(PoisonError::into_inner);
         if !blocked.is_empty() {
+            // One budget for the whole batch: a `clear()` over many held files waits about 50 ms, not
+            // 50 ms for each.
             gate::run_blocking(&|| {
-                for path in &blocked {
-                    match crate::os_error::retry_sharing_violations(|| std::fs::remove_file(path)) {
-                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => self.count_left_file(),
-                        _ => {}
+                for (_, e) in
+                    crate::os_error::retry_sharing_violations_each(&blocked, |path| std::fs::remove_file(path))
+                {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        self.count_left_file();
                     }
                 }
             });
@@ -2132,6 +2134,16 @@ fn directory_check(canonical: &Path) -> Option<&Path> {
     cfg!(windows).then_some(canonical)
 }
 
+/// The directory's canonical path, as a store records it and a Windows lookup matches it, or the
+/// path as given if it can't be canonicalized (it may not exist yet). Windows falls back to the
+/// absolute path first: some filesystems there can't canonicalize at all (some RAM disks, VM shared
+/// folders, network redirectors), and a store and its lookups must still agree on one spelling.
+fn canonical_directory(directory: &Path) -> PathBuf {
+    std::fs::canonicalize(directory)
+        .or_else(|e| if cfg!(windows) { std::path::absolute(directory) } else { Err(e) })
+        .unwrap_or_else(|_| directory.to_path_buf())
+}
+
 /// Opens a store's pin on its database file, and the file's id. On Unix the pin must be a SQLite
 /// connection that never runs a statement, not a plain `File`: closing any descriptor on a file
 /// drops every POSIX lock the process holds on it, SQLite's included. SQLite's own descriptors
@@ -2269,20 +2281,23 @@ mod tests {
 
     /// R-L10: a directory whose `-wal` path passes Windows's 260-character `MAX_PATH`. A test binary
     /// has no long-path-aware manifest, so this is the default Windows machine's case
-    /// (`LongPathsEnabled` off), where only a `\\?\` path reaches past it.
+    /// (`LongPathsEnabled` off), where only a `\\?\` path reaches past it. 2,000 is past the default
+    /// `win32` VFS's own 1,040-byte limit, which `win32-longpath` lifts.
     #[test]
     fn a_store_whose_wal_path_passes_max_path_opens_and_writes() {
-        let tmp = TempDir::new("store-long-path");
-        let mut dir = tmp.path().to_path_buf();
-        while dir.join(crate::schema::DB_FILENAME).as_os_str().len() < 300 {
-            dir.push("a-directory-name-of-forty-characters-xx");
+        for length in [300, 2_000] {
+            let tmp = TempDir::new("store-long-path");
+            let mut dir = tmp.path().to_path_buf();
+            while dir.join(crate::schema::DB_FILENAME).as_os_str().len() < length {
+                dir.push("a-directory-name-of-forty-characters-xx");
+            }
+            std::fs::create_dir_all(&dir).unwrap();
+            let store = Store::open(&options(&dir)).unwrap();
+            put(&store, "k", &[7; 100]);
+            assert_eq!(count(&store), 1, "{length}");
+            assert!(dir.join(format!("{}-wal", crate::schema::DB_FILENAME)).exists(), "{length}");
+            store.release_handle();
         }
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = Store::open(&options(&dir)).unwrap();
-        put(&store, "k", &[7; 100]);
-        assert_eq!(count(&store), 1);
-        assert!(dir.join(format!("{}-wal", crate::schema::DB_FILENAME)).exists());
-        store.release_handle();
     }
 
     fn add_handle(store: &Store) {

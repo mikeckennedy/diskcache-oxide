@@ -54,12 +54,13 @@ def test_an_open_cache_directory_cant_be_removed_and_the_cache_keeps_working(tmp
     shutil.rmtree(directory)
 
 
+@pytest.mark.parametrize('length', [300, 2_000])
 @pytest.mark.parametrize('fanout', [False, True])
-def test_a_cache_past_max_path_works(tmp_path: Path, fanout: bool) -> None:
+def test_a_cache_past_max_path_works(tmp_path: Path, fanout: bool, length: int) -> None:
     # The core's own test covers a process that isn't long-path aware; python.exe is, so this one
     # checks the whole stack, value files and FanoutCache's shard paths included.
     directory = tmp_path
-    while len(str(directory / '00' / 'diskcache-oxide.sqlite-journal')) < 300:
+    while len(str(directory / '00' / 'diskcache-oxide.sqlite-journal')) < length:
         directory = directory / ('d' * 40)
     cache = FanoutCache(directory, shards=2) if fanout else Cache(directory)
     cache.set('small', 1)

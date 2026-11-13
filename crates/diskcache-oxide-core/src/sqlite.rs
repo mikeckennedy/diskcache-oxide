@@ -1,6 +1,7 @@
 //! The bundled SQLite: the one entry point every connection is opened through, and facts about the
 //! library compiled into this build.
 
+#[cfg(windows)]
 use std::borrow::Cow;
 use std::path::Path;
 use std::time::Duration;
@@ -17,40 +18,44 @@ use crate::{Error, Result};
 /// mutex methods ([`sqlite_mutex::ensure_installed`]). A direct rusqlite open would initialize
 /// SQLite itself, and one racing the install is heap corruption, not a fallback.
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
-    sqlite_mutex::ensure_installed();
-    Connection::open(reachable(path))
+    open_with_flags(path, OpenFlags::default())
 }
 
 /// [`open`], with explicit open flags.
 pub fn open_with_flags(path: &Path, flags: OpenFlags) -> rusqlite::Result<Connection> {
     sqlite_mutex::ensure_installed();
-    Connection::open_with_flags(reachable(path), flags)
+    #[cfg(windows)]
+    return Connection::open_with_flags_and_vfs(reachable(path), flags, WINDOWS_VFS);
+    #[cfg(not(windows))]
+    Connection::open_with_flags(path, flags)
 }
 
-/// The path to give SQLite for `path` (plan 25, R-L10). Windows: SQLite's win32 VFS hands the name
-/// to `CreateFileW` as it is, which stops at `MAX_PATH` (260) unless the machine enables long paths
+/// Windows: SQLite's bundled `win32-longpath` VFS, for every connection (plan 25, R-L10). It is the
+/// default `win32` VFS's code (the same files, locks and shared memory, so it shares a database with
+/// any other SQLite on the machine) with a path limit of 65,534 bytes instead of 1,040: past that,
+/// `win32` truncates the full path and the pager refuses to open the database.
+#[cfg(windows)]
+const WINDOWS_VFS: &std::ffi::CStr = c"win32-longpath";
+
+/// The path to give SQLite for `path` (plan 25, R-L10). Windows: SQLite hands the name to
+/// `CreateFileW` as it is, which stops at `MAX_PATH` (260) unless the machine enables long paths
 /// (off by default) and the program declares itself long-path aware. A path whose absolute form,
 /// with SQLite's longest suffix (`-journal`), wouldn't fit becomes a verbatim `\\?\` path, which
-/// has no such limit. Shorter ones are left as they are, so messages show the caller's path. Unix:
-/// always `path`.
+/// has no such limit. Shorter ones are left as they are, so messages show the caller's path.
+#[cfg(windows)]
 fn reachable(path: &Path) -> Cow<'_, Path> {
-    #[cfg(windows)]
-    {
-        const MAX_PATH: usize = 260;
-        const LONGEST_SUFFIX: usize = "-journal".len();
-        let Ok(absolute) = std::path::absolute(path) else { return Cow::Borrowed(path) };
-        let Some(text) = absolute.to_str() else { return Cow::Borrowed(path) };
-        if text.encode_utf16().count() + LONGEST_SUFFIX < MAX_PATH || text.starts_with(r"\\?\") {
-            return Cow::Borrowed(path);
-        }
-        let verbatim = match text.strip_prefix(r"\\") {
-            Some(unc) => format!(r"\\?\UNC\{unc}"),
-            None => format!(r"\\?\{text}"),
-        };
-        Cow::Owned(verbatim.into())
+    const MAX_PATH: usize = 260;
+    const LONGEST_SUFFIX: usize = "-journal".len();
+    let Ok(absolute) = std::path::absolute(path) else { return Cow::Borrowed(path) };
+    let Some(text) = absolute.to_str() else { return Cow::Borrowed(path) };
+    if text.encode_utf16().count() + LONGEST_SUFFIX < MAX_PATH || text.starts_with(r"\\?\") {
+        return Cow::Borrowed(path);
     }
-    #[cfg(not(windows))]
-    Cow::Borrowed(path)
+    let verbatim = match text.strip_prefix(r"\\") {
+        Some(unc) => format!(r"\\?\UNC\{unc}"),
+        None => format!(r"\\?\{text}"),
+    };
+    Cow::Owned(verbatim.into())
 }
 
 /// [`open`], for a private in-memory database.

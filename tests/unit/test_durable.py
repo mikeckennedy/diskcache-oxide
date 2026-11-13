@@ -192,16 +192,29 @@ def unwritable_directory(path: Path) -> Generator[None]:
             os.chmod(each, mode)
 
 
+def _user_sid() -> str:
+    """Windows: this user's SID, for `icacls`."""
+    out = subprocess.run(['whoami', '/user', '/fo', 'csv', '/nh'], capture_output=True, text=True, check=True).stdout
+    return out.strip().split(',')[-1].strip('"')
+
+
+@contextmanager
+def _denied_read(path: Path) -> Generator[None]:
+    """Windows: a deny entry for this user on reading `path`, so opening it is `ERROR_ACCESS_DENIED`
+    (5), the code a delete-pending file also gives; removed afterwards."""
+    sid = _user_sid()
+    subprocess.run(['icacls', str(path), '/deny', f'*{sid}:(RD)'], capture_output=True, check=True)
+    try:
+        yield
+    finally:
+        subprocess.run(['icacls', str(path), '/remove:d', f'*{sid}'], capture_output=True, check=True)
+
+
 @contextmanager
 def _denied_creates(path: Path) -> Generator[None]:
     """Windows: a deny entry for this user on creating files and subdirectories in `path` and every
     directory under it (`icacls`' WD and AD), removed afterwards."""
-    sid = (
-        subprocess.run(['whoami', '/user', '/fo', 'csv', '/nh'], capture_output=True, text=True, check=True)
-        .stdout.strip()
-        .split(',')[-1]
-        .strip('"')
-    )
+    sid = _user_sid()
     dirs = [path, *[p for p in path.rglob('*') if p.is_dir()]]
     for each in dirs:
         subprocess.run(['icacls', str(each), '/deny', f'*{sid}:(WD,AD)'], capture_output=True, check=True)
@@ -355,6 +368,26 @@ def test_a_pool_taken_by_a_slow_hook_fails_reads_as_a_miss(directory: Path) -> N
     assert (busy['get'], busy['in'], busy['pop']) == (3, 1, 1)
     plain.close()
     cache.close()
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows only: an ACL that denies reading')
+def test_a_value_file_denied_with_its_row_unchanged_is_a_logged_miss_and_stays(
+    directory: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # ERROR_ACCESS_DENIED is also what a delete-pending file gives, which the read retries when the
+    # row changed. Here the row is the same, so it is a real denial: never a lost file whose row goes.
+    cache = Cache(directory, durable=True)
+    plain = Cache(directory)
+    cache.set('k', b'x' * BIG)
+    with _denied_read(_value_file(directory)), caplog.at_level(logging.WARNING, logger=LOGGER):
+        assert cache.get('k', 'default') == 'default'
+        with pytest.raises(PermissionError):
+            plain.get('k')
+    [record] = _messages(caplog)
+    assert record.levelno == logging.ERROR and 'get: 1' in record.getMessage()
+    assert cache.get('k') == b'x' * BIG, 'the row went as if its file were gone'
+    cache.close()
+    plain.close()
 
 
 @NOT_AS_ROOT

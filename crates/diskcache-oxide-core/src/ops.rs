@@ -1331,23 +1331,84 @@ mod tests {
         std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ_WRITE).open(path).unwrap()
     }
 
+    /// Windows: runs `op` while another thread holds `held` and drops it about 10 ms after `op`
+    /// starts. Returns `op`'s result, or `None` if the drop landed later than 25 ms in, well inside
+    /// the 50 ms retry budget only when the machine isn't so loaded that the thread wakes late (a
+    /// full `cargo test` can be), so the caller tries again rather than assert on a scenario that
+    /// didn't happen.
+    #[cfg(windows)]
+    fn with_a_brief_hold<T>(held: std::fs::File, op: impl FnOnce() -> T) -> Option<T> {
+        let (go, started) = std::sync::mpsc::channel::<Instant>();
+        let release = std::thread::spawn(move || {
+            let start = started.recv().unwrap();
+            std::thread::sleep(Duration::from_millis(10));
+            drop(held);
+            start.elapsed()
+        });
+        go.send(Instant::now()).unwrap();
+        let result = op();
+        let dropped_after = release.join().unwrap();
+        (dropped_after < Duration::from_millis(25)).then_some(result)
+    }
+
     /// R-M7: a delete whose unlink meets another program's brief handle waits it out.
     #[cfg(windows)]
     #[test]
     fn an_unlink_another_program_blocks_for_a_moment_is_retried() {
-        let tmp = TempDir::new("ops-unlink-retried");
+        for _ in 0..20 {
+            let tmp = TempDir::new("ops-unlink-retried");
+            let s = store(tmp.path(), Requested::default());
+            set_big(&s, MODE_BYTES, 0);
+            let [file] = value_files(tmp.path()).into_iter().collect::<Vec<_>>().try_into().unwrap();
+            let held = held_without_delete_sharing(&file);
+            let Some(deleted) = with_a_brief_hold(held, || s.delete(T, "k", NOW).unwrap()) else { continue };
+            assert!(deleted);
+            assert!(!file.exists(), "the unlink gave up while the other handle was open");
+            assert_eq!(s.left_files(), 0);
+            return;
+        }
+        panic!("the hold was never released within 25 ms in 20 tries");
+    }
+
+    /// A read whose value file another program holds without read sharing, for a moment, waits it
+    /// out; held throughout, the read fails within the same bounded wait.
+    #[cfg(windows)]
+    #[test]
+    fn a_read_another_program_blocks_for_a_moment_is_retried() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = TempDir::new("ops-read-retried");
         let s = store(tmp.path(), Requested::default());
-        set_big(&s, MODE_BYTES, 0);
+        set_big(&s, MODE_BYTES, 3);
         let [file] = value_files(tmp.path()).into_iter().collect::<Vec<_>>().try_into().unwrap();
-        let held = held_without_delete_sharing(&file);
-        let release = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(10));
-            drop(held);
-        });
-        assert!(s.delete(T, "k", NOW).unwrap());
-        release.join().unwrap();
-        assert!(!file.exists(), "the unlink gave up while the other handle was open");
-        assert_eq!(s.left_files(), 0);
+        let exclusive = || std::fs::OpenOptions::new().read(true).share_mode(0).open(&file).unwrap();
+        let got = (0..20).find_map(|_| with_a_brief_hold(exclusive(), || get_bytes(&s)));
+        let got = got.expect("the hold was never released within 25 ms in 20 tries");
+        assert_eq!(got.unwrap(), Some(vec![3; spill::THRESHOLD]));
+        let held = exclusive();
+        let started = Instant::now();
+        assert!(matches!(get_bytes(&s), Err(Error::Io { .. })), "a file held throughout can't be read");
+        assert!(started.elapsed() < Duration::from_secs(1), "the retries are bounded");
+        drop(held);
+    }
+
+    /// A batch of held files shares one retry budget: a `clear()` over 40 of them waits about 50
+    /// ms, not 50 ms for each (about 2 s).
+    #[cfg(windows)]
+    #[test]
+    fn many_unlinks_other_programs_block_share_one_retry_budget() {
+        let tmp = TempDir::new("ops-unlink-batch");
+        let s = store(tmp.path(), Requested::default());
+        let big = vec![1_u8; spill::THRESHOLD];
+        for i in 0..40 {
+            s.set(T, &format!("k{i}"), Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
+        }
+        let held: Vec<_> = value_files(tmp.path()).iter().map(|f| held_without_delete_sharing(f)).collect();
+        assert_eq!(held.len(), 40);
+        let started = Instant::now();
+        assert_eq!(s.clear(T).unwrap(), 40);
+        assert!(started.elapsed() < Duration::from_millis(500), "took {:?}", started.elapsed());
+        assert_eq!(s.left_files(), 40);
+        drop(held);
     }
 
     /// And one held throughout is left, and counted.

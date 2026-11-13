@@ -49,7 +49,25 @@ try {
     if ($volume.FileSystemType -ne 'exFAT') { throw "the volume is $($volume.FileSystemType), not exFAT" }
     $root = "$($volume.DriveLetter):\stress"
     Write-Host "exFAT volume at $($volume.DriveLetter):, stress root $root"
-    & "$Python\Scripts\python.exe" -m tests.unit.windows_stress --seconds $Seconds --root $root
+    # exFAT has no hard links, so a FanoutCache must be refused with the error that says so (which
+    # also checks os_error's guess at the code exFAT's CreateHardLinkW gives), and leave nothing.
+    $refused = @'
+import sys
+from pathlib import Path
+from diskcache_oxide import FanoutCache
+root = Path(sys.argv[1])
+try:
+    FanoutCache(root)
+except OSError as e:
+    assert "doesn't support hard links" in str(e), e
+    assert not (root / 'diskcache-oxide-fanout').exists(), 'a manifest was left behind'
+    print('FanoutCache refused on exFAT, as it should be:', e)
+else:
+    raise SystemExit('a FanoutCache opened on exFAT, which has no hard links')
+'@
+    & "$Python\Scripts\python.exe" -c $refused "$($volume.DriveLetter):\fanout"
+    if ($LASTEXITCODE -ne 0) { throw 'the FanoutCache check on exFAT failed' }
+    & "$Python\Scripts\python.exe" -m tests.unit.windows_stress --seconds $Seconds --root $root --no-fanout
     $code = $LASTEXITCODE
     if ($code -ne 0) {
         $kept = Join-Path $work 'stress-root'

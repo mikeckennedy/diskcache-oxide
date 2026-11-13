@@ -110,9 +110,10 @@ impl PendingFile {
     /// Renames the temp file into place. Called inside the write transaction (under the write
     /// lock); safe to call again if a retried attempt already did it. Same directory, which the
     /// temp file keeps non-empty, so a sweep can't take it. On Windows a sweep's `rmdir` attempt on
-    /// the directory makes the rename a sharing violation for a moment, so that's retried briefly.
+    /// the directory makes the rename a sharing violation for a moment, so that's retried briefly,
+    /// with the interpreter released.
     pub fn commit_name(&self) -> Result<()> {
-        match crate::os_error::retry_sharing_violations(|| std::fs::rename(&self.tmp, &self.val)) {
+        match crate::os_error::retry_sharing_violations_detached(|| std::fs::rename(&self.tmp, &self.val)) {
             Ok(()) => {
                 // A rename keeps the temp file's mtime, so refresh it: `check()` leaves alone a file
                 // no row names until it has been idle for `TMP_MIN_AGE`, and a write in flight for
@@ -325,7 +326,7 @@ pub fn sweep_start() -> usize {
 /// isn't a name this module writes ([`value_path`]).
 pub fn read(directory: &Path, relative: &str, size: i64) -> Result<Option<Vec<u8>>> {
     let Some(path) = value_path(directory, relative) else { return Ok(None) };
-    match File::open(&path) {
+    match open_value_file(&path) {
         Ok(file) => read_open(&file, &path, size),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io_error(&path, e)),
@@ -340,10 +341,17 @@ pub fn may_be_delete_pending(error: &Error) -> bool {
     matches!(error, Error::Io { source, .. } if crate::os_error::is_delete_pending(source))
 }
 
+/// Opens a value file for reading. Windows: another program holding it without read sharing (a
+/// backup tool, some scanners) makes the open a sharing violation for a moment, which is waited out
+/// with the interpreter released (plan 25, R-M7).
+fn open_value_file(path: &Path) -> std::io::Result<File> {
+    crate::os_error::retry_sharing_violations_detached(|| File::open(path))
+}
+
 /// Opens a value file (for the locked fallback, which reads it after releasing the lock).
 pub fn open(directory: &Path, relative: &str) -> Result<Option<(File, PathBuf)>> {
     let Some(path) = value_path(directory, relative) else { return Ok(None) };
-    match File::open(&path) {
+    match open_value_file(&path) {
         Ok(file) => Ok(Some((file, path))),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io_error(&path, e)),

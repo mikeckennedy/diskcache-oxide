@@ -5,10 +5,12 @@
 Spawned worker processes each run threads doing the 99:1 read:write mix (with a few deletes) on one
 `Cache` and one `FanoutCache` over a small hot keyspace, with values on both sides of the spill
 threshold, so readers race overwrites of spilled values and sweeps race writers across processes
-(R-H4, R-M7). Each worker also writes unique keys to a ledger cache and appends each one to its ack
-file once `set` has returned. Another process runs `clear`, `cull` and `check(fix=True)` at random,
-and the parent kills a random worker with `Process.kill()` (`TerminateProcess`) every few seconds and
-starts a replacement. At the end every acknowledged ledger write must read back exactly, every
+(R-H4, R-M7), and a thread pushing, pulling and peeking such values on the `Cache`'s queue.
+`--no-fanout` leaves the `FanoutCache` out, for a filesystem without hard links (exFAT). Each worker
+also writes unique keys to a ledger cache and appends each one to its ack file once `set` has
+returned. An admin process runs `clear`, `cull` and `check(fix=True)` at random, and the parent
+kills a random process, the admin included, with `Process.kill()` (`TerminateProcess`) every few
+seconds and starts a replacement. At the end every acknowledged ledger write must read back exactly, every
 value left in the churned caches must be one a writer wrote for its key, no worker may have logged
 an error, and `check()` must be clean once `check(fix=True)` has removed what the kills left.
 
@@ -42,6 +44,8 @@ LEDGER_WEIGHTS = (6, 3, 1)
 LEDGER_PAUSE = 0.5
 SPAWN = multiprocessing.get_context('spawn')
 STOP_FILE = 'stop'
+NO_FANOUT = 'no-fanout'
+QUEUE_PAUSE = 0.01
 STOP_POLL = 0.2
 
 
@@ -95,12 +99,13 @@ def _stop_signal(base: Path) -> threading.Event:
     return stop
 
 
-def _open_caches(root: Path) -> tuple[Any, Any, Any]:
+def _open_caches(root: Path) -> tuple[Any, Any, Any | None]:
     from diskcache_oxide import Cache, FanoutCache
 
     ledger = Cache(root / 'ledger', timeout=TIMEOUT, size_limit=1 << 40)
     churn = Cache(root / 'churn', timeout=TIMEOUT)
-    fan = FanoutCache(root / 'fanout', shards=4, timeout=TIMEOUT)
+    # Without hard links (exFAT) a FanoutCache can't make its manifest, so --no-fanout leaves it out.
+    fan = None if (root / NO_FANOUT).exists() else FanoutCache(root / 'fanout', shards=4, timeout=TIMEOUT)
     return ledger, churn, fan
 
 
@@ -122,6 +127,28 @@ def _churn(cache: Any, name: str, rng: random.Random, stop: Any, log: Log, count
             else:
                 cache.delete(key)
                 counts['deletes'] += 1
+        except Exception:
+            log.error(traceback.format_exc())
+
+
+def _queue(cache: Any, name: str, rng: random.Random, stop: Any, log: Log, counts: dict[str, int]) -> None:
+    """Pushes and pulls items on both sides of the spill threshold on the shared queue, and peeks:
+    every worker's queue reads race the others' pulls (and the admin's clears) for the head, which
+    goes through the same read path as `get`."""
+    seq = 0
+    while not stop.wait(QUEUE_PAUSE * rng.random()):
+        try:
+            roll = rng.random()
+            if roll < 0.5:
+                seq += 1
+                cache.push(make_value('queue', name, seq, rng.choice(SIZES)))
+                counts['pushed'] += 1
+            else:
+                _, value = cache.peek() if roll < 0.6 else cache.pull()
+                if value is not None:
+                    counts['pulled'] += roll >= 0.6
+                    if (problem := value_problem('queue', value)) is not None:
+                        log.error(f'queue: {problem}')
         except Exception:
             log.error(traceback.format_exc())
 
@@ -149,12 +176,13 @@ def worker(root: str, name: str, threads: int) -> None:
     stop = _stop_signal(base)
     log = Log(base / 'logs' / f'{name}.errors')
     ledger, churn, fan = _open_caches(base)
-    counts = {'reads': 0, 'writes': 0, 'deletes': 0}
+    counts = {'reads': 0, 'writes': 0, 'deletes': 0, 'pushed': 0, 'pulled': 0}
     rng = random.Random(name)
     workers = [
         threading.Thread(target=_churn, args=(c, name, random.Random(rng.random()), stop, log, counts))
-        for c in [churn, fan] * ((threads + 1) // 2)
+        for c in [churn, fan or churn] * ((threads + 1) // 2)
     ][:threads]
+    workers.append(threading.Thread(target=_queue, args=(churn, name, random.Random(rng.random()), stop, log, counts)))
     workers.append(
         threading.Thread(
             target=_ledger, args=(ledger, name, random.Random(rng.random()), stop, base / 'acks' / name, log)
@@ -164,19 +192,23 @@ def worker(root: str, name: str, threads: int) -> None:
         t.start()
     for t in workers:
         t.join()
-    counts['left_value_files'] = ledger._left_value_files() + churn._left_value_files() + sum(fan._left_value_files())
+    counts['left_value_files'] = ledger._left_value_files() + churn._left_value_files()
+    if fan is not None:
+        counts['left_value_files'] += sum(fan._left_value_files())
     (base / 'logs' / f'{name}.counts').write_text(json.dumps(counts))
     for c in (ledger, churn, fan):
-        c.close()
+        if c is not None:
+            c.close()
 
 
-def admin(root: str) -> None:
-    set_title('dco-windows-stress[admin]')
+def admin(root: str, name: str) -> None:
+    set_title(f'dco-windows-stress[{name}]')
     base = Path(root)
     stop = _stop_signal(base)
-    log = Log(base / 'logs' / 'admin.errors')
+    log = Log(base / 'logs' / f'{name}.errors')
     _, churn, fan = _open_caches(base)
-    rng = random.Random('admin')
+    targets = [c for c in (churn, fan) if c is not None]
+    rng = random.Random(name)
     actions = {
         'clear': lambda c: c.clear(),
         'cull': lambda c: c.cull(),
@@ -184,15 +216,15 @@ def admin(root: str) -> None:
     }
     done = dict.fromkeys(actions, 0)
     while not stop.wait(rng.uniform(1.0, 4.0)):
-        name = rng.choice(list(actions))
+        action = rng.choice(list(actions))
         try:
-            actions[name](rng.choice([churn, fan]))
-            done[name] += 1
+            actions[action](rng.choice(targets))
+            done[action] += 1
         except Exception:
             log.error(traceback.format_exc())
-    (base / 'logs' / 'admin.counts').write_text(json.dumps(done))
-    churn.close()
-    fan.close()
+    (base / 'logs' / f'{name}.counts').write_text(json.dumps(done))
+    for c in targets:
+        c.close()
 
 
 def sweep_racer(root: str, name: str, rounds: int) -> None:
@@ -232,24 +264,30 @@ def run_sweep_race(root: Path, procs: int = 6, rounds: int = 1500) -> list[str]:
     return failures
 
 
-def run(root: Path, seconds: float, procs: int = 6, threads: int = 4, kill_every: float = 8.0) -> dict[str, Any]:
-    """Runs the stress test in `root` for `seconds` and returns its summary; `failures` must be empty."""
+def run(
+    root: Path, seconds: float, procs: int = 6, threads: int = 4, kill_every: float = 8.0, fanout: bool = True
+) -> dict[str, Any]:
+    """Runs the stress test in `root` for `seconds` and returns its summary; `failures` must be empty.
+    `fanout=False` leaves the FanoutCache out, for a filesystem without hard links (exFAT)."""
     for sub in ('logs', 'acks'):
         (root / sub).mkdir(parents=True, exist_ok=True)
     (root / STOP_FILE).unlink(missing_ok=True)
+    if fanout:
+        (root / NO_FANOUT).unlink(missing_ok=True)
+    else:
+        (root / NO_FANOUT).touch()
     rng = random.Random(0)
-    started = 0
+    started = {'w': 0, 'admin': 0}
 
-    def start() -> Any:
-        nonlocal started
-        started += 1
-        p = SPAWN.Process(target=worker, args=(str(root), f'w{started}', threads), name=f'w{started}')
+    def start(kind: str) -> Any:
+        started[kind] += 1
+        name = f'{kind}{started[kind]}'
+        target, args = (worker, (str(root), name, threads)) if kind == 'w' else (admin, (str(root), name))
+        p = SPAWN.Process(target=target, args=args, name=name)
         p.start()
         return p
 
-    keeper = SPAWN.Process(target=admin, args=(str(root),), name='admin')
-    keeper.start()
-    live = [start() for _ in range(procs)]
+    live = [start('admin'), *(start('w') for _ in range(procs))]
     kills = 0
     failures: list[str] = []
     deadline = time.monotonic() + seconds
@@ -260,15 +298,16 @@ def run(root: Path, seconds: float, procs: int = 6, threads: int = 4, kill_every
         for p in [p for p in live if not p.is_alive()]:
             failures.append(f'{p.name} exited by itself with {p.exitcode}')
             live.remove(p)
-            live.append(start())
+            live.append(start(p.name.rstrip('0123456789')))
+        # The admin too, now and then: a clear, cull or check(fix=True) killed partway.
         victim = rng.choice(live)
         victim.kill()
         victim.join(30)
         kills += 1
         live.remove(victim)
-        live.append(start())
+        live.append(start(victim.name.rstrip('0123456789')))
     (root / STOP_FILE).touch()
-    for p in [*live, keeper]:
+    for p in live:
         p.join(120)
         if p.is_alive():
             failures.append(f"{p.name} didn't stop within 120 s")
@@ -279,16 +318,21 @@ def run(root: Path, seconds: float, procs: int = 6, threads: int = 4, kill_every
     return _verify(root, kills, started, failures)
 
 
-def _verify(root: Path, kills: int, started: int, failures: list[str]) -> dict[str, Any]:
+def _summed(paths: list[Path]) -> dict[str, int]:
+    total: dict[str, int] = {}
+    for found in paths:
+        for k, v in json.loads(found.read_text()).items():
+            total[k] = total.get(k, 0) + v
+    return total
+
+
+def _verify(root: Path, kills: int, started: dict[str, int], failures: list[str]) -> dict[str, Any]:
     for errors in sorted((root / 'logs').glob('*.errors')):
         for line in errors.read_text(encoding='utf-8').splitlines():
             failures.append(f'{errors.stem}: {json.loads(line)}')
-    counts = {'reads': 0, 'writes': 0, 'deletes': 0, 'left_value_files': 0}
-    for found in (root / 'logs').glob('w*.counts'):
-        for k, v in json.loads(found.read_text()).items():
-            counts[k] += v
-    admin_path = root / 'logs' / 'admin.counts'
-    admin_done = json.loads(admin_path.read_text()) if admin_path.exists() else {}
+    # Only processes that reached the end report: a killed one's counts are lost.
+    counts = _summed(list((root / 'logs').glob('w*.counts')))
+    admin_done = _summed(list((root / 'logs').glob('admin*.counts')))
     ledger, churn, fan = _open_caches(root)
     acked = 0
     for acks in (root / 'acks').iterdir():
@@ -301,18 +345,23 @@ def _verify(root: Path, kills: int, started: int, failures: list[str]) -> dict[s
                 failures.append(f'ledger: {problem}')
     fixed = {}
     for name, cache in (('churn', churn), ('fanout', fan)):
+        if cache is None:
+            continue
         for key in list(cache):
             value = cache.get(key)
-            if value is not None and (problem := value_problem(key, value)) is not None:
+            # A queue item's key is its number; its value names the queue.
+            expected = key if isinstance(key, str) else 'queue'
+            if value is not None and (problem := value_problem(expected, value)) is not None:
                 failures.append(f'{name}: {problem}')
         fixed[name] = [repr(f) for f in cache.check(fix=True)]
         if remaining := cache.check():
             failures.append(f'{name}: check() after check(fix=True) still finds {remaining}')
     for c in (ledger, churn, fan):
-        c.close()
+        if c is not None:
+            c.close()
     return {
         'kills': kills,
-        'workers_started': started,
+        'processes_started': started,
         'acked_ledger_writes': acked,
         'ops': counts,
         'admin': admin_done,
@@ -327,13 +376,14 @@ def main() -> int:
     parser.add_argument('--procs', type=int, default=6)
     parser.add_argument('--threads', type=int, default=4)
     parser.add_argument('--kill-every', type=float, default=8.0)
+    parser.add_argument('--no-fanout', action='store_true', help='leave the FanoutCache out (exFAT has no hard links)')
     parser.add_argument(
         '--root', type=Path, help='kept afterwards; default a temporary directory, removed if it passes'
     )
     args = parser.parse_args()
     root = args.root or Path(tempfile.mkdtemp(prefix='dco-windows-stress-'))
     set_title('dco-windows-stress[parent]')
-    summary = run(root, args.seconds, args.procs, args.threads, args.kill_every)
+    summary = run(root, args.seconds, args.procs, args.threads, args.kill_every, fanout=not args.no_fanout)
     print(json.dumps({**summary, 'root': str(root)}, indent=2))
     if summary['failures']:
         return 1
