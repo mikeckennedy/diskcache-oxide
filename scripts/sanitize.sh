@@ -249,7 +249,7 @@ lane_B() {
     python3 "$TSAN_RACES" "$log" "$TSAN_ALLOWED" | tee -a "$SUMMARY" || verdict=1
     # The canary: run alone, must be reported.
     run_tsan "$target" cargo "+$NIGHTLY" test -Zbuild-std --target "$target" -p diskcache-oxide-core --lib \
-        -- --ignored --exact sqlite_mutex::tests::canary_two_mutexes_exclude_nothing >"$canary" 2>&1 || true
+        -- --ignored --exact sqlite_mutex::pthread::tests::canary_two_mutexes_exclude_nothing >"$canary" 2>&1 || true
     local canary_ok=0
     python3 "$TSAN_RACES" "$canary" "$TSAN_ALLOWED" --expect-ours | tee -a "$SUMMARY" || canary_ok=1
     # The mutex tests in release.
