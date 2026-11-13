@@ -28,6 +28,7 @@ if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
 
 cache.close()  # at shutdown
 
+
 @cache.memoize(expire=600)
 def episode(number: int) -> dict:
     return {'number': number}  # stand-in for a database read
