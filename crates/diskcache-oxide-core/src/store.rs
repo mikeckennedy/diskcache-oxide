@@ -2285,7 +2285,9 @@ mod tests {
     /// `win32` VFS's own 1,040-byte limit, which `win32-longpath` lifts.
     #[test]
     fn a_store_whose_wal_path_passes_max_path_opens_and_writes() {
-        for length in [300, 2_000] {
+        // macOS caps a whole path at PATH_MAX, 1,024 bytes, so 2,000 can't even be created there.
+        let lengths: &[usize] = if cfg!(target_os = "macos") { &[300] } else { &[300, 2_000] };
+        for &length in lengths {
             let tmp = TempDir::new("store-long-path");
             let mut dir = tmp.path().to_path_buf();
             while dir.join(crate::schema::DB_FILENAME).as_os_str().len() < length {

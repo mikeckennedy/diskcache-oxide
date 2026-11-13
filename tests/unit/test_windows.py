@@ -54,7 +54,11 @@ def test_an_open_cache_directory_cant_be_removed_and_the_cache_keeps_working(tmp
     shutil.rmtree(directory)
 
 
-@pytest.mark.parametrize('length', [300, 2_000])
+# macOS caps a whole path at PATH_MAX, 1,024 bytes, so 2,000 can't even be created there.
+past_macos_path_max = pytest.mark.skipif(sys.platform == 'darwin', reason="past macOS's 1,024-byte PATH_MAX")
+
+
+@pytest.mark.parametrize('length', [300, pytest.param(2_000, marks=past_macos_path_max)])
 @pytest.mark.parametrize('fanout', [False, True])
 def test_a_cache_past_max_path_works(tmp_path: Path, fanout: bool, length: int) -> None:
     # The core's own test covers a process that isn't long-path aware; python.exe is, so this one
