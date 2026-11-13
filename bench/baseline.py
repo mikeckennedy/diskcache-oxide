@@ -310,6 +310,9 @@ def run(
             if want(name):
                 results[name] = threaded_throughput(cache, seconds=0.5 if quick else 1.5, every=every)
         cache.close()
+        # diskcache's close() closes only this thread's connection (D-018); the worker threads' stay
+        # open until collected, and Windows won't delete an open database with the temp directory.
+        gc.collect()
 
         for size in scan_sizes if want('scans') else []:
             scan_cache = backend.make_cache(Path(tmp) / f'scan-{size}', timeout=10.0, size_limit=2**32)

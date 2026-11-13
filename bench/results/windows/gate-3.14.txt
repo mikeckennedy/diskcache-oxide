@@ -1,0 +1,41 @@
+# AMD Ryzen 7 3700X, 8 cores (16 threads), 16 GB, Windows 10 22H2 (build 19045), NTFS, Defender real-time protection on, desktop on AC power, nothing else heavy running. diskcache-oxide a44fd51 plus the bench.baseline gc fix (plan 25, step 5), 2026-11-12. Editable (maturin release, no PGO) build in venv/.
+round 1/4: diskcache done
+round 1/4: oxide done
+round 2/4: diskcache done
+round 2/4: oxide done
+round 3/4: diskcache done
+round 3/4: oxide done
+round 4/4: diskcache done
+round 4/4: oxide done
+
+Python 3.14.10 (GIL), 4 interleaved rounds, tolerance 1.05x
+
+workload                     variant          p50 us / ops  vs diskcache  verdict
+get_hit_small                diskcache               7.221
+get_hit_small                oxide                   3.890         0.54x  pass (target <= 0.55x)
+get_miss                     diskcache               5.749
+get_miss                     oxide                   3.359         0.58x  pass
+get_hit_small_dict           diskcache              10.017
+get_hit_small_dict           oxide                   5.393         0.54x  pass
+set_small                    diskcache              95.136
+set_small                    oxide                  63.395         0.67x  pass (target <= 0.85x)
+get_random_wide              diskcache              15.865
+get_random_wide              oxide                  15.717         0.99x  pass
+threads_99to1 x1             diskcache         111,102.504
+threads_99to1 x1             oxide             169,215.452         1.52x  pass
+threads_99to1 x2             diskcache          94,247.674
+threads_99to1 x2             oxide             164,886.442         1.75x  pass
+threads_99to1 x4             diskcache          62,922.088
+threads_99to1 x4             oxide             162,646.934         2.58x  pass
+threads_99to1 x8             diskcache          38,719.738
+threads_99to1 x8             oxide             161,541.121         4.17x  pass
+threads_1000to1 x1           diskcache         121,026.945
+threads_1000to1 x1           oxide             187,030.472         1.55x  pass
+threads_1000to1 x2           diskcache         106,125.269
+threads_1000to1 x2           oxide             182,513.029         1.72x  pass
+threads_1000to1 x4           diskcache          48,593.176
+threads_1000to1 x4           oxide             180,149.446         3.71x  pass
+threads_1000to1 x8           diskcache          28,048.064
+threads_1000to1 x8           oxide             180,463.974         6.43x  pass
+
+oxide: GO

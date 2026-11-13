@@ -1,0 +1,163 @@
+# AMD Ryzen 7 3700X, 8 cores (16 threads), 16 GB, Windows 10 22H2 (build 19045), NTFS, Defender real-time protection on, desktop on AC power, nothing else heavy running. diskcache-oxide a44fd51 plus the bench.baseline gc fix (plan 25, step 5), 2026-11-12. Editable (maturin release, no PGO) build in .venv-ft/, 8 rounds: NO-GO on get_hit_small alone (0.57x against 0.55x; a 4-round run gave 0.56x). Each WAL read transaction's lock calls cost about 2.6 us on this machine, the same for both backends; see the plan 25 Log.
+round 1/8: diskcache done
+round 1/8: oxide done
+round 2/8: diskcache done
+round 2/8: oxide done
+Exception in thread Thread-13 (worker):
+Traceback (most recent call last):
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1083, in _bootstrap_inner
+    self._context.run(self.run)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1025, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\bench\baseline.py", line 364, in worker
+    set_(key, value)
+    ~~~~^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 796, in set
+    with self._transact(retry, filename) as (sql, cleanup):
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 730, in _transact
+    raise Timeout from None
+diskcache.core.Timeout
+round 3/8: diskcache done
+round 3/8: oxide done
+Exception in thread Thread-9 (worker):
+Traceback (most recent call last):
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1083, in _bootstrap_inner
+    self._context.run(self.run)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1025, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\bench\baseline.py", line 364, in worker
+    set_(key, value)
+    ~~~~^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 796, in set
+    with self._transact(retry, filename) as (sql, cleanup):
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 730, in _transact
+    raise Timeout from None
+diskcache.core.Timeout
+round 4/8: diskcache done
+round 4/8: oxide done
+Exception in thread Thread-11 (worker):
+Traceback (most recent call last):
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1083, in _bootstrap_inner
+    self._context.run(self.run)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1025, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\bench\baseline.py", line 364, in worker
+    set_(key, value)
+    ~~~~^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 796, in set
+    with self._transact(retry, filename) as (sql, cleanup):
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 730, in _transact
+    raise Timeout from None
+diskcache.core.Timeout
+Exception in thread Thread-8 (worker):
+Traceback (most recent call last):
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1083, in _bootstrap_inner
+    self._context.run(self.run)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1025, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\bench\baseline.py", line 364, in worker
+    set_(key, value)
+    ~~~~^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 796, in set
+    with self._transact(retry, filename) as (sql, cleanup):
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 730, in _transact
+    raise Timeout from None
+diskcache.core.Timeout
+round 5/8: diskcache done
+round 5/8: oxide done
+round 6/8: diskcache done
+round 6/8: oxide done
+Exception in thread Thread-9 (worker):
+Traceback (most recent call last):
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1083, in _bootstrap_inner
+    self._context.run(self.run)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1025, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\bench\baseline.py", line 364, in worker
+    set_(key, value)
+    ~~~~^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 796, in set
+    with self._transact(retry, filename) as (sql, cleanup):
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 730, in _transact
+    raise Timeout from None
+diskcache.core.Timeout
+round 7/8: diskcache done
+round 7/8: oxide done
+Exception in thread Thread-12 (worker):
+Traceback (most recent call last):
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1083, in _bootstrap_inner
+    self._context.run(self.run)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\threading.py", line 1025, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\bench\baseline.py", line 364, in worker
+    set_(key, value)
+    ~~~~^^^^^^^^^^^^
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 796, in set
+    with self._transact(retry, filename) as (sql, cleanup):
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\mkenn\AppData\Roaming\uv\python\cpython-3.14+freethreaded-windows-x86_64-none\Lib\contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "C:\Users\mkenn\source\repos\diskcache-oxide\.venv-ft\Lib\site-packages\diskcache\core.py", line 730, in _transact
+    raise Timeout from None
+diskcache.core.Timeout
+round 8/8: diskcache done
+round 8/8: oxide done
+
+Python 3.14.10 (free-threaded), 8 interleaved rounds, tolerance 1.05x
+
+workload                     variant          p50 us / ops  vs diskcache  verdict
+get_hit_small                diskcache               6.946
+get_hit_small                oxide                   3.925         0.57x  FAIL (target <= 0.55x)
+get_miss                     diskcache               5.653
+get_miss                     oxide                   3.410         0.60x  pass
+get_hit_small_dict           diskcache               9.843
+get_hit_small_dict           oxide                   5.540         0.56x  pass
+set_small                    diskcache              96.385
+set_small                    oxide                  70.808         0.73x  pass (target <= 0.85x)
+get_random_wide              diskcache              15.459
+get_random_wide              oxide                  15.664         1.01x  pass
+threads_99to1 x1             diskcache         113,081.943
+threads_99to1 x1             oxide             171,208.004         1.51x  pass
+threads_99to1 x2             diskcache         141,024.793
+threads_99to1 x2             oxide             210,302.016         1.49x  pass
+threads_99to1 x4             diskcache         139,956.587
+threads_99to1 x4             oxide             282,136.141         2.02x  pass
+threads_99to1 x8             diskcache         126,840.067
+threads_99to1 x8             oxide             336,301.434         2.65x  pass
+threads_1000to1 x1           diskcache         125,157.044
+threads_1000to1 x1           oxide             186,352.899         1.49x  pass
+threads_1000to1 x2           diskcache         211,207.143
+threads_1000to1 x2           oxide             309,513.722         1.47x  pass
+threads_1000to1 x4           diskcache         291,140.711
+threads_1000to1 x4           oxide             455,362.413         1.56x  pass
+threads_1000to1 x8           diskcache         375,618.184
+threads_1000to1 x8           oxide             565,610.677         1.51x  pass
+
+oxide: NO-GO
