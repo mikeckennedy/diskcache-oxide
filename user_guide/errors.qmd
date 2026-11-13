@@ -154,7 +154,7 @@ SQLite refused write-ahead logging, which diskcache-oxide requires for readers a
 
 ## `OSError`
 
-- **Too many open files (`errno` `EMFILE`) opening a `FanoutCache`.** Each shard takes about 4 file descriptors to open, so 256 shards need more than Linux's usual `ulimit -n` of 1,024. The message gives the shard count, the descriptors needed, the limit and how many are already open. Raise the limit, or use fewer shards; eight is plenty for most apps. A failed open leaves nothing behind.
+- **Too many open files (`errno` `EMFILE`) opening a `FanoutCache`** (macOS and Linux; Windows has no `ulimit` on open files). Each shard takes about 4 file descriptors to open, so 256 shards need more than Linux's usual `ulimit -n` of 1,024. The message gives the shard count, the descriptors needed, the limit and how many are already open. Raise the limit, or use fewer shards; eight is plenty for most apps. A failed open leaves nothing behind.
 - **No hard links.** Creating a `FanoutCache` manifest uses a hard link, so a filesystem without them (FAT, exFAT, SMB, some FUSE mounts) raises `OSError` saying so. Use a local disk.
 - **Disk full, or an I/O error.** The write didn't happen and the cache is unchanged. Under `durable=True` a single-key call answers it as a miss or `False` and logs it; otherwise it raises. `Timeout` is an `OSError` too, so an `except OSError` around a cache call catches both.
 

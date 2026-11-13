@@ -12,7 +12,7 @@ pip install diskcache-oxide
 ```
 
 - **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
-- **Platforms:** macOS and Linux. Wheels cover macOS on Apple Silicon and Linux (glibc) on x86_64 and aarch64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. Windows support is planned.
+- **Platforms:** macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. [Windows](#windows) below says what differs there.
 - **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter (`diskcache_oxide.sqlite_version()` reports the one in use).
 
 ## Open a cache
@@ -265,6 +265,16 @@ A single `Cache` has one write lock per directory. Reads never wait for it, but 
 Call `cache.checkpoint()` at shutdown if you can. It isn't required. With readers in other processes, a burst of writes (a big fill, or a `clear()`) can leave SQLite's write-ahead log much larger than the database, and SQLite only shrinks it when it gets a moment with no readers. `checkpoint()` makes that moment: it waits briefly for in-flight reads, copies the log into the database, and truncates it. It returns `False` instead of raising if other processes keep it busy.
 
 `close()` does the same by default, but only when the log is large, and it waits at most a second, so closing stays cheap. [Storage and WAL](storage-and-wal.qmd) has the details.
+
+## Windows
+
+The API and the guarantees are the same on Windows, with these differences:
+
+- **No `fork()`.** Windows has no fork, so `multiprocessing` starts each worker fresh and each opens its own handle. The [fork guarantees](concurrency-and-forks.qmd) are Unix-only; threads and processes are safe everywhere.
+- **An open cache's directory can't be deleted.** Windows won't delete a file a process has open, and SQLite keeps the database open for as long as any handle is. `close()` every handle first: a closed cache's directory deletes cleanly. A delete attempted while it's open fails with `PermissionError`, and may still remove some large values' files on the way, which then read as misses.
+- **New directories take their parent's permissions.** On macOS and Linux a cache directory is created owner-only (0700); on Windows it inherits its parent's access control list.
+- **Other programs holding a file.** Antivirus, the search indexer and backup tools can hold a large value's file for a moment. A delete waits that out for about 50 ms; a file still held after that is left on disk with no entry, outside `size_limit`, until `check(fix=True)` removes it (it removes a file no entry names once the file is an hour old). Excluding cache directories from real-time antivirus scanning avoids this and can make them faster.
+- **Long paths work.** A cache directory can be deeper than Windows's 260-character limit, whether or not the machine enables long paths.
 
 ## Testing code that uses a cache
 
