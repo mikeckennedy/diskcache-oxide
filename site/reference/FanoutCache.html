@@ -1909,7 +1909,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1059-L1581" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1061-L1590" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">FanoutCache</span>(</span>
@@ -1929,8 +1929,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>    <span class="va">wal_size_limit</span><span class="op">=</span><span class="cn-none">None</span>,</span>
 <span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>    <span class="va">wal_checkpoint</span><span class="op">=</span><span class="st">"manual"</span>,</span>
 <span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    <span class="va">on_decode_error</span><span class="op">=</span><span class="cn-none">None</span>,</span>
-<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    <span class="va">durable</span><span class="op">=</span><span class="cn-bool">False</span></span>
-<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    <span class="va">durable</span><span class="op">=</span><span class="cn-bool">False</span>,</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    <span class="va">raise_on_mismatch</span><span class="op">=</span><span class="cn-bool">False</span></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
 </div>
 <div class="doc-text">
 <p>don’t queue on one file’s locks.</p>
@@ -1955,7 +1956,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><code><span class="doc-parameter-name">shards</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
-<p>How many shards, 1 to 256. <code>None</code> (the default) uses the count the root records, or 8 for a new root. A count that differs from the recorded one raises <a href="LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> (a <code>ValueError</code>): changing it needs a new directory. Each shard takes about 4 file descriptors to open, and 2 more per connection it opens in use, so 256 shards need over 1,024: more than Linux’s default <code>ulimit -n</code>. Too few raises <code>OSError</code> (<code>EMFILE</code>) with the numbers.</p>
+<p>How many shards, 1 to 256. <code>None</code> (the default) uses the count the root records, or 8 for a new root. A count that differs from the recorded one opens with the recorded count and logs a <code>WARNING</code> on the <code>diskcache_oxide</code> logger, once per process; changing the count needs a new directory. Each shard takes about 4 file descriptors to open, and 2 more per connection it opens in use, so 256 shards need over 1,024: more than Linux’s default <code>ulimit -n</code>. Too few raises <code>OSError</code> (<code>EMFILE</code>) with the numbers.</p>
 </dd>
 <dt><code><span class="doc-parameter-name">size_limit</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
@@ -2003,7 +2004,11 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><code><span class="doc-parameter-name">durable</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">bool</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="va">False</span></span></code></dt>
 <dd>
-As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>: single-key calls on a shard that fails give their miss values. One report covers every shard, named by the root directory.
+<p>As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>: single-key calls on a shard that fails give their miss values. One report covers every shard, named by the root directory.</p>
+</dd>
+<dt><code><span class="doc-parameter-name">raise_on_mismatch</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">bool</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="va">False</span></span></code></dt>
+<dd>
+Raise <a href="LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> (a <code>ValueError</code>) when <a href="FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> differs from the root’s recorded count, instead of using the recorded count with a warning (default False). It covers the count only: a root in another on-disk format still opens in its <code>diskcache-oxide-format-N</code> subdirectory.
 </dd>
 </dl>
 </div>
@@ -2018,7 +2023,7 @@ As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Ca
 </dd>
 <dt><code> <span class="doc-parameter-annotation">LayoutMismatchError</span></code></dt>
 <dd>
-<p><a href="FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> differs from the root’s, or the directory belongs to a plain <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (or a shard of it does). Also a <code>ValueError</code>, and a <a href="FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>.</p>
+<p><a href="FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> differs from the root’s and <code>raise_on_mismatch</code> is True, or the directory belongs to a plain <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (or a shard of it does). Also a <code>ValueError</code>, and a <a href="FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>.</p>
 </dd>
 <dt><code> <span class="doc-parameter-annotation">TypeError</span></code></dt>
 <dd>

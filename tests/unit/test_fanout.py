@@ -8,7 +8,9 @@ vector is a format break, never a test update.
 from __future__ import annotations
 
 import gc
+import logging
 import os
+import pickle
 import random
 import signal
 import subprocess
@@ -23,7 +25,7 @@ from typing import Any
 
 import pytest
 import xxhash
-from diskcache_oxide import Cache, FanoutCache, Key, Timeout
+from diskcache_oxide import Cache, FanoutCache, Key, LayoutMismatchError, Timeout
 
 from tests.conformance.proc_workers import SqlitePeer
 from tests.keys import str_keys
@@ -172,12 +174,51 @@ def test_a_new_root_has_a_manifest_and_eight_shard_directories(tmp_path: Path) -
     assert all((root / f'{i:03d}' / 'diskcache-oxide.sqlite').exists() for i in range(8))
 
 
-def test_the_stored_count_wins_and_another_is_refused(tmp_path: Path) -> None:
+def test_the_stored_count_wins_and_another_is_a_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     FanoutCache(tmp_path, shards=4).close()
     with FanoutCache(tmp_path) as cache:
         assert cache.shards == 4
-    with pytest.raises(ValueError, match=r'has 4 shards but shards=8'):
-        FanoutCache(tmp_path, shards=8)
+    with caplog.at_level(logging.WARNING, logger='diskcache_oxide'):
+        for _ in range(3):
+            with FanoutCache(tmp_path, shards=8) as cache:
+                assert cache.shards == 4, 'the stored count, not the one asked for'
+    warned = [r for r in caplog.records if r.name == 'diskcache_oxide' and r.levelno == logging.WARNING]
+    assert len(warned) == 1, 'once per process per root and pair of counts'
+    assert 'has 4 shards but shards=8 was asked for' in warned[0].getMessage()
+    assert 'raise_on_mismatch=True' in warned[0].getMessage()
+    extra = tuple(getattr(warned[0], k) for k in ('stored_shards', 'requested_shards'))
+    assert extra == (4, 8)
+
+
+def test_raise_on_mismatch_refuses_another_count(tmp_path: Path) -> None:
+    FanoutCache(tmp_path, shards=4).close()
+    with pytest.raises(LayoutMismatchError, match=r'has 4 shards but shards=8'):
+        FanoutCache(tmp_path, shards=8, raise_on_mismatch=True)
+    with FanoutCache(tmp_path, shards=4, raise_on_mismatch=True) as cache:
+        assert cache.shards == 4, 'the same count opens as usual'
+        copy = pickle.loads(pickle.dumps(cache))
+    try:
+        assert copy.shards == 4
+    finally:
+        copy.close()
+
+
+def test_an_old_format_root_redirects_whatever_its_count(tmp_path: Path) -> None:
+    # Plan 26: the count belongs to a cache this open won't use, so even raise_on_mismatch=True
+    # redirects a root in another on-disk format rather than raising for its count.
+    FanoutCache(tmp_path, shards=4).close()
+    script = (
+        'import sqlite3, sys\n'
+        'for path in sys.argv[1:]:\n'
+        '    con = sqlite3.connect(path)\n'
+        '    con.execute("PRAGMA user_version = 2")\n'
+        '    con.close()\n'
+    )
+    shards = [str(tmp_path / f'{i:03d}' / 'diskcache-oxide.sqlite') for i in range(4)]
+    subprocess.run([sys.executable, '-c', script, *shards], check=True)
+    with FanoutCache(tmp_path, shards=8, raise_on_mismatch=True) as cache:
+        assert Path(cache.directory) == tmp_path / 'diskcache-oxide-format-3'
+        assert cache.shards == 8
 
 
 @pytest.mark.parametrize('shards', [0, -1, 257, 1 << 40])

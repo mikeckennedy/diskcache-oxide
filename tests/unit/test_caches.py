@@ -682,7 +682,7 @@ def test_a_layout_mismatch_is_a_null_cache_reported_remembered_and_retried(base:
 def test_a_layout_mismatch_raised_directly_is_still_a_value_error(base: Path) -> None:
     _fanout_root(base / 'rl')
     attempts = [
-        lambda: FanoutCache(base / 'rl', shards=16),
+        lambda: FanoutCache(base / 'rl', shards=16, raise_on_mismatch=True),
         lambda: Cache(base / 'rl'),
         lambda: Cache(base / 'rl' / '000'),
     ]
@@ -868,7 +868,7 @@ def test_settings_that_fit_the_registered_count_but_not_the_folders_are_a_report
     [(name, exc)] = errors
     assert name == 'rl' and isinstance(exc, LayoutMismatchError)
     message = str(exc)
-    assert 'has 8 shards but is registered with shards=4' in message, message
+    assert 'has 8 shards but shards=4 was asked for' in message, message
     assert next(iter(settings)) in message and 'delete the directory' in message, message
     caches.close_all()
 
@@ -913,6 +913,17 @@ def test_a_private_parameter_is_never_a_registry_setting(base: Path) -> None:
         caches.register('rl', shards=4, _anything=True)
     with pytest.raises(TypeError, match='unknown Cache setting'):
         Caches(base, _anything=True)
+
+
+def test_raise_on_mismatch_in_a_registration_makes_another_count_an_open_failure(base: Path) -> None:
+    _fanout_root(base / 'rl')
+    errors: list[tuple[str, Exception]] = []
+    caches = Caches(base, on_open_error=lambda name, exc: errors.append((name, exc)))
+    caches.register('rl', shards=4, raise_on_mismatch=True)
+    assert isinstance(caches.fanout('rl'), NullCache)
+    [(name, exc)] = errors
+    assert name == 'rl' and isinstance(exc, LayoutMismatchError), exc
+    caches.close_all()
 
 
 def test_the_keeping_open_takes_every_fanout_setting() -> None:

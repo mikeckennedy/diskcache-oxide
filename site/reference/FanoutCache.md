@@ -24,7 +24,8 @@ FanoutCache(
     wal_size_limit=None,
     wal_checkpoint="manual",
     on_decode_error=None,
-    durable=False
+    durable=False,
+    raise_on_mismatch=False
 )
 ```
 
@@ -49,7 +50,7 @@ The root directory. It holds the manifest (`diskcache-oxide-fanout`) and one dir
 As for [Cache](Cache.md#diskcache_oxide.Cache) (default 60). Opening, `len()`, [volume()](Cache.volume.md#diskcache_oxide.Cache.volume), [clear()](Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](Cache.expire.md#diskcache_oxide.Cache.expire), [cull()](Cache.cull.md#diskcache_oxide.Cache.cull), [checkpoint()](Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) and [close()](Cache.close.md#diskcache_oxide.Cache.close) share one [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) across every shard, not one each.
 
 `shards: int | None = None`  
-How many shards, 1 to 256. `None` (the default) uses the count the root records, or 8 for a new root. A count that differs from the recorded one raises [LayoutMismatchError](LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) (a `ValueError`): changing it needs a new directory. Each shard takes about 4 file descriptors to open, and 2 more per connection it opens in use, so 256 shards need over 1,024: more than Linux's default `ulimit -n`. Too few raises `OSError` (`EMFILE`) with the numbers.
+How many shards, 1 to 256. `None` (the default) uses the count the root records, or 8 for a new root. A count that differs from the recorded one opens with the recorded count and logs a `WARNING` on the `diskcache_oxide` logger, once per process; changing the count needs a new directory. Each shard takes about 4 file descriptors to open, and 2 more per connection it opens in use, so 256 shards need over 1,024: more than Linux's default `ulimit -n`. Too few raises `OSError` (`EMFILE`) with the numbers.
 
 `size_limit: int | None = None`  
 The disk budget in bytes for the whole cache, split evenly (floored) across the shards, each of which culls on its own. Each shard needs at least 1 MiB, so the total must be at least [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) MiB. With none given, a new root gets 1 GiB in all.
@@ -87,6 +88,9 @@ As for [Cache](Cache.md#diskcache_oxide.Cache).
 `durable: bool = ``False`  
 As for [Cache](Cache.md#diskcache_oxide.Cache): single-key calls on a shard that fails give their miss values. One report covers every shard, named by the root directory.
 
+`raise_on_mismatch: bool = ``False`  
+Raise [LayoutMismatchError](LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) (a `ValueError`) when [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) differs from the root's recorded count, instead of using the recorded count with a warning (default False). It covers the count only: a root in another on-disk format still opens in its `diskcache-oxide-format-N` subdirectory.
+
 
 ## Raises
 
@@ -95,7 +99,7 @@ As for [Cache](Cache.md#diskcache_oxide.Cache): single-key calls on a shard that
 A setting is out of range, or `max_connections` is below [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards).
 
 `LayoutMismatchError`  
-[shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) differs from the root's, or the directory belongs to a plain [Cache](Cache.md#diskcache_oxide.Cache) (or a shard of it does). Also a `ValueError`, and a [FormatMismatchError](FormatMismatchError.md#diskcache_oxide.FormatMismatchError).
+[shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) differs from the root's and `raise_on_mismatch` is True, or the directory belongs to a plain [Cache](Cache.md#diskcache_oxide.Cache) (or a shard of it does). Also a `ValueError`, and a [FormatMismatchError](FormatMismatchError.md#diskcache_oxide.FormatMismatchError).
 
 `TypeError`  
 An argument has the wrong type, including a `bool` for [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) or [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards).

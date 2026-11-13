@@ -45,14 +45,17 @@ A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) directo
 
 Each shard is an ordinary diskcache-oxide database. The manifest records the shard count and the hash. A key's shard is XXH3-64 (seed 0) of its type byte and its UTF-8 bytes, mapped onto the shard count. **That hash is part of the on-disk format and is frozen**: pinned by golden vectors in the test suite, so every process and every release sends a key to the same place. A future scheme would get a new format number, never a change in place.
 
-Because the shard count decides where every key lives, it's recorded, and a different `shards=` is an error instead of a quiet loss of data:
+Because the shard count decides where every key lives, it's recorded, and a different `shards=` never changes it. The cache opens with the count it has and logs a warning, once per process, instead of quietly losing data. Pass `raise_on_mismatch=True` to make it an error instead:
 
 ``` python
 FanoutCache('/var/cache/my-app-rate-limits', shards=16)
-# LayoutMismatchError: the root has 8 shards, not 16
+# WARNING: FanoutCache at /var/cache/my-app-rate-limits has 8 shards but shards=16 was asked for; using the 8 it has. ...
+
+FanoutCache('/var/cache/my-app-rate-limits', shards=16, raise_on_mismatch=True)
+# LayoutMismatchError: this FanoutCache has 8 shards but shards=16 was requested; changing the count needs a new directory
 ```
 
-`shards=None` (the default) uses the stored count, or creates 8. Changing the count means a new directory. Creating the manifest uses a hard link, so a filesystem without them (FAT, exFAT, SMB, some FUSE mounts) raises `OSError` saying so.
+`shards=None` (the default) uses the stored count, or creates 8. Changing the count means a new directory. `raise_on_mismatch` covers the count only: a root in another on-disk format opens in its versioned subdirectory either way (below). Creating the manifest uses a hard link, so a filesystem without them (FAT, exFAT, SMB, some FUSE mounts) raises `OSError` saying so.
 
 
 ## Plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) and [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) directories don't mix

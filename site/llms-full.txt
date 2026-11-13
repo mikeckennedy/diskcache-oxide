@@ -805,7 +805,7 @@ Examples:
 A cache sharded over several SQLite databases, so writers in many processes stop queueing on one write lock.
 
 
-FanoutCache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, shards: 'int | None' = None, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False) -> 'FanoutCache'
+FanoutCache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, shards: 'int | None' = None, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False, raise_on_mismatch: 'bool' = False) -> 'FanoutCache'
 
 A disk cache split over several SQLite databases (shards), so reads and writes on different keys
 don't queue on one file's locks.
@@ -833,8 +833,9 @@ Args:
         `cull()`, `checkpoint()` and `close()` share one `timeout` across every shard, not one
         each.
     shards: How many shards, 1 to 256. `None` (the default) uses the count the root records, or
-        8 for a new root. A count that differs from the recorded one raises `LayoutMismatchError` (a `ValueError`):
-        changing it needs a new directory. Each shard takes about 4 file descriptors to open,
+        8 for a new root. A count that differs from the recorded one opens with the recorded
+        count and logs a `WARNING` on the `diskcache_oxide` logger, once per process; changing the
+        count needs a new directory. Each shard takes about 4 file descriptors to open,
         and 2 more per connection it opens in use, so 256 shards need over 1,024: more than
         Linux's default `ulimit -n`. Too few raises `OSError` (`EMFILE`) with the numbers.
     size_limit: The disk budget in bytes for the whole cache, split evenly (floored) across the
@@ -854,10 +855,15 @@ Args:
     on_decode_error: As for `Cache`.
     durable: As for `Cache`: single-key calls on a shard that fails give their miss values. One
         report covers every shard, named by the root directory.
+    raise_on_mismatch: Raise `LayoutMismatchError` (a `ValueError`) when `shards` differs from
+        the root's recorded count, instead of using the recorded count with a warning (default
+        False). It covers the count only: a root in another on-disk format still opens in its
+        `diskcache-oxide-format-N` subdirectory.
 
 Raises:
     ValueError: A setting is out of range, or `max_connections` is below `shards`.
-    LayoutMismatchError: `shards` differs from the root's, or the directory belongs to a plain
+    LayoutMismatchError: `shards` differs from the root's and `raise_on_mismatch` is True, or the
+        directory belongs to a plain
         `Cache` (or a shard of it does). Also a `ValueError`, and a `FormatMismatchError`.
     TypeError: An argument has the wrong type, including a `bool` for `timeout` or `shards`.
     FormatMismatchError: Inside the versioned subdirectory, the manifest or a shard's database
@@ -2719,12 +2725,12 @@ A database, or a `FanoutCache` manifest, in a format this build doesn't know, wh
 ## `LayoutMismatchError`: the wrong kind of cache for the directory
 
 ```text
-LayoutMismatchError: the root has 8 shards, not 16
+LayoutMismatchError: this FanoutCache has 8 shards but shards=16 was requested; changing the count needs a new directory
 ```
 
-The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or one of its shard directories, a `FanoutCache` on a plain `Cache`'s directory, or a `shards=` count that differs from the one the root records. The refused open creates nothing, so a typo doesn't leave a directory neither kind can open. It's both a `ValueError` and a `FormatMismatchError`.
+The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or one of its shard directories, a `FanoutCache` on a plain `Cache`'s directory, or, with `raise_on_mismatch=True`, a `shards=` count that differs from the one the root records. (Without `raise_on_mismatch`, another count opens with the root's own and logs a warning.) The refused open creates nothing, so a typo doesn't leave a directory neither kind can open. It's both a `ValueError` and a `FormatMismatchError`.
 
-Use the class the directory was created with, and for a `FanoutCache` either leave `shards` out (the stored count is used) or pass the stored one. A different shard count means a new directory: the count decides where every key lives, so it can't change in place. See [The layout and the hash](fanoutcache.qmd#the-layout-and-the-hash). In a [`Caches`](caches.qmd) registry, a lookup that hits a role mismatch returns a `NullCache` and reports it like any failed open. Another shard count is not an error there: the registry opens the folder with the count on disk and logs a warning (below). It still fails with `LayoutMismatchError`, and so a `NullCache`, when a `size_limit` or `max_connections` that fits the registered count is too small to split over the folder's count; delete the folder or raise the setting.
+Use the class the directory was created with, and for a `FanoutCache` with `raise_on_mismatch=True` either leave `shards` out (the stored count is used) or pass the stored one. A different shard count means a new directory: the count decides where every key lives, so it can't change in place. See [The layout and the hash](fanoutcache.qmd#the-layout-and-the-hash). In a [`Caches`](caches.qmd) registry, a lookup that hits a role mismatch returns a `NullCache` and reports it like any failed open. Another shard count is not an error there: the registry opens the folder with the count on disk and logs a warning (below). It still fails with `LayoutMismatchError`, and so a `NullCache`, when a `size_limit` or `max_connections` that fits the registered count is too small to split over the folder's count; delete the folder or raise the setting.
 
 ## `RuntimeError`: the filesystem can't run SQLite in WAL mode
 
@@ -2772,6 +2778,7 @@ These settings turn failures into log lines on the `diskcache_oxide` logger inst
 - **`on_decode_error='miss'`** logs a warning for each stored version it couldn't read, once per cache handle, and deletes the row if no build could read it.
 - **`durable=True`** counts every swallowed failure in one of three groups and logs each group's first failure at once, then at most once a minute per cache handle, with counts by operation since its last line (`get: 1204, set: 37`). Busy (a `Timeout`) logs at `WARNING`, failing (a full disk, an I/O error, a damaged database) at `ERROR`, and lost invalidations (any failed `delete`, whose entry can now be served stale) at `ERROR`. An outage that ends within the minute shows only its first failure until the next line, so each line says more may follow. `close()` logs what's left.
 - **`Caches`** logs `could not open cache 'pages' at /var/cache/my-app/pages; using a NullCache, retrying in 10 s` at `ERROR` with the traceback when a cache can't open, and the same at `WARNING` without one when the open merely timed out (that's retried after at most 1 s). Pass `on_open_error=` to send it to Sentry instead.
+- **`FanoutCache(directory, shards=n)`** logs `FanoutCache at /var/cache/my-app/rate_limits has 8 shards but shards=16 was asked for; using the 8 it has. ...` at `WARNING`, once per process per folder and pair of counts, when the folder has another count than `shards`. Its record carries `directory`, `stored_shards` and `requested_shards`. Pass `raise_on_mismatch=True` to raise `LayoutMismatchError` instead.
 - **`Caches`** also logs `cache 'rate_limits' at /var/cache/my-app/rate_limits has 8 shards but is registered with shards=16; using the 8 on disk. To apply shards=16, delete /var/cache/my-app/rate_limits while no process has it open` at `WARNING` each time it opens a sharded cache whose folder has another count than the registration, and once per process `a FanoutCache is registered with a shard count its folder does not have` at `ERROR`, a constant message with the details in the record's `cache`, `directory`, `stored_shards` and `registered_shards` attributes, so an error tracker groups every worker's report into one issue. The cache works throughout; this one doesn't go through `on_open_error`, since the open succeeded.
 
 ## If it looks like a bug in diskcache-oxide
@@ -3241,7 +3248,7 @@ caches.fanout('rate_limits').incr('ip:203.0.113.7')
 
 A plain cache is read with `caches[name]` and a sharded one with `caches.fanout(name)`, typed `FanoutCache | NullCache`, because its `transact` takes a key. Reading a name the wrong way raises `TypeError`. Passing `shards` at all picks the kind, even `shards=None`, so a config file that writes `shards: null` for "none" would register a `FanoutCache`: leave it out. A directory that holds the other kind of cache fails to open with `LayoutMismatchError`, and the lookup returns a `NullCache` like any failed open.
 
-A sharded cache keeps the shard count it was created with. `register('rate_limits', shards=16)` on a folder that already has 8 shards opens it with 8, logs a `WARNING` saying so and how to apply 16, and logs one `ERROR` per process so an error tracker hears of it. Every process then routes keys by the same count, so a deploy that changes `shards=` keeps working while old and new workers overlap. The registered count applies only to a new folder: to change it, delete the folder with every worker stopped, for example at deploy. A folder deleted while old workers still run is re-created by whichever process opens it first, with that process's count. One case is still a `NullCache`: a `size_limit` or `max_connections` that fits the registered count but is too small to split over the folder's count (at least one connection and 1 MiB a shard) fails with `LayoutMismatchError` naming both counts. A setting that's wrong for the registered count itself still raises `ValueError` from the lookup, as any bad setting does. A direct `FanoutCache(path, shards=16)` on that folder still raises `LayoutMismatchError`: only the registry is lenient. Everything else on this page (`disable`, `stats`, `clear`, `expire_all`, `close_all`) works the same for both kinds.
+A sharded cache keeps the shard count it was created with. `register('rate_limits', shards=16)` on a folder that already has 8 shards opens it with 8, logs a `WARNING` saying so and how to apply 16, and logs one `ERROR` per process so an error tracker hears of it. Every process then routes keys by the same count, so a deploy that changes `shards=` keeps working while old and new workers overlap. The registered count applies only to a new folder: to change it, delete the folder with every worker stopped, for example at deploy. A folder deleted while old workers still run is re-created by whichever process opens it first, with that process's count. One case is still a `NullCache`: a `size_limit` or `max_connections` that fits the registered count but is too small to split over the folder's count (at least one connection and 1 MiB a shard) fails with `LayoutMismatchError` naming both counts. A setting that's wrong for the registered count itself still raises `ValueError` from the lookup, as any bad setting does. A direct `FanoutCache(path, shards=16)` on that folder opens with 8 too, and logs its own `WARNING`. Pass `raise_on_mismatch=True`, to `register()` or to `FanoutCache`, to make another count an error instead: in the registry that's an open failure, so the lookup returns a reported `NullCache`. Everything else on this page (`disable`, `stats`, `clear`, `expire_all`, `close_all`) works the same for both kinds.
 
 ## Switching caches off
 
@@ -3393,14 +3400,17 @@ my-app-rate-limits/
 
 Each shard is an ordinary diskcache-oxide database. The manifest records the shard count and the hash. A key's shard is XXH3-64 (seed 0) of its type byte and its UTF-8 bytes, mapped onto the shard count. **That hash is part of the on-disk format and is frozen**: pinned by golden vectors in the test suite, so every process and every release sends a key to the same place. A future scheme would get a new format number, never a change in place.
 
-Because the shard count decides where every key lives, it's recorded, and a different `shards=` is an error instead of a quiet loss of data:
+Because the shard count decides where every key lives, it's recorded, and a different `shards=` never changes it. The cache opens with the count it has and logs a warning, once per process, instead of quietly losing data. Pass `raise_on_mismatch=True` to make it an error instead:
 
 ```python
 FanoutCache('/var/cache/my-app-rate-limits', shards=16)
-# LayoutMismatchError: the root has 8 shards, not 16
+# WARNING: FanoutCache at /var/cache/my-app-rate-limits has 8 shards but shards=16 was asked for; using the 8 it has. ...
+
+FanoutCache('/var/cache/my-app-rate-limits', shards=16, raise_on_mismatch=True)
+# LayoutMismatchError: this FanoutCache has 8 shards but shards=16 was requested; changing the count needs a new directory
 ```
 
-`shards=None` (the default) uses the stored count, or creates 8. Changing the count means a new directory. Creating the manifest uses a hard link, so a filesystem without them (FAT, exFAT, SMB, some FUSE mounts) raises `OSError` saying so.
+`shards=None` (the default) uses the stored count, or creates 8. Changing the count means a new directory. `raise_on_mismatch` covers the count only: a root in another on-disk format opens in its versioned subdirectory either way (below). Creating the manifest uses a hard link, so a filesystem without them (FAT, exFAT, SMB, some FUSE mounts) raises `OSError` saying so.
 
 ### Plain `Cache` and `FanoutCache` directories don't mix
 
@@ -3992,7 +4002,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-029 | `with cache.transact() as tx:` | `tx` is `None`; a second handle's `transact()` inside waits out the timeout | `tx` is the cache; every handle on the directory joins the outer transaction |
 | D-030 | A transaction on a second, busy cache | Waits for the timeout; `retry=True` loops on any `OperationalError` | `TransactionBusy` at once; `retry=True` retries only `Timeout` |
 | D-031 | Ending a transaction on another thread | "May not be shared between threads" | Allowed, within its `timeout`; the owner's exit raises unless it committed |
-| D-032 | `FanoutCache` shard count | Not recorded; a different `shards=` quietly misroutes keys | Recorded in a manifest; a different `shards=` raises `LayoutMismatchError` |
+| D-032 | `FanoutCache` shard count | Not recorded; a different `shards=` quietly misroutes keys | Recorded in a manifest; a different `shards=` keeps it with a warning, or raises with `raise_on_mismatch=True` |
 | D-033 | Which shard a key lives in | adler32; no `iterkeys()` | XXH3-64, frozen in the format; `shard_of(key)`; `iterkeys()` merges the shards in sorted order |
 | D-034 | A busy shard on a single-key call | Swallows `Timeout` (10 ms default); `get` swallows any `OperationalError` | Raises `Timeout`; `durable=True` answers it as a miss and reports it |
 | D-035 | `clear()`, `expire()`, `cull()` over the shards | Retries each shard forever | One `timeout` for the call; raises with `failed_shards` and `removed` |
@@ -4134,7 +4144,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 
 These are covered together in [FanoutCache: sharded caches](fanoutcache.qmd), and listed against diskcache's in [Switching from python-diskcache](switching-from-diskcache.qmd#fanoutcache).
 
-- **D-032:** the shard count is part of where every key lives, so it's recorded, and a different `shards=` is an error instead of a quiet loss of data and atomicity.
+- **D-032:** the shard count is part of where every key lives, so it's recorded, and a different `shards=` never changes it: the cache opens with the stored count and logs a warning, or raises `LayoutMismatchError` with `raise_on_mismatch=True`, instead of quietly losing data and atomicity.
 - **D-033:** the hash is fixed by its definition and part of the format, and `iterkeys(prefix=)` gives `FanoutCache` the ordered listing `Cache` has.
 - **D-034:** a silently dropped write and a hang are both worse than an error the caller chose how to handle; `durable=True` is that choice.
 - **D-035:** a maintenance job must finish in bounded time, and when it can't, it must say what it did.

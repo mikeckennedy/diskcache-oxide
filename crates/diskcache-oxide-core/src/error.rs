@@ -75,7 +75,7 @@ pub enum Error {
     /// `max_connections` too small to split over `stored` shards). Python `LayoutMismatchError`, so
     /// the registry serves its reported `NullCache` (plan 15, R1).
     #[error(
-        "this FanoutCache has {stored} shards but is registered with shards={requested}, and its settings don't fit {stored} shards: {reason}; delete the directory to apply shards={requested}, or raise the setting"
+        "this FanoutCache has {stored} shards but shards={requested} was asked for, and its settings don't fit {stored} shards: {reason}; delete the directory to apply shards={requested}, or raise the setting"
     )]
     StoredShardsRefuseSettings { stored: u32, requested: u32, reason: String },
 

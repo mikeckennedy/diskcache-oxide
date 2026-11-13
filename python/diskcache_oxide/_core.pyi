@@ -122,11 +122,13 @@ def _open_fanout_keeping_stored(
     wal_checkpoint: Literal['manual', 'auto'] = 'manual',
     on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
     durable: bool = False,
+    raise_on_mismatch: bool = False,
 ) -> FanoutCache:
     """For the `Caches` registry: `FanoutCache(...)`, but `shards` is the count for a new root only.
 
-    An existing root keeps its stored count instead of raising `LayoutMismatchError`; compare the
-    result's `shards` with the one passed. A setting that fits `shards` but not the stored count
+    An existing root keeps its stored count, with no warning (the registry reports it); compare the
+    result's `shards` with the one passed. With `raise_on_mismatch=True` another count raises
+    `LayoutMismatchError` instead. A setting that fits `shards` but not the stored count
     raises `LayoutMismatchError` (plan 15).
     """
 
@@ -1083,8 +1085,9 @@ class FanoutCache:
             `cull()`, `checkpoint()` and `close()` share one `timeout` across every shard, not one
             each.
         shards: How many shards, 1 to 256. `None` (the default) uses the count the root records, or
-            8 for a new root. A count that differs from the recorded one raises `LayoutMismatchError` (a `ValueError`):
-            changing it needs a new directory. Each shard takes about 4 file descriptors to open,
+            8 for a new root. A count that differs from the recorded one opens with the recorded
+            count and logs a `WARNING` on the `diskcache_oxide` logger, once per process; changing the
+            count needs a new directory. Each shard takes about 4 file descriptors to open,
             and 2 more per connection it opens in use, so 256 shards need over 1,024: more than
             Linux's default `ulimit -n`. Too few raises `OSError` (`EMFILE`) with the numbers.
         size_limit: The disk budget in bytes for the whole cache, split evenly (floored) across the
@@ -1104,10 +1107,15 @@ class FanoutCache:
         on_decode_error: As for `Cache`.
         durable: As for `Cache`: single-key calls on a shard that fails give their miss values. One
             report covers every shard, named by the root directory.
+        raise_on_mismatch: Raise `LayoutMismatchError` (a `ValueError`) when `shards` differs from
+            the root's recorded count, instead of using the recorded count with a warning (default
+            False). It covers the count only: a root in another on-disk format still opens in its
+            `diskcache-oxide-format-N` subdirectory.
 
     Raises:
         ValueError: A setting is out of range, or `max_connections` is below `shards`.
-        LayoutMismatchError: `shards` differs from the root's, or the directory belongs to a plain
+        LayoutMismatchError: `shards` differs from the root's and `raise_on_mismatch` is True, or the
+            directory belongs to a plain
             `Cache` (or a shard of it does). Also a `ValueError`, and a `FormatMismatchError`.
         TypeError: An argument has the wrong type, including a `bool` for `timeout` or `shards`.
         FormatMismatchError: Inside the versioned subdirectory, the manifest or a shard's database
@@ -1148,6 +1156,7 @@ class FanoutCache:
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
         on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
         durable: bool = False,
+        raise_on_mismatch: bool = False,
     ) -> FanoutCache: ...
     @property
     def directory(self) -> str:

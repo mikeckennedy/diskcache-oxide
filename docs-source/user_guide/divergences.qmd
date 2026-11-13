@@ -42,7 +42,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-029 | `with cache.transact() as tx:` | `tx` is `None`; a second handle's `transact()` inside waits out the timeout | `tx` is the cache; every handle on the directory joins the outer transaction |
 | D-030 | A transaction on a second, busy cache | Waits for the timeout; `retry=True` loops on any `OperationalError` | `TransactionBusy` at once; `retry=True` retries only `Timeout` |
 | D-031 | Ending a transaction on another thread | "May not be shared between threads" | Allowed, within its `timeout`; the owner's exit raises unless it committed |
-| D-032 | `FanoutCache` shard count | Not recorded; a different `shards=` quietly misroutes keys | Recorded in a manifest; a different `shards=` raises `LayoutMismatchError` |
+| D-032 | `FanoutCache` shard count | Not recorded; a different `shards=` quietly misroutes keys | Recorded in a manifest; a different `shards=` keeps it with a warning, or raises with `raise_on_mismatch=True` |
 | D-033 | Which shard a key lives in | adler32; no `iterkeys()` | XXH3-64, frozen in the format; `shard_of(key)`; `iterkeys()` merges the shards in sorted order |
 | D-034 | A busy shard on a single-key call | Swallows `Timeout` (10 ms default); `get` swallows any `OperationalError` | Raises `Timeout`; `durable=True` answers it as a miss and reports it |
 | D-035 | `clear()`, `expire()`, `cull()` over the shards | Retries each shard forever | One `timeout` for the call; raises with `failed_shards` and `removed` |
@@ -184,7 +184,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 
 These are covered together in [FanoutCache: sharded caches](fanoutcache.qmd), and listed against diskcache's in [Switching from python-diskcache](switching-from-diskcache.qmd#fanoutcache).
 
-- **D-032:** the shard count is part of where every key lives, so it's recorded, and a different `shards=` is an error instead of a quiet loss of data and atomicity.
+- **D-032:** the shard count is part of where every key lives, so it's recorded, and a different `shards=` never changes it: the cache opens with the stored count and logs a warning, or raises `LayoutMismatchError` with `raise_on_mismatch=True`, instead of quietly losing data and atomicity.
 - **D-033:** the hash is fixed by its definition and part of the format, and `iterkeys(prefix=)` gives `FanoutCache` the ordered listing `Cache` has.
 - **D-034:** a silently dropped write and a hang are both worse than an error the caller chose how to handle; `durable=True` is that choice.
 - **D-035:** a maintenance job must finish in bounded time, and when it can't, it must say what it did.

@@ -894,7 +894,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>D-032</td>
 <td><a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> shard count</td>
 <td>Not recorded; a different <code>shards=</code> quietly misroutes keys</td>
-<td>Recorded in a manifest; a different <code>shards=</code> raises <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a></td>
+<td>Recorded in a manifest; a different <code>shards=</code> keeps it with a warning, or raises with <code>raise_on_mismatch=True</code></td>
 </tr>
 <tr class="odd">
 <td>D-033</td>
@@ -1179,7 +1179,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h2 class="anchored" data-anchor-id="fanoutcache-d-032-to-d-040">FanoutCache (D-032 to D-040)</h2>
 <p>These are covered together in <a href="../user-guide/fanoutcache.html">FanoutCache: sharded caches</a>, and listed against diskcache’s in <a href="../user-guide/switching-from-diskcache.html#fanoutcache">Switching from python-diskcache</a>.</p>
 <ul>
-<li><strong>D-032:</strong> the shard count is part of where every key lives, so it’s recorded, and a different <code>shards=</code> is an error instead of a quiet loss of data and atomicity.</li>
+<li><strong>D-032:</strong> the shard count is part of where every key lives, so it’s recorded, and a different <code>shards=</code> never changes it: the cache opens with the stored count and logs a warning, or raises <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> with <code>raise_on_mismatch=True</code>, instead of quietly losing data and atomicity.</li>
 <li><strong>D-033:</strong> the hash is fixed by its definition and part of the format, and <code>iterkeys(prefix=)</code> gives <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> the ordered listing <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> has.</li>
 <li><strong>D-034:</strong> a silently dropped write and a hang are both worse than an error the caller chose how to handle; <code>durable=True</code> is that choice.</li>
 <li><strong>D-035:</strong> a maintenance job must finish in bounded time, and when it can’t, it must say what it did.</li>

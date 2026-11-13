@@ -69,6 +69,7 @@ impl FanoutCache {
         wal_checkpoint = "manual",
         on_decode_error = None,
         durable = false,
+        raise_on_mismatch = false,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -89,13 +90,14 @@ impl FanoutCache {
         wal_checkpoint: &str,
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
+        raise_on_mismatch: bool,
     ) -> PyResult<Self> {
         Self::construct(
             py,
             directory,
             timeout,
             shards,
-            false,
+            if raise_on_mismatch { CountMismatch::Raise } else { CountMismatch::Warn },
             size_limit,
             cull_limit,
             eviction_policy,
@@ -625,17 +627,31 @@ impl FanoutCache {
     }
 }
 
+/// What an explicit `shards=n` that differs from an existing root's stored count does. A root in
+/// another on-disk format is redirected first in every mode (plan 26): its count belongs to a cache
+/// this open won't use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CountMismatch {
+    /// Keep the stored count and log a `WARNING`, once per process per root and pair of counts:
+    /// `FanoutCache(...)`'s default.
+    Warn,
+    /// `LayoutMismatchError` naming both counts: `FanoutCache(..., raise_on_mismatch=True)`.
+    Raise,
+    /// Keep the stored count without a word: the `Caches` registry, which reports it itself.
+    Quiet,
+}
+
 impl FanoutCache {
     /// `FanoutCache(...)` and `_open_fanout_keeping_stored(...)`: validates the settings (in
-    /// `Cache`'s order, then `shards`) and opens the root. With `keep_stored`, `shards=n` is a count
-    /// for a new root only, and an existing root keeps its own (`ShardRequest::ForNewRoot`).
+    /// `Cache`'s order, then `shards`) and opens the root. `mismatch` decides what an explicit
+    /// `shards=n` that differs from an existing root's count does (see [`CountMismatch`]).
     #[allow(clippy::too_many_arguments)]
     fn construct(
         py: Python<'_>,
         directory: PathBuf,
         timeout: Option<&Bound<'_, PyAny>>,
         shards: Option<&Bound<'_, PyAny>>,
-        keep_stored: bool,
+        mismatch: CountMismatch,
         size_limit: Option<&Bound<'_, PyAny>>,
         cull_limit: Option<&Bound<'_, PyAny>>,
         eviction_policy: Option<&str>,
@@ -676,15 +692,24 @@ impl FanoutCache {
             wal_size_limit,
             wal_checkpoint,
         )?;
-        let request = match (shard_count(shards)?, keep_stored) {
+        let requested = shard_count(shards)?;
+        let request = match (requested, mismatch) {
             (None, _) => ShardRequest::Stored,
-            (Some(manifest), false) => ShardRequest::Exactly(manifest),
-            (Some(manifest), true) => ShardRequest::ForNewRoot(manifest),
+            (Some(manifest), CountMismatch::Raise) => ShardRequest::Exactly(manifest),
+            (Some(manifest), CountMismatch::Warn | CountMismatch::Quiet) => ShardRequest::ForNewRoot(manifest),
         };
+        if mismatch == CountMismatch::Raise {
+            reopen.bind(py).set_item("raise_on_mismatch", true)?;
+        }
         let resolved = crate::detach(py, || open(&directory, &settings, request))
             .map_err(|(e, shards)| open_error(py, e, shards))?;
         if let Some(redirect) = &resolved.redirect {
             super::report_redirect(py, redirect);
+        }
+        if let (Some(wanted), CountMismatch::Warn) = (requested, mismatch)
+            && wanted.shards() as usize != resolved.value.len()
+        {
+            report_count_mismatch(py, &resolved.directory, resolved.value.len(), wanted.shards());
         }
         let shards: Box<[StoreHandle]> = resolved
             .value
@@ -1165,6 +1190,7 @@ impl FanoutKeyIterator {
     wal_checkpoint = "manual",
     on_decode_error = None,
     durable = false,
+    raise_on_mismatch = false,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn _open_fanout_keeping_stored(
@@ -1185,13 +1211,15 @@ pub(crate) fn _open_fanout_keeping_stored(
     wal_checkpoint: &str,
     on_decode_error: Option<DecodePolicy>,
     durable: bool,
+    raise_on_mismatch: bool,
 ) -> PyResult<FanoutCache> {
     FanoutCache::construct(
         py,
         directory,
         timeout,
         Some(shards),
-        true,
+        // The registry reports a kept count itself; asked to raise, a mismatch is an open failure.
+        if raise_on_mismatch { CountMismatch::Raise } else { CountMismatch::Quiet },
         size_limit,
         cull_limit,
         eviction_policy,
@@ -1305,6 +1333,44 @@ fn shard_count(shards: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Manifest>> 
     }
 }
 
+/// Logs that `FanoutCache(directory, shards=requested)` opened a root that keeps `stored` shards, at
+/// `WARNING` on the `diskcache_oxide` logger, once per process per root and pair of counts. Deduped
+/// through a Python dict's `setdefault`, with no lock a thread could hold at `fork()`, as
+/// `report_redirect` is. The message is a `%s` template so an error tracker groups the reports.
+/// Never fails.
+fn report_count_mismatch(py: Python<'_>, directory: &std::path::Path, stored: usize, requested: u32) {
+    static REPORTED: pyo3::sync::PyOnceLock<Py<pyo3::types::PyDict>> = pyo3::sync::PyOnceLock::new();
+    let _ = (|| -> PyResult<()> {
+        let reported = REPORTED.get_or_try_init(py, || Ok::<_, PyErr>(pyo3::types::PyDict::new(py).unbind()))?;
+        let real = std::fs::canonicalize(directory).unwrap_or_else(|_| directory.to_path_buf());
+        let mine = pyo3::types::PyDict::new(py);
+        let stored_mine = reported.bind(py).call_method1("setdefault", ((real, stored, requested), &mine))?;
+        if !stored_mine.is(&mine) {
+            return Ok(());
+        }
+        let path = directory.display().to_string();
+        let extra = pyo3::types::PyDict::new(py);
+        extra.set_item("directory", &path)?;
+        extra.set_item("stored_shards", stored)?;
+        extra.set_item("requested_shards", requested)?;
+        let kwargs = pyo3::types::PyDict::new(py);
+        kwargs.set_item("extra", extra)?;
+        super::logger(py)?.call_method(
+            "warning",
+            (
+                "FanoutCache at %s has %s shards but shards=%s was asked for; using the %s it has. Changing the \
+                 count needs a new directory; pass raise_on_mismatch=True to raise LayoutMismatchError instead",
+                path.as_str(),
+                stored,
+                requested,
+                stored,
+            ),
+            Some(&kwargs),
+        )?;
+        Ok(())
+    })();
+}
+
 /// Every shard's store, in shard order.
 type Shards = Vec<std::sync::Arc<Store>>;
 
@@ -1337,9 +1403,15 @@ fn open(
     let opening = std::cell::Cell::new(None);
     let attempt = |root: &std::path::Path| {
         opening.set(None);
-        let manifest: Manifest = fanout::open_manifest(root, request)?;
+        // An exact count is checked here, after the format, not by `open_manifest`: an old root in
+        // another format redirects whatever its count (plan 26), so its count can't refuse first.
+        let open_request = match request {
+            ShardRequest::Exactly(wanted) => ShardRequest::ForNewRoot(wanted),
+            other => other,
+        };
+        let manifest: Manifest = fanout::open_manifest(root, open_request)?;
         let base = base_for(root, manifest.shards());
-        if let ShardRequest::ForNewRoot(wanted) = request
+        if let ShardRequest::Exactly(wanted) | ShardRequest::ForNewRoot(wanted) = request
             && wanted != manifest
         {
             // A root in another format is redirected, not judged by settings for a cache this open
@@ -1351,6 +1423,9 @@ fn open(
             {
                 let path = Some(diskcache_oxide_core::open::db_path(&root.join(fanout::shard_dirname(0))));
                 return Err(Error::FormatMismatch { found: version, expected: FORMAT_VERSION, path });
+            }
+            if let ShardRequest::Exactly(wanted) = request {
+                return Err(Error::ShardCountMismatch { stored: manifest.shards(), requested: wanted.shards() });
             }
             if let Err(Error::InvalidSetting(reason)) = Store::check_shard_settings(&base, manifest.shards()) {
                 return Err(Error::StoredShardsRefuseSettings {
