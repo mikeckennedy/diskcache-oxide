@@ -174,6 +174,11 @@ impl FanoutCache {
         self.shards.iter().map(|h| h.store.handles()).collect()
     }
 
+    /// Test hook: value files each shard's unlinks couldn't remove, in shard order.
+    fn _left_value_files(&self) -> Vec<u64> {
+        self.shards.iter().map(|h| h.store.left_files()).collect()
+    }
+
     fn __repr__(&self) -> String {
         format!("FanoutCache({:?}, shards={})", self.config.directory, self.shards.len())
     }

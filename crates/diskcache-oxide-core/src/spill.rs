@@ -332,6 +332,14 @@ pub fn read(directory: &Path, relative: &str, size: i64) -> Result<Option<Vec<u8
     }
 }
 
+/// Whether a failed [`read`] can mean its file is delete-pending (Windows only, plan 25 R-H4): an
+/// overwrite's delete while another handle had the file open. Only the caller can tell that from a
+/// real denial, by reading the row again: a changed row means the file was replaced.
+#[must_use]
+pub fn may_be_delete_pending(error: &Error) -> bool {
+    matches!(error, Error::Io { source, .. } if crate::os_error::is_delete_pending(source))
+}
+
 /// Opens a value file (for the locked fallback, which reads it after releasing the lock).
 pub fn open(directory: &Path, relative: &str) -> Result<Option<(File, PathBuf)>> {
     let Some(path) = value_path(directory, relative) else { return Ok(None) };

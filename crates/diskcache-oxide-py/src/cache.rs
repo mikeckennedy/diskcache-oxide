@@ -229,6 +229,12 @@ impl Cache {
         self.handle.store.handles()
     }
 
+    /// Test hook: value files this cache's store's unlinks couldn't remove (a Windows program
+    /// holding one past the retries, plan 25 R-M7). Each stays until `check(fix=True)`.
+    fn _left_value_files(&self) -> u64 {
+        self.handle.store.left_files()
+    }
+
     fn __repr__(&self) -> String {
         format!("Cache({:?})", self.config.directory)
     }

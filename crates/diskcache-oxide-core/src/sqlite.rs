@@ -1,6 +1,7 @@
 //! The bundled SQLite: the one entry point every connection is opened through, and facts about the
 //! library compiled into this build.
 
+use std::borrow::Cow;
 use std::path::Path;
 use std::time::Duration;
 
@@ -17,13 +18,39 @@ use crate::{Error, Result};
 /// SQLite itself, and one racing the install is heap corruption, not a fallback.
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     sqlite_mutex::ensure_installed();
-    Connection::open(path)
+    Connection::open(reachable(path))
 }
 
 /// [`open`], with explicit open flags.
 pub fn open_with_flags(path: &Path, flags: OpenFlags) -> rusqlite::Result<Connection> {
     sqlite_mutex::ensure_installed();
-    Connection::open_with_flags(path, flags)
+    Connection::open_with_flags(reachable(path), flags)
+}
+
+/// The path to give SQLite for `path` (plan 25, R-L10). Windows: SQLite's win32 VFS hands the name
+/// to `CreateFileW` as it is, which stops at `MAX_PATH` (260) unless the machine enables long paths
+/// (off by default) and the program declares itself long-path aware. A path whose absolute form,
+/// with SQLite's longest suffix (`-journal`), wouldn't fit becomes a verbatim `\\?\` path, which
+/// has no such limit. Shorter ones are left as they are, so messages show the caller's path. Unix:
+/// always `path`.
+fn reachable(path: &Path) -> Cow<'_, Path> {
+    #[cfg(windows)]
+    {
+        const MAX_PATH: usize = 260;
+        const LONGEST_SUFFIX: usize = "-journal".len();
+        let Ok(absolute) = std::path::absolute(path) else { return Cow::Borrowed(path) };
+        let Some(text) = absolute.to_str() else { return Cow::Borrowed(path) };
+        if text.encode_utf16().count() + LONGEST_SUFFIX < MAX_PATH || text.starts_with(r"\\?\") {
+            return Cow::Borrowed(path);
+        }
+        let verbatim = match text.strip_prefix(r"\\") {
+            Some(unc) => format!(r"\\?\UNC\{unc}"),
+            None => format!(r"\\?\{text}"),
+        };
+        Cow::Owned(verbatim.into())
+    }
+    #[cfg(not(windows))]
+    Cow::Borrowed(path)
 }
 
 /// [`open`], for a private in-memory database.

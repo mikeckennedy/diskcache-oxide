@@ -236,7 +236,8 @@ impl Store {
             if std::fs::symlink_metadata(&path).is_err() {
                 continue;
             }
-            let fixed = fix && std::fs::remove_file(&path).is_ok();
+            // Windows: another program holding the file for a moment is waited out (plan 25, R-M7).
+            let fixed = fix && crate::os_error::retry_sharing_violations(|| std::fs::remove_file(&path)).is_ok();
             merge(found, Finding::UnknownFile { path, fixed });
         }
         Ok(())

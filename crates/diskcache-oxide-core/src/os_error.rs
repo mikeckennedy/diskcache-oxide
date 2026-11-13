@@ -72,6 +72,18 @@ const SHARING_VIOLATIONS: &[i32] = &[32, 33];
 #[cfg(windows)]
 const SHARING_RETRY_SLEEPS_MS: &[u64] = &[1, 2, 4, 8, 16, 16];
 
+/// Whether `error` is another handle holding the file for a moment: a sharing or lock violation.
+/// Never on Unix.
+pub(crate) fn is_sharing_violation(error: &io::Error) -> bool {
+    #[cfg(windows)]
+    return error.raw_os_error().is_some_and(|code| SHARING_VIOLATIONS.contains(&code));
+    #[cfg(not(windows))]
+    {
+        let _ = error;
+        false
+    }
+}
+
 /// Runs `op`, and on Windows retries a sharing or lock violation a few times over about 50 ms
 /// (plan 25, R-M7): another process's brief handle shouldn't fail a write. Any other error, the
 /// last violation, and every error on Unix (which has no such thing) are returned as they are.
@@ -79,7 +91,7 @@ pub(crate) fn retry_sharing_violations<T>(mut op: impl FnMut() -> io::Result<T>)
     #[cfg(windows)]
     for &ms in SHARING_RETRY_SLEEPS_MS {
         match op() {
-            Err(e) if e.raw_os_error().is_some_and(|code| SHARING_VIOLATIONS.contains(&code)) => {
+            Err(e) if is_sharing_violation(&e) => {
                 std::thread::sleep(std::time::Duration::from_millis(ms));
             }
             other => return other,

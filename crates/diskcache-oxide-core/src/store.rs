@@ -178,6 +178,9 @@ pub struct Store {
     /// Handles closed behind a stuck fork, still counted in `handles`, for the drain to release (see
     /// [`Store::release_handle`]).
     deferred_releases: AtomicUsize,
+    /// Value files an unlink couldn't remove, even after retrying a Windows sharing violation (plan 25,
+    /// R-M7): each is left with no row, outside the totals, until `check(fix=True)`.
+    left_files: AtomicU64,
     /// Cached copies of the persisted limits, for the attribute getters only. Write paths read the
     /// current values inside their transaction.
     size_limit: AtomicI64,
@@ -556,6 +559,7 @@ impl Store {
             wal_path: db_path.with_extension("sqlite-wal"),
             handles: AtomicIsize::new(1),
             deferred_releases: AtomicUsize::new(0),
+            left_files: AtomicU64::new(0),
             size_limit: AtomicI64::new(limits.size_limit),
             cull_limit: AtomicI64::new(limits.cull_limit),
             eviction_policy: AtomicI64::new(limits.eviction_policy.code()),
@@ -1087,12 +1091,24 @@ impl Store {
     /// interpreter back can wait out the switch interval behind busy threads (a one-file `delete`
     /// measured 27 ms detached against 4 spinning threads).
     /// A name that isn't one `spill` writes (a damaged row) unlinks nothing ([`spill::value_path`]).
+    ///
+    /// Windows: another program holding a file for a moment (antivirus, the indexer, a backup) makes
+    /// its unlink a sharing violation. Those are tried again over about 50 ms, always with the
+    /// interpreter released (R-M7). A file still left, there or for any other reason, is counted
+    /// ([`Store::left_files`]).
     pub(crate) fn unlink(&self, files: impl IntoIterator<Item = String>) {
         let paths: Vec<PathBuf> =
             files.into_iter().filter_map(|relative| spill::value_path(&self.directory, &relative)).collect();
+        let blocked = Mutex::new(Vec::new());
         let work = || {
             for path in &paths {
-                let _ = std::fs::remove_file(path);
+                match std::fs::remove_file(path) {
+                    Err(e) if crate::os_error::is_sharing_violation(&e) => {
+                        blocked.lock().unwrap_or_else(PoisonError::into_inner).push(path);
+                    }
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => self.count_left_file(),
+                    _ => {}
+                }
             }
         };
         if paths.len() < UNLINK_DETACH_AT {
@@ -1100,6 +1116,29 @@ impl Store {
         } else {
             gate::run_blocking(&work);
         }
+        let blocked = blocked.into_inner().unwrap_or_else(PoisonError::into_inner);
+        if !blocked.is_empty() {
+            gate::run_blocking(&|| {
+                for path in &blocked {
+                    match crate::os_error::retry_sharing_violations(|| std::fs::remove_file(path)) {
+                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => self.count_left_file(),
+                        _ => {}
+                    }
+                }
+            });
+        }
+    }
+
+    fn count_left_file(&self) {
+        self.left_files.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How many value files this store's unlinks couldn't remove: on Windows, another program still
+    /// holding one after about 50 ms of retries (plan 25, R-M7), or any other failed unlink. Each is
+    /// left with no row until `check(fix=True)`.
+    #[must_use]
+    pub fn left_files(&self) -> u64 {
+        self.left_files.load(Ordering::Relaxed)
     }
 
     /// The write path outside a held transaction, after step 0 of `Store::write_files`.
@@ -2226,6 +2265,24 @@ mod tests {
                 })
             })
             .unwrap();
+    }
+
+    /// R-L10: a directory whose `-wal` path passes Windows's 260-character `MAX_PATH`. A test binary
+    /// has no long-path-aware manifest, so this is the default Windows machine's case
+    /// (`LongPathsEnabled` off), where only a `\\?\` path reaches past it.
+    #[test]
+    fn a_store_whose_wal_path_passes_max_path_opens_and_writes() {
+        let tmp = TempDir::new("store-long-path");
+        let mut dir = tmp.path().to_path_buf();
+        while dir.join(crate::schema::DB_FILENAME).as_os_str().len() < 300 {
+            dir.push("a-directory-name-of-forty-characters-xx");
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&options(&dir)).unwrap();
+        put(&store, "k", &[7; 100]);
+        assert_eq!(count(&store), 1);
+        assert!(dir.join(format!("{}-wal", crate::schema::DB_FILENAME)).exists());
+        store.release_handle();
     }
 
     fn add_handle(store: &Store) {
