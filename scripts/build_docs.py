@@ -23,8 +23,8 @@ signatures; the full ones live in ``_core.pyi``, which the reference pages alrea
 griffe. ``_install_stub_twins`` swaps the stub's classes in for the compiled ones in this
 process only, so ``llms-full.txt`` shows the same docstrings, Examples included, as the reference.
 
-Run it with the project's virtualenv interpreter (``uv sync --group docs`` installs Great Docs
-into it), e.g.::
+Run it with the project's virtualenv interpreter (``uv pip install --python venv/bin/python --group docs``
+installs Great Docs into it), e.g.::
 
     venv/bin/python scripts/build_docs.py
 """
@@ -613,8 +613,7 @@ def main() -> int:
         env = Path(sys.prefix).name
         print(
             f'The docs tooling is not installed in {env}/. It lives in the `docs` dependency group, which is not a '
-            f'default group, so install it with:\n\n    UV_PROJECT_ENVIRONMENT={env} uv sync --locked --group docs\n\n'
-            'or run `make docs`, which uses venv/.',
+            f'default group, so install it with:\n\n    uv pip install --python {env}/bin/python --group docs\n',
             file=sys.stderr,
         )
         return 1
