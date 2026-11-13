@@ -2285,8 +2285,9 @@ mod tests {
     /// `win32` VFS's own 1,040-byte limit, which `win32-longpath` lifts.
     #[test]
     fn a_store_whose_wal_path_passes_max_path_opens_and_writes() {
-        // macOS caps a whole path at PATH_MAX, 1,024 bytes, so 2,000 can't even be created there.
-        let lengths: &[usize] = if cfg!(target_os = "macos") { &[300] } else { &[300, 2_000] };
+        // Only Windows, through the win32-longpath VFS, takes 2,000: SQLite's unix VFS refuses any
+        // path past its 512-byte mxPathname, and macOS can't even create one past its 1,024-byte PATH_MAX.
+        let lengths: &[usize] = if cfg!(windows) { &[300, 2_000] } else { &[300] };
         for &length in lengths {
             let tmp = TempDir::new("store-long-path");
             let mut dir = tmp.path().to_path_buf();
