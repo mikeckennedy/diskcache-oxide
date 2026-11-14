@@ -6,7 +6,7 @@ A [Cache](../reference/Cache.md#diskcache_oxide.Cache) is a directory. That's th
 # Install
 
 ``` bash
-pip install diskcache-oxide
+uv pip install diskcache-oxide
 ```
 
 - **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).

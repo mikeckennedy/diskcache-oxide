@@ -91,6 +91,7 @@ See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
 ## Why diskcache-oxide
 
 - **[Fast where web apps spend their time.](user-guide/performance.qmd)** At a 99:1 read/write mix, one thread gets about 690,000 operations a second from a `Cache`, 1.6× diskcache's rate and cheap enough to call straight from the event loop. Add threads and the gap opens: at 8 threads on a GIL build, diskcache's per-thread connections pile into each other and its throughput falls to 19,000 a second, while oxide's stays near 670,000, 35× ahead (the chart above).
+- **[Scales out across worker processes.](user-guide/fanoutcache.qmd)** A plain `Cache` has one write lock, so a server with a worker per core ends up queueing on it. `FanoutCache` spreads keys over several SQLite databases so writes to different keys stop waiting on each other. With 8 processes it runs 1.5 million operations a second, 5.7× a plain `Cache` and 1.2× diskcache's `FanoutCache`, behind the same API and in one directory.
 - **[Built for free-threaded Python.](user-guide/concurrency-and-forks.qmd)** The extension is compiled with `gil_used = false` and never leans on the GIL for correctness, which matters on a build where there's no GIL to lean on. Every change is tested on 3.14, 3.14t, 3.15 and 3.15t.
 - **[Safe across `fork()`.](user-guide/concurrency-and-forks.qmd)** gunicorn, Celery's prefork pool and `multiprocessing` create workers by copying the parent, and the copy includes whatever SQLite lock a thread was holding at that instant. A process-wide fork barrier makes sure no child is ever born holding half a transaction.
 - **[No pickle on your disk.](user-guide/serialization.qmd)** Values are msgpack (or JSON) with exact type tags, so tuples, sets, datetimes, dates, Decimals, big ints and NaN come back as what you stored, not as whatever the format could manage. Your own types are registered once and read back only where the name is registered. Pickle is opt-in, and a cache that didn't opt in refuses to unpickle anything it finds, however it got there.
@@ -113,7 +114,7 @@ Most of diskcache's API is here: `Cache` and `FanoutCache`, keys of every native
 ## Install
 
 ```bash
-pip install diskcache-oxide
+uv pip install diskcache-oxide
 ```
 
 It supports CPython 3.14 and 3.15, including the free-threaded builds (3.14t and 3.15t), on macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64 for all four Pythons, with the compiled engine and a bundled SQLite inside, so there's nothing else to install. Anywhere else pip builds from source, which needs the latest stable Rust toolchain. Windows has no `fork()`, so the fork guarantees are Unix-only there; [Getting started](user-guide/getting-started.qmd#windows) lists what else differs.

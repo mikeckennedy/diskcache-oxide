@@ -711,7 +711,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>A slightly old answer is acceptable, or you can tell when it stops being right.</strong> This is the one that bites, and the rest of this page is mostly about it.</li>
 </ul>
 <p>Here it is in the smallest possible form. The first call does the work; the second gets the copy:</p>
-<div id="b81e734a" class="cell" data-execution_count="1">
+<div id="78a41244" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -732,8 +732,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    popular_episodes()</span>
 <span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f'</span><span class="sc">{</span>attempt<span class="sc">}</span><span class="ss">: </span><span class="sc">{</span>(time.perf_counter() <span class="op">-</span> start) <span class="op">*</span> <span class="dv">1000</span><span class="sc">:.2f}</span><span class="ss"> ms'</span>)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>first call: 55.27 ms
-second call: 0.01 ms</code></pre>
+<pre><code>first call: 59.95 ms
+second call: 0.02 ms</code></pre>
 </div>
 </div>
 <p>That shape, check the cache, do the work on a miss, store the result, is called <strong>cache-aside</strong>, and it’s the one you’ll use most. <code>@cache.memoize()</code> wraps it up as a decorator; the <a href="../recipes/caching-expensive-calls.html">caching recipe</a> shows how.</p>
@@ -750,52 +750,17 @@ second call: 0.01 ms</code></pre>
 </section>
 <section id="the-words" class="level1">
 <h1>The words</h1>
-<table class="caption-top table">
-<thead>
-<tr class="header">
-<th>Word</th>
-<th>What it means</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><strong>Hit / miss</strong></td>
-<td>A lookup found a live entry, or didn’t. The <strong>hit rate</strong> is the fraction of lookups that hit; a cache with a low hit rate is costing you writes for nothing.</td>
-</tr>
-<tr class="even">
-<td><strong>Key</strong></td>
-<td>The name an entry is stored under. In diskcache-oxide a key is usually a string like <code>user:42:profile</code>; numbers, bytes and tuples such as <code>('user', 42)</code> work too.</td>
-</tr>
-<tr class="odd">
-<td><strong>Expiry (TTL)</strong></td>
-<td>How long an entry stays valid. After it, a lookup misses as if the entry were gone. <code>expire=300</code> means five minutes.</td>
-</tr>
-<tr class="even">
-<td><strong>Stale</strong></td>
-<td>Still cached, but no longer what the source would say. Expiry bounds how stale an entry can get.</td>
-</tr>
-<tr class="odd">
-<td><strong>Invalidation</strong></td>
-<td>Removing or replacing an entry because its source changed, instead of waiting for it to expire.</td>
-</tr>
-<tr class="even">
-<td><strong>Eviction</strong></td>
-<td>The cache removing entries to stay under its size limit. diskcache-oxide evicts the least recently <em>stored</em> entries first, or nothing at all under <code>eviction_policy='none'</code>. Eviction is why a cache can never be the only copy of something you need.</td>
-</tr>
-<tr class="odd">
-<td><strong>Cold / warm</strong></td>
-<td>A cold cache is empty (just deployed, just cleared) and every lookup misses until it’s warm. The first minutes after a deploy are the slow ones.</td>
-</tr>
-<tr class="even">
-<td><strong>Stampede (thundering herd)</strong></td>
-<td>A popular entry expires and every worker recomputes it at the same instant. See <a href="../recipes/stale-while-revalidate.html">Serving stale values while refreshing</a>.</td>
-</tr>
-<tr class="odd">
-<td><strong>Negative caching</strong></td>
-<td>Caching “there’s no such thing” so a missing record doesn’t cost a database query every time someone asks. Use a short expiry.</td>
-</tr>
-</tbody>
-</table>
+<ul>
+<li><strong>Hit / miss</strong>: A lookup found a live entry, or didn’t. The <strong>hit rate</strong> is the fraction of lookups that hit; a cache with a low hit rate is costing you writes for nothing.</li>
+<li><strong>Key</strong>: The name an entry is stored under. In diskcache-oxide a key is usually a string like <code>user:42:profile</code>; numbers, bytes and tuples such as <code>('user', 42)</code> work too.</li>
+<li><strong>Expiry (TTL)</strong>: How long an entry stays valid. After it, a lookup misses as if the entry were gone. <code>expire=300</code> means five minutes.</li>
+<li><strong>Stale</strong>: Still cached, but no longer what the source would say. Expiry bounds how stale an entry can get.</li>
+<li><strong>Invalidation</strong>: Removing or replacing an entry because its source changed, instead of waiting for it to expire.</li>
+<li><strong>Eviction</strong>: The cache removing entries to stay under its size limit. diskcache-oxide evicts the least recently <em>stored</em> entries first, or nothing at all under <code>eviction_policy='none'</code>. Eviction is why a cache can never be the only copy of something you need.</li>
+<li><strong>Cold / warm</strong>: A cold cache is empty (just deployed, just cleared) and every lookup misses until it’s warm. The first minutes after a deploy are the slow ones.</li>
+<li><strong>Stampede (thundering herd)</strong>: A popular entry expires and every worker recomputes it at the same instant. See <a href="../recipes/stale-while-revalidate.html">Serving stale values while refreshing</a>.</li>
+<li><strong>Negative caching</strong>: Caching “there’s no such thing” so a missing record doesn’t cost a database query every time someone asks. Use a short expiry.</li>
+</ul>
 </section>
 <section id="the-first-hard-thing-invalidation" class="level1">
 <h1>The first hard thing: invalidation</h1>
@@ -811,7 +776,7 @@ second call: 0.01 ms</code></pre>
 <li><strong>Put the version in the key.</strong> If the key is <code>episode:512:v7:page</code>, then publishing revision 8 means readers ask for <code>episode:512:v8:page</code>, miss, and rebuild, and the old entry is simply never asked for again. Nothing is deleted; the stale copy expires on its own.</li>
 </ol>
 <p>Most apps use all three: an expiry on everything, a delete where the write is obvious, and versioned keys for things that have a natural version. Here’s the expiry half, with a fake clock so it runs instantly:</p>
-<div id="9107c562" class="cell" data-execution_count="2">
+<div id="c65dd78f" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>now <span class="op">=</span> [<span class="fl">1_000_000.0</span>]</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tempfile.mkdtemp(), clock<span class="op">=</span><span class="kw">lambda</span>: now[<span class="dv">0</span>])</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>

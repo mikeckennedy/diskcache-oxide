@@ -39,8 +39,8 @@ for attempt in ('first call', 'second call'):
 ```
 
 
-    first call: 55.27 ms
-    second call: 0.01 ms
+    first call: 59.95 ms
+    second call: 0.02 ms
 
 
 That shape, check the cache, do the work on a miss, store the result, is called **cache-aside**, and it's the one you'll use most. `@cache.memoize()` wraps it up as a decorator; the [caching recipe](../recipes/caching-expensive-calls.md) shows how.
@@ -59,17 +59,15 @@ The flip side: a cache is a copy, and copies go out of date. Every design decisi
 
 # The words
 
-| Word | What it means |
-|----|----|
-| **Hit / miss** | A lookup found a live entry, or didn't. The **hit rate** is the fraction of lookups that hit; a cache with a low hit rate is costing you writes for nothing. |
-| **Key** | The name an entry is stored under. In diskcache-oxide a key is usually a string like `user:42:profile`; numbers, bytes and tuples such as `('user', 42)` work too. |
-| **Expiry (TTL)** | How long an entry stays valid. After it, a lookup misses as if the entry were gone. `expire=300` means five minutes. |
-| **Stale** | Still cached, but no longer what the source would say. Expiry bounds how stale an entry can get. |
-| **Invalidation** | Removing or replacing an entry because its source changed, instead of waiting for it to expire. |
-| **Eviction** | The cache removing entries to stay under its size limit. diskcache-oxide evicts the least recently *stored* entries first, or nothing at all under `eviction_policy='none'`. Eviction is why a cache can never be the only copy of something you need. |
-| **Cold / warm** | A cold cache is empty (just deployed, just cleared) and every lookup misses until it's warm. The first minutes after a deploy are the slow ones. |
-| **Stampede (thundering herd)** | A popular entry expires and every worker recomputes it at the same instant. See [Serving stale values while refreshing](../recipes/stale-while-revalidate.md). |
-| **Negative caching** | Caching "there's no such thing" so a missing record doesn't cost a database query every time someone asks. Use a short expiry. |
+- **Hit / miss**: A lookup found a live entry, or didn't. The **hit rate** is the fraction of lookups that hit; a cache with a low hit rate is costing you writes for nothing.
+- **Key**: The name an entry is stored under. In diskcache-oxide a key is usually a string like `user:42:profile`; numbers, bytes and tuples such as `('user', 42)` work too.
+- **Expiry (TTL)**: How long an entry stays valid. After it, a lookup misses as if the entry were gone. `expire=300` means five minutes.
+- **Stale**: Still cached, but no longer what the source would say. Expiry bounds how stale an entry can get.
+- **Invalidation**: Removing or replacing an entry because its source changed, instead of waiting for it to expire.
+- **Eviction**: The cache removing entries to stay under its size limit. diskcache-oxide evicts the least recently *stored* entries first, or nothing at all under `eviction_policy='none'`. Eviction is why a cache can never be the only copy of something you need.
+- **Cold / warm**: A cold cache is empty (just deployed, just cleared) and every lookup misses until it's warm. The first minutes after a deploy are the slow ones.
+- **Stampede (thundering herd)**: A popular entry expires and every worker recomputes it at the same instant. See [Serving stale values while refreshing](../recipes/stale-while-revalidate.md).
+- **Negative caching**: Caching "there's no such thing" so a missing record doesn't cost a database query every time someone asks. Use a short expiry.
 
 
 # The first hard thing: invalidation

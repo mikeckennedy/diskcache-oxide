@@ -171,21 +171,19 @@ caches.close_all()                  # at shutdown; `with Caches(...) as caches:`
 
 ## Coming from your own diskcache wrapper
 
-Apps that run diskcache in production tend to grow the same wrapper around it: a class that turns errors into misses, a null cache for turning caching off, and a module that creates, lists and maintains the app's caches. Talk Python's, for one, are a `DurableCache` class and a `cache_service` module, and the left column uses their names. Each piece now has a home in the library:
+Apps that run diskcache in production tend to grow the same wrapper around it: a class that turns errors into misses, a null cache for turning caching off, and a module that creates, lists and maintains the app's caches. Talk Python's, for one, are a `DurableCache` class and a `cache_service` module, and the list uses their names, wrapper first. Each piece now has a home in the library:
 
-| A typical wrapper | diskcache-oxide |
-|---|---|
-| `bool()` is always True | `Cache` is always truthy (D-009); `NullCache` is falsy |
-| `CacheProtocol` | `CacheLike` |
-| `NullCache`, `PerfTestNullCache` | `NullCache`, and `NullCache(invalidate=real)` |
-| `get` that logs, deletes and misses on any error | `Cache(on_decode_error='miss')` or a reporting function ([details](getting-started.qmd#values-that-cant-be-read)) |
-| A cache that can't take a request down | `Caches(base_dir, durable=True)`, which also covers `set`, whose failures such a wrapper usually raises ([details](getting-started.qmd#a-cache-that-cant-take-a-request-down)) |
-| `create_cache(name, size_limit)` | `caches.register(name, size_limit=...)`, then `caches[name]` |
-| `timeout=1.0` on every open | `Caches(base_dir, timeout=1.0)` |
-| A `NullCache` when opening fails | the same, reported through `on_open_error` and retried after 10 s |
-| `get_all_caches()`, `clear_*()`, `close_all_caches()` | `caches.stats()`, `caches.clear(name, timeout=...)`, `caches.close_all()` |
-| A separate maintenance handle with a 10 s timeout | `timeout=` on `clear()`, `expire()` and `cull()` |
-| Hourly `expire_all_caches()` inside `create_cache` | `caches.expire_all()` from a scheduled job |
+- **`bool()` is always True**: `Cache` is always truthy (D-009); `NullCache` is falsy
+- **`CacheProtocol`**: `CacheLike`
+- **`NullCache`, `PerfTestNullCache`**: `NullCache`, and `NullCache(invalidate=real)`
+- **`get` that logs, deletes and misses on any error**: `Cache(on_decode_error='miss')` or a reporting function ([details](getting-started.qmd#values-that-cant-be-read))
+- **A cache that can't take a request down**: `Caches(base_dir, durable=True)`, which also covers `set`, whose failures such a wrapper usually raises ([details](getting-started.qmd#a-cache-that-cant-take-a-request-down))
+- **`create_cache(name, size_limit)`**: `caches.register(name, size_limit=...)`, then `caches[name]`
+- **`timeout=1.0` on every open**: `Caches(base_dir, timeout=1.0)`
+- **A `NullCache` when opening fails**: the same, reported through `on_open_error` and retried after 10 s
+- **`get_all_caches()`, `clear_*()`, `close_all_caches()`**: `caches.stats()`, `caches.clear(name, timeout=...)`, `caches.close_all()`
+- **A separate maintenance handle with a 10 s timeout**: `timeout=` on `clear()`, `expire()` and `cull()`
+- **Hourly `expire_all_caches()` inside `create_cache`**: `caches.expire_all()` from a scheduled job
 
 The library's self-healing read is safer than the wrapper's in three ways:
 

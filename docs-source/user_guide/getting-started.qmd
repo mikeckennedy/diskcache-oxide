@@ -8,7 +8,7 @@ A `Cache` is a directory. That's the whole mental model, and it carries further 
 ## Install
 
 ```bash
-pip install diskcache-oxide
+uv pip install diskcache-oxide
 ```
 
 - **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
@@ -191,16 +191,14 @@ page = cache.get('homepage')  # None if the cache is locked, full, broken or the
 
 An operational failure is a `Timeout`, an `OSError` (disk full, I/O), a SQLite error including a damaged database, or a child forked inside a transaction that can't write. On a single-key call it's answered like this:
 
-| Call | On an operational failure |
-|---|---|
-| `get`, `pop` | the default; `get(key, expire_time=True)` gives `(default, None)` |
-| `key in cache` | `False` |
-| `cache[key]` | raises `KeyError` |
-| `set`, `add`, `touch` | `False` |
-| `cache[key] = value` | drops the write |
-| `incr`, `decr` | `default + delta` or `default - delta`, as `NullCache` does. `default=None` raises `KeyError` |
-| `delete` | `False` |
-| `del cache[key]` | raises `KeyError` |
+- `get`, `pop`: the default; `get(key, expire_time=True)` gives `(default, None)`
+- `key in cache`: `False`
+- `cache[key]`: raises `KeyError`
+- `set`, `add`, `touch`: `False`
+- `cache[key] = value`: drops the write
+- `incr`, `decr`: `default + delta` or `default - delta`, as `NullCache` does. `default=None` raises `KeyError`
+- `delete`: `False`
+- `del cache[key]`: raises `KeyError`
 
 These always raise:
 
