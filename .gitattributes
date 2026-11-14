@@ -1,5 +1,14 @@
 # Keep GitHub's language bar about the product, not its tooling.
+# Mirrors the [exclude] list in .tally-config.toml (tracked directories only).
 # site/ is the built docs output (scripts/build_docs.py).
 site/** linguist-generated
-tests/** linguist-detectable=false
 bench/** linguist-detectable=false
+crates/*/tests/** linguist-detectable=false
+docker/** linguist-detectable=false
+docs-source/** linguist-detectable=false
+examples/** linguist-detectable=false
+reviews/** linguist-detectable=false
+scripts/** linguist-detectable=false
+soak/** linguist-detectable=false
+tests/** linguist-detectable=false
+upstream/** linguist-detectable=false

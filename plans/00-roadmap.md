@@ -173,6 +173,7 @@ Expectation (Michael): at a 1,000:1 read ratio, multiple threads should clearly 
 - immutable, frozen shared data read without locks;
 - deferred refcounting on `Cache` instances (only in the per-version wheels, since it's a `PyUnstable_*` API);
 - removing per-call shared-object traffic in the py layer;
+- **possible, low priority (Michael, 2026-11-13):** move the `memoize` wrapper from Python into Rust. It's the only library Python on a hot path: on 3.14 a memoized hit takes 1,555 ns, of which the `get` is 1,017 ns and the Python wrapper (key building with `args_to_key`, the miss sentinel) about 540 ns. A Rust callable might bring the overhead to around 100 ns (unmeasured). It must keep diskcache's key shape and `__cache_key__`, copy what `functools.wraps` copies, and implement `__get__` so decorated methods still bind; the cold error path (`_culprit`) and `memoize_stampede`'s extras can stay in Python;
 - per-file write lock and `-shm` tuning;
 - ~~SQLite's global memory statistics~~ (done in Phase 2): the shipped build sets `SQLITE_DEFAULT_MEMSTATUS=0`, which measured 2-10% more threaded throughput. Memory is measured in a separate instrumented build (`.venv-mem`).
 

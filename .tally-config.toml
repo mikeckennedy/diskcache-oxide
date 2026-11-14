@@ -2,6 +2,23 @@
 
 [exclude]
 directories = [
+    "1.7",
+    "bench",
+    "crates/diskcache-oxide-core/tests",
+    "docker",
+    "docs-source",
+    "examples",
+    "reviews",
+    "scripts",
     "site",
+    "soak",
+    "tests",
+    "tmp0el_vr2v",
+    "tmp4k5pe7j5",
+    "tmpglws250p",
     "upstream",
 ]
+
+[rust]
+# Leave #[cfg(test)] items out of the count
+exclude_test_modules = true
