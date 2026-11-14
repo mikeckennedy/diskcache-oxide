@@ -78,7 +78,7 @@ impl Store {
                 Ok(store) => opened[index] = Some(store),
                 Err(error) => {
                     let opened: Vec<Arc<Self>> = opened.into_iter().flatten().collect();
-                    release_all(&opened, GATE.try_enter_shared());
+                    release_all(&opened, GATE.try_enter_shared(), deadline);
                     return Err(error);
                 }
             }
@@ -106,18 +106,25 @@ pub(super) fn close_all_within(stores: &[&Arc<Store>], checkpoint_budget: Option
             store.checkpoint_on_close(deadline.saturating_duration_since(Instant::now()));
         }
     }
-    let gate = GATE.enter_shared_until(lockwait::deadline_after(Instant::now(), release_budget));
-    release_all(stores, gate);
+    let deadline = lockwait::deadline_after(Instant::now(), release_budget);
+    let gate = GATE.enter_shared_until(deadline);
+    release_all(stores, gate, deadline);
 }
 
 /// Releases a handle on each of `stores` under `gate`, or, with none (a fork is pending), defers
-/// each release to the drain at the end of that fork.
-fn release_all<S: Borrow<Arc<Store>>>(stores: &[S], gate: Option<SharedGuard<'_>>) {
+/// each release to the drain at the end of that fork. The shards it retired then wait for their
+/// background turns together, with the gate let go, under one `deadline`: eight shards never wait
+/// eight times.
+fn release_all<S: Borrow<Arc<Store>>>(stores: &[S], gate: Option<SharedGuard<'_>>, deadline: Instant) {
     match gate {
         // Shards don't sweep yet (plan 17, part 2).
-        Some(gate) => stores.iter().for_each(|store| {
-            let _ = store.borrow().release_under(&gate);
-        }),
+        Some(gate) => {
+            let retired: Vec<_> = stores.iter().map(|store| store.borrow().release_under(&gate)).collect();
+            drop(gate);
+            for retirement in retired {
+                let _ = retirement.wait_for_turns(deadline);
+            }
+        }
         None => stores.iter().for_each(|store| store.borrow().defer_release()),
     }
 }
@@ -325,6 +332,30 @@ mod tests {
         let err = Store::open_shards(&base(&root), manifest, lockwait::deadline_after(Instant::now(), T)).unwrap_err();
         assert!(matches!(&err, Error::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound), "{err:?}");
         assert!(!root.exists(), "a shard open re-created the deleted root");
+    }
+
+    /// Plan 28, decision 13 on a `FanoutCache`: closing every shard waits for a background turn on
+    /// any of them, under the one release deadline.
+    #[test]
+    fn closing_every_shard_waits_for_a_background_turn() {
+        let _forks = crate::testutil::one_global_fork_at_a_time();
+        let tmp = TempDir::new("shards-turn");
+        let root = tmp.path();
+        let manifest =
+            fanout::open_manifest(root, fanout::ShardRequest::Exactly(fanout::Manifest::new(4).unwrap())).unwrap();
+        let stores = Store::open_shards(&base(root), manifest, lockwait::deadline_after(Instant::now(), T)).unwrap();
+        let turn = stores[2].begin_background_turn().unwrap();
+        let ended = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                std::thread::sleep(Duration::from_millis(100));
+                ended.store(true, std::sync::atomic::Ordering::SeqCst);
+                drop(turn);
+            });
+            close(&stores);
+            assert!(ended.load(std::sync::atomic::Ordering::SeqCst), "the close returned before the turn ended");
+        });
+        assert!(stores.iter().all(|store| store.is_retired()));
     }
 
     #[test]

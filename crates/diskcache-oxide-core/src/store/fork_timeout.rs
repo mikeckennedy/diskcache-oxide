@@ -1403,3 +1403,28 @@ fn a_reader_that_outlasts_a_few_windows_doesnt_fail_the_round() {
     }
     panic!("the round never outlasted the reader: {outcomes:?}");
 }
+
+/// Plan 28: background maintenance never waits behind a fork. Its turn, its reads and its writes
+/// are all refused at once while one is pending, and work again after it.
+#[test]
+fn background_maintenance_is_refused_behind_a_fork() {
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("fork-background");
+    let store = open_store(tmp.path());
+    put(&store, "k");
+    // A turn that began before the fork: its calls refuse while the fork is pending.
+    let early = store.begin_background_turn().unwrap();
+    let refused = behind_a_fork(|| {
+        let started = Instant::now();
+        let refused = store.begin_background_turn().is_none();
+        let read = early.read(|_| Ok(())).is_none();
+        let write = early.write_files(|_, _| Ok(Changed::unchanged(()))).is_none();
+        (refused, read, write, started.elapsed())
+    });
+    assert!(refused.0 && refused.1 && refused.2, "{refused:?}");
+    assert!(refused.3 < SHORT, "refused at once, not after a wait: {:?}", refused.3);
+    assert!(early.read(|_| Ok(())).is_some(), "the turn's calls go again after the fork");
+    drop(early);
+    assert!(store.begin_background_turn().is_some());
+    store.release_handle();
+}

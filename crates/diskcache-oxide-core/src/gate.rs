@@ -95,15 +95,54 @@ pub fn set_blocker(blocker: Blocker) -> bool {
     BLOCKER.set(blocker).is_ok()
 }
 
+crate::sync::thread_local! {
+    /// Set on a thread the interpreter has never seen (plan 28's maintenance thread): see
+    /// [`mark_native_thread`].
+    static NATIVE: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+crate::sync::thread_local! {
+    /// How many times this thread went through the installed blocker, for tests that prove a native
+    /// thread never does.
+    static BLOCKER_CALLS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Marks the calling thread as one the interpreter has never seen, for the rest of its life:
+/// [`run_blocking`] then runs its work directly instead of through the [`Blocker`]. The Python
+/// layer's blocker attaches to the interpreter on any thread it hasn't marked detached, so on a
+/// thread Rust started it would make that thread a Python thread, which hangs or panics at
+/// interpreter shutdown (plan 28, decision 2). Such a thread holds no interpreter to release, so
+/// running the work directly is all the blocker would have done. Never call it on a thread the
+/// interpreter knows: every wait there would then run attached, breaking the gate's rules.
+#[cfg_attr(not(test), expect(dead_code, reason = "plan 28 step 4's maintenance thread calls it"))]
+pub(crate) fn mark_native_thread() {
+    NATIVE.with(|native| native.set(true));
+}
+
 /// Runs `work` once, on the calling thread, through the installed [`Blocker`], so the interpreter is
 /// released while it runs. Usually called with no gate level held. A caller holding one may use it
 /// only for the bounded work the rules above allow (the spill-file read in `pop`, unlinking many value
-/// files, the forced WAL checkpoint).
+/// files, the forced WAL checkpoint). On a thread marked with `mark_native_thread` the work runs
+/// directly.
 pub fn run_blocking(wait: &(dyn Fn() + Sync)) {
+    if NATIVE.with(Cell::get) {
+        return wait();
+    }
     match BLOCKER.get() {
-        Some(blocker) => blocker(wait),
+        Some(blocker) => {
+            #[cfg(test)]
+            BLOCKER_CALLS.with(|calls| calls.set(calls.get() + 1));
+            blocker(wait);
+        }
         None => wait(),
     }
+}
+
+/// How many times this thread has run work through the installed blocker (tests only).
+#[cfg(test)]
+pub(crate) fn blocker_calls() -> usize {
+    BLOCKER_CALLS.with(Cell::get)
 }
 
 /// One thread's view of one gate.
@@ -859,6 +898,28 @@ mod tests {
     }
 
     const SETTLE: Duration = Duration::from_millis(100);
+
+    /// Plan 28, decision 2: on a thread marked native, blocking work never goes through the
+    /// installed blocker (the Python layer's attaches to the interpreter).
+    #[test]
+    fn a_native_thread_never_goes_through_the_blocker() {
+        fn pass_through(work: &(dyn Fn() + Sync)) {
+            work();
+        }
+        let _ = set_blocker(pass_through);
+        let counted = std::thread::spawn(|| {
+            run_blocking(&|| {});
+            blocker_calls()
+        });
+        assert_eq!(counted.join().unwrap(), 1, "an ordinary thread goes through it");
+        let native = std::thread::spawn(|| {
+            mark_native_thread();
+            let ran = std::sync::atomic::AtomicBool::new(false);
+            run_blocking(&|| ran.store(true, Ordering::SeqCst));
+            (ran.load(Ordering::SeqCst), blocker_calls())
+        });
+        assert_eq!(native.join().unwrap(), (true, 0), "a native thread runs the work itself");
+    }
 
     #[test]
     fn shared_entry_is_reentrant_and_counted() {
