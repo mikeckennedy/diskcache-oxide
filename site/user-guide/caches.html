@@ -829,61 +829,20 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="coming-from-your-own-diskcache-wrapper" class="level1">
 <h1>Coming from your own diskcache wrapper</h1>
-<p>Apps that run diskcache in production tend to grow the same wrapper around it: a class that turns errors into misses, a null cache for turning caching off, and a module that creates, lists and maintains the app’s caches. Talk Python’s, for one, are a <code>DurableCache</code> class and a <code>cache_service</code> module, and the left column uses their names. Each piece now has a home in the library:</p>
-<table class="caption-top table">
-<thead>
-<tr class="header">
-<th>A typical wrapper</th>
-<th>diskcache-oxide</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><code>bool()</code> is always True</td>
-<td><a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is always truthy (D-009); <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> is falsy</td>
-</tr>
-<tr class="even">
-<td><code>CacheProtocol</code></td>
-<td><a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a></td>
-</tr>
-<tr class="odd">
-<td><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, <code>PerfTestNullCache</code></td>
-<td><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, and <code>NullCache(invalidate=real)</code></td>
-</tr>
-<tr class="even">
-<td><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> that logs, deletes and misses on any error</td>
-<td><code>Cache(on_decode_error='miss')</code> or a reporting function (<a href="../user-guide/getting-started.html#values-that-cant-be-read">details</a>)</td>
-</tr>
-<tr class="odd">
-<td>A cache that can’t take a request down</td>
-<td><code>Caches(base_dir, durable=True)</code>, which also covers <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, whose failures such a wrapper usually raises (<a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">details</a>)</td>
-</tr>
-<tr class="even">
-<td><code>create_cache(name, size_limit)</code></td>
-<td><code>caches.register(name, size_limit=...)</code>, then <code>caches[name]</code></td>
-</tr>
-<tr class="odd">
-<td><code>timeout=1.0</code> on every open</td>
-<td><code>Caches(base_dir, timeout=1.0)</code></td>
-</tr>
-<tr class="even">
-<td>A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> when opening fails</td>
-<td>the same, reported through <code>on_open_error</code> and retried after 10 s</td>
-</tr>
-<tr class="odd">
-<td><code>get_all_caches()</code>, <code>clear_*()</code>, <code>close_all_caches()</code></td>
-<td><code>caches.stats()</code>, <code>caches.clear(name, timeout=...)</code>, <code>caches.close_all()</code></td>
-</tr>
-<tr class="even">
-<td>A separate maintenance handle with a 10 s timeout</td>
-<td><code>timeout=</code> on <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> and <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a></td>
-</tr>
-<tr class="odd">
-<td>Hourly <code>expire_all_caches()</code> inside <code>create_cache</code></td>
-<td><code>caches.expire_all()</code> from a scheduled job</td>
-</tr>
-</tbody>
-</table>
+<p>Apps that run diskcache in production tend to grow the same wrapper around it: a class that turns errors into misses, a null cache for turning caching off, and a module that creates, lists and maintains the app’s caches. Talk Python’s, for one, are a <code>DurableCache</code> class and a <code>cache_service</code> module, and the list uses their names, wrapper first. Each piece now has a home in the library:</p>
+<ul>
+<li><strong><code>bool()</code> is always True</strong>: <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is always truthy (D-009); <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> is falsy</li>
+<li><strong><code>CacheProtocol</code></strong>: <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a></li>
+<li><strong><a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, <code>PerfTestNullCache</code></strong>: <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, and <code>NullCache(invalidate=real)</code></li>
+<li><strong><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> that logs, deletes and misses on any error</strong>: <code>Cache(on_decode_error='miss')</code> or a reporting function (<a href="../user-guide/getting-started.html#values-that-cant-be-read">details</a>)</li>
+<li><strong>A cache that can’t take a request down</strong>: <code>Caches(base_dir, durable=True)</code>, which also covers <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, whose failures such a wrapper usually raises (<a href="../user-guide/getting-started.html#a-cache-that-cant-take-a-request-down">details</a>)</li>
+<li><strong><code>create_cache(name, size_limit)</code></strong>: <code>caches.register(name, size_limit=...)</code>, then <code>caches[name]</code></li>
+<li><strong><code>timeout=1.0</code> on every open</strong>: <code>Caches(base_dir, timeout=1.0)</code></li>
+<li><strong>A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> when opening fails</strong>: the same, reported through <code>on_open_error</code> and retried after 10 s</li>
+<li><strong><code>get_all_caches()</code>, <code>clear_*()</code>, <code>close_all_caches()</code></strong>: <code>caches.stats()</code>, <code>caches.clear(name, timeout=...)</code>, <code>caches.close_all()</code></li>
+<li><strong>A separate maintenance handle with a 10 s timeout</strong>: <code>timeout=</code> on <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> and <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a></li>
+<li><strong>Hourly <code>expire_all_caches()</code> inside <code>create_cache</code></strong>: <code>caches.expire_all()</code> from a scheduled job</li>
+</ul>
 <p>The library’s self-healing read is safer than the wrapper’s in three ways:</p>
 <ul>
 <li><strong>It deletes only what failed.</strong> The wrapper’s <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>-then-<a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> can remove a fresh value another process wrote in between. The library deletes exactly the stored version it couldn’t read.</li>

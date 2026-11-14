@@ -201,16 +201,14 @@ page = cache.get('homepage')  # None if the cache is locked, full, broken or the
 
 An operational failure is a [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), an `OSError` (disk full, I/O), a SQLite error including a damaged database, or a child forked inside a transaction that can't write. On a single-key call it's answered like this:
 
-| Call | On an operational failure |
-|----|----|
-| [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) | the default; `get(key, expire_time=True)` gives `(default, None)` |
-| `key in cache` | `False` |
-| `cache[key]` | raises `KeyError` |
-| [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), [add](../reference/Cache.add.md#diskcache_oxide.Cache.add), [touch](../reference/Cache.touch.md#diskcache_oxide.Cache.touch) | `False` |
-| `cache[key] = value` | drops the write |
-| [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr), [decr](../reference/Cache.decr.md#diskcache_oxide.Cache.decr) | `default + delta` or `default - delta`, as [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) does. `default=None` raises `KeyError` |
-| [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete) | `False` |
-| `del cache[key]` | raises `KeyError` |
+- [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop): the default; `get(key, expire_time=True)` gives `(default, None)`
+- `key in cache`: `False`
+- `cache[key]`: raises `KeyError`
+- [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), [add](../reference/Cache.add.md#diskcache_oxide.Cache.add), [touch](../reference/Cache.touch.md#diskcache_oxide.Cache.touch): `False`
+- `cache[key] = value`: drops the write
+- [incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr), [decr](../reference/Cache.decr.md#diskcache_oxide.Cache.decr): `default + delta` or `default - delta`, as [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) does. `default=None` raises `KeyError`
+- [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete): `False`
+- `del cache[key]`: raises `KeyError`
 
 These always raise:
 

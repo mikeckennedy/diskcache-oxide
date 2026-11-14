@@ -719,56 +719,18 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Exact types</h1>
 <p>JSON turns tuples into lists and can’t store sets, datetimes, NaN, very large ints, or dicts with non-<code>str</code> keys. msgpack has some of the same gaps. The usual answer is to coerce quietly and let the bug show up later.</p>
 <p>diskcache-oxide’s encoder, written in Rust, notices anything its format would change and tags it instead, so it decodes back to the same type:</p>
-<table class="caption-top table">
-<thead>
-<tr class="header">
-<th>Python value</th>
-<th>Comes back as</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><code>tuple</code></td>
-<td>a <code>tuple</code>, not a list</td>
-</tr>
-<tr class="even">
-<td><a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a></td>
-<td>a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a></td>
-</tr>
-<tr class="odd">
-<td><code>frozenset</code></td>
-<td>a <code>frozenset</code></td>
-</tr>
-<tr class="even">
-<td><code>datetime.datetime</code></td>
-<td>a <code>datetime</code>, with its timezone and microseconds</td>
-</tr>
-<tr class="odd">
-<td><code>datetime.date</code></td>
-<td>a <code>date</code></td>
-</tr>
-<tr class="even">
-<td><code>decimal.Decimal</code></td>
-<td>a <code>Decimal</code>, exact</td>
-</tr>
-<tr class="odd">
-<td><code>int</code> wider than 64 bits</td>
-<td>the same int</td>
-</tr>
-<tr class="even">
-<td><code>float('nan')</code>, <code>inf</code>, <code>-inf</code></td>
-<td>the same float</td>
-</tr>
-<tr class="odd">
-<td><code>bytes</code> nested in a container</td>
-<td><code>bytes</code></td>
-</tr>
-<tr class="even">
-<td><code>dict</code> with <code>int</code> (or other non-<code>str</code>) keys</td>
-<td>the same keys</td>
-</tr>
-</tbody>
-</table>
+<ul>
+<li><strong><code>tuple</code></strong>: a <code>tuple</code>, not a list</li>
+<li><strong><a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a></strong>: a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a></li>
+<li><strong><code>frozenset</code></strong>: a <code>frozenset</code></li>
+<li><strong><code>datetime.datetime</code></strong>: a <code>datetime</code>, with its timezone and microseconds</li>
+<li><strong><code>datetime.date</code></strong>: a <code>date</code></li>
+<li><strong><code>decimal.Decimal</code></strong>: a <code>Decimal</code>, exact</li>
+<li><strong><code>int</code> wider than 64 bits</strong>: the same int</li>
+<li><strong><code>float('nan')</code>, <code>inf</code>, <code>-inf</code></strong>: the same float</li>
+<li><strong><code>bytes</code> nested in a container</strong>: <code>bytes</code></li>
+<li><strong><code>dict</code> with <code>int</code> (or other non-<code>str</code>) keys</strong>: the same keys</li>
+</ul>
 <div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> datetime</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'record'</span>, {</span>

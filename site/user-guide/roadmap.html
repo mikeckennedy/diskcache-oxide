@@ -777,36 +777,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="next" class="level2">
 <h2 class="anchored" data-anchor-id="next">Next</h2>
 <p>In roughly this order:</p>
-<table class="caption-top table">
-<thead>
-<tr class="header">
-<th>What</th>
-<th>What it delivers</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><strong>Background maintenance</strong></td>
-<td>A cache that looks after itself, with no scheduled <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>. One small Rust thread per process frees expired entries’ space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache. The caches are spread evenly over the interval (four caches on the default 5 minutes take turns at 0:00, 1:15, 2:30 and 3:45), the processes sharing a cache take turns so eight workers don’t all do the same work, and a cache with nothing to do is only read, never locked.</td>
-</tr>
-<tr class="even">
-<td><strong>Django cache backend</strong></td>
-<td>A diskcache-oxide backend for Django’s cache framework, tested against Django’s own cache test suite. It’s a big job, so it gets a phase of its own.</td>
-</tr>
-<tr class="odd">
-<td><strong>Free-threaded performance</strong></td>
-<td>Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that’s the first target.</td>
-</tr>
-<tr class="even">
-<td><strong><code>AsyncCache</code></strong></td>
-<td>An async API for asyncio frameworks that can’t slow down the sync one, including <code>transact_async()</code>. It starts as an experiment and ships only if it earns its place; if it doesn’t, this page will say why.</td>
-</tr>
-<tr class="odd">
-<td><strong>Network server</strong></td>
-<td>Stage 3, above. Speculative, and a separate product if it happens.</td>
-</tr>
-</tbody>
-</table>
+<ul>
+<li><strong>Background maintenance</strong>: A cache that looks after itself, with no scheduled <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>. One small Rust thread per process frees expired entries’ space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache. The caches are spread evenly over the interval (four caches on the default 5 minutes take turns at 0:00, 1:15, 2:30 and 3:45), the processes sharing a cache take turns so eight workers don’t all do the same work, and a cache with nothing to do is only read, never locked.</li>
+<li><strong>Django cache backend</strong>: A diskcache-oxide backend for Django’s cache framework, tested against Django’s own cache test suite. It’s a big job, so it gets a phase of its own.</li>
+<li><strong>Free-threaded performance</strong>: Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that’s the first target.</li>
+<li><strong><code>AsyncCache</code></strong>: An async API for asyncio frameworks that can’t slow down the sync one, including <code>transact_async()</code>. It starts as an experiment and ships only if it earns its place; if it doesn’t, this page will say why.</li>
+<li><strong>Network server</strong>: Stage 3, above. Speculative, and a separate product if it happens.</li>
+</ul>
 </section>
 <section id="decided-against-and-why" class="level2">
 <h2 class="anchored" data-anchor-id="decided-against-and-why">Decided against, and why</h2>

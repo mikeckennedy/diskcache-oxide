@@ -857,48 +857,16 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>page <span class="op">=</span> cache.get(<span class="st">'homepage'</span>)  <span class="co"># None if the cache is locked, full, broken or the disk failed</span></span></code></pre></div>
 <p>“Durable” here means the cache keeps your app running. It doesn’t mean what it means in a database, where a durable write survives a crash. This option does the opposite: it can drop writes. It’s off by default.</p>
 <p>An operational failure is a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, an <code>OSError</code> (disk full, I/O), a SQLite error including a damaged database, or a child forked inside a transaction that can’t write. On a single-key call it’s answered like this:</p>
-<table class="caption-top table">
-<thead>
-<tr class="header">
-<th>Call</th>
-<th>On an operational failure</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a></td>
-<td>the default; <code>get(key, expire_time=True)</code> gives <code>(default, None)</code></td>
-</tr>
-<tr class="even">
-<td><code>key in cache</code></td>
-<td><code>False</code></td>
-</tr>
-<tr class="odd">
-<td><code>cache[key]</code></td>
-<td>raises <code>KeyError</code></td>
-</tr>
-<tr class="even">
-<td><a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>, <a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a></td>
-<td><code>False</code></td>
-</tr>
-<tr class="odd">
-<td><code>cache[key] = value</code></td>
-<td>drops the write</td>
-</tr>
-<tr class="even">
-<td><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>, <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr</a></td>
-<td><code>default + delta</code> or <code>default - delta</code>, as <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> does. <code>default=None</code> raises <code>KeyError</code></td>
-</tr>
-<tr class="odd">
-<td><a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a></td>
-<td><code>False</code></td>
-</tr>
-<tr class="even">
-<td><code>del cache[key]</code></td>
-<td>raises <code>KeyError</code></td>
-</tr>
-</tbody>
-</table>
+<ul>
+<li><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a>: the default; <code>get(key, expire_time=True)</code> gives <code>(default, None)</code></li>
+<li><code>key in cache</code>: <code>False</code></li>
+<li><code>cache[key]</code>: raises <code>KeyError</code></li>
+<li><a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>, <a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a>: <code>False</code></li>
+<li><code>cache[key] = value</code>: drops the write</li>
+<li><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>, <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr</a>: <code>default + delta</code> or <code>default - delta</code>, as <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> does. <code>default=None</code> raises <code>KeyError</code></li>
+<li><a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>: <code>False</code></li>
+<li><code>del cache[key]</code>: raises <code>KeyError</code></li>
+</ul>
 <p>These always raise:</p>
 <ul>
 <li><strong>Bugs.</strong> A key of a type that can’t be a key, a value that can’t be stored without pickle, a non-numeric <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>, an <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> past 64 bits, <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>, and misusing a transaction.</li>

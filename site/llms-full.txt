@@ -2520,16 +2520,14 @@ page = cache.get('homepage')  # None if the cache is locked, full, broken or the
 
 An operational failure is a `Timeout`, an `OSError` (disk full, I/O), a SQLite error including a damaged database, or a child forked inside a transaction that can't write. On a single-key call it's answered like this:
 
-| Call | On an operational failure |
-|---|---|
-| `get`, `pop` | the default; `get(key, expire_time=True)` gives `(default, None)` |
-| `key in cache` | `False` |
-| `cache[key]` | raises `KeyError` |
-| `set`, `add`, `touch` | `False` |
-| `cache[key] = value` | drops the write |
-| `incr`, `decr` | `default + delta` or `default - delta`, as `NullCache` does. `default=None` raises `KeyError` |
-| `delete` | `False` |
-| `del cache[key]` | raises `KeyError` |
+- `get`, `pop`: the default; `get(key, expire_time=True)` gives `(default, None)`
+- `key in cache`: `False`
+- `cache[key]`: raises `KeyError`
+- `set`, `add`, `touch`: `False`
+- `cache[key] = value`: drops the write
+- `incr`, `decr`: `default + delta` or `default - delta`, as `NullCache` does. `default=None` raises `KeyError`
+- `delete`: `False`
+- `del cache[key]`: raises `KeyError`
 
 These always raise:
 
@@ -2688,18 +2686,16 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 
 diskcache takes its settings as keyword arguments (`Cache(directory, statistics=1)`). diskcache-oxide's constructors list theirs explicitly, so a diskcache-only keyword raises `TypeError: unexpected keyword argument`. Here's where each went:
 
-| diskcache keyword | diskcache-oxide |
-|---|---|
-| `size_limit`, `cull_limit` | The same, persisted in the cache (`size_limit` at least 1 MiB) |
-| `eviction_policy` | The same name; `'least-recently-stored'` or `'none'` |
-| `sqlite_cache_size` | The same name, in 4 KiB pages per connection; default 256 (1 MiB), not diskcache's 8192 |
-| `statistics` | Gone: call `cache.stats(enable=True)`, which counts per process, in memory (D-049) |
-| `tag_index` | Gone: tags are always indexed |
-| `disk_min_file_size` | Gone: values of 64 KiB or more always go to files |
-| `disk_pickle_protocol` | Gone: no pickle by default; `pickle=True` uses the highest protocol |
-| `sqlite_journal_mode` | Gone: always WAL, checked at open |
-| `sqlite_synchronous` | Gone: always `NORMAL`, as diskcache's default |
-| `sqlite_mmap_size`, `sqlite_auto_vacuum` | Gone: not configurable |
+- `size_limit`, `cull_limit`: the same, persisted in the cache (`size_limit` at least 1 MiB)
+- `eviction_policy`: the same name; `'least-recently-stored'` or `'none'`
+- `sqlite_cache_size`: the same name, in 4 KiB pages per connection; default 256 (1 MiB), not diskcache's 8192
+- `statistics`: gone; call `cache.stats(enable=True)`, which counts per process, in memory (D-049)
+- `tag_index`: gone; tags are always indexed
+- `disk_min_file_size`: gone; values of 64 KiB or more always go to files
+- `disk_pickle_protocol`: gone; no pickle by default; `pickle=True` uses the highest protocol
+- `sqlite_journal_mode`: gone; always WAL, checked at open
+- `sqlite_synchronous`: gone; always `NORMAL`, as diskcache's default
+- `sqlite_mmap_size`, `sqlite_auto_vacuum`: gone; not configurable
 
 New settings with no diskcache counterpart: `serializer`, `pickle`, `types`, `clock`, `max_connections`, `wal_size_limit`, `wal_checkpoint`, `on_decode_error` and `durable`. [`Cache`](../reference/Cache.qmd) lists them.
 
@@ -3178,13 +3174,11 @@ An entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it e
 
 In roughly this order:
 
-| What | What it delivers |
-|---|---|
-| **Background maintenance** | A cache that looks after itself, with no scheduled `expire()`. One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache. The caches are spread evenly over the interval (four caches on the default 5 minutes take turns at 0:00, 1:15, 2:30 and 3:45), the processes sharing a cache take turns so eight workers don't all do the same work, and a cache with nothing to do is only read, never locked. |
-| **Django cache backend** | A diskcache-oxide backend for Django's cache framework, tested against Django's own cache test suite. It's a big job, so it gets a phase of its own. |
-| **Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
-| **`AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. It starts as an experiment and ships only if it earns its place; if it doesn't, this page will say why. |
-| **Network server** | Stage 3, above. Speculative, and a separate product if it happens. |
+- **Background maintenance**: A cache that looks after itself, with no scheduled `expire()`. One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache. The caches are spread evenly over the interval (four caches on the default 5 minutes take turns at 0:00, 1:15, 2:30 and 3:45), the processes sharing a cache take turns so eight workers don't all do the same work, and a cache with nothing to do is only read, never locked.
+- **Django cache backend**: A diskcache-oxide backend for Django's cache framework, tested against Django's own cache test suite. It's a big job, so it gets a phase of its own.
+- **Free-threaded performance**: Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target.
+- **`AsyncCache`**: An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. It starts as an experiment and ships only if it earns its place; if it doesn't, this page will say why.
+- **Network server**: Stage 3, above. Speculative, and a separate product if it happens.
 
 ### Decided against, and why
 
@@ -3239,18 +3233,16 @@ JSON turns tuples into lists and can't store sets, datetimes, NaN, very large in
 
 diskcache-oxide's encoder, written in Rust, notices anything its format would change and tags it instead, so it decodes back to the same type:
 
-| Python value | Comes back as |
-|---|---|
-| `tuple` | a `tuple`, not a list |
-| `set` | a `set` |
-| `frozenset` | a `frozenset` |
-| `datetime.datetime` | a `datetime`, with its timezone and microseconds |
-| `datetime.date` | a `date` |
-| `decimal.Decimal` | a `Decimal`, exact |
-| `int` wider than 64 bits | the same int |
-| `float('nan')`, `inf`, `-inf` | the same float |
-| `bytes` nested in a container | `bytes` |
-| `dict` with `int` (or other non-`str`) keys | the same keys |
+- **`tuple`**: a `tuple`, not a list
+- **`set`**: a `set`
+- **`frozenset`**: a `frozenset`
+- **`datetime.datetime`**: a `datetime`, with its timezone and microseconds
+- **`datetime.date`**: a `date`
+- **`decimal.Decimal`**: a `Decimal`, exact
+- **`int` wider than 64 bits**: the same int
+- **`float('nan')`, `inf`, `-inf`**: the same float
+- **`bytes` nested in a container**: `bytes`
+- **`dict` with `int` (or other non-`str`) keys**: the same keys
 
 ```python
 import datetime
@@ -3676,21 +3668,19 @@ caches.close_all()                  # at shutdown; `with Caches(...) as caches:`
 
 ## Coming from your own diskcache wrapper
 
-Apps that run diskcache in production tend to grow the same wrapper around it: a class that turns errors into misses, a null cache for turning caching off, and a module that creates, lists and maintains the app's caches. Talk Python's, for one, are a `DurableCache` class and a `cache_service` module, and the left column uses their names. Each piece now has a home in the library:
+Apps that run diskcache in production tend to grow the same wrapper around it: a class that turns errors into misses, a null cache for turning caching off, and a module that creates, lists and maintains the app's caches. Talk Python's, for one, are a `DurableCache` class and a `cache_service` module, and the list uses their names, wrapper first. Each piece now has a home in the library:
 
-| A typical wrapper | diskcache-oxide |
-|---|---|
-| `bool()` is always True | `Cache` is always truthy (D-009); `NullCache` is falsy |
-| `CacheProtocol` | `CacheLike` |
-| `NullCache`, `PerfTestNullCache` | `NullCache`, and `NullCache(invalidate=real)` |
-| `get` that logs, deletes and misses on any error | `Cache(on_decode_error='miss')` or a reporting function ([details](getting-started.qmd#values-that-cant-be-read)) |
-| A cache that can't take a request down | `Caches(base_dir, durable=True)`, which also covers `set`, whose failures such a wrapper usually raises ([details](getting-started.qmd#a-cache-that-cant-take-a-request-down)) |
-| `create_cache(name, size_limit)` | `caches.register(name, size_limit=...)`, then `caches[name]` |
-| `timeout=1.0` on every open | `Caches(base_dir, timeout=1.0)` |
-| A `NullCache` when opening fails | the same, reported through `on_open_error` and retried after 10 s |
-| `get_all_caches()`, `clear_*()`, `close_all_caches()` | `caches.stats()`, `caches.clear(name, timeout=...)`, `caches.close_all()` |
-| A separate maintenance handle with a 10 s timeout | `timeout=` on `clear()`, `expire()` and `cull()` |
-| Hourly `expire_all_caches()` inside `create_cache` | `caches.expire_all()` from a scheduled job |
+- **`bool()` is always True**: `Cache` is always truthy (D-009); `NullCache` is falsy
+- **`CacheProtocol`**: `CacheLike`
+- **`NullCache`, `PerfTestNullCache`**: `NullCache`, and `NullCache(invalidate=real)`
+- **`get` that logs, deletes and misses on any error**: `Cache(on_decode_error='miss')` or a reporting function ([details](getting-started.qmd#values-that-cant-be-read))
+- **A cache that can't take a request down**: `Caches(base_dir, durable=True)`, which also covers `set`, whose failures such a wrapper usually raises ([details](getting-started.qmd#a-cache-that-cant-take-a-request-down))
+- **`create_cache(name, size_limit)`**: `caches.register(name, size_limit=...)`, then `caches[name]`
+- **`timeout=1.0` on every open**: `Caches(base_dir, timeout=1.0)`
+- **A `NullCache` when opening fails**: the same, reported through `on_open_error` and retried after 10 s
+- **`get_all_caches()`, `clear_*()`, `close_all_caches()`**: `caches.stats()`, `caches.clear(name, timeout=...)`, `caches.close_all()`
+- **A separate maintenance handle with a 10 s timeout**: `timeout=` on `clear()`, `expire()` and `cull()`
+- **Hourly `expire_all_caches()` inside `create_cache`**: `caches.expire_all()` from a scheduled job
 
 The library's self-healing read is safer than the wrapper's in three ways:
 

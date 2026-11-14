@@ -26,18 +26,16 @@ JSON turns tuples into lists and can't store sets, datetimes, NaN, very large in
 
 diskcache-oxide's encoder, written in Rust, notices anything its format would change and tags it instead, so it decodes back to the same type:
 
-| Python value | Comes back as |
-|----|----|
-| `tuple` | a `tuple`, not a list |
-| [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) | a [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) |
-| `frozenset` | a `frozenset` |
-| `datetime.datetime` | a `datetime`, with its timezone and microseconds |
-| `datetime.date` | a `date` |
-| `decimal.Decimal` | a `Decimal`, exact |
-| `int` wider than 64 bits | the same int |
-| `float('nan')`, `inf`, `-inf` | the same float |
-| `bytes` nested in a container | `bytes` |
-| `dict` with `int` (or other non-`str`) keys | the same keys |
+- **`tuple`**: a `tuple`, not a list
+- **[set](../reference/Cache.set.md#diskcache_oxide.Cache.set)**: a [set](../reference/Cache.set.md#diskcache_oxide.Cache.set)
+- **`frozenset`**: a `frozenset`
+- **`datetime.datetime`**: a `datetime`, with its timezone and microseconds
+- **`datetime.date`**: a `date`
+- **`decimal.Decimal`**: a `Decimal`, exact
+- **`int` wider than 64 bits**: the same int
+- **`float('nan')`, `inf`, `-inf`**: the same float
+- **`bytes` nested in a container**: `bytes`
+- **`dict` with `int` (or other non-`str`) keys**: the same keys
 
 ``` python
 import datetime
