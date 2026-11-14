@@ -4,11 +4,22 @@
 # for /health/cache, loads a page, then removes everything, volume included.
 #
 # Usage: scripts/example-docker.sh [wheel]
-#   default: dist/diskcache_oxide-<version>-cp314-cp314-manylinux_2_28_<arch>.whl for Docker's
+#        scripts/example-docker.sh --serve      (what `make demo` runs)
+#   default wheel: dist/diskcache_oxide-<version>-cp314-cp314-manylinux_2_28_<arch>.whl for Docker's
 #   architecture (scripts/build_linux.sh --arch <arch> 3.14 builds it). Run it at release time; it
 #   isn't part of check.sh, which doesn't build images.
+#
+#   --serve runs the demo in the foreground at http://127.0.0.1:${EXAMPLE_PORT:-8000} until Ctrl-C,
+#   keeping its volume between runs. It uses the local wheel when there is one, and the released
+#   version from PyPI when there isn't.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+serve=0
+if [[ "${1:-}" == --serve ]]; then
+    serve=1
+    shift
+fi
 
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
 case "$(docker version --format '{{.Server.Arch}}')" in
@@ -17,12 +28,31 @@ case "$(docker version --format '{{.Server.Arch}}')" in
     *) echo "unsupported Docker architecture" >&2; exit 1 ;;
 esac
 wheel="${1:-dist/diskcache_oxide-$version-cp314-cp314-manylinux_2_28_$arch.whl}"
+app=examples/webapp
+
+if [[ $serve == 1 ]]; then
+    port="${EXAMPLE_PORT:-8000}"
+    compose() { EXAMPLE_PORT="$port" docker compose -p dco-example -f "$app/compose.yaml" "$@"; }
+    local_wheels=0
+    if [[ -f "$wheel" ]]; then
+        cp "$wheel" "$app/wheels/"
+        local_wheels=1
+        trap 'find "$app/wheels" -name "*.whl" -delete' EXIT
+        echo "==> building with the local $(basename "$wheel")"
+    else
+        echo "==> no local wheel at $wheel; installing diskcache-oxide from PyPI"
+    fi
+    compose build --quiet --build-arg LOCAL_WHEELS="$local_wheels"
+    echo "==> the demo: http://127.0.0.1:$port  (Ctrl-C stops it; 'docker compose -p dco-example down -v' resets its data)"
+    compose up
+    exit
+fi
+
 if [[ ! -f "$wheel" ]]; then
     echo "no wheel at $wheel; build it with: scripts/build_linux.sh --arch $arch 3.14" >&2
     exit 1
 fi
 
-app=examples/webapp
 project=dco-example-smoke
 port="${EXAMPLE_PORT:-18080}"
 compose() { EXAMPLE_PORT="$port" docker compose -p "$project" -f "$app/compose.yaml" "$@"; }

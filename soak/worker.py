@@ -69,6 +69,7 @@ import logging
 import os
 import random
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -145,6 +146,12 @@ STUCK_EVERY = (30.0, 90.0)
 STUCK_TIMEOUT = 0.2
 STUCK_SLACK = 1.3
 STUCK_CALLER_LIMIT = 5.0
+# A timed call still running after SLOW_SAMPLE_AFTER gets its process sampled while it's slow: every
+# Python thread's traceback and a native `sample` (macOS only) into stalls/, so an overrun comes with
+# where the time went. At most one per worker per SLOW_SAMPLE_GAP. A sample pauses the process for
+# microseconds at a time; it locates an overrun, it never excuses one.
+SLOW_SAMPLE_AFTER = 1.5
+SLOW_SAMPLE_GAP = 600.0
 # A durable handle logs one line per bucket per 60 s, and a line is emitted after a call that may have
 # waited, so two can land a little closer than that.
 LOG_MIN_GAP = 55.0
@@ -900,6 +907,7 @@ class LaneWorker(Worker):
         self.stuck_call = Cache(private / 'call', timeout=STUCK_TIMEOUT)
         self.stuck_held.set('hooked', Hooked())
         self.calls_started = 0
+        self.inflight: dict[int, tuple[str, float]] = {}  # thread -> the timed call it's in, and when it began
         self.max_overrun = 0.0
         self.stuck_caller_max_s = 0.0
         self.durable_acked: dict[int, dict[str, int]] = {}
@@ -915,6 +923,7 @@ class LaneWorker(Worker):
             return threading.Thread(target=target, args=args, daemon=True)
 
         return [
+            spawn(self.slow_call_main),
             *(spawn(self.behind_main, n) for n in range(2)),
             *(spawn(self.durable_main, n) for n in range(2)),
             spawn(self.hog_main),
@@ -928,9 +937,12 @@ class LaneWorker(Worker):
             self.calls_started += 1
             self.ops += 1
         start = time.monotonic()
+        me = threading.get_ident()
+        self.inflight[me] = (what, start)
         try:
             return work()
         finally:
+            self.inflight.pop(me, None)
             over = time.monotonic() - start - budget
             with self.lock:
                 self.max_overrun = max(self.max_overrun, over)
@@ -939,6 +951,38 @@ class LaneWorker(Worker):
                 self.problem(
                     f'{what} took {over + budget:.2f}s against a budget of {budget}s (allowance {OVERRUN_ALLOWANCE}s)'
                 )
+
+    def slow_call_main(self) -> None:
+        """Samples this process while a timed call is slow (SLOW_SAMPLE_AFTER)."""
+        last = -SLOW_SAMPLE_GAP
+        while not self.stop.is_set():
+            time.sleep(0.1)
+            now = time.monotonic()
+            if now - last < SLOW_SAMPLE_GAP:
+                continue
+            slow = [
+                (what, round(now - start, 2))
+                for what, start in list(self.inflight.values())
+                if now - start > SLOW_SAMPLE_AFTER
+            ]
+            if not slow:
+                continue
+            last = now
+            self.count('slow_samples')
+            out = self.run_dir / 'stalls' / f'slow-{self.id}-{time.strftime("%H%M%S")}'
+            try:
+                with open(f'{out}-python.txt', 'w') as f:
+                    f.write(f'slow calls in flight: {slow}\n\n')
+                    f.flush()
+                    faulthandler.dump_traceback(f, all_threads=True)
+                if sys.platform == 'darwin':
+                    subprocess.Popen(
+                        ['sample', str(os.getpid()), '1', '-file', f'{out}-native.txt'],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+            except OSError:
+                pass
 
     def child_work(self) -> None:
         rng = random.Random()

@@ -27,7 +27,7 @@ cd examples/webapp
 docker compose up --build
 ```
 
-Then open <http://127.0.0.1:8000>. Reload a page and watch the request strip turn from misses to hits; sign in (any address works), edit an episode and watch its fragments go; request a transcript and watch the worker take it on the Jobs page.
+Or, from the repository root, `make demo`, which does the same and builds with a local diskcache-oxide wheel when `dist/` has one (for trying a version that isn't on PyPI yet). Then open <http://127.0.0.1:8000>. Reload a page and watch the request strip turn from misses to hits; sign in (any address works), edit an episode and watch its fragments go; request a transcript and watch the worker take it on the Jobs page.
 
 Without Docker, from this directory, in an environment with diskcache-oxide and the packages in `requirements.txt`:
 

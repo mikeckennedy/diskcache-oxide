@@ -1,12 +1,16 @@
 PY ?= venv/bin/python
 
-.PHONY: docs docs-serve check test wheels wheels-mac wheels-linux wheels-local wheels-windows
+.PHONY: docs docs-serve demo check test wheels wheels-mac wheels-linux wheels-local wheels-windows
 
 docs:
 	$(PY) scripts/build_docs.py
 
 docs-serve:
 	$(PY) scripts/serve_docs.py
+
+# The example app in Docker at http://127.0.0.1:8000, with a local wheel if dist/ has one.
+demo:
+	scripts/example-docker.sh --serve
 
 test:
 	$(PY) -m pytest
