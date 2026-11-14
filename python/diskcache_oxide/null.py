@@ -43,7 +43,7 @@ from typing import Any, Literal, Self, overload
 
 from diskcache_oxide._constants import ENOVAL
 from diskcache_oxide._core import TypeRegistry
-from diskcache_oxide._types import Key, Memoizer
+from diskcache_oxide._types import Key, MaintenanceStats, Memoizer
 from diskcache_oxide.protocol import CacheLike
 
 DEFAULT_SIZE_LIMIT = 2**30
@@ -218,9 +218,16 @@ class NullCache:
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
         on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
         durable: bool = False,
+        maintenance_interval: float | None = None,
         invalidate: CacheLike | None = None,
     ) -> None:
         _check_timeout(timeout)
+        if maintenance_interval is not None and (
+            isinstance(maintenance_interval, bool) or not isinstance(maintenance_interval, (int, float))
+        ):
+            raise TypeError(
+                f'maintenance_interval must be a number of seconds or None, not {type(maintenance_interval).__name__}'
+            )
         _check_decode_policy(on_decode_error)
         _check_durable(durable)
         self._directory = None if directory is None else os.fspath(directory)
@@ -282,6 +289,10 @@ class NullCache:
     def remove_old_formats(self) -> list[str]:
         """Always `[]`: a `NullCache` has no directory to clean up."""
         return []
+
+    def maintenance_stats(self) -> MaintenanceStats:
+        """All zero: a `NullCache` has nothing to maintain."""
+        return {'interval': 0.0, 'turns': 0, 'removed': 0, 'failures': 0, 'last_error': None}
 
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """Always `(0, 0)`: nothing is looked up."""

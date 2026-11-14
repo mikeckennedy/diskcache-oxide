@@ -217,7 +217,7 @@ fn errors_and_panics_are_failures_with_their_message() {
     let panic: Box<dyn std::any::Any + Send> = Box::new("the turn fell over");
     turn_ends(&upkeep, &mut tending, 200, Err(panic));
     assert_eq!(upkeep.health().failures, 2);
-    assert!(tending.last_error.as_deref().is_some_and(|e| e.contains("panicked: the turn fell over")));
+    assert!(tending.last_error.as_deref().is_some_and(|e| e.contains("a turn panicked: the turn fell over")));
     // No turn at all (a fork, a retired store) is neither progress nor failure, and resets starving.
     tending.starving_since = Some(150);
     turn_ends(&upkeep, &mut tending, 300, Ok(None));

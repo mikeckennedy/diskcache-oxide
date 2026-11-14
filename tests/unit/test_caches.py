@@ -446,7 +446,9 @@ def test_stats_covers_every_cache_and_never_raises(base: Path) -> None:
 
     stats = caches.stats()
     assert list(stats) == ['good', 'broken', 'unopened', 'off']
-    assert stats['good'] == CacheStats('good', str(base / 'good'), True, 1, stats['good'].volume)
+    good = stats['good']
+    assert good == CacheStats('good', str(base / 'good'), True, 1, good.volume, maintenance=good.maintenance)
+    assert good.maintenance is not None and good.maintenance['interval'] == 300.0
     assert stats['good'].volume > 0
     assert stats['broken'].error is not None and stats['broken'].count == 0
     assert stats['unopened'].error is None and stats['unopened'].count == 0

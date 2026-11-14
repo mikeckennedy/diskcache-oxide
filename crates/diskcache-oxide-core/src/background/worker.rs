@@ -58,6 +58,21 @@ static THREAD: Mutex<Option<(u64, JoinHandle<()>)>> = Mutex::new(None);
 static STOPPED_FOR_FORK: AtomicUsize = AtomicUsize::new(0);
 
 static SPAWN_FAILURES: AtomicU64 = AtomicU64::new(0);
+
+/// Turns left to fail on purpose, for tests in other crates that check failures are reported.
+static FAIL_NEXT_TURNS: AtomicU64 = AtomicU64::new(0);
+
+/// Makes the next `turns` maintenance turns in this process fail, as a turn whose database refused
+/// it would. For the Python layer's tests of failure reporting; never called by the library.
+#[doc(hidden)]
+pub fn fail_next_turns_for_tests(turns: u64) {
+    FAIL_NEXT_TURNS.store(turns, Ordering::Release);
+}
+
+/// Takes one injected failure, if any are left.
+fn injected_failure() -> bool {
+    FAIL_NEXT_TURNS.try_update(Ordering::AcqRel, Ordering::Acquire, |left| left.checked_sub(1)).is_ok()
+}
 static PASS_PANICS: AtomicU64 = AtomicU64::new(0);
 
 /// How many times starting the maintenance thread failed in this process (decision 1).
@@ -212,6 +227,16 @@ fn pass() -> Option<Duration> {
             if stopping() {
                 return Ok(None);
             }
+            if injected_failure() {
+                let error = crate::Error::InvalidSetting("an injected failure (a test hook)".into());
+                return Ok(Some(TurnReport {
+                    done: TaskSet::EMPTY,
+                    stopped: None,
+                    removed: 0,
+                    work_seen: true,
+                    error: Some(error),
+                }));
+            }
             catch_unwind(AssertUnwindSafe(|| {
                 store.maintenance_turn(*tasks, wall_now(), Duration::from_millis(*interval_ms))
             }))
@@ -263,7 +288,7 @@ fn record(
                 .map(ToString::to_string)
                 .or_else(|| panic.downcast_ref::<String>().cloned())
                 .unwrap_or_default();
-            upkeep.fail(tending, format!("a background maintenance turn panicked: {detail}"));
+            upkeep.fail(tending, format!("a turn panicked: {detail}"));
             return;
         }
     };
@@ -285,8 +310,7 @@ fn record(
             upkeep.fail(
                 tending,
                 format!(
-                    "background maintenance has found work on this cache for {seconds} s without getting the write \
-                     lock: another connection keeps it"
+                    "it has found work for {seconds} s without getting the write lock: another connection keeps it"
                 ),
             );
         }

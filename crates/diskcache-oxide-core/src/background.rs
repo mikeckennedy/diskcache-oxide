@@ -15,7 +15,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError, Weak};
 use crate::gate::SharedGuard;
 use crate::store::Store;
 use schedule::{Schedule, Tick};
-pub use worker::{pass_panics, spawn_failures};
+pub use worker::{fail_next_turns_for_tests, pass_panics, spawn_failures};
 
 /// The store registry's guard, which is only ever held under a shared gate level: the proof a
 /// function that locks a store's [`Tending`] under it needs.
@@ -43,6 +43,9 @@ impl Maintenance {
 /// How a store's maintenance has gone in this process (decision 16).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Health {
+    /// The interval maintenance runs at on this store in this process, in milliseconds: 0 when it's
+    /// off, or vetoed by a handle with its own clock, or behind a pending fork.
+    pub interval_ms: u64,
     /// Turns that ran.
     pub turns: u64,
     /// Rows the turns removed.
@@ -52,6 +55,11 @@ pub struct Health {
     pub failures: u64,
     /// The last failure's message. Left out behind a pending fork.
     pub last_error: Option<String>,
+}
+
+/// The interval a schedule runs at, 0 when it's off or vetoed.
+fn effective_interval(schedule: &Schedule) -> u64 {
+    if schedule.is_on() { schedule.interval_ms() } else { 0 }
 }
 
 /// The schedule and what the counters can't hold, kept together under one mutex.
@@ -84,6 +92,7 @@ pub(crate) struct Upkeep {
     /// store's is held, so no thread holds it when a fork takes the gate exclusively.
     tending: Mutex<Tending>,
     /// [`Health`]'s counters, readable with no gate level (behind a pending fork too).
+    interval_ms: AtomicU64,
     turns: AtomicU64,
     removed: AtomicU64,
     failures: AtomicU64,
@@ -97,6 +106,7 @@ impl Upkeep {
         Self {
             turns_in_flight: crate::genlock::Slots::new(),
             own_claims: [AtomicU64::new(0), AtomicU64::new(0)],
+            interval_ms: AtomicU64::new(effective_interval(&schedule)),
             tending: Mutex::new(Tending { schedule, last_error: None, starving_since: None, warned: false }),
             turns: AtomicU64::new(0),
             removed: AtomicU64::new(0),
@@ -160,17 +170,19 @@ impl Upkeep {
         if asked.own_clock {
             tending.schedule.veto();
         }
+        self.interval_ms.store(effective_interval(&tending.schedule), Ordering::Relaxed);
         let after = tending.schedule.next_ms();
         // A revived store wakes the thread whatever its tick: while the store was retired the thread
         // left it out of its next wake, and may be parked with nothing else to do.
         after.is_some() && (revived || before.is_none_or(|before| after.is_some_and(|after| after < before)))
     }
 
-    /// How maintenance has gone. The counters need no lock; the last error is left out behind a
-    /// pending fork.
+    /// How maintenance has gone. The counters and interval need no lock; the last error is left out
+    /// behind a pending fork.
     pub(crate) fn health(&self) -> Health {
         let last_error = crate::gate::GATE.try_enter_shared().and_then(|gate| self.tending(&gate).last_error.clone());
         Health {
+            interval_ms: self.interval_ms.load(Ordering::Relaxed),
             turns: self.turns.load(Ordering::Relaxed),
             removed: self.removed.load(Ordering::Relaxed),
             failures: self.failures.load(Ordering::Relaxed),

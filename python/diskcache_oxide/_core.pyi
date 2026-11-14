@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Iterator
 from types import TracebackType
 from typing import Any, Literal, Self, final, overload
 
-from diskcache_oxide._types import Key, Memoizer
+from diskcache_oxide._types import Key, MaintenanceStats, Memoizer
 
 # PyO3 generates __all__ from everything the module adds, in the order it adds them.
 __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
@@ -26,6 +26,8 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     '_decode',
     '_sqlite_memory',
     '_gate_stats',
+    '_set_maintenance_floor',
+    '_fail_next_maintenance_turns',
     '_open_fanout_keeping_stored',
     '_sqlite_error',
     '_held_stores',
@@ -104,6 +106,12 @@ def _encode(
 def _gate_stats() -> dict[str, Any]:
     """Test hook: the fork gate's state and counters (pending, holders, parked, fork_timeouts, deferred)."""
 
+def _set_maintenance_floor(seconds: float) -> None:
+    """Test hook: lets `maintenance_interval` go below a second, so tests can watch maintenance run."""
+
+def _fail_next_maintenance_turns(turns: int) -> None:
+    """Test hook: the next `turns` background maintenance turns in this process fail."""
+
 def _open_fanout_keeping_stored(
     directory: str | os.PathLike[str],
     timeout: float | None = None,
@@ -123,6 +131,7 @@ def _open_fanout_keeping_stored(
     on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
     durable: bool = False,
     raise_on_mismatch: bool = False,
+    maintenance_interval: float | None = None,
 ) -> FanoutCache:
     """For the `Caches` registry: `FanoutCache(...)`, but `shards` is the count for a new root only.
 
@@ -184,15 +193,17 @@ class Cache:
             process that opens the directory, since a row written through a registration can only
             be read where it is registered.
         clock: A function returning the current time in seconds, used instead of the native clock.
-            Tests pass `clock=lambda: time.time()` to follow a patched `time.time`.
+            Tests pass `clock=lambda: time.time()` to follow a patched `time.time`. A cache with its
+            own clock gets no background maintenance in this process, which only knows the wall clock
+            (see `maintenance_interval`).
         max_connections: The most SQLite connections this process opens for the directory, shared
             by every handle on it (default 8).
         sqlite_cache_size: SQLite's page cache per connection, in 4 KiB pages (default 256, 1 MiB).
         wal_size_limit: The write-ahead log is trimmed back to half this many bytes whenever it
             resets (default 64 MiB, minimum 1 MiB).
-        wal_checkpoint: `'manual'` (the default) leaves checkpoints to `checkpoint()` and
-            `close()`. `'auto'` also checkpoints after writes once the log is over
-            `wal_size_limit`.
+        wal_checkpoint: `'manual'` (the default) leaves checkpoints to `checkpoint()`, `close()` and
+            background maintenance, which checkpoints a log grown past half of `wal_size_limit`.
+            `'auto'` also checkpoints after writes once the log is over `wal_size_limit`.
         on_decode_error: What a read does with a stored value it can't decode. `'raise'` (the
             default, unless `durable=True`, where it's `'miss'`) raises. `'miss'` treats it as a miss, logs a warning
             on the `diskcache_oxide`
@@ -219,6 +230,24 @@ class Cache:
             this option can drop writes, and a dropped `set`, `delete`, `pop` or `incr` means stale
             data until the entry expires, or forever if it has no expiry. See "A cache that can't
             take a request down" in the Getting Started guide before you use it.
+        maintenance_interval: How often, in seconds, background maintenance looks after this cache
+            in this process (default None: every 5 minutes; 0 turns it off; otherwise from 1 second to
+            a day). A thread of the library's own, one per process, removes expired entries and their
+            value files, trims a cache left over `size_limit` (`cull_limit` entries at a time; never
+            under `eviction_policy='none'` or with `cull_limit` 0), checkpoints a write-ahead log grown
+            past its trim size (except on a cache with `max_connections=1`), and hourly clears stray
+            temporary files and empty value folders. It never waits for a lock itself and holds the
+            write lock only for short chunks. The caches in a process take turns across the interval,
+            and the processes sharing a cache take turns too, so eight workers don't all do the same
+            work. The first turn comes one to two intervals after the cache is first opened in the
+            process. The setting is per process and isn't stored in the cache (it's not a `reset()`
+            key): the shortest interval any open handle on the directory asked for wins, until every
+            handle has closed. Even a cache with nothing to do is written once an hour, to claim the
+            folder sweep, so a read-only replica or backup should pass 0. With `clock`, there's no
+            background maintenance for the directory in this process while that handle is open, and
+            an interval other than 0 raises `ValueError`. The thread stops for every `os.fork()` and
+            starts again after it; a process that forks without Python's at-fork hooks should pass
+            0. See `maintenance_stats()`.
 
     Raises:
         ValueError: A setting is out of range, such as a `size_limit` under 1 MiB.
@@ -263,6 +292,7 @@ class Cache:
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
         on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
         durable: bool = False,
+        maintenance_interval: float | None = None,
     ) -> Cache: ...
     @property
     def directory(self) -> str:
@@ -650,6 +680,14 @@ class Cache:
             RuntimeError: Inside this thread's own `transact()` block.
             Timeout: A step waited longer than `timeout` (and `retry` is False).
         """
+    def maintenance_stats(self) -> MaintenanceStats:
+        """How background maintenance has gone on this cache in this process (see
+        `maintenance_interval`): its interval in seconds (0 when off here, or closed), the turns that
+        ran, the entries they removed, failures, and the last failure's message. A failure is also
+        logged once per streak, as a WARNING on the `diskcache_oxide` logger, by the next single-key
+        call on the cache (`get`, `set`, `incr` and the like); a cache nobody calls shows it here
+        only. A thread that couldn't be started counts as failures too. On a `FanoutCache`, every
+        shard's counts summed, the largest interval, and the first shard's last error."""
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
 
@@ -1114,6 +1152,7 @@ class FanoutCache:
             the root's recorded count, instead of using the recorded count with a warning (default
             False). It covers the count only: a root in another on-disk format still opens in its
             `diskcache-oxide-format-N` subdirectory.
+        maintenance_interval: As for `Cache`; each shard takes its own turn across the interval.
 
     Raises:
         ValueError: A setting is out of range, or `max_connections` is below `shards`.
@@ -1161,6 +1200,7 @@ class FanoutCache:
         on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
         durable: bool = False,
         raise_on_mismatch: bool = False,
+        maintenance_interval: float | None = None,
     ) -> FanoutCache: ...
     @property
     def directory(self) -> str:
@@ -1482,6 +1522,14 @@ class FanoutCache:
             RuntimeError: Inside this thread's own `transact()` block.
             Timeout: A step waited longer than `timeout` (and `retry` is False).
         """
+    def maintenance_stats(self) -> MaintenanceStats:
+        """How background maintenance has gone on this cache in this process (see
+        `maintenance_interval`): its interval in seconds (0 when off here, or closed), the turns that
+        ran, the entries they removed, failures, and the last failure's message. A failure is also
+        logged once per streak, as a WARNING on the `diskcache_oxide` logger, by the next single-key
+        call on the cache (`get`, `set`, `incr` and the like); a cache nobody calls shows it here
+        only. A thread that couldn't be started counts as failures too. On a `FanoutCache`, every
+        shard's counts summed, the largest interval, and the first shard's last error."""
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
 

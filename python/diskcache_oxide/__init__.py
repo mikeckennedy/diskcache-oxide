@@ -63,7 +63,7 @@ from diskcache_oxide._core import (
     sqlite_compile_options,
     sqlite_version,
 )
-from diskcache_oxide._types import Key, Memoized, Memoizer
+from diskcache_oxide._types import Key, MaintenanceStats, Memoized, Memoizer
 from diskcache_oxide._warnings import EmptyDirWarning, UnknownFileWarning
 from diskcache_oxide.caches import Caches, CacheStats
 from diskcache_oxide.null import NullCache
@@ -126,6 +126,7 @@ __all__ = [
     'LayoutMismatchError',
     'Lock',
     'Memoized',
+    'MaintenanceStats',
     'Memoizer',
     'NullCache',
     'RLock',

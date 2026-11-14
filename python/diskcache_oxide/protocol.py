@@ -15,7 +15,7 @@ from contextlib import AbstractContextManager
 from types import TracebackType
 from typing import Any, Literal, Protocol, Self, overload, runtime_checkable
 
-from diskcache_oxide._types import Key, Memoizer
+from diskcache_oxide._types import Key, MaintenanceStats, Memoizer
 
 
 @runtime_checkable
@@ -170,6 +170,9 @@ class CacheLike(Protocol):
 
     def remove_old_formats(self) -> list[str]:
         """Remove caches an older format left in this cache's directory; `[]` on a `NullCache`."""
+
+    def maintenance_stats(self) -> MaintenanceStats:
+        """How background maintenance has gone on this cache in this process; all zero on a `NullCache`."""
 
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """`(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`."""

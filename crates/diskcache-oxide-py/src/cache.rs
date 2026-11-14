@@ -107,6 +107,7 @@ impl Cache {
         wal_checkpoint = "manual",
         on_decode_error = None,
         durable = false,
+        maintenance_interval = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -126,6 +127,7 @@ impl Cache {
         wal_checkpoint: &str,
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
+        maintenance_interval: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let reopen = ReopenOptions {
             timeout,
@@ -139,6 +141,7 @@ impl Cache {
             wal_checkpoint,
             on_decode_error: on_decode_error.as_ref(),
             durable,
+            maintenance_interval,
         }
         .build(py, &directory)?;
         let settings = Settings::parse(
@@ -152,6 +155,8 @@ impl Cache {
             sqlite_cache_size,
             wal_size_limit,
             wal_checkpoint,
+            maintenance_interval,
+            clock.is_some(),
         )?;
         let max_connections = settings.max_connections.unwrap_or(DEFAULT_MAX_CONNECTIONS);
         let options = settings.options(directory, max_connections, Role::Plain);
@@ -167,7 +172,7 @@ impl Cache {
                 store: resolved.value,
                 shard: 0,
                 closed: AtomicBool::new(false),
-                maintenance: diskcache_oxide_core::background::Maintenance::OFF,
+                maintenance: settings.maintenance,
             },
             config: HandleConfig::new(
                 &options.directory,
@@ -193,6 +198,11 @@ impl Cache {
     #[getter]
     fn timeout(&self) -> f64 {
         self.config.timeout.as_secs_f64()
+    }
+
+    /// How background maintenance has gone on this cache in this process (plan 28).
+    fn maintenance_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        maintenance_stats(py, [&self.handle.store])
     }
 
     #[getter]
@@ -775,6 +785,42 @@ pub(crate) fn parse_policy(name: &str) -> PyResult<EvictionPolicy> {
     }
 }
 
+/// `maintenance_stats()` over `stores`: the interval (seconds, 0 when off), and turns, rows removed
+/// and failures summed, with the last error of the first store that has one.
+pub(crate) fn maintenance_stats<'py, 'a>(
+    py: Python<'py>,
+    stores: impl IntoIterator<Item = &'a Arc<Store>>,
+) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+    let mut total = diskcache_oxide_core::background::Health::default();
+    for store in stores {
+        let health = store.maintenance_health();
+        total.interval_ms = total.interval_ms.max(health.interval_ms);
+        total.turns += health.turns;
+        total.removed += health.removed;
+        total.failures += health.failures;
+        if total.last_error.is_none() {
+            total.last_error = health.last_error;
+        }
+    }
+    // A thread that couldn't be started (a container's thread limit) shows as failures, not as "not
+    // due yet".
+    let spawn_failures = diskcache_oxide_core::background::spawn_failures();
+    if total.interval_ms > 0 && spawn_failures > 0 {
+        total.failures += spawn_failures;
+        total.last_error.get_or_insert_with(|| {
+            format!("the background maintenance thread couldn't be started ({spawn_failures} tries)")
+        });
+    }
+    let d = pyo3::types::PyDict::new(py);
+    #[expect(clippy::cast_precision_loss, reason = "an interval in milliseconds fits an f64 exactly")]
+    d.set_item("interval", total.interval_ms as f64 / 1_000.0)?;
+    d.set_item("turns", total.turns)?;
+    d.set_item("removed", total.removed)?;
+    d.set_item("failures", total.failures)?;
+    d.set_item("last_error", total.last_error)?;
+    Ok(d)
+}
+
 /// The constructor arguments `Cache` and `FanoutCache` share, validated in the order `Cache`
 /// always checked them.
 struct Settings {
@@ -786,6 +832,51 @@ struct Settings {
     wal_size_limit: u64,
     auto_checkpoint: bool,
     serializer: Serializer,
+    /// What each handle asks of background maintenance (plan 28).
+    maintenance: diskcache_oxide_core::background::Maintenance,
+}
+
+/// The shortest `maintenance_interval` the public API takes, in milliseconds: a second, unless a test
+/// lowered it with `_set_maintenance_floor`.
+pub(crate) static MAINTENANCE_FLOOR_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(diskcache_oxide_core::background::schedule::MIN_INTERVAL_MS);
+
+/// `maintenance_interval`: None for the default (5 minutes), 0 for off, else seconds, at least the
+/// floor. A handle with its own `clock` gets no background maintenance (the thread only knows wall
+/// time), so it can't ask for an interval.
+fn parse_maintenance(
+    value: Option<&Bound<'_, PyAny>>,
+    own_clock: bool,
+) -> PyResult<diskcache_oxide_core::background::Maintenance> {
+    let Some(seconds) = optional_seconds("maintenance_interval", value)? else {
+        return Ok(diskcache_oxide_core::background::Maintenance {
+            own_clock,
+            ..diskcache_oxide_core::background::Maintenance::DEFAULT
+        });
+    };
+    if seconds == 0.0 {
+        // Off for this handle; a handle with its own clock still vetoes the store's maintenance, so
+        // another handle on the same directory can't turn it back on (decision 15).
+        return Ok(diskcache_oxide_core::background::Maintenance { interval_ms: 0, own_clock });
+    }
+    if own_clock {
+        return Err(PyValueError::new_err(
+            "maintenance_interval can't be used with clock=: background maintenance only knows the wall clock, \
+             and would remove entries your clock still calls live; pass 0 or leave it out",
+        ));
+    }
+    let floor = MAINTENANCE_FLOOR_MS.load(Ordering::Relaxed);
+    #[expect(clippy::cast_precision_loss, reason = "a floor in milliseconds fits an f64 exactly")]
+    let floor_s = floor as f64 / 1_000.0;
+    let ceiling_s = 86_400.0;
+    if !seconds.is_finite() || seconds < floor_s || seconds > ceiling_s {
+        return Err(PyValueError::new_err(format!(
+            "maintenance_interval must be 0 (off), or from {floor_s} to {ceiling_s} seconds (a day), got {seconds}"
+        )));
+    }
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "positive, finite, at most a day")]
+    let interval_ms = (seconds * 1_000.0).round() as u64;
+    Ok(diskcache_oxide_core::background::Maintenance { interval_ms, own_clock: false })
 }
 
 impl Settings {
@@ -801,6 +892,8 @@ impl Settings {
         sqlite_cache_size: Option<&Bound<'_, PyAny>>,
         wal_size_limit: Option<&Bound<'_, PyAny>>,
         wal_checkpoint: &str,
+        maintenance_interval: Option<&Bound<'_, PyAny>>,
+        own_clock: bool,
     ) -> PyResult<Self> {
         codec::load_types(py)?;
         let timeout = timeout_duration(match timeout {
@@ -842,7 +935,17 @@ impl Settings {
             }
         };
         let serializer = Serializer::from_name(serializer)?;
-        Ok(Self { timeout, requested, max_connections, cache_pages, wal_size_limit, auto_checkpoint, serializer })
+        let maintenance = parse_maintenance(maintenance_interval, own_clock)?;
+        Ok(Self {
+            timeout,
+            requested,
+            max_connections,
+            cache_pages,
+            wal_size_limit,
+            auto_checkpoint,
+            serializer,
+            maintenance,
+        })
     }
 
     /// The store options for `directory`, with `max_connections` resolved by the caller.
@@ -857,7 +960,7 @@ impl Settings {
             auto_checkpoint: self.auto_checkpoint,
             role,
             default_size_limit: DEFAULT_SIZE_LIMIT,
-            maintenance: diskcache_oxide_core::background::Maintenance::OFF,
+            maintenance: self.maintenance,
         }
     }
 }
@@ -1024,10 +1127,37 @@ impl HandleConfig {
         now: f64,
         result: Result<T, Error>,
     ) -> PyResult<Option<T>> {
+        self.check_maintenance(py, store);
         match result {
             Ok(value) => Ok(Some(value)),
             Err(error) => self.store_failed(py, store, op, now, error).map(|()| None),
         }
+    }
+
+    /// Logs a background maintenance failure waiting on `store`, if there is one: one relaxed load
+    /// otherwise, on every single-key call (plan 28, decision 16).
+    #[inline]
+    fn check_maintenance(&self, py: Python<'_>, store: &Store) {
+        if let Some(message) = store.take_maintenance_warning() {
+            self.report_maintenance(py, &message);
+        }
+    }
+
+    /// Logs a background maintenance failure, once per streak, on the `diskcache_oxide` logger.
+    #[cold]
+    #[inline(never)]
+    fn report_maintenance(&self, py: Python<'_>, message: &str) {
+        let _ = logger(py).and_then(|log| {
+            let kwargs = pyo3::types::PyDict::new(py);
+            let extra = pyo3::types::PyDict::new(py);
+            extra.set_item("directory", self.directory.as_str())?;
+            kwargs.set_item("extra", extra)?;
+            log.call_method(
+                "warning",
+                ("background maintenance failed on the cache at %s: %s", self.directory.as_str(), message),
+                Some(&kwargs),
+            )
+        });
     }
 
     /// `Ok` if `error` was swallowed and counted, or the exception to raise: it isn't durable, it's a
@@ -1700,6 +1830,7 @@ impl HandleConfig {
         let op = if negate { Op::Decr } else { Op::Incr };
         let store = &*handle.store;
         let stored = handle.run(self.timeout, |timeout| store.incr(timeout, name, delta, default, now));
+        self.check_maintenance(py, store);
         let number = match stored {
             Ok(number) => number,
             Err(Error::KeyMissing) => return Err(PyKeyError::new_err(key.clone().unbind())),
@@ -1820,6 +1951,7 @@ pub(crate) struct ReopenOptions<'a, 'py> {
     pub wal_checkpoint: &'a str,
     pub on_decode_error: Option<&'a DecodePolicy>,
     pub durable: bool,
+    pub maintenance_interval: Option<&'a Bound<'py, PyAny>>,
 }
 
 impl ReopenOptions<'_, '_> {
@@ -1862,6 +1994,9 @@ impl ReopenOptions<'_, '_> {
         }
         if self.durable {
             d.set_item("durable", true)?;
+        }
+        if let Some(interval) = self.maintenance_interval.filter(|v| !v.is_none()) {
+            d.set_item("maintenance_interval", interval)?;
         }
         Ok(d.unbind())
     }

@@ -61,6 +61,7 @@ from types import TracebackType
 from typing import Any, Self, cast
 
 from diskcache_oxide._core import Cache, FanoutCache, Timeout, _open_fanout_keeping_stored
+from diskcache_oxide._types import MaintenanceStats
 from diskcache_oxide.null import NullCache
 from diskcache_oxide.protocol import CacheLike, TransactionalCacheLike
 
@@ -117,6 +118,8 @@ class CacheStats:
     count: int
     volume: int
     error: str | None = None
+    #: The cache's `maintenance_stats()`, or None if it couldn't be read.
+    maintenance: MaintenanceStats | None = None
 
 
 def _check_settings(settings: dict[str, Any], allowed: frozenset[str] = _CACHE_SETTINGS) -> None:
@@ -497,7 +500,9 @@ class Caches[N: str = str]:
             enabled = name not in self._disabled
             try:
                 cache = self._open(name)
-                result[name] = CacheStats(name, path, enabled, len(cache), cache.volume())
+                result[name] = CacheStats(
+                    name, path, enabled, len(cache), cache.volume(), maintenance=cache.maintenance_stats()
+                )
             except Exception as exc:
                 result[name] = CacheStats(name, path, enabled, 0, 0, f'{type(exc).__name__}: {exc}')
         return result

@@ -1203,7 +1203,12 @@ impl Store {
     /// counters are always there; the last error is left out behind a pending fork.
     #[must_use]
     pub fn maintenance_health(&self) -> crate::background::Health {
-        self.upkeep.health()
+        let mut health = self.upkeep.health();
+        // A closed cache gets no turns, whatever its schedule says.
+        if self.is_retired() {
+            health.interval_ms = 0;
+        }
+        health
     }
 
     /// The failure a maintenance turn raised since the last call, if any, for the caller to log once:

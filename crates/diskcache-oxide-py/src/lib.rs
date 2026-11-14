@@ -250,6 +250,26 @@ fn drain_deferred_releases(py: Python<'_>) {
     }
 }
 
+/// Test hook: lets `maintenance_interval` go below a second, so tests can watch maintenance run. Not
+/// part of the public API.
+#[pyfunction]
+fn _set_maintenance_floor(seconds: f64) -> PyResult<()> {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return Err(pyo3::exceptions::PyValueError::new_err("the floor must be a positive number of seconds"));
+    }
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "positive and finite")]
+    let ms = ((seconds * 1_000.0).round() as u64).max(1);
+    cache::MAINTENANCE_FLOOR_MS.store(ms, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Test hook: the next `turns` background maintenance turns in this process fail, so tests can check
+/// failures are counted and logged. Not part of the public API.
+#[pyfunction]
+fn _fail_next_maintenance_turns(turns: u64) {
+    diskcache_oxide_core::background::fail_next_turns_for_tests(turns);
+}
+
 /// Test hook: the fork gate's state and counters. Not part of the public API.
 #[pyfunction]
 fn _gate_stats(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
@@ -444,6 +464,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(codec::_decode, m)?)?;
     m.add_function(wrap_pyfunction!(_sqlite_memory, m)?)?;
     m.add_function(wrap_pyfunction!(_gate_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(_set_maintenance_floor, m)?)?;
+    m.add_function(wrap_pyfunction!(_fail_next_maintenance_turns, m)?)?;
     m.add_function(wrap_pyfunction!(cache::_open_fanout_keeping_stored, m)?)?;
     m.add_function(wrap_pyfunction!(_sqlite_error, m)?)?;
     m.add_function(wrap_pyfunction!(_held_stores, m)?)?;

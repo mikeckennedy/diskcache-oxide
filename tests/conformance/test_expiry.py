@@ -177,3 +177,24 @@ def test_oxide_rejects_bool_expire(cache: Any, flag: bool) -> None:
         with pytest.raises(TypeError):
             call()
     assert 'k' not in cache
+
+
+@pytest.mark.backend_only('oxide')
+@pytest.mark.covers('D-061')
+def test_oxide_maintenance_removes_expired_rows_with_no_calls(cache_dir: Path, backend: Backend) -> None:
+    # Oxide-only, so it may reach past the black box: a hidden hook lets the interval go below a
+    # second, which the public API refuses.
+    import time
+
+    from diskcache_oxide import Cache
+
+    from tests.maintenance import fast_maintenance
+
+    with fast_maintenance(), Cache(cache_dir, maintenance_interval=0.1) as cache:
+        with cache.transact():
+            for i in range(100):
+                cache.set(f'k{i}', i, expire=0.05)
+        deadline = time.monotonic() + 10
+        while backend.stored_rows(cache_dir) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert backend.stored_rows(cache_dir) == 0, 'background maintenance never removed the expired rows'

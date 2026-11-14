@@ -70,6 +70,7 @@ impl FanoutCache {
         on_decode_error = None,
         durable = false,
         raise_on_mismatch = false,
+        maintenance_interval = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -91,6 +92,7 @@ impl FanoutCache {
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
         raise_on_mismatch: bool,
+        maintenance_interval: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         Self::construct(
             py,
@@ -111,6 +113,7 @@ impl FanoutCache {
             wal_checkpoint,
             on_decode_error,
             durable,
+            maintenance_interval,
         )
     }
 
@@ -131,6 +134,11 @@ impl FanoutCache {
     #[getter]
     fn shards(&self) -> usize {
         self.shards.len()
+    }
+
+    /// How background maintenance has gone on every shard in this process, summed (plan 28).
+    fn maintenance_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        super::maintenance_stats(py, self.shards.iter().map(|h| &h.store))
     }
 
     /// The sum of every shard's stored `size_limit`.
@@ -667,6 +675,7 @@ impl FanoutCache {
         wal_checkpoint: &str,
         on_decode_error: Option<DecodePolicy>,
         durable: bool,
+        maintenance_interval: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let reopen = ReopenOptions {
             timeout,
@@ -680,6 +689,7 @@ impl FanoutCache {
             wal_checkpoint,
             on_decode_error: on_decode_error.as_ref(),
             durable,
+            maintenance_interval,
         }
         .build(py, &directory)?;
         let settings = Settings::parse(
@@ -693,6 +703,8 @@ impl FanoutCache {
             sqlite_cache_size,
             wal_size_limit,
             wal_checkpoint,
+            maintenance_interval,
+            clock.is_some(),
         )?;
         let requested = shard_count(shards)?;
         let request = match (requested, mismatch) {
@@ -721,7 +733,7 @@ impl FanoutCache {
                 store,
                 shard,
                 closed: AtomicBool::new(false),
-                maintenance: diskcache_oxide_core::background::Maintenance::OFF,
+                maintenance: settings.maintenance,
             })
             .collect();
         // The count actually opened, which an existing root decides.
@@ -1203,6 +1215,7 @@ impl FanoutKeyIterator {
     on_decode_error = None,
     durable = false,
     raise_on_mismatch = false,
+    maintenance_interval = None,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn _open_fanout_keeping_stored(
@@ -1224,6 +1237,7 @@ pub(crate) fn _open_fanout_keeping_stored(
     on_decode_error: Option<DecodePolicy>,
     durable: bool,
     raise_on_mismatch: bool,
+    maintenance_interval: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<FanoutCache> {
     FanoutCache::construct(
         py,
@@ -1245,6 +1259,7 @@ pub(crate) fn _open_fanout_keeping_stored(
         wal_checkpoint,
         on_decode_error,
         durable,
+        maintenance_interval,
     )
 }
 
