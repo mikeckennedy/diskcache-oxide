@@ -237,6 +237,8 @@ A failure reaches you as "wasn't there", so know what each one means before you 
 
 A call still waits up to its [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) before it gives up, so pair `durable=True` with a small `timeout=`. Not too small: [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) still has to exceed the work in flight, plus a fork, plus the interpreter handing over, or ordinary forks turn into misses. Beside busy threads on a GIL build, that hand-over alone takes tens to hundreds of milliseconds. See [How long a call waits for a fork](concurrency-and-forks.md#how-long-a-call-waits-for-a-fork).
 
+[timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) bounds the waiting, not the work. Once a write has the lock, its commit runs to the end, and so does the checkpoint SQLite runs inside a commit after every thousand or so pages written. On a disk that's saturated, or a machine so loaded the process isn't scheduled, that can take seconds, and a read can stall the same way. Our 24-hour soak, which runs a machine flat out on purpose, sees the occasional durable call take more than 3 seconds.
+
 
 ## Reporting
 
