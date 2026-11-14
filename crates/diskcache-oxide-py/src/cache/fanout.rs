@@ -717,7 +717,12 @@ impl FanoutCache {
             .value
             .into_iter()
             .enumerate()
-            .map(|(shard, store)| StoreHandle { store, shard, closed: AtomicBool::new(false) })
+            .map(|(shard, store)| StoreHandle {
+                store,
+                shard,
+                closed: AtomicBool::new(false),
+                maintenance: diskcache_oxide_core::background::Maintenance::OFF,
+            })
             .collect();
         // The count actually opened, which an existing root decides.
         reopen.bind(py).set_item("shards", shards.len())?;

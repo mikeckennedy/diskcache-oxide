@@ -711,7 +711,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>A slightly old answer is acceptable, or you can tell when it stops being right.</strong> This is the one that bites, and the rest of this page is mostly about it.</li>
 </ul>
 <p>Here it is in the smallest possible form. The first call does the work; the second gets the copy:</p>
-<div id="78a41244" class="cell" data-execution_count="1">
+<div id="707c3bb3" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -732,8 +732,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    popular_episodes()</span>
 <span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f'</span><span class="sc">{</span>attempt<span class="sc">}</span><span class="ss">: </span><span class="sc">{</span>(time.perf_counter() <span class="op">-</span> start) <span class="op">*</span> <span class="dv">1000</span><span class="sc">:.2f}</span><span class="ss"> ms'</span>)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>first call: 59.95 ms
-second call: 0.02 ms</code></pre>
+<pre><code>first call: 50.89 ms
+second call: 0.01 ms</code></pre>
 </div>
 </div>
 <p>That shape, check the cache, do the work on a miss, store the result, is called <strong>cache-aside</strong>, and it’s the one you’ll use most. <code>@cache.memoize()</code> wraps it up as a decorator; the <a href="../recipes/caching-expensive-calls.html">caching recipe</a> shows how.</p>
@@ -775,24 +775,44 @@ second call: 0.02 ms</code></pre>
 <li><strong>Invalidate at the write.</strong> When your code saves the user’s new name, it also deletes <code>user:42:profile</code>. The next read misses and rebuilds. This gives exact freshness, at the cost of knowing every key the change affects, which is where naming (below) comes in. When many keys depend on one thing, delete them by prefix, store them with a shared tag and drop them all with <code>evict(tag)</code>, or change a generation number so the old keys are never read again: <a href="../recipes/invalidating-groups.html">Invalidating groups of keys</a>.</li>
 <li><strong>Put the version in the key.</strong> If the key is <code>episode:512:v7:page</code>, then publishing revision 8 means readers ask for <code>episode:512:v8:page</code>, miss, and rebuild, and the old entry is simply never asked for again. Nothing is deleted; the stale copy expires on its own.</li>
 </ol>
-<p>Most apps use all three: an expiry on everything, a delete where the write is obvious, and versioned keys for things that have a natural version. Here’s the expiry half, with a fake clock so it runs instantly:</p>
-<div id="c65dd78f" class="cell" data-execution_count="2">
+<p>Most apps use all three: an expiry on everything, a delete where the write is obvious, and versioned keys for things that have a natural version. Here’s the first two, with a dict standing in for the database and a fake clock so the expiry runs instantly:</p>
+<div id="adf375ff" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>now <span class="op">=</span> [<span class="fl">1_000_000.0</span>]</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tempfile.mkdtemp(), clock<span class="op">=</span><span class="kw">lambda</span>: now[<span class="dv">0</span>])</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'user:42:profile'</span>, {<span class="st">'name'</span>: <span class="st">'Sam'</span>}, expire<span class="op">=</span><span class="dv">600</span>)</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'right away:   '</span>, cache.get(<span class="st">'user:42:profile'</span>))</span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>now[<span class="dv">0</span>] <span class="op">+=</span> <span class="dv">601</span>                                          <span class="co"># ten minutes pass</span></span>
-<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'after expiry: '</span>, cache.get(<span class="st">'user:42:profile'</span>))</span>
-<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'user:42:profile'</span>, {<span class="st">'name'</span>: <span class="st">'Sam'</span>}, expire<span class="op">=</span><span class="dv">600</span>)</span>
-<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>cache.delete(<span class="st">'user:42:profile'</span>)                        <span class="co"># the user renamed themselves: invalidate at the write</span></span>
-<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'after delete: '</span>, cache.get(<span class="st">'user:42:profile'</span>))</span></code></pre></div>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>database <span class="op">=</span> {<span class="dv">42</span>: {<span class="st">'name'</span>: <span class="st">'Sam'</span>}}                       <span class="co"># stands in for the real database</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> get_user(user_id: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>:</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>    key <span class="op">=</span> <span class="ss">f'user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">:profile'</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>    profile <span class="op">=</span> cache.get(key)</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> profile <span class="kw">is</span> <span class="va">None</span>:                                <span class="co"># a miss: ask the database, keep the answer for ten minutes</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>        <span class="bu">print</span>(<span class="st">'  (loaded from the database)'</span>)</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>        profile <span class="op">=</span> database[user_id]</span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>        cache.<span class="bu">set</span>(key, profile, expire<span class="op">=</span><span class="dv">600</span>)</span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> profile</span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> rename_user(user_id: <span class="bu">int</span>, name: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb3-17"><a href="#cb3-17" aria-hidden="true" tabindex="-1"></a>    database[user_id] <span class="op">=</span> {<span class="st">'name'</span>: name}                 <span class="co"># the write...</span></span>
+<span id="cb3-18"><a href="#cb3-18" aria-hidden="true" tabindex="-1"></a>    cache.delete(<span class="ss">f'user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">:profile'</span>)            <span class="co"># ...and the invalidation, side by side</span></span>
+<span id="cb3-19"><a href="#cb3-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-20"><a href="#cb3-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-21"><a href="#cb3-21" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'first read:   '</span>, get_user(<span class="dv">42</span>))</span>
+<span id="cb3-22"><a href="#cb3-22" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'second read:  '</span>, get_user(<span class="dv">42</span>))                  <span class="co"># a hit, no database</span></span>
+<span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a>now[<span class="dv">0</span>] <span class="op">+=</span> <span class="dv">601</span>                                          <span class="co"># ten minutes pass</span></span>
+<span id="cb3-25"><a href="#cb3-25" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'after expiry: '</span>, get_user(<span class="dv">42</span>))                  <span class="co"># expired, so it loads again</span></span>
+<span id="cb3-26"><a href="#cb3-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-27"><a href="#cb3-27" aria-hidden="true" tabindex="-1"></a>rename_user(<span class="dv">42</span>, <span class="st">'Samantha'</span>)</span>
+<span id="cb3-28"><a href="#cb3-28" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'after rename: '</span>, get_user(<span class="dv">42</span>))                  <span class="co"># deleted at the write, so it loads the new name</span></span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>right away:    {'name': 'Sam'}
-after expiry:  None
-after delete:  None</code></pre>
+<pre><code>  (loaded from the database)
+first read:    {'name': 'Sam'}
+second read:   {'name': 'Sam'}
+  (loaded from the database)
+after expiry:  {'name': 'Sam'}
+  (loaded from the database)
+after rename:  {'name': 'Samantha'}</code></pre>
 </div>
 </div>
 <p>One more rule that saves real grief: <strong>never cache a value that depends on who’s asking under a key that doesn’t say who’s asking.</strong> A profile page cached as <code>page:profile</code> will be shown to the next user who asks for it. If the answer depends on the user, the locale, the plan, or the A/B group, the key includes them.</p>

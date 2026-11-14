@@ -77,21 +77,37 @@ Invalidation is hard because the cache can't know when the source changed. It ha
 2. **Invalidate at the write.** When your code saves the user's new name, it also deletes `user:42:profile`. The next read misses and rebuilds. This gives exact freshness, at the cost of knowing every key the change affects, which is where naming (below) comes in. When many keys depend on one thing, delete them by prefix, store them with a shared tag and drop them all with `evict(tag)`, or change a generation number so the old keys are never read again: [Invalidating groups of keys](../recipes/invalidating-groups.qmd).
 3. **Put the version in the key.** If the key is `episode:512:v7:page`, then publishing revision 8 means readers ask for `episode:512:v8:page`, miss, and rebuild, and the old entry is simply never asked for again. Nothing is deleted; the stale copy expires on its own.
 
-Most apps use all three: an expiry on everything, a delete where the write is obvious, and versioned keys for things that have a natural version. Here's the expiry half, with a fake clock so it runs instantly:
+Most apps use all three: an expiry on everything, a delete where the write is obvious, and versioned keys for things that have a natural version. Here's the first two, with a dict standing in for the database and a fake clock so the expiry runs instantly:
 
 ```{python}
 now = [1_000_000.0]
 cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+database = {42: {'name': 'Sam'}}                       # stands in for the real database
 
-cache.set('user:42:profile', {'name': 'Sam'}, expire=600)
-print('right away:   ', cache.get('user:42:profile'))
+
+def get_user(user_id: int) -> dict:
+    key = f'user:{user_id}:profile'
+    profile = cache.get(key)
+    if profile is None:                                # a miss: ask the database, keep the answer for ten minutes
+        print('  (loaded from the database)')
+        profile = database[user_id]
+        cache.set(key, profile, expire=600)
+    return profile
+
+
+def rename_user(user_id: int, name: str) -> None:
+    database[user_id] = {'name': name}                 # the write...
+    cache.delete(f'user:{user_id}:profile')            # ...and the invalidation, side by side
+
+
+print('first read:   ', get_user(42))
+print('second read:  ', get_user(42))                  # a hit, no database
 
 now[0] += 601                                          # ten minutes pass
-print('after expiry: ', cache.get('user:42:profile'))
+print('after expiry: ', get_user(42))                  # expired, so it loads again
 
-cache.set('user:42:profile', {'name': 'Sam'}, expire=600)
-cache.delete('user:42:profile')                        # the user renamed themselves: invalidate at the write
-print('after delete: ', cache.get('user:42:profile'))
+rename_user(42, 'Samantha')
+print('after rename: ', get_user(42))                  # deleted at the write, so it loads the new name
 ```
 
 One more rule that saves real grief: **never cache a value that depends on who's asking under a key that doesn't say who's asking.** A profile page cached as `page:profile` will be shown to the next user who asks for it. If the answer depends on the user, the locale, the plan, or the A/B group, the key includes them.

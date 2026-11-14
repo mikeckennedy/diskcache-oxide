@@ -56,6 +56,8 @@ struct StoreHandle {
     store: Arc<Store>,
     shard: usize,
     closed: AtomicBool,
+    /// What this handle asked of background maintenance, asked again if it rejoins after a close.
+    maintenance: diskcache_oxide_core::background::Maintenance,
 }
 
 /// What a handle applies to every store it operates on: its settings and what it has reported.
@@ -161,7 +163,12 @@ impl Cache {
             report_redirect(py, redirect);
         }
         Ok(Self {
-            handle: StoreHandle { store: resolved.value, shard: 0, closed: AtomicBool::new(false) },
+            handle: StoreHandle {
+                store: resolved.value,
+                shard: 0,
+                closed: AtomicBool::new(false),
+                maintenance: diskcache_oxide_core::background::Maintenance::OFF,
+            },
             config: HandleConfig::new(
                 &options.directory,
                 &resolved.directory,
@@ -883,7 +890,7 @@ impl StoreHandle {
     #[cold]
     fn reopen(&self, timeout: Duration) -> Result<Duration, Error> {
         let deadline = lockwait::deadline_after(Instant::now(), timeout);
-        self.store.add_handle_until(deadline, || self.closed.swap(false, Ordering::AcqRel)).map_err(
+        self.store.add_handle_until(deadline, self.maintenance, || self.closed.swap(false, Ordering::AcqRel)).map_err(
             |error| match error {
                 Error::Timeout { .. } => Error::Timeout { seconds: timeout.as_secs_f64() },
                 other => other,

@@ -240,9 +240,6 @@ fn _after_fork_in_parent(py: Python<'_>) {
 fn _after_fork_in_child(py: Python<'_>) {
     gate::end_fork_child();
     drain_deferred_releases(py);
-    // The parent's maintenance thread didn't come across: start the child's own if a cache here
-    // wants it (plan 28, decision 14). It may spawn a thread, so with the interpreter released.
-    detach(py, diskcache_oxide_core::background::after_fork_in_child);
 }
 
 /// Releases the handles closed behind the fork that just ended. One atomic load unless there are

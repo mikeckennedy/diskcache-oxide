@@ -600,7 +600,7 @@ impl Store {
         let left = || deadline.saturating_duration_since(Instant::now());
 
         // Fast path: another handle in this process already has the store.
-        if let Some(store) = Self::lookup(&db_path, deadline)? {
+        if let Some(store) = Self::lookup(&db_path, deadline, options.maintenance)? {
             store.join(options, left())?;
             return Ok(store);
         }
@@ -636,7 +636,7 @@ impl Store {
             open_race::after_prepare(&options.directory);
             if let Some(id) = conn_file {
                 let stores = registry(&gate);
-                if let Some(store) = Self::claim_live(&stores, id, directory_check(&canonical)) {
+                if let Some(store) = Self::claim_live(&stores, id, directory_check(&canonical), options.maintenance) {
                     drop(stores);
                     // The claim is the closure's last fallible step, so `retry` never runs it twice.
                     store.adopt(&gate, conn, generation, options.max_connections);
@@ -662,7 +662,7 @@ impl Store {
         // A live store for this file, or a retired one that a closed handle still holds: join it
         // (reviving a retired one), so a file never has two stores, and two write locks, at once.
         if let Some(existing) = Self::find(&stores, file_id, &canonical) {
-            let (revived, unused) = existing.claim(&stores, Some(pin));
+            let (revived, unused) = existing.claim(&stores, Some(pin), options.maintenance);
             if revived {
                 existing.cache_limits(limits);
             }
@@ -734,7 +734,7 @@ impl Store {
 
     /// A live store for `db_path`, with one more handle registered on it. A retired one is left to
     /// the slow path, which has the pinned file to revive it with. Times out with no handle claimed.
-    fn lookup(db_path: &Path, deadline: Instant) -> Result<Option<Arc<Self>>> {
+    fn lookup(db_path: &Path, deadline: Instant, asked: crate::background::Maintenance) -> Result<Option<Arc<Self>>> {
         let Ok(id) = file_id(db_path) else { return Ok(None) };
         // Windows matches on the directory too (see `directory_check`).
         #[cfg(windows)]
@@ -747,7 +747,7 @@ impl Store {
         let directory = None;
         let gate = enter_until(deadline)?;
         let stores = registry(&gate);
-        Ok(Self::claim_live(&stores, id, directory))
+        Ok(Self::claim_live(&stores, id, directory, asked))
     }
 
     /// Whether this store is for the database `id`, in the directory `canonical` when one is given
@@ -758,9 +758,14 @@ impl Store {
 
     /// The live store for the file `id` (in `canonical`, if given), with one more handle registered
     /// on it, or None. A live store already has its pin, so the claim takes none and hands none back.
-    fn claim_live(stores: &MutexGuard<'_, Vec<Weak<Self>>>, id: FileId, canonical: Option<&Path>) -> Option<Arc<Self>> {
+    fn claim_live(
+        stores: &MutexGuard<'_, Vec<Weak<Self>>>,
+        id: FileId,
+        canonical: Option<&Path>,
+        asked: crate::background::Maintenance,
+    ) -> Option<Arc<Self>> {
         let store = stores.iter().filter_map(Weak::upgrade).find(|s| s.is_for(id, canonical) && !s.is_retired())?;
-        let (_, unused) = store.claim(stores, None);
+        let (_, unused) = store.claim(stores, None, asked);
         debug_assert!(unused.is_none(), "a live store handed back a pin it was never given");
         Some(store)
     }
@@ -831,6 +836,7 @@ impl Store {
         stores: &MutexGuard<'_, Vec<Weak<Self>>>,
         delta: isize,
         pin: Option<FilePin>,
+        asked: Option<crate::background::Maintenance>,
     ) -> (bool, Option<FilePin>) {
         let after = self.handles.fetch_add(delta, Ordering::AcqRel) + delta;
         let mut slot = self.pin.lock().unwrap_or_else(PoisonError::into_inner);
@@ -841,6 +847,10 @@ impl Store {
             return (false, slot.take().or(pin));
         }
         if !self.is_retired() {
+            drop(slot);
+            if let Some(asked) = asked {
+                self.ask_maintenance(stores, asked, false);
+            }
             return (false, pin);
         }
         let other_live = stores
@@ -855,23 +865,54 @@ impl Store {
         };
         *slot = Some(pin);
         self.retired.store(false, Ordering::Release);
-        // No handle from before is open now: a `clock=` veto ends, and the schedule moves past any
-        // ticks it slept through (plan 28).
-        let on = {
-            let mut tending = self.upkeep.tending_under(stores);
-            tending.schedule.revive(crate::background::worker::mono_ms());
-            tending.schedule.is_on()
-        };
-        if on {
-            crate::background::worker::ensure_running(stores);
+        drop(slot);
+        if let Some(asked) = asked {
+            self.ask_maintenance(stores, asked, true);
         }
         (true, None)
     }
 
+    /// Merges a handle's maintenance request into the store's, under the registry and in the same
+    /// step that counts the handle (plan 28, decisions 3 and 15): the shortest interval wins, a
+    /// handle with its own clock vetoes, and a revive starts over from this handle's ask. Gathers the
+    /// other stores' spread only when this store is being placed, and wakes the thread only when its
+    /// next turn came earlier, so reopening an open cache stays cheap.
+    fn ask_maintenance(
+        &self,
+        stores: &MutexGuard<'_, Vec<Weak<Self>>>,
+        asked: crate::background::Maintenance,
+        revived: bool,
+    ) {
+        if asked == crate::background::Maintenance::OFF && !revived {
+            return;
+        }
+        let others = if self.upkeep.needs_placement(stores, asked) {
+            // One store's mutex at a time, and never this store's meanwhile. A temporary `Arc` here
+            // can't be a store's last unless that store is retired with its pool cleared and its pin
+            // taken, so dropping it frees memory only.
+            stores
+                .iter()
+                .filter_map(Weak::upgrade)
+                .filter(|other| !std::ptr::eq(Arc::as_ptr(other), self))
+                .filter_map(|other| other.upkeep.spread(stores))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if self.upkeep.ask(stores, crate::background::worker::mono_ms(), asked, revived, others) {
+            crate::background::worker::ensure_running(stores);
+        }
+    }
+
     /// Registers one more handle; see [`Store::count_handle`], whose result it returns.
     #[must_use = "the pin it returns must be closed after the registry is released"]
-    fn claim(&self, stores: &MutexGuard<'_, Vec<Weak<Self>>>, pin: Option<FilePin>) -> (bool, Option<FilePin>) {
-        self.count_handle(stores, 1, pin)
+    fn claim(
+        &self,
+        stores: &MutexGuard<'_, Vec<Weak<Self>>>,
+        pin: Option<FilePin>,
+        asked: crate::background::Maintenance,
+    ) -> (bool, Option<FilePin>) {
+        self.count_handle(stores, 1, pin, Some(asked))
     }
 
     /// Applies a joining handle's settings (its handle is already registered by [`Store::claim`]):
@@ -894,7 +935,6 @@ impl Store {
         if options.auto_checkpoint {
             self.auto_checkpoint.store(true, Ordering::Release);
         }
-        self.join_maintenance(options.maintenance, timeout);
         if options.requested == Requested::default() {
             return Ok(());
         }
@@ -971,7 +1011,12 @@ impl Store {
     /// timeout leaves the handle closed and nothing counted. A retired store is revived if its
     /// database file is still the one it was opened on; otherwise it stays retired and keeps working
     /// by path, and a new open of the directory gets a new store.
-    pub fn add_handle_until(&self, deadline: Instant, claim: impl FnOnce() -> bool) -> Result<()> {
+    pub fn add_handle_until(
+        &self,
+        deadline: Instant,
+        asked: crate::background::Maintenance,
+        claim: impl FnOnce() -> bool,
+    ) -> Result<()> {
         let gate = enter_until(deadline)?;
         if !claim() {
             return Ok(());
@@ -986,7 +1031,7 @@ impl Store {
         {
             let stores = registry(&gate);
             if !self.is_retired() {
-                let (_, unused) = self.claim(&stores, None);
+                let (_, unused) = self.claim(&stores, None, asked);
                 drop(stores);
                 debug_assert!(unused.is_none(), "a live store handed back a pin it was never given");
                 return Ok(());
@@ -998,7 +1043,7 @@ impl Store {
         let db_path = open::db_path(&self.directory);
         let pin = open_pin(&gate, &db_path).ok().filter(|(_, id)| *id == self.file_id).map(|(pin, _)| pin);
         let stores = registry(&gate);
-        let (_, unused) = self.claim(&stores, pin);
+        let (_, unused) = self.claim(&stores, pin, asked);
         drop(stores);
         drop(unused);
         Ok(())
@@ -1052,7 +1097,7 @@ impl Store {
         // Decided under the registry, like `claim`: an open that finds this store either registers
         // its handle first (and this isn't the last), or finds it retired.
         let stores = registry(gate);
-        let (_, unpinned) = self.count_handle(&stores, -1, None);
+        let (_, unpinned) = self.count_handle(&stores, -1, None, None);
         let retired = self.is_retired();
         drop(stores);
         drop(unpinned);
@@ -1128,17 +1173,20 @@ impl Store {
         asked: crate::background::Maintenance,
     ) -> crate::background::Upkeep {
         use crate::background::schedule::Schedule;
-        let now = crate::background::worker::mono_ms();
-        let others: Vec<_> = stores
-            .iter()
-            .filter_map(Weak::upgrade)
-            .filter_map(|other| other.upkeep.tending(gate).schedule.spread())
-            .collect();
-        let mut schedule = Schedule::new(now, asked.interval_ms, others);
+        let others: Vec<_> = if asked.interval_ms == 0 {
+            Vec::new()
+        } else {
+            stores
+                .iter()
+                .filter_map(Weak::upgrade)
+                .filter_map(|other| other.upkeep.tending(gate).schedule.spread())
+                .collect()
+        };
+        let mut schedule = Schedule::new(crate::background::worker::mono_ms(), asked.interval_ms, others);
         if asked.own_clock {
             schedule.veto();
         }
-        crate::background::Upkeep::new(schedule, now)
+        crate::background::Upkeep::new(schedule)
     }
 
     /// Adds a new store to the registry, pruning dead entries, and wakes background maintenance if
@@ -1151,44 +1199,11 @@ impl Store {
         }
     }
 
-    /// Merges a joining handle's maintenance request into the store's (plan 28, decision 3): the
-    /// shortest interval wins, and a handle with its own clock vetoes it. Best effort within
-    /// `timeout`: behind a fork that outlasts it, the request is dropped, never the open.
-    fn join_maintenance(&self, asked: crate::background::Maintenance, timeout: Duration) {
-        if asked == crate::background::Maintenance::OFF {
-            return;
-        }
-        let Some(gate) = GATE.enter_shared_until(lockwait::deadline_after(Instant::now(), timeout)) else {
-            return;
-        };
-        let stores = registry(&gate);
-        let now = crate::background::worker::mono_ms();
-        // The others' first, one at a time: never two stores' schedules at once.
-        let others: Vec<_> = stores
-            .iter()
-            .filter_map(Weak::upgrade)
-            .filter(|other| !std::ptr::eq(Arc::as_ptr(other), self))
-            .filter_map(|other| other.upkeep.tending(&gate).schedule.spread())
-            .collect();
-        let on = {
-            let mut tending = self.upkeep.tending(&gate);
-            tending.schedule.join(now, asked.interval_ms, others);
-            if asked.own_clock {
-                tending.schedule.veto();
-            }
-            tending.schedule.is_on()
-        };
-        if on {
-            crate::background::worker::ensure_running(&stores);
-        }
-    }
-
-    /// How background maintenance has gone on this store in this process (plan 28, decision 16), or
-    /// None behind a pending fork.
+    /// How background maintenance has gone on this store in this process (plan 28, decision 16). The
+    /// counters are always there; the last error is left out behind a pending fork.
     #[must_use]
-    pub fn maintenance_health(&self) -> Option<crate::background::Health> {
-        let gate = GATE.try_enter_shared()?;
-        Some(self.upkeep.tending(&gate).health.clone())
+    pub fn maintenance_health(&self) -> crate::background::Health {
+        self.upkeep.health()
     }
 
     /// The failure a maintenance turn raised since the last call, if any, for the caller to log once:
@@ -1203,7 +1218,7 @@ impl Store {
             self.upkeep.raise_warning();
             return None;
         };
-        self.upkeep.tending(&gate).health.last_error.clone()
+        self.upkeep.tending(&gate).last_error.clone()
     }
 
     /// Every store in the registry, collected under it and returned after it's released, so no
@@ -1233,7 +1248,7 @@ impl Store {
         if self.is_retired() {
             return None;
         }
-        let turn = self.upkeep.turns.try_acquire(u64::MAX)?;
+        let turn = self.upkeep.turns_in_flight.try_acquire(u64::MAX)?;
         drop(stores);
         Some(BackgroundTurn { store: self, _turn: turn })
     }
@@ -1245,12 +1260,12 @@ impl Store {
     /// meanwhile, since the turns are then a live store's. Skipped at gate depth > 0 (a close inside
     /// this thread's own transaction), which the gate's rules don't allow to sleep.
     fn wait_for_background_turns(&self, deadline: Instant) {
-        if self.upkeep.turns.in_use() == 0 || GATE.own_depth() > 0 {
+        if self.upkeep.turns_in_flight.in_use() == 0 || GATE.own_depth() > 0 {
             return;
         }
         let deadline = deadline.max(lockwait::deadline_after(Instant::now(), TURN_DRAIN_FLOOR));
         gate::run_blocking(&|| {
-            while self.upkeep.turns.in_use() != 0 && self.is_retired() && Instant::now() < deadline {
+            while self.upkeep.turns_in_flight.in_use() != 0 && self.is_retired() && Instant::now() < deadline {
                 std::thread::sleep(TURN_DRAIN_POLL);
             }
         });
@@ -2867,7 +2882,7 @@ mod tests {
     }
 
     fn add_handle(store: &Store) {
-        store.add_handle_until(Instant::now() + T, || true).unwrap();
+        store.add_handle_until(Instant::now() + T, crate::background::Maintenance::OFF, || true).unwrap();
     }
 
     fn count(store: &Store) -> i64 {
@@ -3242,18 +3257,18 @@ mod tests {
         // Live: the store keeps its own pin and hands the new one back.
         let (pin, _) = open_pin(&gate, &db_path).unwrap();
         let stores = registry(&gate);
-        let (revived, unused) = store.claim(&stores, Some(pin));
+        let (revived, unused) = store.claim(&stores, Some(pin), crate::background::Maintenance::OFF);
         drop(stores);
         assert!(!revived && unused.is_some());
         // A release that lands first (the count dips to 0) retires the store and hands back its pin.
         let stores = registry(&gate);
-        let (_, own) = store.count_handle(&stores, -2, None);
+        let (_, own) = store.count_handle(&stores, -2, None, None);
         drop(stores);
         assert!(store.is_retired() && own.is_some());
         // Retired, a claim with a pin keeps it: nothing comes back.
         let (pin, _) = open_pin(&gate, &db_path).unwrap();
         let stores = registry(&gate);
-        let (revived, unused) = store.claim(&stores, Some(pin));
+        let (revived, unused) = store.claim(&stores, Some(pin), crate::background::Maintenance::OFF);
         drop(stores);
         assert!(revived && unused.is_none());
         drop(gate);
@@ -3274,7 +3289,7 @@ mod tests {
         let gate = GATE.enter_shared_blocking();
         let (pin, _) = open_pin(&gate, &open::db_path(&d1)).unwrap();
         let stores = registry(&gate);
-        let (revived, unused) = first.claim(&stores, Some(pin));
+        let (revived, unused) = first.claim(&stores, Some(pin), crate::background::Maintenance::OFF);
         drop(stores);
         assert!(!revived && unused.is_some());
         assert!(first.is_retired());

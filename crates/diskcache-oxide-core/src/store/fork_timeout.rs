@@ -327,16 +327,25 @@ fn row_4_a_timed_out_reopen_leaves_the_handle_closed_and_uncounted() {
     let closed = AtomicBool::new(true);
     behind_a_fork(|| {
         let deadline = Instant::now() + SHORT;
-        let result = store.add_handle_until(deadline, || closed.swap(false, Ordering::AcqRel));
+        let result = store
+            .add_handle_until(deadline, crate::background::Maintenance::OFF, || closed.swap(false, Ordering::AcqRel));
         assert!(matches!(result, Err(Error::Timeout { .. })), "{result:?}");
     });
     assert!(closed.load(Ordering::Acquire), "the handle was marked open");
     assert_eq!(store.handles(), 0, "a handle was counted");
-    store.add_handle_until(Instant::now() + T, || closed.swap(false, Ordering::AcqRel)).unwrap();
+    store
+        .add_handle_until(Instant::now() + T, crate::background::Maintenance::OFF, || {
+            closed.swap(false, Ordering::AcqRel)
+        })
+        .unwrap();
     assert!(!closed.load(Ordering::Acquire));
     assert_eq!(store.handles(), 1);
     // Only the caller that flips the flag counts.
-    store.add_handle_until(Instant::now() + T, || closed.swap(false, Ordering::AcqRel)).unwrap();
+    store
+        .add_handle_until(Instant::now() + T, crate::background::Maintenance::OFF, || {
+            closed.swap(false, Ordering::AcqRel)
+        })
+        .unwrap();
     assert_eq!(store.handles(), 1);
 }
 
@@ -568,7 +577,7 @@ fn row_5_a_deferral_racing_the_end_of_a_fork_is_never_stranded() {
 }
 
 fn add_handle(store: &Store) {
-    store.add_handle_until(Instant::now() + T, || true).unwrap();
+    store.add_handle_until(Instant::now() + T, crate::background::Maintenance::OFF, || true).unwrap();
 }
 
 // -- rows 6 and 7: reads -------------------------------------------------------------------------

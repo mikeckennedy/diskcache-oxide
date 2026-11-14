@@ -843,12 +843,15 @@ pub fn begin_fork() {
     if let Some(stale) = HELD_FORK.with(|held| held.borrow_mut().take()) {
         stale.end_parent();
     }
+    // Background maintenance's thread first, while the gate is still open to it: stopped and joined,
+    // so CPython counts no thread of ours and never warns about forking a multi-threaded process
+    // (plan 28).
+    crate::background::worker::stop_for_fork();
     // Before the claim, which is what sets this thread's `forking` flag.
     FORKING_PID.store(std::process::id(), Ordering::Release);
     let guard = GATE.begin_fork();
     crate::pool::quiesce_all();
     crate::store::quiesce_registry();
-    crate::background::worker::quiesce();
     crate::pool::close_idle_all();
     HELD_FORK.with(|held| *held.borrow_mut() = Some(guard));
 }
@@ -858,6 +861,7 @@ pub fn end_fork_parent() {
     if let Some(guard) = HELD_FORK.with(|held| held.borrow_mut().take()) {
         guard.end_parent();
     }
+    crate::background::worker::resume_after_fork(false);
 }
 
 /// The after-fork hook in the child: bumps the process generation, poisons the databases a write
@@ -876,6 +880,7 @@ pub fn end_fork_child() {
         // drop the parent's other threads from the count, and any claim one of them held.
         None => GATE.reset_in_unclaimed_child(),
     }
+    crate::background::worker::resume_after_fork(true);
 }
 
 #[cfg(all(test, not(shuttle)))]

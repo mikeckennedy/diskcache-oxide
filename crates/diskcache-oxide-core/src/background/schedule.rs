@@ -215,14 +215,29 @@ impl Schedule {
         self.vetoed = true;
     }
 
-    /// The store was revived after retiring, so no handle from before is open: the veto ends. The
-    /// store keeps its place; if its ticks went by while it was retired, its next turn is the next
-    /// regular tick.
-    pub fn revive(&mut self, now_ms: u64) {
+    /// The store was revived at `now_ms` after retiring, by a handle asking for `interval_ms`. No
+    /// handle from before is open, so their asks no longer apply (Michael, 2026-11-13): the veto ends
+    /// and the interval becomes the reviving handle's, 0 turning maintenance off. A store that had an
+    /// interval keeps its place on its grid, with the new spacing from its next tick; one that had
+    /// none is placed among `others`, as a new store is.
+    pub fn revive(&mut self, now_ms: u64, interval_ms: u64, others: impl IntoIterator<Item = Tick>) {
+        let interval_ms = interval_ms.min(MAX_INTERVAL_MS);
         self.vetoed = false;
-        if self.next_ms <= now_ms {
-            self.skip(now_ms);
+        self.turn_tick_ms = None;
+        if interval_ms == 0 {
+            self.interval_ms = 0;
+            return;
         }
+        if self.interval_ms == 0 {
+            let first = place(now_ms, interval_ms, others);
+            self.interval_ms = interval_ms;
+            self.regular_ms = first;
+            self.next_ms = first;
+            return;
+        }
+        self.advance_past(now_ms);
+        self.interval_ms = interval_ms;
+        self.next_ms = self.regular_ms;
     }
 
     /// Starts a turn at `now_ms`, if one is due: returns the tasks to run, after which the caller must
@@ -565,9 +580,25 @@ mod tests {
         assert_eq!(schedule.begin(1_000 * S), None);
         assert_eq!(schedule.next_ms(), None);
         assert_eq!(schedule.spread(), None, "a vetoed store takes no part in the spread");
-        schedule.revive(1_000 * S);
+        schedule.revive(1_000 * S, 60 * S, []);
         assert!(schedule.is_on());
         assert!(schedule.next_ms().unwrap() > 1_000 * S, "no turn straight away");
+    }
+
+    #[test]
+    fn a_revive_takes_the_reviving_handles_interval() {
+        // A store on 60 s, closed, then reopened by a handle asking for none: off.
+        let mut schedule = Schedule::new(0, 60 * S, []);
+        schedule.revive(100 * S, 0, []);
+        assert!(!schedule.is_on());
+        // Reopened later asking for 30 s: placed again, as a new store is.
+        schedule.revive(200 * S, 30 * S, [Tick { at_ms: 240 * S, every_ms: 30 * S }]);
+        assert_eq!(schedule.interval_ms(), 30 * S);
+        assert_eq!(schedule.next_ms(), Some(255 * S), "the middle of the gap in [230, 260)");
+        // A longer interval on a revive is taken too, keeping the grid from the next tick.
+        schedule.revive(300 * S, 120 * S, []);
+        assert_eq!(schedule.interval_ms(), 120 * S);
+        assert_eq!(schedule.next_ms(), Some(315 * S));
     }
 
     #[test]

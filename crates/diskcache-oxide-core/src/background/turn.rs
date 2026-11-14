@@ -179,6 +179,9 @@ impl Store {
     fn turn_should_stop(&self, deadline: Instant) -> Option<Stop> {
         if self.is_retired() {
             Some(Stop::Retired)
+        } else if crate::background::worker::stopping() {
+            // A fork is stopping the thread: end the turn at once.
+            Some(Stop::Refused)
         } else if self.write_waiters() > 0 {
             Some(Stop::Yielded)
         } else if Instant::now() >= deadline {
