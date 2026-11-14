@@ -433,6 +433,7 @@ def test_a_disabled_caches_transact_is_a_no_op(base: Path) -> None:
 # -- admin ----------------------------------------------------------------------------------------
 
 
+@pytest.mark.races_maintenance
 def test_stats_covers_every_cache_and_never_raises(base: Path) -> None:
     caches = Caches(base)
     caches.register('good')
@@ -475,7 +476,8 @@ def test_clear_and_expire_all_take_a_timeout(base: Path) -> None:
     from tests.conformance.proc_workers import SqlitePeer, stored_rows
 
     caches = Caches(base, timeout=60)
-    caches.register('a')
+    # Background maintenance off: the test counts the expired rows expire_all() will find.
+    caches.register('a', maintenance_interval=0)
     for i in range(5):
         caches['a'].set(f'k{i}', 'v', expire=0.001)
     time.sleep(0.01)

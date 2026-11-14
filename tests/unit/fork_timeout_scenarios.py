@@ -303,7 +303,8 @@ def swollen(directory: Path, timeout: float) -> Any:
     from tests.conformance.proc_workers import SqlitePeer
 
     limit = 1 << 20
-    cache = Cache(directory, wal_size_limit=limit, timeout=timeout)
+    # Background maintenance off: it would checkpoint the WAL these scenarios need large at close.
+    cache = Cache(directory, wal_size_limit=limit, timeout=timeout, maintenance_interval=0)
     cache.set('k', 1)
     with SqlitePeer(directory / 'diskcache-oxide.sqlite') as peer:
         peer.begin('READ')
@@ -803,6 +804,12 @@ SCENARIOS: dict[str, Callable[[Path], None]] = {
 
 if __name__ == '__main__':
     faulthandler.dump_traceback_later(WATCHDOG, exit=True)
+    # Under --maintenance-interval, the run's interval, except where the import order is what a
+    # scenario pins (applying it imports diskcache_oxide first).
+    if sys.argv[1] != 'hook-logging-and-futures':
+        from tests.maintenance import apply_from_env
+
+        apply_from_env()
     outcome = 0
     try:
         SCENARIOS[sys.argv[1]](Path(sys.argv[2]))

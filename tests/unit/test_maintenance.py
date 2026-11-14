@@ -15,7 +15,7 @@ import pytest
 from diskcache_oxide import Cache, Caches, FanoutCache, NullCache, _core
 
 from tests.conformance.proc_workers import stored_rows
-from tests.maintenance import fast_maintenance
+from tests.maintenance import fast_maintenance, interval_from_env
 
 DB = 'diskcache-oxide.sqlite'
 FAST = 0.1
@@ -48,6 +48,7 @@ def expiring(cache: Cache | FanoutCache, count: int, expire: float = 0.3) -> Non
 # -- the setting --------------------------------------------------------------------------------------
 
 
+@pytest.mark.races_maintenance
 def test_the_default_is_five_minutes_and_zero_turns_it_off(tmp_path: Path) -> None:
     with Cache(tmp_path / 'a') as cache:
         assert cache.maintenance_stats() == {**ZERO, 'interval': 300.0}
@@ -253,3 +254,26 @@ def test_the_interpreter_exits_cleanly_mid_turn(tmp_path: Path) -> None:
     done = run(script, str(tmp_path / 'c'))
     assert (done.returncode, done.stderr) == (0, '')
     assert time.monotonic() - started < 30
+
+
+@pytest.mark.skipif(not interval_from_env(), reason='only under --maintenance-interval')
+def test_the_mode_reaches_the_processes_tests_start(tmp_path: Path) -> None:
+    # As fork_scenarios, fork_timeout_scenarios and proc_workers start: a fresh interpreter that
+    # applies the run's interval from the environment.
+    script = """
+        import sys
+        from diskcache_oxide import Cache
+        from tests.maintenance import apply_from_env
+        apply_from_env()
+        with Cache(sys.argv[1]) as cache:
+            print(cache.maintenance_stats()['interval'])
+    """
+    done = subprocess.run(
+        [sys.executable, '-c', textwrap.dedent(script), str(tmp_path / 'c')],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=Path(__file__).resolve().parents[2],
+    )
+    assert done.returncode == 0, done.stderr
+    assert float(done.stdout) == interval_from_env()

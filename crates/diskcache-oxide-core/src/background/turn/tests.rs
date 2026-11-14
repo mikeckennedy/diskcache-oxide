@@ -460,8 +460,10 @@ fn the_checkpoint_never_copies_under_the_write_lock() {
     let turn = store.begin_background_turn().unwrap();
     assert!(matches!(store.background_checkpoint(&turn), Some(Outcome::Busy)));
     assert_eq!(wal_size(&wal), size, "the WAL was reset under a reader");
-    // Busy backs off: the next turn soon after doesn't try again.
-    assert!(store.background_checkpoint(&turn).is_none());
+    // It never arms the request path's backoff, so the last close's checkpoint (which waits for
+    // readers, as this one doesn't) still runs: the review's 539 MiB WAL left after close.
+    assert!(!store.wal_in_backoff_for_tests(), "a background checkpoint started the close path's backoff");
+    assert!(matches!(store.background_checkpoint(&turn), Some(Outcome::Busy)), "tried again next turn");
     drop(turn);
     reader.execute_batch("COMMIT").unwrap();
     store.release_handle();
@@ -477,6 +479,7 @@ fn a_one_connection_store_never_checkpoints_in_the_background() {
     let turn = store.begin_background_turn().unwrap();
     assert!(matches!(store.background_checkpoint(&turn), Some(Outcome::NoSlot)));
     assert_eq!(wal_size(&wal), size);
+    assert!(!store.wal_in_backoff_for_tests(), "a background NoSlot started the close path's backoff");
     drop(turn);
     store.release_handle();
 }

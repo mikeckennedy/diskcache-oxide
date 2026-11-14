@@ -28,6 +28,8 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     '_gate_stats',
     '_set_maintenance_floor',
     '_fail_next_maintenance_turns',
+    '_set_default_maintenance_interval',
+    '_maintenance_totals',
     '_open_fanout_keeping_stored',
     '_sqlite_error',
     '_held_stores',
@@ -111,6 +113,12 @@ def _set_maintenance_floor(seconds: float) -> None:
 
 def _fail_next_maintenance_turns(turns: int) -> None:
     """Test hook: the next `turns` background maintenance turns in this process fail."""
+
+def _set_default_maintenance_interval(seconds: float) -> None:
+    """Test hook: the interval a cache opened with no `maintenance_interval` gets (0 for off)."""
+
+def _maintenance_totals() -> tuple[int, int]:
+    """Test hook: `(turns, rows removed)` by background maintenance in this process."""
 
 def _open_fanout_keeping_stored(
     directory: str | os.PathLike[str],

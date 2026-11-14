@@ -1,6 +1,7 @@
 """What a fork costs the parent, with caches open (Phase 2.5, review 07).
 
     python -m bench.fork_cost [--caches 1] [--idle 8] [--forks 200] [--rss-mib 0] [--load-threads 0]
+                              [--maintenance-interval SECONDS]
 
 Since `e817ba2` the before-fork hook closes every pool's idle connections, so the child inherits a
 clean SQLite lock table. The parent pays twice: the fork itself (the hook's quiesce and closes), and
@@ -26,6 +27,11 @@ short strs, since an app's heap is mostly small objects.
 and reports their calls that overlapped a fork against those that didn't. Every cache call in the
 process waits for a pending fork, so the overlapping calls' worst case is what requests feel. The
 load threads share the pool with the warm-up, so "warming added" can read low with them.
+
+`--maintenance-interval` sets the caches' background maintenance (plan 28): every fork stops and
+joins its thread, then starts it again, so this times that too. Left out, the caches get the library
+default (5 minutes): the thread runs, parked, and no turn lands within a run. `0` turns it off, for
+the cost without a thread; a short interval (0.05) has turns landing during the forks.
 
 Not modeled: a child that lives on, so the parent pays real copy-on-write copies (the child here
 exits at once), and the write faults the parent takes afterwards as refcounts touch pages the fork
@@ -171,14 +177,25 @@ def main() -> None:
     parser.add_argument('--forks', type=int, default=200)
     parser.add_argument('--rss-mib', type=int, default=0, help='grow until anonymous RSS reaches this many MiB')
     parser.add_argument('--load-threads', type=int, default=0, help='threads doing get/set during the forks')
+    parser.add_argument(
+        '--maintenance-interval', type=float, default=None, help='background maintenance interval (0 for off)'
+    )
     args = parser.parse_args()
     ballast = grow(args.rss_mib)
 
-    from diskcache_oxide import Cache
+    from diskcache_oxide import Cache, _core
 
+    if args.maintenance_interval:
+        _core._set_maintenance_floor(min(args.maintenance_interval, 1.0))
     with tempfile.TemporaryDirectory() as tmp:
         caches = [
-            Cache(Path(tmp) / f'c{i}', max_connections=max(args.idle, 1), pickle=True) for i in range(args.caches)
+            Cache(
+                Path(tmp) / f'c{i}',
+                max_connections=max(args.idle, 1),
+                pickle=True,
+                maintenance_interval=args.maintenance_interval,
+            )
+            for i in range(args.caches)
         ]
         for cache in caches:
             cache.set('k', 'v')
@@ -225,7 +242,8 @@ def main() -> None:
     build = 'free-threaded' if not sys._is_gil_enabled() else 'GIL'
     print(
         f'Python {sys.version.split()[0]} ({build}), {args.caches} cache(s), {args.idle} idle connection(s) each, '
-        f'{args.forks} forks, {args.load_threads} load thread(s), RSS at the first fork {rss_at_fork:.0f} MiB'
+        f'{args.forks} forks, {args.load_threads} load thread(s), RSS at the first fork {rss_at_fork:.0f} MiB, '
+        f'maintenance_interval {args.maintenance_interval}'
     )
     print(
         f'warming added {extra} connection(s) in all (expected {args.caches * max(args.idle - 1, 0)}); WAL before the '

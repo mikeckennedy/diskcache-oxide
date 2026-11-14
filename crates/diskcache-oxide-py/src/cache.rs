@@ -841,6 +841,11 @@ struct Settings {
 pub(crate) static MAINTENANCE_FLOOR_MS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(diskcache_oxide_core::background::schedule::MIN_INTERVAL_MS);
 
+/// The interval a handle that passes no `maintenance_interval` gets, in milliseconds: 5 minutes,
+/// unless a test run set another with `_set_default_maintenance_interval` (0 for off).
+pub(crate) static DEFAULT_MAINTENANCE_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(diskcache_oxide_core::background::schedule::DEFAULT_INTERVAL_MS);
+
 /// `maintenance_interval`: None for the default (5 minutes), 0 for off, else seconds, at least the
 /// floor. A handle with its own `clock` gets no background maintenance (the thread only knows wall
 /// time), so it can't ask for an interval.
@@ -849,10 +854,8 @@ fn parse_maintenance(
     own_clock: bool,
 ) -> PyResult<diskcache_oxide_core::background::Maintenance> {
     let Some(seconds) = optional_seconds("maintenance_interval", value)? else {
-        return Ok(diskcache_oxide_core::background::Maintenance {
-            own_clock,
-            ..diskcache_oxide_core::background::Maintenance::DEFAULT
-        });
+        let interval_ms = DEFAULT_MAINTENANCE_MS.load(Ordering::Relaxed);
+        return Ok(diskcache_oxide_core::background::Maintenance { interval_ms, own_clock });
     };
     if seconds == 0.0 {
         // Off for this handle; a handle with its own clock still vetoes the store's maintenance, so

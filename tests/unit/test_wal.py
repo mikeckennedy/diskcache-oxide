@@ -297,6 +297,9 @@ def _swollen(directory: Path) -> Cache:
 # deletes the WAL when the last connection closes, whatever `checkpoint` says.
 
 
+# The races_maintenance tests need a WAL left large at close, which background maintenance would
+# already have checkpointed under --maintenance-interval.
+@pytest.mark.races_maintenance
 def test_close_checkpoints_a_large_wal(tmp_path: Path) -> None:
     from tests.conformance.proc_workers import SqlitePeer
 
@@ -307,6 +310,7 @@ def test_close_checkpoints_a_large_wal(tmp_path: Path) -> None:
         assert _wal_bytes(tmp_path / 'c') == 0
 
 
+@pytest.mark.races_maintenance
 def test_close_without_checkpoint_leaves_the_wal_alone(tmp_path: Path) -> None:
     from tests.conformance.proc_workers import SqlitePeer
 
@@ -318,6 +322,7 @@ def test_close_without_checkpoint_leaves_the_wal_alone(tmp_path: Path) -> None:
         assert _wal_bytes(tmp_path / 'c') == before
 
 
+@pytest.mark.races_maintenance
 @pytest.mark.parametrize('how', ['close(checkpoint=False)', 'garbage collected'])
 def test_the_last_close_on_a_large_wal_lets_sqlite_checkpoint_it(tmp_path: Path, how: str) -> None:
     # With no other connection on the file, closing the last one makes SQLite checkpoint and delete
@@ -338,6 +343,7 @@ def test_the_last_close_on_a_large_wal_lets_sqlite_checkpoint_it(tmp_path: Path,
     reopened.close()
 
 
+@pytest.mark.races_maintenance
 @pytest.mark.timeout(120)
 def test_a_cache_collected_as_garbage_on_a_large_wal_while_other_threads_run(
     tmp_path: Path,
@@ -394,6 +400,7 @@ def test_a_cache_collected_as_garbage_on_a_large_wal_while_other_threads_run(
     other.close()
 
 
+@pytest.mark.races_maintenance
 def test_closing_twice_is_harmless_and_the_cache_reopens_after(tmp_path: Path) -> None:
     from tests.conformance.proc_workers import SqlitePeer
 
@@ -411,6 +418,7 @@ def test_closing_twice_is_harmless_and_the_cache_reopens_after(tmp_path: Path) -
         cache.close()
 
 
+@pytest.mark.races_maintenance
 def test_closing_one_handle_repeatedly_leaves_the_other_as_the_last(
     tmp_path: Path,
 ) -> None:

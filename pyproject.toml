@@ -113,6 +113,7 @@ markers = [
     "covers(ref): this test checks the fixed side of a divergence that can't be a strict xfail (diskcache fails it only sometimes)",
     "requires(feature): skipped until the backend supports the feature",
     "slow: heavy stress tests, excluded by default (run with -m slow)",
+    "races_maintenance: asserts what background maintenance may change between calls (raw row counts, expire() results); left out under --maintenance-interval",
 ]
 
 # Optional imports, each guarded or only used by a tool with its own dependency group: griffe and

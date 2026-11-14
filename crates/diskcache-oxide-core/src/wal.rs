@@ -123,9 +123,8 @@ pub struct WalStats {
 
 /// A store's checkpoint bookkeeping. Times are milliseconds since `created`, on the monotonic clock,
 /// which carries over `fork()` unchanged, so inherited values stay meaningful in a child. Writers
-/// reach it holding the in-process write lock, except background maintenance's checkpoint (plan 28,
-/// decision 10), which records its outcome without it. Every field is an atomic, so that only means
-/// two attempts recorded at once can each set the backoff, the later one winning: harmless.
+/// reach it holding the in-process write lock, so they're serialized and plain loads and stores
+/// are enough. Background maintenance's checkpoint (plan 28) records nothing here.
 #[derive(Debug)]
 pub(crate) struct WalState {
     created: Instant,

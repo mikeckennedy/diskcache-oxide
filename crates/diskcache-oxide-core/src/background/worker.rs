@@ -59,6 +59,17 @@ static STOPPED_FOR_FORK: AtomicUsize = AtomicUsize::new(0);
 
 static SPAWN_FAILURES: AtomicU64 = AtomicU64::new(0);
 
+/// Turns run and rows removed in this process, every store's, for test runs that must prove
+/// maintenance actually ran beside them (plan 28's gate).
+static TOTAL_TURNS: AtomicU64 = AtomicU64::new(0);
+static TOTAL_REMOVED: AtomicU64 = AtomicU64::new(0);
+
+/// `(turns, rows removed)` by background maintenance in this process, every store's.
+#[must_use]
+pub fn totals() -> (u64, u64) {
+    (TOTAL_TURNS.load(Ordering::Relaxed), TOTAL_REMOVED.load(Ordering::Relaxed))
+}
+
 /// Turns left to fail on purpose, for tests in other crates that check failures are reported.
 static FAIL_NEXT_TURNS: AtomicU64 = AtomicU64::new(0);
 
@@ -294,6 +305,8 @@ fn record(
     };
     tending.schedule.finish(now, report.done, report.cut_short());
     upkeep.count_turn(report.removed);
+    TOTAL_TURNS.fetch_add(1, Ordering::Relaxed);
+    TOTAL_REMOVED.fetch_add(report.removed, Ordering::Relaxed);
     let starved =
         report.work_seen && report.removed == 0 && matches!(report.stopped, Some(Stop::Refused | Stop::Yielded));
     if let Some(error) = report.error {

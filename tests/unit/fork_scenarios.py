@@ -808,9 +808,10 @@ def fanout_close_after_fork(directory: Path) -> list[str]:
     every shard: each write must reach its database, as `parent-closes-after-fork` checks for one
     store. The child inherits exactly one pin per shard and no connection (the forking thread held
     none), and its close leaves just those pins, forgotten by design (D-017), never a connection it
-    opened itself.
+    opened itself. Background maintenance is off for it: the child's own thread may open a connection
+    of its own at once, which this count can't tell from an inherited one.
     """
-    cache = FanoutCache(directory, timeout=TIMEOUT)
+    cache = FanoutCache(directory, timeout=TIMEOUT, maintenance_interval=0)
     shards = cache.shards
     keys = one_key_per_shard(cache, 'k')
     for key in keys.values():
@@ -1092,6 +1093,9 @@ SCENARIOS = {
 def main() -> int:
     name, directory = sys.argv[1], Path(sys.argv[2])
     set_title(f'fork-{name}')
+    from tests.maintenance import apply_from_env
+
+    apply_from_env()
     # Forking with threads running is the point of these scenarios.
     warnings.filterwarnings('ignore', r'This process .* is multi-threaded', DeprecationWarning)
     failures = SCENARIOS[name](directory)

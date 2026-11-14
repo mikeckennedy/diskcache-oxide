@@ -56,6 +56,10 @@ def _backend(name: str) -> Backend:
     # Imported lazily so the peer and integrity commands start fast and never load a cache backend.
     from tests.conformance.backends import BACKENDS
 
+    if name == 'oxide':
+        from tests.maintenance import apply_from_env
+
+        apply_from_env()
     return BACKENDS[name]()
 
 
@@ -164,7 +168,10 @@ class SqlitePeer:
 def _peer_main(db_path: str) -> int:
     import sqlite3
 
-    con = sqlite3.connect(db_path, isolation_level=None, timeout=0)
+    # Under --maintenance-interval a busy timeout, so taking a lock waits out a background maintenance
+    # chunk; otherwise none, so a test also proves the cache left no lock behind when its call returned.
+    busy = 5 if os.environ.get('DCO_MAINTENANCE_INTERVAL') else 0
+    con = sqlite3.connect(db_path, isolation_level=None, timeout=busy)
     try:
         for line in sys.stdin:
             command = line.split()

@@ -448,11 +448,16 @@ lane_E() {
     note "E  canary: the preloaded runtime reported a heap-buffer-overflow into its report file, as required"
     env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider tests/unit >"$unit" 2>&1 || rc=1
     env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider --backend=oxide tests/conformance >"$conf" 2>&1 || rc=1
+    # Again with background maintenance running every 10 ms in every cache (plan 28): the conformance
+    # suite and the unit tests where it meets forks, threads and transactions.
+    local maint="$OUT/E-maintenance.log"
+    env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider --maintenance-interval=0.01 --backend=oxide \
+        tests/conformance "${MAINTENANCE_UNITS[@]}" >"$maint" 2>&1 || rc=1
     local verdict=0 results files
     files=$(collect_reports "$reports" "$OUT/E-reports.log")
     note "E  ${files% *} process(es) wrote a report file, ${files#* } with a report in it"
     judge_asan "$OUT/E-reports.log" no-leaks || verdict=1
-    results="unit: $( (grep -E '^[0-9]+ (passed|failed)' "$unit" || grep -E 'passed|failed|error' "$unit" || true) | tail -1); conformance: $( (grep -E '^[0-9]+ (passed|failed)' "$conf" || grep -E 'passed|failed|error' "$conf" || true) | tail -1)"
+    results="unit: $( (grep -E '^[0-9]+ (passed|failed)' "$unit" || grep -E 'passed|failed|error' "$unit" || true) | tail -1); conformance: $( (grep -E '^[0-9]+ (passed|failed)' "$conf" || grep -E 'passed|failed|error' "$conf" || true) | tail -1); with maintenance: $( (grep -E '^[0-9]+ (passed|failed)' "$maint" || grep -E 'passed|failed|error' "$maint" || true) | tail -1)"
     if (( rc == 0 && verdict == 0 )); then
         note "E  PASS  the unit and conformance suites ran on Python $py with the extension and SQLite under AddressSanitizer, no report ($results)"
     else
@@ -611,6 +616,13 @@ ts = [threading.Thread(target=hammer, args=(v,)) for v in (1, 2)]
         --deselect 'tests/unit/test_concurrency.py::test_cull_finishes_promptly_while_threads_hammer_writes' \
         >"$unit" 2>&1 || rc=1
     env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider -o timeout=600 --backend=oxide tests/conformance >"$conf" 2>&1 || rc=1
+    # Again with background maintenance running every 10 ms in every cache (plan 28), as in lane E.
+    local maint="$OUT/D-maintenance.log"
+    env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider -o timeout=600 --maintenance-interval=0.01 \
+        --backend=oxide tests/conformance "${MAINTENANCE_UNITS[@]}" \
+        --deselect 'tests/unit/test_concurrency.py::test_clear_inside_a_held_transaction_doesnt_pause_for_a_writer_that_cant_get_in' \
+        --deselect 'tests/unit/test_concurrency.py::test_cull_finishes_promptly_while_threads_hammer_writes' \
+        >"$maint" 2>&1 || rc=1
     local slow="$OUT/D-slow.log" slow_result=''
     if (( SLOW )); then
         env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider -o timeout=1800 -m slow tests/unit/test_concurrency.py >"$slow" 2>&1 || rc=1
@@ -628,7 +640,7 @@ ts = [threading.Thread(target=hammer, args=(v,)) for v in (1, 2)]
         note "D  no CPython suppression matched in any process that exited normally"
     fi
     python3 "$TSAN_RACES" "$OUT/D-reports.log" "$TSAN_ALLOWED" | tee -a "$SUMMARY" || verdict=1
-    results="unit: $( (grep -E '^[0-9]+ (passed|failed)' "$unit" || grep -E 'passed|failed|error' "$unit" || true) | tail -1); conformance: $( (grep -E '^[0-9]+ (passed|failed)' "$conf" || grep -E 'passed|failed|error' "$conf" || true) | tail -1)$slow_result"
+    results="unit: $( (grep -E '^[0-9]+ (passed|failed)' "$unit" || grep -E 'passed|failed|error' "$unit" || true) | tail -1); conformance: $( (grep -E '^[0-9]+ (passed|failed)' "$conf" || grep -E 'passed|failed|error' "$conf" || true) | tail -1); with maintenance: $( (grep -E '^[0-9]+ (passed|failed)' "$maint" || grep -E 'passed|failed|error' "$maint" || true) | tail -1)$slow_result"
     if (( rc == 0 && verdict == 0 )); then
         note "D  PASS  the unit and conformance suites ran on the TSan free-threaded Python $CPYTHON_SAN_VERSION with the extension and SQLite under ThreadSanitizer, races only as allowed ($results)"
     else
@@ -636,6 +648,13 @@ ts = [threading.Thread(target=hammer, args=(v,)) for v in (1, 2)]
         FAILED+=(D)
     fi
 }
+
+# The unit tests lanes D and E run a second time with background maintenance on a 50 ms interval
+# (plan 28): where it meets forks, threads, transactions, the forced checkpoints and its own tests. The
+# mode reaches the processes those tests start too (through the environment), and the pass fails if
+# maintenance ran fewer than tests/conftest.py's MIN_TURNS turns beside it.
+MAINTENANCE_UNITS=(tests/unit/test_maintenance.py tests/unit/test_concurrency.py tests/unit/test_transact.py
+    tests/unit/test_fanout_transact.py tests/unit/test_fork_timeout.py tests/unit/test_wal.py)
 
 IFS=',' read -r -a WANT <<< "$LANES"
 for lane in "${WANT[@]}"; do

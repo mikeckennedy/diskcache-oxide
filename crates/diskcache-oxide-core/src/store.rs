@@ -1152,6 +1152,8 @@ impl Store {
     /// Returns a leased connection: to the pool, or closed if the store is retired (a lease or a
     /// held transaction that outlived the last handle), so nothing stays open after the last
     /// close (D-018).
+    ///
+    /// `background::model` rebuilds this protocol for shuttle: keep the two in step.
     fn give_back(&self, gate: &SharedGuard<'_>, pooled: PooledConn) {
         if self.is_retired() {
             self.pool.discard(gate, pooled);
@@ -1663,8 +1665,10 @@ impl Store {
     /// PASSIVE holds a connection slot, and a shared gate level, for its whole copy (up to 1.4 s in
     /// the soak), so it never takes a store's last free slot: a store capped at one connection
     /// (`max_connections=1`, or a small `FanoutCache` shard) never checkpoints in the background, and
-    /// a fork may wait for a copy in progress, as for any checkpoint. Records the outcome like any
-    /// forced checkpoint; a pending fork as such, not as contention.
+    /// a fork may wait for a copy in progress, as for any checkpoint. It records nothing in the WAL's
+    /// counters and backoff, which describe the request path's checkpoints: a background attempt that
+    /// doesn't succeed must not make the last `close()` skip its own, which waits for readers as this
+    /// one doesn't. `maintenance_stats()` reports the background's work.
     pub(crate) fn background_checkpoint(&self, turn: &BackgroundTurn<'_>) -> Option<crate::wal::Outcome> {
         use crate::wal::Outcome;
         if self.is_retired() || self.wal.in_backoff() || crate::poison::check_writable(self.file_id).is_err() {
@@ -1677,18 +1681,14 @@ impl Store {
         let refused = || if GATE.stats().pending { Outcome::ForkPending } else { Outcome::Busy };
         let cap = self.max_connections.load(Ordering::Acquire);
         if cap < 2 || self.slots.in_use() + 1 >= cap {
-            let outcome = Outcome::NoSlot;
-            self.wal.record_outcome(&outcome);
-            return Some(outcome);
+            return Some(Outcome::NoSlot);
         }
-        let start = Instant::now();
         let passive = turn.read(|conn| {
             conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| {
                 Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
             })
             .map_err(|e| Error::from_sqlite(e, Duration::ZERO))
         });
-        let passive_took = start.elapsed();
         let outcome = match passive {
             None => refused(),
             Some(Err(error)) => Outcome::Failed(error),
@@ -1714,9 +1714,13 @@ impl Store {
                 }
             },
         };
-        self.wal.record_pause(passive_took, start.elapsed().saturating_sub(passive_took));
-        self.wal.record_outcome(&outcome);
         Some(outcome)
+    }
+
+    /// Whether the request path's forced checkpoints are backing off (tests only).
+    #[cfg(test)]
+    pub(crate) fn wal_in_backoff_for_tests(&self) -> bool {
+        self.wal.in_backoff()
     }
 
     /// Whether [`Store::checkpoint_on_close`] would checkpoint: one `stat` at most.

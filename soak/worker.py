@@ -755,6 +755,7 @@ class Worker:
                 'c': dict(self.c),
                 'beats': dict(self.beats),
                 'gate': _core._gate_stats(),
+                'maint_bg': self.background_maintenance(),
                 'fork_max_s': self.fork_max_s,
                 'child_max_s': self.child_max_s,
                 **self.extra_stats(),
@@ -763,6 +764,27 @@ class Worker:
 
     def extra_stats(self) -> dict[str, Any]:
         return {}
+
+    def background_maintenance(self) -> dict[str, Any]:
+        """Background maintenance's counts on every cache this worker holds (plan 28), summed: the
+        chaos and ledger caches, and a role's own (the durable, behind and stuck caches on the lanes,
+        where a long-held write lock makes a starved streak likeliest). A `maintenance_stats()` that
+        raises is counted in `errors`, which the orchestrator reports."""
+        total: dict[str, Any] = {'turns': 0, 'removed': 0, 'failures': 0, 'errors': 0, 'last_error': None}
+        seen: set[int] = set()
+        for cache in list(vars(self).values()):
+            if not hasattr(cache, 'maintenance_stats') or id(cache) in seen:
+                continue
+            seen.add(id(cache))
+            try:
+                stats = cache.maintenance_stats()
+            except Exception:
+                total['errors'] += 1
+                continue
+            for key in ('turns', 'removed', 'failures'):
+                total[key] += stats[key]
+            total['last_error'] = total['last_error'] or stats['last_error']
+        return total
 
     def child_work(self) -> None:
         """In a forked child: calls on the handles this role's threads are busy on at the fork, as
@@ -1372,6 +1394,10 @@ class AutoWorker(Worker):
             size_limit=2**34,
             wal_size_limit=AUTO_WAL_LIMIT,
             wal_checkpoint='auto',
+            # This group measures the forced checkpoints writes make; background maintenance's own
+            # checkpoints (plan 28) would take that work from them. Store 0 keeps it on, so the soak
+            # still sees the two kinds meet (a background one must never stop a forced one).
+            maintenance_interval=None if store == 0 else 0,
         )
         self.wal_path = run_dir / f'auto-{store}' / 'diskcache-oxide.sqlite-wal'
         self.peak_wal = 0
@@ -1904,6 +1930,12 @@ def maint(run_dir: Path, op: str) -> int:
 
 def main() -> int:
     from tests.proctitle import set_title
+
+    # A short background maintenance interval for every cache this worker opens without its own, set
+    # by soak --maintenance-interval (plan 28); the soak's tooling, not the library, reads it.
+    interval = float(os.environ.get('DCO_MAINTENANCE_INTERVAL', '0') or 0)
+    if interval:
+        _core._set_default_maintenance_interval(interval)
 
     mode, run_dir = sys.argv[1], Path(sys.argv[2])
     if mode == 'maint':

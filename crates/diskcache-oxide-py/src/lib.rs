@@ -263,6 +263,27 @@ fn _set_maintenance_floor(seconds: f64) -> PyResult<()> {
     Ok(())
 }
 
+/// Test hook: the interval a cache opened with no `maintenance_interval` gets (0 for off), so a whole
+/// test run can have maintenance running on a short interval beside every test. Not part of the
+/// public API.
+#[pyfunction]
+fn _set_default_maintenance_interval(seconds: f64) -> PyResult<()> {
+    if !seconds.is_finite() || seconds < 0.0 || (seconds > 0.0 && seconds < 0.001) {
+        return Err(pyo3::exceptions::PyValueError::new_err("the interval must be 0 or at least a millisecond"));
+    }
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "non-negative and finite")]
+    let ms = (seconds * 1_000.0).round() as u64;
+    cache::DEFAULT_MAINTENANCE_MS.store(ms, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Test hook: `(turns, rows removed)` by background maintenance in this process, every cache's, so a
+/// test run can prove it ran. Not part of the public API.
+#[pyfunction]
+fn _maintenance_totals() -> (u64, u64) {
+    diskcache_oxide_core::background::totals()
+}
+
 /// Test hook: the next `turns` background maintenance turns in this process fail, so tests can check
 /// failures are counted and logged. Not part of the public API.
 #[pyfunction]
@@ -466,6 +487,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_gate_stats, m)?)?;
     m.add_function(wrap_pyfunction!(_set_maintenance_floor, m)?)?;
     m.add_function(wrap_pyfunction!(_fail_next_maintenance_turns, m)?)?;
+    m.add_function(wrap_pyfunction!(_set_default_maintenance_interval, m)?)?;
+    m.add_function(wrap_pyfunction!(_maintenance_totals, m)?)?;
     m.add_function(wrap_pyfunction!(cache::_open_fanout_keeping_stored, m)?)?;
     m.add_function(wrap_pyfunction!(_sqlite_error, m)?)?;
     m.add_function(wrap_pyfunction!(_held_stores, m)?)?;

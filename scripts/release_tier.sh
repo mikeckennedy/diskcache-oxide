@@ -17,8 +17,9 @@ git rev-parse -q --verify "$base^{commit}" >/dev/null || { echo "unknown base: $
 
 core=crates/diskcache-oxide-core/src
 # The areas the long soak and the sanitizers exist for: locks, the fork gate, our SQLite mutexes,
-# the lock-free stack, connections, the WAL, value files, the row writer, eviction and maintenance.
-full_re="^($core/(gate|genlock|sync|model|stack|sqlite_mutex|sqlite|lockwait|poison|pool|store|open|wal|spill|rows|ops|maintenance)(\.rs|/)|crates/diskcache-oxide-core/tests/|\.cargo/config\.toml$|rust-toolchain\.toml$)"
+# the lock-free stack, connections, the WAL, value files, the row writer, eviction and maintenance, and
+# background maintenance's thread (plan 28).
+full_re="^($core/(gate|genlock|sync|model|stack|sqlite_mutex|sqlite|lockwait|poison|pool|store|open|wal|spill|rows|ops|maintenance|background)(\.rs|/)|crates/diskcache-oxide-core/tests/|\.cargo/config\.toml$|rust-toolchain\.toml$)"
 # What's written to disk: the schema, key encoding, the fanout root, the value codecs.
 format_re="^($core/(schema|key|fanout)\.rs$|crates/diskcache-oxide-py/src/codec/)"
 # Shipped code that isn't in either list above.

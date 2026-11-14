@@ -337,6 +337,9 @@ print(before, fds())
 FD_THREADS = 64
 
 
+# Under --maintenance-interval a close can land while a turn is mid-checkpoint on a shard, D-018's
+# documented exception (that turn's connection stays open a moment), which "none after close" counts.
+@pytest.mark.races_maintenance
 @unix_only('counts file descriptors; Windows has handles')
 @pytest.mark.parametrize(('shards', 'max_connections'), [(8, None), (4, 16), (16, None), (8, 24)])
 def test_many_threads_stay_within_the_fd_budget_and_close_leaves_none(

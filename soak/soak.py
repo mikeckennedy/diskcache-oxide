@@ -958,6 +958,14 @@ class Soak:
             'forks_ok': self.total('forks_ok'),
             'forks_failed': self.total('forks_failed'),
             'maint_calls': self.counts['maint'],
+            **{
+                f'bg_{key}': sum((s.get('maint_bg') or {}).get(key, 0) or 0 for s in self.last_stats.values())
+                for key in ('turns', 'removed', 'failures')
+            },
+            'bg_errors': sum((s.get('maint_bg') or {}).get('errors', 0) or 0 for s in self.last_stats.values()),
+            'bg_last_error': next(
+                (e for s in self.last_stats.values() if (e := (s.get('maint_bg') or {}).get('last_error'))), None
+            ),
             'stalls': self.counts['stalls'],
             **{
                 f'{n}_{k}': db.get(n, {}).get(k)
@@ -1198,6 +1206,26 @@ class Soak:
                     counter=key,
                     detail='this count is zero, so its lane proved nothing',
                 )
+        # Background maintenance (plan 28), summed over every worker's last stats: with a short interval
+        # it must have run and removed rows; a broken report is a problem; failures are a warning, since
+        # the chaos lanes' long-held transactions can starve a turn by design (one per 3 intervals).
+        bg = {
+            key: sum((s.get('maint_bg') or {}).get(key, 0) or 0 for s in self.last_stats.values())
+            for key in ('turns', 'removed', 'failures', 'errors')
+        }
+        if self.args.maintenance_interval:
+            for key in ('turns', 'removed'):
+                if not bg[key]:
+                    self.event(
+                        'lane-silent',
+                        problem=True,
+                        counter=f'bg_{key}',
+                        detail='background maintenance never ran or removed nothing, so it proved nothing',
+                    )
+        if bg['errors']:
+            self.event('maintenance-stats-error', problem=True, count=bg['errors'])
+        if bg['failures']:
+            self.event('maintenance-failures', count=bg['failures'])
         # Each pop site separately only on a long run: at a low rate, a short one can miss a rare site.
         if self.elapsed_h() >= 1:
             for key in ('pops_chaos', 'pops_held', 'pops_fork', 'pops_pq'):
@@ -1323,6 +1351,8 @@ class Soak:
             f'{t["stalls"]}',
             f'kills {t["kills"]}  restarts {t["restarts"]}  respawns {self.counts["respawns"]}  forks ok/failed '
             f'{t["forks_ok"]}/{t["forks_failed"]}  maintenance calls {t["maint_calls"]}',
+            f'background maintenance: {t["bg_turns"]:,} turns, {t["bg_removed"]:,} rows removed, '
+            f'{t["bg_failures"]} failures' + (f' (last: {t["bg_last_error"]})' if t['bg_last_error'] else ''),
             f'chaos: {t["chaos_rows"]} rows, db {mib(t["chaos_db_bytes"])} MiB, wal {mib(t["chaos_wal_bytes"])} MiB, '
             f'{t["chaos_value_files"]} value files, orphans {t["chaos_orphans"]}',
             f'ledger: {t["ledger_rows"]} rows, db {mib(t["ledger_db_bytes"])} MiB, wal {mib(t["ledger_wal_bytes"])} '
@@ -1553,6 +1583,7 @@ TIMELINE_FIELDS = [
     'stuck_callers_timed_out', 'stuck_forks_completed', 'stuck_callers_hung', 'auto_writes', 'auto_rounds',
     'auto_successes', 'auto_busy', 'auto_fork_pending', 'auto_peak_wal', 'load_1m', 'child_max_s', 'stuck_caller_max_s',
     *FANOUT_COUNTERS, 'fanout_max_sampled_fds',
+    'bg_turns', 'bg_removed', 'bg_failures', 'bg_last_error', 'bg_errors',
 ]  # fmt: skip
 WORKER_FIELDS = [
     'time', 'elapsed_h', 'id', 'python', 'long_lived', 'rss_mib', 'fds', 'ops', 'timeouts', 'problems', 'forks_ok',
@@ -1657,9 +1688,21 @@ def main() -> int:
         default=QUIET_AFTER,
         help='Seconds a proof counter may go without moving before the lane counts as quiet (lower it for a smoke).',
     )
+    parser.add_argument(
+        '--maintenance-interval',
+        type=float,
+        default=0.0,
+        help=(
+            'Background maintenance interval, in seconds, for every cache the workers open (plan 28). 0, '
+            'the default, leaves the library default (5 minutes); a short one (5) has it running all the time.'
+        ),
+    )
     parser.add_argument('--seed', type=int, default=int(time.time()) % 100_000)
     parser.add_argument('--out', default=str(REPO / 'soak-results'))
     args = parser.parse_args()
+    if args.maintenance_interval:
+        # The workers inherit the environment and apply it at startup.
+        os.environ['DCO_MAINTENANCE_INTERVAL'] = str(args.maintenance_interval)
     if not args.hours and not args.minutes:
         parser.error('give --hours and/or --minutes')
     if args.auto_stores and not last_python_is_free_threaded(args.pythons):

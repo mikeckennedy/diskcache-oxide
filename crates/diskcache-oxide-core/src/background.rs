@@ -9,13 +9,16 @@ pub mod schedule;
 pub(crate) mod turn;
 pub(crate) mod worker;
 
+#[cfg(all(test, shuttle))]
+mod model;
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError, Weak};
 
 use crate::gate::SharedGuard;
 use crate::store::Store;
 use schedule::{Schedule, Tick};
-pub use worker::{fail_next_turns_for_tests, pass_panics, spawn_failures};
+pub use worker::{fail_next_turns_for_tests, pass_panics, spawn_failures, totals};
 
 /// The store registry's guard, which is only ever held under a shared gate level: the proof a
 /// function that locks a store's [`Tending`] under it needs.

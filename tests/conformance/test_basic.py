@@ -355,6 +355,7 @@ def _main_db_snapshot(db: Path) -> tuple[str, int, int]:
     return hashlib.sha256(db.read_bytes()).hexdigest(), st.st_size, st.st_mtime_ns
 
 
+@pytest.mark.races_maintenance
 @pytest.mark.diverges(
     backend='diskcache',
     ref='D-019',
