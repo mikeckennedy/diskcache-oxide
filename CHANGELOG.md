@@ -31,6 +31,7 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 - `import diskcache_oxide` no longer calls `os.register_at_fork` where it doesn't exist.
 - A value file that hits a full quota (`EDQUOT`) now raises `OSError` with `errno.ENOSPC`, as a full disk does, since a full disk is recognized by the error's kind rather than one Unix error number.
+- `iter(cache)` (and a `FanoutCache`'s, shard by shard) could yield a key twice: one deleted and stored again while the walk ran got a newer row, which the walk met again at its end. It now stops at the newest row when it began, as diskcache's does, so a key stored meanwhile isn't yielded and a re-stored one is yielded once. Found by the 24-hour soak, 8.5 hours in.
 - `iter(cache)` and `reversed(cache)` no longer sort the whole table for every page of keys. Without SQLite statistics, the planner read insertion order through the key index and sorted it, so walking a large cache took time in proportion to its size for every 512 keys (about 2 s for 200,000 entries on an M5 Max, now 22 ms); each page now seeks on the row id.
 
 ### Documentation

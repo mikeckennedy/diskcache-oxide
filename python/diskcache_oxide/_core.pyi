@@ -1090,7 +1090,9 @@ class Cache:
     def __bool__(self) -> bool:
         """Always True, even when empty, so `if cache:` means "caching is on"."""
     def __iter__(self) -> Iterator[Key]:
-        """Iterate over keys in insertion order. An overwrite keeps its key's place.
+        """Iterate over keys in insertion order. An overwrite keeps its key's place. The walk covers
+        the entries there when it began: one stored meanwhile isn't yielded, and one deleted and
+        stored again is yielded once, as in diskcache.
 
         As with `iterkeys()`, expired entries are skipped, and `next()` raises `ValueError` while
         another thread is inside it.
@@ -1605,7 +1607,8 @@ class FanoutCache:
     def __iter__(self) -> Iterator[Key]:
         """Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on.
 
-        That isn't the order keys were stored in across the cache. Otherwise as `iterkeys()`.
+        That isn't the order keys were stored in across the cache. Each shard's walk covers the entries
+        there when the walk reached it, as `Cache.__iter__` does. Otherwise as `iterkeys()`.
         """
     def close(self, *, checkpoint: bool = True) -> None:
         """Close this handle on every shard, as `Cache.close()` does for one.

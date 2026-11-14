@@ -129,6 +129,22 @@ def test_iter_is_insertion_order(cache: Any) -> None:
     assert list(cache) == keys
 
 
+def test_iter_walks_only_what_was_there_when_it_began(cache: Any) -> None:
+    # Observed on diskcache: iteration stops at the newest row when it began, so a key deleted and
+    # stored again mid-walk (a newer row) is yielded once, not twice, and a key stored mid-walk not at
+    # all. The soak found oxide yielding the re-stored key again (fixed with the same bound).
+    for i in range(5):
+        cache.set(f'k{i}', i)
+    seen = []
+    for key in cache:
+        seen.append(key)
+        if key == 'k3':
+            del cache['k0']
+            cache['k0'] = 'again'
+            cache['new'] = 1
+    assert seen == ['k0', 'k1', 'k2', 'k3', 'k4']
+
+
 def test_unusual_keys_round_trip_and_sort_like_python(cache: Any) -> None:
     for i, k in enumerate(UNUSUAL_KEYS):
         cache.set(k, i)
