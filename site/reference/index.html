@@ -631,6 +631,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.maintenance_stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Cache.maintenance_stats</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/Cache.stats.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Cache.stats</span></a>
   </div>
@@ -965,6 +971,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.maintenance_stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache.maintenance_stats</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/FanoutCache.stats.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">FanoutCache.stats</span></a>
   </div>
@@ -1163,6 +1175,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/NullCache.remove_old_formats.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">NullCache.remove_old_formats</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.maintenance_stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">NullCache.maintenance_stats</span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1477,6 +1495,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/CacheLike.remove_old_formats.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">CacheLike.remove_old_formats</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.maintenance_stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">CacheLike.maintenance_stats</span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -2099,6 +2123,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Check the database and the value files against each other, as diskcache’s <code>check()</code>.</p>
 </dd>
+<dt><a href="../reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="doc-function doc-label doc-label-method">Cache.maintenance_stats()</a></dt>
+<dd>
+<p>How background maintenance has gone on this cache in this process (see</p>
+</dd>
 <dt><a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="doc-function doc-label doc-label-method">Cache.stats()</a></dt>
 <dd>
 <p><code>(hits, misses)</code> of <code>get</code> and <code>cache[key]</code> in this process, as diskcache’s <code>stats()</code>.</p>
@@ -2327,6 +2355,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Check the database and the value files against each other, as diskcache’s <code>check()</code>.</p>
 </dd>
+<dt><a href="../reference/FanoutCache.maintenance_stats.html#diskcache_oxide.FanoutCache.maintenance_stats" class="doc-function doc-label doc-label-method">FanoutCache.maintenance_stats()</a></dt>
+<dd>
+<p>How background maintenance has gone on this cache in this process (see</p>
+</dd>
 <dt><a href="../reference/FanoutCache.stats.html#diskcache_oxide.FanoutCache.stats" class="doc-function doc-label doc-label-method">FanoutCache.stats()</a></dt>
 <dd>
 <p><code>(hits, misses)</code> of <code>get</code> and <code>cache[key]</code> in this process, as diskcache’s <code>stats()</code>.</p>
@@ -2466,6 +2498,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/NullCache.remove_old_formats.html#diskcache_oxide.NullCache.remove_old_formats" class="doc-function doc-label doc-label-method">NullCache.remove_old_formats()</a></dt>
 <dd>
 <p>Always <code>[]</code>: a <code>NullCache</code> has no directory to clean up.</p>
+</dd>
+<dt><a href="../reference/NullCache.maintenance_stats.html#diskcache_oxide.NullCache.maintenance_stats" class="doc-function doc-label doc-label-method">NullCache.maintenance_stats()</a></dt>
+<dd>
+<p>All zero: a <code>NullCache</code> has nothing to maintain.</p>
 </dd>
 <dt><a href="../reference/NullCache.stats.html#diskcache_oxide.NullCache.stats" class="doc-function doc-label doc-label-method">NullCache.stats()</a></dt>
 <dd>
@@ -2678,6 +2714,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/CacheLike.remove_old_formats.html#diskcache_oxide.CacheLike.remove_old_formats" class="doc-function doc-label doc-label-method">CacheLike.remove_old_formats()</a></dt>
 <dd>
 <p>Remove caches an older format left in this cache’s directory; <code>[]</code> on a <code>NullCache</code>.</p>
+</dd>
+<dt><a href="../reference/CacheLike.maintenance_stats.html#diskcache_oxide.CacheLike.maintenance_stats" class="doc-function doc-label doc-label-method">CacheLike.maintenance_stats()</a></dt>
+<dd>
+<p>How background maintenance has gone on this cache in this process; all zero on a <code>NullCache</code>.</p>
 </dd>
 <dt><a href="../reference/CacheLike.stats.html#diskcache_oxide.CacheLike.stats" class="doc-function doc-label doc-label-method">CacheLike.stats()</a></dt>
 <dd>

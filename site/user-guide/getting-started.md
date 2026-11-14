@@ -56,7 +56,7 @@ value, expires_at = cache.get('user:42', expire_time=True)
 - Keys are `str`, `bytes`, `int`, `float`, `bool`, `None`, or tuples of those, such as `('user', 42)`. They're compared by exact type, so `1`, `1.0` and `True` are three keys. Anything else (a `list`, a `dict`, an object) raises `TypeError`; build a tuple or a string instead.
 - Values can be `str`, `bytes`, `int`, `float`, `bool`, `None`, `Decimal`, and lists, tuples, dicts, sets, frozensets, datetimes and dates made of those. They come back as the types you stored. See [Serialization](serialization.md).
 - [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) is in seconds. Leave it out for an entry that never expires. `touch(key, expire=...)` changes the expiry of an existing entry.
-- An entry is gone the moment it expires: [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), `in`, [add](../reference/Cache.add.md#diskcache_oxide.Cache.add), `len()` and iteration all stop seeing it at once. Its row and any value file stay on disk, and in [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume), until something removes them. Each [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) removes a few, and [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) removes the rest, so a cache that's mostly read should call [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) (or `caches.expire_all()`) from a scheduled job, about hourly. Nothing does this in the background yet; it's on the [roadmap](roadmap.md).
+- An entry is gone the moment it expires: [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), `in`, [add](../reference/Cache.add.md#diskcache_oxide.Cache.add), `len()` and iteration all stop seeing it at once. Its row and any value file are removed soon after, with nothing for you to schedule: each [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) removes a few, and background maintenance removes the rest every 5 minutes (see below).
 
 
 ## Dictionary syntax
@@ -134,7 +134,19 @@ cache = Cache(
 
 When the cache's on-disk volume goes over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), each [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) evicts up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of the least recently stored entries. `cache.volume()` reports the current size in bytes. For a cache that must never drop a live entry (job claims, locks, a queue), pass `eviction_policy='none'`: nothing is evicted for size, expired entries are still removed, and the cache can grow past [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit). Like the limits, the policy is stored in the cache, so every process shares it.
 
-Maintenance calls, all safe to run while other processes use the cache:
+
+## Background maintenance
+
+A thread of the library's own, one per process, looks after every open cache: every `maintenance_interval` seconds (default 300, 5 minutes) it removes expired entries and their files, trims a cache that's over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) back under it, checkpoints a write-ahead log that has grown, and hourly clears stray temporary files. The caches in a process take turns across the interval, and the processes sharing a cache take turns too. It never waits for a lock and holds the write lock only for short chunks, so requests don't notice it. `cache.maintenance_stats()` says how it's going, and a failure is logged once, as a WARNING on the `diskcache_oxide` logger.
+
+``` python
+cache = Cache('/var/cache/my-app', maintenance_interval=60)    # every minute
+backup = Cache('/srv/replica/my-app', maintenance_interval=0)  # off: never written
+```
+
+Pass 0 for a cache that must never be written by this process, such as a read-only replica: maintenance writes when it has work, and once an hour to coordinate the processes. A cache opened with `clock=` gets none, since the thread only knows the real time. [Storage and WAL](storage-and-wal.md#background-maintenance) has the whole story.
+
+Maintenance calls, for when you want it done now, all safe to run while other processes use the cache:
 
 - `cache.expire()` removes every expired entry and returns how many.
 - `cache.clear()` removes every entry that existed when it started, and keeps anything written while it runs.

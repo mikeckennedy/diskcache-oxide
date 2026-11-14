@@ -39,6 +39,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Cache.memoize](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.memoize.html): Return a decorator that caches the function's results in this cache, as diskcache's `memoize`
 - [Cache.remove_old_formats](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.remove_old_formats.html): Remove the caches an older diskcache-oxide format left in this cache's directory: the
 - [Cache.check](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.check.html): Check the database and the value files against each other, as diskcache's `check()`
+- [Cache.maintenance_stats](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.maintenance_stats.html): How background maintenance has gone on this cache in this process (see
 - [Cache.stats](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.stats.html): `(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`
 - [Cache.durable](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.durable.html): True for a `durable=True` handle
 - [Cache.__reversed__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__reversed__.html): Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first)
@@ -100,6 +101,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [FanoutCache.memoize](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.memoize.html): Return a decorator that caches the function's results in this cache, as diskcache's `memoize`
 - [FanoutCache.remove_old_formats](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.remove_old_formats.html): As `Cache.remove_old_formats()`, for this cache's root directory: an older format's
 - [FanoutCache.check](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.check.html): Check the database and the value files against each other, as diskcache's `check()`
+- [FanoutCache.maintenance_stats](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.maintenance_stats.html): How background maintenance has gone on this cache in this process (see
 - [FanoutCache.stats](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.stats.html): `(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`
 - [FanoutCache.durable](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.durable.html): True for a `durable=True` handle
 - [FanoutCache.__reversed__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__reversed__.html): Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first)
@@ -139,6 +141,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [NullCache.durable](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.durable.html): Always False: a `NullCache` has no outages to answer
 - [NullCache.check](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.check.html): Always `[]`: there is nothing to check
 - [NullCache.remove_old_formats](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.remove_old_formats.html): Always `[]`: a `NullCache` has no directory to clean up
+- [NullCache.maintenance_stats](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.maintenance_stats.html): All zero: a `NullCache` has nothing to maintain
 - [NullCache.stats](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.stats.html): Always `(0, 0)`: nothing is looked up
 - [NullCache.reset](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.reset.html): Read `size_limit`, `cull_limit` or `eviction_policy`, or set it (checked as `Cache` checks it)
 - [NullCache.get](https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.get.html): Return `default`, as every entry has already expired. With `expire_time=True` or `tag=True`,
@@ -194,6 +197,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [CacheLike.durable](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.durable.html): True for a `durable=True` handle (always False on a `NullCache`)
 - [CacheLike.check](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.check.html): Check the database and value files against each other; `[]` on a `NullCache`
 - [CacheLike.remove_old_formats](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.remove_old_formats.html): Remove caches an older format left in this cache's directory; `[]` on a `NullCache`
+- [CacheLike.maintenance_stats](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.maintenance_stats.html): How background maintenance has gone on this cache in this process; all zero on a `NullCache`
 - [CacheLike.stats](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.stats.html): `(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`
 - [CacheLike.reset](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.reset.html): Read or set `size_limit`, `cull_limit` or `eviction_policy`
 - [CacheLike.__reversed__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__reversed__.html): Keys in insertion order backwards, newest first

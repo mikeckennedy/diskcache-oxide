@@ -680,6 +680,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#opt-in-automatic-checkpoints" id="toc-opt-in-automatic-checkpoints" class="nav-link" data-scroll-target="#opt-in-automatic-checkpoints">Opt-in: automatic checkpoints</a></li>
   <li><a href="#the-limit-is-a-target-not-a-bound" id="toc-the-limit-is-a-target-not-a-bound" class="nav-link" data-scroll-target="#the-limit-is-a-target-not-a-bound">The limit is a target, not a bound</a></li>
   </ul></li>
+  <li><a href="#background-maintenance" id="toc-background-maintenance" class="nav-link" data-scroll-target="#background-maintenance">Background maintenance</a></li>
   <li><a href="#maintenance-calls" id="toc-maintenance-calls" class="nav-link" data-scroll-target="#maintenance-calls">Maintenance calls</a></li>
   </ul>
 </nav>
@@ -790,17 +791,57 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="opt-in-automatic-checkpoints" class="level2">
 <h2 class="anchored" data-anchor-id="opt-in-automatic-checkpoints">Opt-in: automatic checkpoints</h2>
 <div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, wal_checkpoint<span class="op">=</span><span class="st">'auto'</span>)</span></code></pre></div>
-<p>With <code>'auto'</code>, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it’s over the limit, with the interpreter released. Readers in other processes can get in the way for a moment, so it tries the final truncation up to 8 times, a couple of milliseconds each, before backing off for a second. It never fails a write. It isn’t the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. The plan is to move this into a background maintenance thread so writes never pay for it at all. Writes queue behind a checkpoint for tens of milliseconds, so a <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> under about 35 ms can time out behind one.</p>
+<p>With <code>'auto'</code>, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it’s over the limit, with the interpreter released. Readers in other processes can get in the way for a moment, so it tries the final truncation up to 8 times, a couple of milliseconds each, before backing off for a second. It never fails a write. It isn’t the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. Background maintenance (below) checkpoints a log past half the limit on its own turn, so <code>'auto'</code> is only for logs that grow faster than that. Writes queue behind a checkpoint for tens of milliseconds, so a <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> under about 35 ms can time out behind one.</p>
 </section>
 <section id="the-limit-is-a-target-not-a-bound" class="level2">
 <h2 class="anchored" data-anchor-id="the-limit-is-a-target-not-a-bound">The limit is a target, not a bound</h2>
 <p><code>wal_size_limit</code> says where the log should stay, not where it’s guaranteed to stay. Sustained writes from several processes near flat out can take it to tens of times the limit: we measured 6 GiB on free-threaded 3.15 and 21 GiB on 3.14 in 10 minutes, against a 64 MiB limit. It’s much smaller below flat out, for example 250 MiB at about 2,600 writes per second across 3 writers in <code>auto</code>.</p>
-<p>In the default <code>manual</code> mode, with busy readers in other processes, the log grows until something checkpoints. If your app has that shape, use <code>wal_checkpoint='auto'</code> or call <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> periodically. A script should call <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> or <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> after a large fill.</p>
+<p>In the default <code>manual</code> mode, with busy readers in other processes, the log grows until something checkpoints: background maintenance does, every <code>maintenance_interval</code>, when its readers let it. If your app writes faster than that, use <code>wal_checkpoint='auto'</code>. A script should call <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> or <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> after a large fill.</p>
 </section>
+</section>
+<section id="background-maintenance" class="level1">
+<h1>Background maintenance</h1>
+<p>One thread per process, of the library’s own, looks after every cache open in that process (D-061). It holds no Python state, so it never takes the GIL, and it costs nothing while it waits.</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Task</th>
+<th>How often</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Expiry and trimming</td>
+<td>every <code>maintenance_interval</code></td>
+<td>Removes expired entries and their value files, then, if the cache is over <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, evicts the least recently stored, <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> at a time, until it’s under. Never evicts under <code>eviction_policy='none'</code> or with <code>cull_limit=0</code> (diskcache’s “I cull myself”).</td>
+</tr>
+<tr class="even">
+<td>The write-ahead log</td>
+<td>every <code>maintenance_interval</code></td>
+<td>If the log is over half of <code>wal_size_limit</code>, copies it into the database without holding the write lock, then truncates it if nothing’s left to copy. Skipped on a cache with <code>max_connections=1</code>, whose one connection the copy would hold.</td>
+</tr>
+<tr class="odd">
+<td>Value folders</td>
+<td>hourly</td>
+<td>Removes temporary files a killed writer left (an hour old) and empty value folders, on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s shards too.</td>
+</tr>
+</tbody>
+</table>
+<p><code>maintenance_interval</code> is set when a cache is opened, in seconds: <code>None</code> for 300, <code>0</code> for off, otherwise 1 second to a day. It’s per process and isn’t stored in the cache; the shortest interval any open handle on the directory asked for wins. A cache’s first turn comes one to two intervals after it’s first opened in the process, so a short script never runs one.</p>
+<ul>
+<li><strong>Taking turns.</strong> The caches in a process are spread across the interval: four caches on a 5-minute interval get their turns about 75 seconds apart. The processes sharing a cache take turns through a row in its <code>settings</code> table, so eight workers don’t all sweep the same cache; the shortest interval among them sets the pace.</li>
+<li><strong>Never in a request’s way.</strong> It never waits for a lock: if a request holds the write lock, or one is waiting for it, the turn steps aside and comes back a second later. It writes in chunks of about 130 µs, so a request waits at most one chunk.</li>
+<li><strong>A cache with nothing to do</strong> is only read, except for one write an hour to coordinate the folder sweep. A cache that must never be written by this process (a read-only replica, a backup) should pass <code>maintenance_interval=0</code>.</li>
+<li><strong>Forks.</strong> The thread stops before every <code>os.fork()</code> and starts again after it, in the parent and in the child, so Python never warns about forking a multi-threaded process. A process that forks without Python’s at-fork hooks (a C-level <code>fork()</code>) gets no stop; pass <code>maintenance_interval=0</code> there.</li>
+<li><strong><code>clock=</code>.</strong> The thread only knows the real time, so a cache opened with <code>clock=</code> gets no background maintenance in this process while that handle is open, and asking for an interval with it raises <code>ValueError</code>.</li>
+<li><strong>Reporting.</strong> <a href="../reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="gdls-link gdls-code">maintenance_stats()</a> returns the interval, turns, entries removed, failures and the last error. A failure is logged once, as a WARNING on the <code>diskcache_oxide</code> logger, by the next single-key call on the cache. A turn that keeps finding the write lock held for 3 intervals counts as a failure too.</li>
+</ul>
+<p>Since maintenance may get there first, an explicit <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> can return less than it would have, and <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> and the log’s size change without a call.</p>
 </section>
 <section id="maintenance-calls" class="level1">
 <h1>Maintenance calls</h1>
-<p>All of these work in chunks, release the database between chunks so other writers get in, and are safe to call while other processes use the cache:</p>
+<p>For when you want it done now. All of these work in chunks, release the database between chunks so other writers get in, and are safe to call while other processes use the cache:</p>
 <ul>
 <li><a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes every expired entry and its value file.</li>
 <li><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> removes every entry that existed when it started, and keeps writes that land while it runs.</li>

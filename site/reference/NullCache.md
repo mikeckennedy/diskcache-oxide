@@ -24,6 +24,7 @@ NullCache(
     wal_checkpoint="manual",
     on_decode_error=None,
     durable=False,
+    maintenance_interval=None,
     invalidate=None
 )
 ```

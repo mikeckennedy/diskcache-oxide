@@ -122,19 +122,41 @@ cache.checkpoint()   # True if the log was reset and truncated
 cache = Cache('/var/cache/my-app', wal_checkpoint='auto')
 ```
 
-With `'auto'`, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it's over the limit, with the interpreter released. Readers in other processes can get in the way for a moment, so it tries the final truncation up to 8 times, a couple of milliseconds each, before backing off for a second. It never fails a write. It isn't the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. The plan is to move this into a background maintenance thread so writes never pay for it at all. Writes queue behind a checkpoint for tens of milliseconds, so a [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) under about 35 ms can time out behind one.
+With `'auto'`, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it's over the limit, with the interpreter released. Readers in other processes can get in the way for a moment, so it tries the final truncation up to 8 times, a couple of milliseconds each, before backing off for a second. It never fails a write. It isn't the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. Background maintenance (below) checkpoints a log past half the limit on its own turn, so `'auto'` is only for logs that grow faster than that. Writes queue behind a checkpoint for tens of milliseconds, so a [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) under about 35 ms can time out behind one.
 
 
 ## The limit is a target, not a bound
 
 `wal_size_limit` says where the log should stay, not where it's guaranteed to stay. Sustained writes from several processes near flat out can take it to tens of times the limit: we measured 6 GiB on free-threaded 3.15 and 21 GiB on 3.14 in 10 minutes, against a 64 MiB limit. It's much smaller below flat out, for example 250 MiB at about 2,600 writes per second across 3 writers in `auto`.
 
-In the default `manual` mode, with busy readers in other processes, the log grows until something checkpoints. If your app has that shape, use `wal_checkpoint='auto'` or call [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) periodically. A script should call [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) or [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) after a large fill.
+In the default `manual` mode, with busy readers in other processes, the log grows until something checkpoints: background maintenance does, every `maintenance_interval`, when its readers let it. If your app writes faster than that, use `wal_checkpoint='auto'`. A script should call [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) or [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) after a large fill.
+
+
+# Background maintenance
+
+One thread per process, of the library's own, looks after every cache open in that process (D-061). It holds no Python state, so it never takes the GIL, and it costs nothing while it waits.
+
+| Task | How often | What it does |
+|----|----|----|
+| Expiry and trimming | every `maintenance_interval` | Removes expired entries and their value files, then, if the cache is over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), evicts the least recently stored, [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) at a time, until it's under. Never evicts under `eviction_policy='none'` or with `cull_limit=0` (diskcache's "I cull myself"). |
+| The write-ahead log | every `maintenance_interval` | If the log is over half of `wal_size_limit`, copies it into the database without holding the write lock, then truncates it if nothing's left to copy. Skipped on a cache with `max_connections=1`, whose one connection the copy would hold. |
+| Value folders | hourly | Removes temporary files a killed writer left (an hour old) and empty value folders, on a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)'s shards too. |
+
+`maintenance_interval` is set when a cache is opened, in seconds: `None` for 300, `0` for off, otherwise 1 second to a day. It's per process and isn't stored in the cache; the shortest interval any open handle on the directory asked for wins. A cache's first turn comes one to two intervals after it's first opened in the process, so a short script never runs one.
+
+- **Taking turns.** The caches in a process are spread across the interval: four caches on a 5-minute interval get their turns about 75 seconds apart. The processes sharing a cache take turns through a row in its `settings` table, so eight workers don't all sweep the same cache; the shortest interval among them sets the pace.
+- **Never in a request's way.** It never waits for a lock: if a request holds the write lock, or one is waiting for it, the turn steps aside and comes back a second later. It writes in chunks of about 130 µs, so a request waits at most one chunk.
+- **A cache with nothing to do** is only read, except for one write an hour to coordinate the folder sweep. A cache that must never be written by this process (a read-only replica, a backup) should pass `maintenance_interval=0`.
+- **Forks.** The thread stops before every `os.fork()` and starts again after it, in the parent and in the child, so Python never warns about forking a multi-threaded process. A process that forks without Python's at-fork hooks (a C-level `fork()`) gets no stop; pass `maintenance_interval=0` there.
+- **`clock=`.** The thread only knows the real time, so a cache opened with `clock=` gets no background maintenance in this process while that handle is open, and asking for an interval with it raises `ValueError`.
+- **Reporting.** [maintenance_stats()](../reference/Cache.maintenance_stats.md#diskcache_oxide.Cache.maintenance_stats) returns the interval, turns, entries removed, failures and the last error. A failure is logged once, as a WARNING on the `diskcache_oxide` logger, by the next single-key call on the cache. A turn that keeps finding the write lock held for 3 intervals counts as a failure too.
+
+Since maintenance may get there first, an explicit [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) or [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) can return less than it would have, and [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) and the log's size change without a call.
 
 
 # Maintenance calls
 
-All of these work in chunks, release the database between chunks so other writers get in, and are safe to call while other processes use the cache:
+For when you want it done now. All of these work in chunks, release the database between chunks so other writers get in, and are safe to call while other processes use the cache:
 
 - [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) removes every expired entry and its value file.
 - [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) removes every entry that existed when it started, and keeps writes that land while it runs.

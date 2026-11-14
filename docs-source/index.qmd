@@ -72,7 +72,7 @@ caches.close_all()  # at shutdown
 sessions.close()
 ```
 
-An entry is gone the moment it expires, for every read, `len()` and iteration. Its space is freed later: each `set()` clears a few expired entries, and nothing sweeps in the background yet, so run `caches.expire_all()` and `sessions.expire()` from a scheduled job about once an hour. [Web workers](recipes/web-workers.qmd) shows where that job goes.
+An entry is gone the moment it expires, for every read, `len()` and iteration, and its space comes back on its own: a small thread in each process looks after every open cache every 5 minutes, removing expired entries, trimming a cache that's over its size limit and keeping the write-ahead log small, with the workers taking turns so they don't all do the same work. There's nothing to schedule. [Background maintenance](user-guide/storage-and-wal.qmd#background-maintenance) has the details and the one setting, `maintenance_interval`.
 
 Talk Python runs its eight caches this way. [Named caches](user-guide/caches.qmd) covers the registry in full.
 

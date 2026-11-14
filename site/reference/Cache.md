@@ -23,7 +23,8 @@ Cache(
     wal_size_limit=None,
     wal_checkpoint="manual",
     on_decode_error=None,
-    durable=False
+    durable=False,
+    maintenance_interval=None
 )
 ```
 
@@ -59,7 +60,7 @@ Allow pickle for values the serializer can't represent exactly. Without it, such
 A [TypeRegistry](TypeRegistry.md#diskcache_oxide.TypeRegistry) consulted before the process-wide [diskcache_oxide.registry](registry.md#diskcache_oxide.registry), for a cache that needs its own encoding of a type. Register types at import time, in every process that opens the directory, since a row written through a registration can only be read where it is registered.
 
 `clock: Callable[[], float] | None = None`  
-A function returning the current time in seconds, used instead of the native clock. Tests pass `clock=lambda: time.time()` to follow a patched `time.time`.
+A function returning the current time in seconds, used instead of the native clock. Tests pass `clock=lambda: time.time()` to follow a patched `time.time`. A cache with its own clock gets no background maintenance in this process, which only knows the wall clock (see `maintenance_interval`).
 
 `max_connections: int | None = None`  
 The most SQLite connections this process opens for the directory, shared by every handle on it (default 8).
@@ -71,13 +72,18 @@ SQLite's page cache per connection, in 4 KiB pages (default 256, 1 MiB).
 The write-ahead log is trimmed back to half this many bytes whenever it resets (default 64 MiB, minimum 1 MiB).
 
 `wal_checkpoint: Literal[``"manual", `<span class="st">`"auto"``]`</span>` = ``"manual"`  
-`'manual'` (the default) leaves checkpoints to [checkpoint()](Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) and [close()](Cache.close.md#diskcache_oxide.Cache.close). `'auto'` also checkpoints after writes once the log is over `wal_size_limit`.
+`'manual'` (the default) leaves checkpoints to [checkpoint()](Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint), [close()](Cache.close.md#diskcache_oxide.Cache.close) and background maintenance, which checkpoints a log grown past half of `wal_size_limit`. `'auto'` also checkpoints after writes once the log is over `wal_size_limit`.
 
 `on_decode_error: Literal[``"raise", `<span class="st">`"miss"``] | Callable[[str, Exception], object] | None`</span>` = None`  
 What a read does with a stored value it can't decode. `'raise'` (the default, unless `durable=True`, where it's `'miss'`) raises. `'miss'` treats it as a miss, logs a warning on the `diskcache_oxide` logger, and deletes the row if no build could ever read it (a class removed since it was pickled, malformed bytes). A row another version or host might read ([ForeignValueError](ForeignValueError.md#diskcache_oxide.ForeignValueError)) is left in place. A callable does the same as `'miss'`, but is called with `(key, exc)` instead of the warning, after the row is dealt with; whatever it raises is logged. [UnsafeValueError](UnsafeValueError.md#diskcache_oxide.UnsafeValueError), [Timeout](Timeout.md#diskcache_oxide.Timeout), `MemoryError` and other errors that aren't about the stored bytes raise, though under `durable=True` a [Timeout](Timeout.md#diskcache_oxide.Timeout), `OSError` or `RecursionError` from a pickle hook is a miss, with the row kept, and so is a `RecursionError` from a value too deep for this thread's stack. Covers [get](Cache.get.md#diskcache_oxide.Cache.get), `cache[key]` and [pop](Cache.pop.md#diskcache_oxide.Cache.pop), which decodes before it deletes, so it keeps a row it can't read. Under `'raise'`, [pop](Cache.pop.md#diskcache_oxide.Cache.pop) still deletes a value no build could read, then raises.
 
 `durable: bool = ``False`  
 Keep the cache from taking a request down, for an app whose every caller can fall back to its source of truth (default False). An outage on a single-key call (a [Timeout](Timeout.md#diskcache_oxide.Timeout), a full disk, an I/O error, a damaged database) doesn't raise: [get](Cache.get.md#diskcache_oxide.Cache.get), [pop](Cache.pop.md#diskcache_oxide.Cache.pop) and `in` give the default or False, [set](Cache.set.md#diskcache_oxide.Cache.set), [add](Cache.add.md#diskcache_oxide.Cache.add), [touch](Cache.touch.md#diskcache_oxide.Cache.touch) and [delete](Cache.delete.md#diskcache_oxide.Cache.delete) give False, and [incr](Cache.incr.md#diskcache_oxide.Cache.incr) and [decr](Cache.decr.md#diskcache_oxide.Cache.decr) give `default + delta`. It's reported on the `diskcache_oxide` logger, at most once a minute per kind of failure. Bugs still raise (`TypeError`, `ValueError`, [UnsafeValueError](UnsafeValueError.md#diskcache_oxide.UnsafeValueError)), as do `MemoryError` and `KeyboardInterrupt`, a `RecursionError` from encoding a value too deep for this thread's stack, the constructor, admin calls (`len`, [volume](Cache.volume.md#diskcache_oxide.Cache.volume), [clear](Cache.clear.md#diskcache_oxide.Cache.clear), [expire](Cache.expire.md#diskcache_oxide.Cache.expire), [cull](Cache.cull.md#diskcache_oxide.Cache.cull), [checkpoint](Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint), iteration) and anything inside a transaction held on this cache. This isn't durability in the database sense: this option can drop writes, and a dropped [set](Cache.set.md#diskcache_oxide.Cache.set), [delete](Cache.delete.md#diskcache_oxide.Cache.delete), [pop](Cache.pop.md#diskcache_oxide.Cache.pop) or [incr](Cache.incr.md#diskcache_oxide.Cache.incr) means stale data until the entry expires, or forever if it has no expiry. See "A cache that can't take a request down" in the Getting Started guide before you use it.
+
+`maintenance_interval: float | None = None`  
+How often, in seconds, background maintenance looks after this cache in this process (default None: every 5 minutes; 0 turns it off; otherwise from 1 second to a day). A thread of the library's own, one per process, removes expired entries and their value files, trims a cache left over [size_limit](Cache.size_limit.md#diskcache_oxide.Cache.size_limit) ([cull_limit](Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) entries at a time; never under `eviction_policy='none'` or with [cull_limit](Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) 0), checkpoints a write-ahead log grown past its trim size (except on a cache with `max_connections=1`), and hourly clears stray temporary files and empty value folders. It never waits for a lock itself and holds the write lock only for short chunks. The caches in a process take turns across the interval, and the processes sharing a cache take turns too, so eight workers don't all do the same work. The first turn comes one to two intervals after the cache is first opened in the process. The setting is per process and isn't stored in the cache (it's not a [reset()](Cache.reset.md#diskcache_oxide.Cache.reset) key): the shortest interval any open handle on the directory asked for wins, until every handle has closed. Even a cache with nothing to do is written once an hour, to claim the folder sweep, so a read-only replica or backup should pass 0. With `clock`, there's no background maintenance for the directory in this process while that handle is open, and an interval other than 0 raises `ValueError`. The thread stops for every `os.fork()` and starts again after it; a process that forks without Python's at-fork hooks should pass
+
+0.  See [maintenance_stats()](Cache.maintenance_stats.md#diskcache_oxide.Cache.maintenance_stats).
 
 
 ## Raises

@@ -823,7 +823,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> opens every registered cache and never raises: a cache that can’t be read has its <code>error</code> set.</li>
 <li>Hit and miss counts come from each cache’s own <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>: <code>caches['pages'].stats()</code> turns counting on for this process, and later calls return <code>(hits, misses)</code> for this process’s lookups. A disabled cache, or one that couldn’t open, returns <code>(0, 0)</code>.</li>
 <li><code>clear(name)</code> raises if the cache can’t be opened, so an admin page doesn’t report “0 cleared” for a failure.</li>
-<li><a href="../reference/Caches.expire_all.html#diskcache_oxide.Caches.expire_all" class="gdls-link gdls-code">expire_all()</a> runs every cache, logging and reporting <code>None</code> for one that fails. Run it from a scheduled job rather than inside a request: a large expire takes seconds.</li>
+<li><a href="../reference/Caches.expire_all.html#diskcache_oxide.Caches.expire_all" class="gdls-link gdls-code">expire_all()</a> runs every cache, logging and reporting <code>None</code> for one that fails. Background maintenance already does this on its own; <a href="../reference/Caches.expire_all.html#diskcache_oxide.Caches.expire_all" class="gdls-link gdls-code">expire_all()</a> is for when you want it done now. Run it from a job rather than inside a request: a large expire takes seconds.</li>
+<li>Each <a href="../reference/CacheStats.html#diskcache_oxide.CacheStats" class="gdls-link gdls-code">CacheStats</a> carries the cache’s <a href="../reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="gdls-link gdls-code">maintenance_stats()</a> as <code>maintenance</code>, for an admin page.</li>
 <li>Maintenance calls hold the write lock once per chunk, so give them a longer <code>timeout=</code> than the request path’s.</li>
 </ul>
 </section>
@@ -841,7 +842,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> when opening fails</strong>: the same, reported through <code>on_open_error</code> and retried after 10 s</li>
 <li><strong><code>get_all_caches()</code>, <code>clear_*()</code>, <code>close_all_caches()</code></strong>: <code>caches.stats()</code>, <code>caches.clear(name, timeout=...)</code>, <code>caches.close_all()</code></li>
 <li><strong>A separate maintenance handle with a 10 s timeout</strong>: <code>timeout=</code> on <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> and <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a></li>
-<li><strong>Hourly <code>expire_all_caches()</code> inside <code>create_cache</code></strong>: <code>caches.expire_all()</code> from a scheduled job</li>
+<li><strong>Hourly <code>expire_all_caches()</code> inside <code>create_cache</code></strong>: nothing; background maintenance does it</li>
 </ul>
 <p>The library’s self-healing read is safer than the wrapper’s in three ways:</p>
 <ul>

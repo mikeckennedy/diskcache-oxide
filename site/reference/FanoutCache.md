@@ -25,7 +25,8 @@ FanoutCache(
     wal_checkpoint="manual",
     on_decode_error=None,
     durable=False,
-    raise_on_mismatch=False
+    raise_on_mismatch=False,
+    maintenance_interval=None
 )
 ```
 
@@ -93,6 +94,9 @@ As for [Cache](Cache.md#diskcache_oxide.Cache): single-key calls on a shard that
 
 `raise_on_mismatch: bool = ``False`  
 Raise [LayoutMismatchError](LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) (a `ValueError`) when [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) differs from the root's recorded count, instead of using the recorded count with a warning (default False). It covers the count only: a root in another on-disk format still opens in its `diskcache-oxide-format-N` subdirectory.
+
+`maintenance_interval: float | None = None`  
+As for [Cache](Cache.md#diskcache_oxide.Cache); each shard takes its own turn across the interval.
 
 
 ## Raises

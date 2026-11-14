@@ -644,6 +644,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#done-windows-0.3.5" id="toc-done-windows-0.3.5" class="nav-link" data-scroll-target="#done-windows-0.3.5">Done: Windows (0.3.5)</a></li>
   <li><a href="#done-upgrades-across-a-format-change-0.3.5" id="toc-done-upgrades-across-a-format-change-0.3.5" class="nav-link" data-scroll-target="#done-upgrades-across-a-format-change-0.3.5">Done: upgrades across a format change (0.3.5)</a></li>
   <li><a href="#done-expiry-thats-exact-for-counts-and-listings-0.3.5" id="toc-done-expiry-thats-exact-for-counts-and-listings-0.3.5" class="nav-link" data-scroll-target="#done-expiry-thats-exact-for-counts-and-listings-0.3.5">Done: expiry that’s exact for counts and listings (0.3.5)</a></li>
+  <li><a href="#done-background-maintenance-0.3.5" id="toc-done-background-maintenance-0.3.5" class="nav-link" data-scroll-target="#done-background-maintenance-0.3.5">Done: background maintenance (0.3.5)</a></li>
   <li><a href="#next" id="toc-next" class="nav-link" data-scroll-target="#next">Next</a></li>
   <li><a href="#decided-against-and-why" id="toc-decided-against-and-why" class="nav-link" data-scroll-target="#decided-against-and-why">Decided against, and why</a></li>
   </ul></li>
@@ -772,13 +773,16 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="done-expiry-thats-exact-for-counts-and-listings-0.3.5" class="level2">
 <h2 class="anchored" data-anchor-id="done-expiry-thats-exact-for-counts-and-listings-0.3.5">Done: expiry that’s exact for counts and listings (0.3.5)</h2>
-<p>An entry leaves <code>len()</code>, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>, <code>iter()</code> and <code>reversed()</code> the moment it expires, as it always left <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> and <code>in</code> (D-060). Its space is still freed by the next writes or a scheduled <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>; background maintenance, below, makes that automatic.</p>
+<p>An entry leaves <code>len()</code>, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>, <code>iter()</code> and <code>reversed()</code> the moment it expires, as it always left <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> and <code>in</code> (D-060). Background maintenance, below, frees their space.</p>
+</section>
+<section id="done-background-maintenance-0.3.5" class="level2">
+<h2 class="anchored" data-anchor-id="done-background-maintenance-0.3.5">Done: background maintenance (0.3.5)</h2>
+<p>A cache looks after itself, with no <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> to schedule. One small Rust thread per process frees expired entries’ space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (<code>maintenance_interval</code>). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don’t all do the same work, a cache with nothing to do is only read, and the thread steps aside for every request and every fork. See <a href="../user-guide/storage-and-wal.html#background-maintenance">Background maintenance</a>.</p>
 </section>
 <section id="next" class="level2">
 <h2 class="anchored" data-anchor-id="next">Next</h2>
 <p>In roughly this order:</p>
 <ul>
-<li><strong>Background maintenance</strong>: A cache that looks after itself, with no scheduled <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>. One small Rust thread per process frees expired entries’ space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache. The caches are spread evenly over the interval (four caches on the default 5 minutes take turns at 0:00, 1:15, 2:30 and 3:45), the processes sharing a cache take turns so eight workers don’t all do the same work, and a cache with nothing to do is only read, never locked.</li>
 <li><strong>Django cache backend</strong>: A diskcache-oxide backend for Django’s cache framework, tested against Django’s own cache test suite. It’s a big job, so it gets a phase of its own.</li>
 <li><strong>Free-threaded performance</strong>: Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that’s the first target.</li>
 <li><strong><code>AsyncCache</code></strong>: An async API for asyncio frameworks that can’t slow down the sync one, including <code>transact_async()</code>. It starts as an experiment and ships only if it earns its place; if it doesn’t, this page will say why.</li>

@@ -127,8 +127,8 @@ for name, stat in caches.stats().items():
 ```
 
 
-    {'name': 'general', 'directory': '...', 'enabled': True, 'count': 1, 'volume': 40960, 'error': None}
-    {'name': 'pages', 'directory': '...', 'enabled': True, 'count': 0, 'volume': 40960, 'error': None}
+    {'name': 'general', 'directory': '...', 'enabled': True, 'count': 1, 'volume': 40960, 'error': None, 'maintenance': {'interval': 300.0, 'turns': 0, 'removed': 0, 'failures': 0, 'last_error': None}}
+    {'name': 'pages', 'directory': '...', 'enabled': True, 'count': 0, 'volume': 40960, 'error': None, 'maintenance': {'interval': 300.0, 'turns': 0, 'removed': 0, 'failures': 0, 'last_error': None}}
 
 
 A cache that can't open shows up here with `count` and [volume](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) at 0 and the reason in `error`, for example `LayoutMismatchError: ...` for a directory that holds the other kind of cache. An upgrade that changed the on-disk format doesn't: the cache opens in its versioned subdirectory. Watch for that with the warning instead. A `diskcache_oxide` record at `WARNING` saying a directory "holds a cache made by an older diskcache-oxide" (or "still holds") means old files are waiting for [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats), and "made by a newer diskcache-oxide" means a process is running an older release than the one that wrote the cache (see [Upgrading across a format change](upgrading.md)).
@@ -205,7 +205,7 @@ print('repaired:', len(damaged.check(fix=True)), '| after:', damaged.check(), '|
 ```
 
 
-    UserWarning file not found: .../7f/7f77e9498e4a6725cfe1eeaa0130bdf7.val
+    UserWarning file not found: .../be/be8cb21af8d69b1a87ca1e0e12288c87.val
     repaired: 1 | after: [] | entries: 1
 
 
@@ -244,5 +244,6 @@ The exact messages, and what to do about each, are in [Errors and what to do abo
 
 - **[stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) turns counting on.** Its [enable](../reference/Caches.enable.md#diskcache_oxide.Caches.enable) argument defaults to True, so a health check that reads the counts also starts them. `stats(enable=False)` turns counting off and stops the counts where they are.
 - **Counts reset on restart.** Graph the hit ratio, not the raw counts, or publish the counts as above.
-- **[volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) includes expired entries** until [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), or the cleanup a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) does, removes them, though `len()` already leaves them out. A scheduled [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) frees their space; `caches.expire_all()` does every registered cache.
+- **[volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) includes expired entries** until background maintenance or a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set)'s cleanup removes them, though `len()` already leaves them out, so it can drop on its own between calls.
+- **Background maintenance reports in [maintenance_stats()](../reference/Cache.maintenance_stats.md#diskcache_oxide.Cache.maintenance_stats)**: its `interval` (0 when it's off for the cache in this process), the `turns` that ran, the entries they `removed`, `failures` and the `last_error`. A failure is also logged once as a WARNING on the `diskcache_oxide` logger, by the next [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) or other single-key call, so a cache nobody calls shows it here only. `caches.stats()` carries it per cache as `maintenance`. Alert on `failures` going up.
 - **Health checks shouldn't write.** Everything in `cache_health` is a read. [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check) and [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) belong in a maintenance job.

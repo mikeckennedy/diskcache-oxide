@@ -8,7 +8,7 @@ This is the API documentation for the diskcache_oxide library.
 Disk-backed cache backed by SQLite, shared safely across threads and processes.
 
 
-Cache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False) -> 'Cache'
+Cache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False, maintenance_interval: 'float | None' = None) -> 'Cache'
 
 A disk cache backed by SQLite, shared safely across threads and processes.
 
@@ -44,15 +44,17 @@ Args:
         process that opens the directory, since a row written through a registration can only
         be read where it is registered.
     clock: A function returning the current time in seconds, used instead of the native clock.
-        Tests pass `clock=lambda: time.time()` to follow a patched `time.time`.
+        Tests pass `clock=lambda: time.time()` to follow a patched `time.time`. A cache with its
+        own clock gets no background maintenance in this process, which only knows the wall clock
+        (see `maintenance_interval`).
     max_connections: The most SQLite connections this process opens for the directory, shared
         by every handle on it (default 8).
     sqlite_cache_size: SQLite's page cache per connection, in 4 KiB pages (default 256, 1 MiB).
     wal_size_limit: The write-ahead log is trimmed back to half this many bytes whenever it
         resets (default 64 MiB, minimum 1 MiB).
-    wal_checkpoint: `'manual'` (the default) leaves checkpoints to `checkpoint()` and
-        `close()`. `'auto'` also checkpoints after writes once the log is over
-        `wal_size_limit`.
+    wal_checkpoint: `'manual'` (the default) leaves checkpoints to `checkpoint()`, `close()` and
+        background maintenance, which checkpoints a log grown past half of `wal_size_limit`.
+        `'auto'` also checkpoints after writes once the log is over `wal_size_limit`.
     on_decode_error: What a read does with a stored value it can't decode. `'raise'` (the
         default, unless `durable=True`, where it's `'miss'`) raises. `'miss'` treats it as a miss, logs a warning
         on the `diskcache_oxide`
@@ -79,6 +81,24 @@ Args:
         this option can drop writes, and a dropped `set`, `delete`, `pop` or `incr` means stale
         data until the entry expires, or forever if it has no expiry. See "A cache that can't
         take a request down" in the Getting Started guide before you use it.
+    maintenance_interval: How often, in seconds, background maintenance looks after this cache
+        in this process (default None: every 5 minutes; 0 turns it off; otherwise from 1 second to
+        a day). A thread of the library's own, one per process, removes expired entries and their
+        value files, trims a cache left over `size_limit` (`cull_limit` entries at a time; never
+        under `eviction_policy='none'` or with `cull_limit` 0), checkpoints a write-ahead log grown
+        past its trim size (except on a cache with `max_connections=1`), and hourly clears stray
+        temporary files and empty value folders. It never waits for a lock itself and holds the
+        write lock only for short chunks. The caches in a process take turns across the interval,
+        and the processes sharing a cache take turns too, so eight workers don't all do the same
+        work. The first turn comes one to two intervals after the cache is first opened in the
+        process. The setting is per process and isn't stored in the cache (it's not a `reset()`
+        key): the shortest interval any open handle on the directory asked for wins, until every
+        handle has closed. Even a cache with nothing to do is written once an hour, to claim the
+        folder sweep, so a read-only replica or backup should pass 0. With `clock`, there's no
+        background maintenance for the directory in this process while that handle is open, and
+        an interval other than 0 raises `ValueError`. The thread stops for every `os.fork()` and
+        starts again after it; a process that forks without Python's at-fork hooks should pass
+        0. See `maintenance_stats()`.
 
 Raises:
     ValueError: A setting is out of range, such as a `size_limit` under 1 MiB.
@@ -365,6 +385,16 @@ Args:
 Raises:
     RuntimeError: Inside this thread's own `transact()` block.
     Timeout: A step waited longer than `timeout` (and `retry` is False).
+
+maintenance_stats(self) -> 'MaintenanceStats'
+
+How background maintenance has gone on this cache in this process (see
+`maintenance_interval`): its interval in seconds (0 when off here, or closed), the turns that
+ran, the entries they removed, failures, and the last failure's message. A failure is also
+logged once per streak, as a WARNING on the `diskcache_oxide` logger, by the next single-key
+call on the cache (`get`, `set`, `incr` and the like); a cache nobody calls shows it here
+only. A thread that couldn't be started counts as failures too. On a `FanoutCache`, every
+shard's counts summed, the largest interval, and the first shard's last error.
 
 stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
 
@@ -807,7 +837,7 @@ Examples:
 A cache sharded over several SQLite databases, so writers in many processes stop queueing on one write lock.
 
 
-FanoutCache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, shards: 'int | None' = None, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False, raise_on_mismatch: 'bool' = False) -> 'FanoutCache'
+FanoutCache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, shards: 'int | None' = None, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False, raise_on_mismatch: 'bool' = False, maintenance_interval: 'float | None' = None) -> 'FanoutCache'
 
 A disk cache split over several SQLite databases (shards), so reads and writes on different keys
 don't queue on one file's locks.
@@ -862,6 +892,7 @@ Args:
         the root's recorded count, instead of using the recorded count with a warning (default
         False). It covers the count only: a root in another on-disk format still opens in its
         `diskcache-oxide-format-N` subdirectory.
+    maintenance_interval: As for `Cache`; each shard takes its own turn across the interval.
 
 Raises:
     ValueError: A setting is out of range, or `max_connections` is below `shards`.
@@ -1167,6 +1198,16 @@ Raises:
     RuntimeError: Inside this thread's own `transact()` block.
     Timeout: A step waited longer than `timeout` (and `retry` is False).
 
+maintenance_stats(self) -> 'MaintenanceStats'
+
+How background maintenance has gone on this cache in this process (see
+`maintenance_interval`): its interval in seconds (0 when off here, or closed), the turns that
+ran, the entries they removed, failures, and the last failure's message. A failure is also
+logged once per streak, as a WARNING on the `diskcache_oxide` logger, by the next single-key
+call on the cache (`get`, `set`, `incr` and the like); a cache nobody calls shows it here
+only. A thread that couldn't be started counts as failures too. On a `FanoutCache`, every
+shard's counts summed, the largest interval, and the first shard's last error.
+
 stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
 
 `(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
@@ -1289,7 +1330,7 @@ Raises:
 Switched-off cache behaving as if every entry expires instantly.
 
 
-NullCache(directory: 'str | os.PathLike[str] | None' = None, timeout: 'float | None' = None, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: "Literal['msgpack', 'json']" = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int' = 8, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False, invalidate: 'CacheLike | None' = None) -> 'None'
+NullCache(directory: 'str | os.PathLike[str] | None' = None, timeout: 'float | None' = None, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: "Literal['msgpack', 'json']" = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int' = 8, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False, maintenance_interval: 'float | None' = None, invalidate: 'CacheLike | None' = None) -> 'None'
 
 A switched-off cache, so app code needs no `if cache is None` checks.
 
@@ -1423,6 +1464,10 @@ Always `[]`: there is nothing to check.
 remove_old_formats(self) -> 'list[str]'
 
 Always `[]`: a `NullCache` has no directory to clean up.
+
+maintenance_stats(self) -> 'MaintenanceStats'
+
+All zero: a `NullCache` has nothing to maintain.
 
 stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
 
@@ -1658,6 +1703,10 @@ remove_old_formats(self) -> 'list[str]'
 
 Remove caches an older format left in this cache's directory; `[]` on a `NullCache`.
 
+maintenance_stats(self) -> 'MaintenanceStats'
+
+How background maintenance has gone on this cache in this process; all zero on a `NullCache`.
+
 stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
 
 `(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`.
@@ -1781,7 +1830,7 @@ Examples:
     caches.stats()['pages'].count
     ```
 
-CacheStats(name: 'str', directory: 'str', enabled: 'bool', count: 'int', volume: 'int', error: 'str | None' = None) -> None
+CacheStats(name: 'str', directory: 'str', enabled: 'bool', count: 'int', volume: 'int', error: 'str | None' = None, maintenance: 'MaintenanceStats | None' = None) -> None
 
 One cache's numbers, for an admin page. `error` says why it couldn't be read, if it couldn't.
 
@@ -2400,7 +2449,7 @@ value, expires_at = cache.get('user:42', expire_time=True)
 - Keys are `str`, `bytes`, `int`, `float`, `bool`, `None`, or tuples of those, such as `('user', 42)`. They're compared by exact type, so `1`, `1.0` and `True` are three keys. Anything else (a `list`, a `dict`, an object) raises `TypeError`; build a tuple or a string instead.
 - Values can be `str`, `bytes`, `int`, `float`, `bool`, `None`, `Decimal`, and lists, tuples, dicts, sets, frozensets, datetimes and dates made of those. They come back as the types you stored. See [Serialization](serialization.qmd).
 - `expire` is in seconds. Leave it out for an entry that never expires. `touch(key, expire=...)` changes the expiry of an existing entry.
-- An entry is gone the moment it expires: `get`, `in`, `add`, `len()` and iteration all stop seeing it at once. Its row and any value file stay on disk, and in `volume()`, until something removes them. Each `set()` removes a few, and `expire()` removes the rest, so a cache that's mostly read should call `expire()` (or `caches.expire_all()`) from a scheduled job, about hourly. Nothing does this in the background yet; it's on the [roadmap](roadmap.qmd).
+- An entry is gone the moment it expires: `get`, `in`, `add`, `len()` and iteration all stop seeing it at once. Its row and any value file are removed soon after, with nothing for you to schedule: each `set()` removes a few, and background maintenance removes the rest every 5 minutes (see below).
 
 ### Dictionary syntax
 
@@ -2472,7 +2521,18 @@ cache = Cache(
 
 When the cache's on-disk volume goes over `size_limit`, each `set()` evicts up to `cull_limit` of the least recently stored entries. `cache.volume()` reports the current size in bytes. For a cache that must never drop a live entry (job claims, locks, a queue), pass `eviction_policy='none'`: nothing is evicted for size, expired entries are still removed, and the cache can grow past `size_limit`. Like the limits, the policy is stored in the cache, so every process shares it.
 
-Maintenance calls, all safe to run while other processes use the cache:
+### Background maintenance
+
+A thread of the library's own, one per process, looks after every open cache: every `maintenance_interval` seconds (default 300, 5 minutes) it removes expired entries and their files, trims a cache that's over `size_limit` back under it, checkpoints a write-ahead log that has grown, and hourly clears stray temporary files. The caches in a process take turns across the interval, and the processes sharing a cache take turns too. It never waits for a lock and holds the write lock only for short chunks, so requests don't notice it. `cache.maintenance_stats()` says how it's going, and a failure is logged once, as a WARNING on the `diskcache_oxide` logger.
+
+```python
+cache = Cache('/var/cache/my-app', maintenance_interval=60)    # every minute
+backup = Cache('/srv/replica/my-app', maintenance_interval=0)  # off: never written
+```
+
+Pass 0 for a cache that must never be written by this process, such as a read-only replica: maintenance writes when it has work, and once an hour to coordinate the processes. A cache opened with `clock=` gets none, since the thread only knows the real time. [Storage and WAL](storage-and-wal.qmd#background-maintenance) has the whole story.
+
+Maintenance calls, for when you want it done now, all safe to run while other processes use the cache:
 
 - `cache.expire()` removes every expired entry and returns how many.
 - `cache.clear()` removes every entry that existed when it started, and keeps anything written while it runs.
@@ -3077,7 +3137,7 @@ If you've read this far and the traceback still doesn't fit, it may be one. Open
 
 - **The write-ahead log.** Each cache has a `-wal` file beside its database, trimmed back to `wal_size_limit / 2` when it resets. After a burst of writes it can be much larger than the database until `checkpoint()` runs. See [Storage and WAL](storage-and-wal.qmd).
 - **Eviction is off.** A cache with `eviction_policy='none'` (the recommended setting for sessions, claims and queues) holds what you put in until it expires, past `size_limit` if need be. Give those entries an `expire`, and run `expire()` from a scheduled job so expired ones free their space.
-- **Expired entries that nobody removed.** Expired entries are invisible to reads at once, but their space comes back only when `expire()` or a later write's cleanup removes them. On a cache that's mostly read, run `expire()` (or `caches.expire_all()`) hourly.
+- **Expired entries that nobody removed.** Expired entries are invisible to reads at once, and background maintenance frees their space within its interval (5 minutes by default). If it doesn't, check `cache.maintenance_stats()`: an `interval` of 0 means it's off for this cache in this process (`maintenance_interval=0`, or a cache opened with `clock=`), and `failures` with a `last_error` says why it couldn't. Another connection holding the write lock for minutes, in a long `transact()`, shows up there too.
 - **An old format's cache.** After a format change the old cache stays on disk beside the new one until you run `remove_old_formats()`.
 - **Every cache adds up.** A volume holds the sum of the `size_limit`s, about one write-ahead log per cache, and the unbounded state caches. A [`FanoutCache`](fanoutcache.qmd) has a log per shard. [Docker and Compose](../recipes/docker.qmd#how-much-disk) has the arithmetic.
 - **Files no entry names.** A crash at the wrong moment can leave a large value's file behind. `check(fix=True)` removes value files no entry names once they're an hour old.
@@ -3184,13 +3244,16 @@ A release that meets a cache in another on-disk format opens a cache of its own 
 
 ### Done: expiry that's exact for counts and listings (0.3.5)
 
-An entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it expires, as it always left `get` and `in` (D-060). Its space is still freed by the next writes or a scheduled `expire()`; background maintenance, below, makes that automatic.
+An entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it expires, as it always left `get` and `in` (D-060). Background maintenance, below, frees their space.
+
+### Done: background maintenance (0.3.5)
+
+A cache looks after itself, with no `expire()` to schedule. One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (`maintenance_interval`). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don't all do the same work, a cache with nothing to do is only read, and the thread steps aside for every request and every fork. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
 
 ### Next
 
 In roughly this order:
 
-- **Background maintenance**: A cache that looks after itself, with no scheduled `expire()`. One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache. The caches are spread evenly over the interval (four caches on the default 5 minutes take turns at 0:00, 1:15, 2:30 and 3:45), the processes sharing a cache take turns so eight workers don't all do the same work, and a cache with nothing to do is only read, never locked.
 - **Django cache backend**: A diskcache-oxide backend for Django's cache framework, tested against Django's own cache test suite. It's a big job, so it gets a phase of its own.
 - **Free-threaded performance**: Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target.
 - **`AsyncCache`**: An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. It starts as an experiment and ships only if it earns its place; if it doesn't, this page will say why.
@@ -3679,7 +3742,8 @@ caches.close_all()                  # at shutdown; `with Caches(...) as caches:`
 - `stats()` opens every registered cache and never raises: a cache that can't be read has its `error` set.
 - Hit and miss counts come from each cache's own `stats()`: `caches['pages'].stats()` turns counting on for this process, and later calls return `(hits, misses)` for this process's lookups. A disabled cache, or one that couldn't open, returns `(0, 0)`.
 - `clear(name)` raises if the cache can't be opened, so an admin page doesn't report "0 cleared" for a failure.
-- `expire_all()` runs every cache, logging and reporting `None` for one that fails. Run it from a scheduled job rather than inside a request: a large expire takes seconds.
+- `expire_all()` runs every cache, logging and reporting `None` for one that fails. Background maintenance already does this on its own; `expire_all()` is for when you want it done now. Run it from a job rather than inside a request: a large expire takes seconds.
+- Each `CacheStats` carries the cache's `maintenance_stats()` as `maintenance`, for an admin page.
 - Maintenance calls hold the write lock once per chunk, so give them a longer `timeout=` than the request path's.
 
 ## Coming from your own diskcache wrapper
@@ -3696,7 +3760,7 @@ Apps that run diskcache in production tend to grow the same wrapper around it: a
 - **A `NullCache` when opening fails**: the same, reported through `on_open_error` and retried after 10 s
 - **`get_all_caches()`, `clear_*()`, `close_all_caches()`**: `caches.stats()`, `caches.clear(name, timeout=...)`, `caches.close_all()`
 - **A separate maintenance handle with a 10 s timeout**: `timeout=` on `clear()`, `expire()` and `cull()`
-- **Hourly `expire_all_caches()` inside `create_cache`**: `caches.expire_all()` from a scheduled job
+- **Hourly `expire_all_caches()` inside `create_cache`**: nothing; background maintenance does it
 
 The library's self-healing read is safer than the wrapper's in three ways:
 
@@ -4225,17 +4289,38 @@ cache.checkpoint()   # True if the log was reset and truncated
 cache = Cache('/var/cache/my-app', wal_checkpoint='auto')
 ```
 
-With `'auto'`, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it's over the limit, with the interpreter released. Readers in other processes can get in the way for a moment, so it tries the final truncation up to 8 times, a couple of milliseconds each, before backing off for a second. It never fails a write. It isn't the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. The plan is to move this into a background maintenance thread so writes never pay for it at all. Writes queue behind a checkpoint for tens of milliseconds, so a `timeout` under about 35 ms can time out behind one.
+With `'auto'`, writes check the log (at most every 250 ms or 64 writes) and checkpoint it when it's over the limit, with the interpreter released. Readers in other processes can get in the way for a moment, so it tries the final truncation up to 8 times, a couple of milliseconds each, before backing off for a second. It never fails a write. It isn't the default because on a saturated disk the write that triggers the checkpoint can still pause for a long time, and no write should pay for housekeeping unless you asked for it. Background maintenance (below) checkpoints a log past half the limit on its own turn, so `'auto'` is only for logs that grow faster than that. Writes queue behind a checkpoint for tens of milliseconds, so a `timeout` under about 35 ms can time out behind one.
 
 ### The limit is a target, not a bound
 
 `wal_size_limit` says where the log should stay, not where it's guaranteed to stay. Sustained writes from several processes near flat out can take it to tens of times the limit: we measured 6 GiB on free-threaded 3.15 and 21 GiB on 3.14 in 10 minutes, against a 64 MiB limit. It's much smaller below flat out, for example 250 MiB at about 2,600 writes per second across 3 writers in `auto`.
 
-In the default `manual` mode, with busy readers in other processes, the log grows until something checkpoints. If your app has that shape, use `wal_checkpoint='auto'` or call `checkpoint()` periodically. A script should call `checkpoint()` or `close()` after a large fill.
+In the default `manual` mode, with busy readers in other processes, the log grows until something checkpoints: background maintenance does, every `maintenance_interval`, when its readers let it. If your app writes faster than that, use `wal_checkpoint='auto'`. A script should call `checkpoint()` or `close()` after a large fill.
+
+## Background maintenance
+
+One thread per process, of the library's own, looks after every cache open in that process (D-061). It holds no Python state, so it never takes the GIL, and it costs nothing while it waits.
+
+| Task | How often | What it does |
+|---|---|---|
+| Expiry and trimming | every `maintenance_interval` | Removes expired entries and their value files, then, if the cache is over `size_limit`, evicts the least recently stored, `cull_limit` at a time, until it's under. Never evicts under `eviction_policy='none'` or with `cull_limit=0` (diskcache's "I cull myself"). |
+| The write-ahead log | every `maintenance_interval` | If the log is over half of `wal_size_limit`, copies it into the database without holding the write lock, then truncates it if nothing's left to copy. Skipped on a cache with `max_connections=1`, whose one connection the copy would hold. |
+| Value folders | hourly | Removes temporary files a killed writer left (an hour old) and empty value folders, on a `FanoutCache`'s shards too. |
+
+`maintenance_interval` is set when a cache is opened, in seconds: `None` for 300, `0` for off, otherwise 1 second to a day. It's per process and isn't stored in the cache; the shortest interval any open handle on the directory asked for wins. A cache's first turn comes one to two intervals after it's first opened in the process, so a short script never runs one.
+
+- **Taking turns.** The caches in a process are spread across the interval: four caches on a 5-minute interval get their turns about 75 seconds apart. The processes sharing a cache take turns through a row in its `settings` table, so eight workers don't all sweep the same cache; the shortest interval among them sets the pace.
+- **Never in a request's way.** It never waits for a lock: if a request holds the write lock, or one is waiting for it, the turn steps aside and comes back a second later. It writes in chunks of about 130 µs, so a request waits at most one chunk.
+- **A cache with nothing to do** is only read, except for one write an hour to coordinate the folder sweep. A cache that must never be written by this process (a read-only replica, a backup) should pass `maintenance_interval=0`.
+- **Forks.** The thread stops before every `os.fork()` and starts again after it, in the parent and in the child, so Python never warns about forking a multi-threaded process. A process that forks without Python's at-fork hooks (a C-level `fork()`) gets no stop; pass `maintenance_interval=0` there.
+- **`clock=`.** The thread only knows the real time, so a cache opened with `clock=` gets no background maintenance in this process while that handle is open, and asking for an interval with it raises `ValueError`.
+- **Reporting.** `maintenance_stats()` returns the interval, turns, entries removed, failures and the last error. A failure is logged once, as a WARNING on the `diskcache_oxide` logger, by the next single-key call on the cache. A turn that keeps finding the write lock held for 3 intervals counts as a failure too.
+
+Since maintenance may get there first, an explicit `expire()` or `cull()` can return less than it would have, and `volume()` and the log's size change without a call.
 
 ## Maintenance calls
 
-All of these work in chunks, release the database between chunks so other writers get in, and are safe to call while other processes use the cache:
+For when you want it done now. All of these work in chunks, release the database between chunks so other writers get in, and are safe to call while other processes use the cache:
 
 - `expire()` removes every expired entry and its value file.
 - `clear()` removes every entry that existed when it started, and keeps writes that land while it runs.
@@ -4385,6 +4470,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-058 | Windows: deleting or overwriting a large value while it's being read | Leaks its file, outside `size_limit` | Removes it |
 | D-059 | A directory holding another diskcache-oxide format | (no such thing) `directory` is the one passed | Opens `diskcache-oxide-format-N` inside it; `directory` says so |
 | D-060 | `len()` and iteration | Count and list expired entries until something removes them | Leave them out the moment they expire |
+| D-061 | Between calls | Nothing happens: expired rows, an over-limit cache and stray files wait for a call | Background maintenance looks after every open cache, every 5 minutes by default |
 
 ## Safety
 
@@ -4494,6 +4580,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-058:** on Windows, diskcache can't delete a value file while any reader has it open (Python's `open()` doesn't share delete) and ignores the failure, so the file stays with nothing pointing at it (upstream bug 19); one test left 154 files for 6 entries. diskcache-oxide's readers allow the delete, so nothing leaks.
 - **D-059:** when a cache directory holds a cache in another diskcache-oxide format (after an upgrade or a rollback), the cache opens in the subdirectory `diskcache-oxide-format-N` with a warning, and every later open uses it; `directory` reports where the cache really is. `remove_old_formats()` cleans up older formats once the old workers are gone. See [Upgrading across a format change](../recipes/upgrading.qmd).
 - **D-060:** an expired entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it expires, as it already left `get` and `in`. diskcache keeps counting and listing it until a `set()`, `expire()` or `cull()` removes its row. Nothing is written by the check: the row and its space, in `volume()`, stay until that removal, as in diskcache.
+- **D-061:** one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every `maintenance_interval` (default 5 minutes, 0 for off), with the caches and the processes taking turns. So an explicit `expire()` or `cull()` can return less than diskcache's would, `volume()` changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)
@@ -5850,7 +5937,7 @@ Under normal load a write takes about 20 µs and never comes near the timeout. T
 
 Run maintenance from one place, such as a scheduled job [one worker claims](run-once.qmd), not from every worker:
 
-- `caches.expire_all()` and `sessions.expire()` remove expired entries and free their space. A cache that's mostly read can accumulate expired entries, because the cleanup each `set()` does is small. Once an hour is plenty for most apps.
+- Expired entries need no job: background maintenance removes them in every cache every 5 minutes, with the workers taking turns (`maintenance_interval`). `caches.expire_all()` and `sessions.expire()` are still there for when you want it done now.
 - `checkpoint()` empties a cache's write-ahead log after a write burst. It returns `False` instead of waiting long if workers are busy, so it's safe to call any time.
 
 ## At shutdown
@@ -6303,7 +6390,8 @@ The exact messages, and what to do about each, are in [Errors and what to do abo
 
 - **`stats()` turns counting on.** Its `enable` argument defaults to True, so a health check that reads the counts also starts them. `stats(enable=False)` turns counting off and stops the counts where they are.
 - **Counts reset on restart.** Graph the hit ratio, not the raw counts, or publish the counts as above.
-- **`volume()` includes expired entries** until `expire()`, or the cleanup a `set()` does, removes them, though `len()` already leaves them out. A scheduled `expire()` frees their space; `caches.expire_all()` does every registered cache.
+- **`volume()` includes expired entries** until background maintenance or a `set()`'s cleanup removes them, though `len()` already leaves them out, so it can drop on its own between calls.
+- **Background maintenance reports in `maintenance_stats()`**: its `interval` (0 when it's off for the cache in this process), the `turns` that ran, the entries they `removed`, `failures` and the `last_error`. A failure is also logged once as a WARNING on the `diskcache_oxide` logger, by the next `get`, `set` or other single-key call, so a cache nobody calls shows it here only. `caches.stats()` carries it per cache as `maintenance`. Alert on `failures` going up.
 - **Health checks shouldn't write.** Everything in `cache_health` is a read. `check()` and `checkpoint()` belong in a maintenance job.
 
 ### Upgrading across a format change

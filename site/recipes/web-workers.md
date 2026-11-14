@@ -152,7 +152,7 @@ Under normal load a write takes about 20 µs and never comes near the timeout. T
 
 Run maintenance from one place, such as a scheduled job [one worker claims](run-once.md), not from every worker:
 
-- `caches.expire_all()` and `sessions.expire()` remove expired entries and free their space. A cache that's mostly read can accumulate expired entries, because the cleanup each [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) does is small. Once an hour is plenty for most apps.
+- Expired entries need no job: background maintenance removes them in every cache every 5 minutes, with the workers taking turns (`maintenance_interval`). `caches.expire_all()` and `sessions.expire()` are still there for when you want it done now.
 - [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) empties a cache's write-ahead log after a write burst. It returns `False` instead of waiting long if workers are busy, so it's safe to call any time.
 
 

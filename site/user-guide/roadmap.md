@@ -85,14 +85,18 @@ A release that meets a cache in another on-disk format opens a cache of its own 
 
 ## Done: expiry that's exact for counts and listings (0.3.5)
 
-An entry leaves `len()`, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys), `iter()` and `reversed()` the moment it expires, as it always left [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) and `in` (D-060). Its space is still freed by the next writes or a scheduled [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire); background maintenance, below, makes that automatic.
+An entry leaves `len()`, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys), `iter()` and `reversed()` the moment it expires, as it always left [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) and `in` (D-060). Background maintenance, below, frees their space.
+
+
+## Done: background maintenance (0.3.5)
+
+A cache looks after itself, with no [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) to schedule. One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (`maintenance_interval`). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don't all do the same work, a cache with nothing to do is only read, and the thread steps aside for every request and every fork. See [Background maintenance](storage-and-wal.md#background-maintenance).
 
 
 ## Next
 
 In roughly this order:
 
-- **Background maintenance**: A cache that looks after itself, with no scheduled [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire). One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache. The caches are spread evenly over the interval (four caches on the default 5 minutes take turns at 0:00, 1:15, 2:30 and 3:45), the processes sharing a cache take turns so eight workers don't all do the same work, and a cache with nothing to do is only read, never locked.
 - **Django cache backend**: A diskcache-oxide backend for Django's cache framework, tested against Django's own cache test suite. It's a big job, so it gets a phase of its own.
 - **Free-threaded performance**: Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target.
 - **`AsyncCache`**: An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. It starts as an experiment and ships only if it earns its place; if it doesn't, this page will say why.

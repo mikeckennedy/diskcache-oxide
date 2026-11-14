@@ -171,7 +171,8 @@ caches.close_all()                  # at shutdown; `with Caches(...) as caches:`
 - [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) opens every registered cache and never raises: a cache that can't be read has its `error` set.
 - Hit and miss counts come from each cache's own [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats): `caches['pages'].stats()` turns counting on for this process, and later calls return `(hits, misses)` for this process's lookups. A disabled cache, or one that couldn't open, returns `(0, 0)`.
 - `clear(name)` raises if the cache can't be opened, so an admin page doesn't report "0 cleared" for a failure.
-- [expire_all()](../reference/Caches.expire_all.md#diskcache_oxide.Caches.expire_all) runs every cache, logging and reporting `None` for one that fails. Run it from a scheduled job rather than inside a request: a large expire takes seconds.
+- [expire_all()](../reference/Caches.expire_all.md#diskcache_oxide.Caches.expire_all) runs every cache, logging and reporting `None` for one that fails. Background maintenance already does this on its own; [expire_all()](../reference/Caches.expire_all.md#diskcache_oxide.Caches.expire_all) is for when you want it done now. Run it from a job rather than inside a request: a large expire takes seconds.
+- Each [CacheStats](../reference/CacheStats.md#diskcache_oxide.CacheStats) carries the cache's [maintenance_stats()](../reference/Cache.maintenance_stats.md#diskcache_oxide.Cache.maintenance_stats) as `maintenance`, for an admin page.
 - Maintenance calls hold the write lock once per chunk, so give them a longer `timeout=` than the request path's.
 
 
@@ -189,7 +190,7 @@ Apps that run diskcache in production tend to grow the same wrapper around it: a
 - **A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) when opening fails**: the same, reported through `on_open_error` and retried after 10 s
 - **`get_all_caches()`, `clear_*()`, `close_all_caches()`**: `caches.stats()`, `caches.clear(name, timeout=...)`, `caches.close_all()`
 - **A separate maintenance handle with a 10 s timeout**: `timeout=` on [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) and [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull)
-- **Hourly `expire_all_caches()` inside `create_cache`**: `caches.expire_all()` from a scheduled job
+- **Hourly `expire_all_caches()` inside `create_cache`**: nothing; background maintenance does it
 
 The library's self-healing read is safer than the wrapper's in three ways:
 
