@@ -30,7 +30,7 @@ use rusqlite::types::ValueRef;
 use crate::gate;
 use crate::key::{Key, OwnedKey};
 use crate::rows::{Removed, RowWriter};
-use crate::schema::{EvictionPolicy, KEY_TYPE_STR, KEY_TYPE_TYPED};
+use crate::schema::{KEY_TYPE_STR, KEY_TYPE_TYPED};
 use crate::store::{Changed, LockPriority, Store};
 use crate::{Error, Result};
 
@@ -266,13 +266,7 @@ impl Store {
             let (over, batch) = self
                 .write_files(timeout, LockPriority::Normal, |writer, conn| {
                     // The policy too, in this transaction: under 'none' only the expired go (H2).
-                    let (size_limit, size, policy): (i64, i64, i64) = conn
-                        .prepare_cached("SELECT size_limit, size, eviction_policy FROM state WHERE only = 1")
-                        .and_then(|mut stmt| stmt.query_row([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))))
-                        .map_err(|e| Error::from_sqlite(e, timeout))?;
-                    if policy != EvictionPolicy::LeastRecentlyStored.code()
-                        || crate::ops::volume_in(conn, size, timeout)? < size_limit
-                    {
+                    if !crate::ops::Fill::read(conn, timeout)?.over(conn, timeout)? {
                         return Ok(Changed::removing((false, 0), []));
                     }
                     // Its size isn't needed: the next pass reads `state` again.

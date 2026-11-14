@@ -1049,6 +1049,32 @@ fn over_limit(tx: &Connection, size: i64, size_limit: i64, timeout: Duration) ->
     Ok(volume_in(tx, size, timeout)? >= size_limit)
 }
 
+/// What a size eviction judges by, read in the caller's transaction: the stored totals, limits and
+/// policy. One reader for `cull()` and background maintenance, so they agree on "over the limit".
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Fill {
+    pub size: i64,
+    pub size_limit: i64,
+    pub cull_limit: i64,
+    /// The policy evicts for size (not `'none'`).
+    pub evicts: bool,
+}
+
+impl Fill {
+    pub(crate) fn read(conn: &Connection, timeout: Duration) -> Result<Self> {
+        let (size, size_limit, cull_limit, policy): (i64, i64, i64, i64) = conn
+            .prepare_cached("SELECT size, size_limit, cull_limit, eviction_policy FROM state WHERE only = 1")
+            .and_then(|mut stmt| stmt.query_row([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))))
+            .map_err(|e| Error::from_sqlite(e, timeout))?;
+        Ok(Self { size, size_limit, cull_limit, evicts: policy == EvictionPolicy::LeastRecentlyStored.code() })
+    }
+
+    /// Whether the policy evicts and the cache is at or over its limit (see [`volume_in`]).
+    pub(crate) fn over(&self, conn: &Connection, timeout: Duration) -> Result<bool> {
+        Ok(self.evicts && volume_in(conn, self.size, timeout)? >= self.size_limit)
+    }
+}
+
 /// `(page_count − freelist_count) × page_size + state.size`: the database pages in use plus the
 /// value files. Freed pages are left out: deleting rows never shrinks the file (the pages go on
 /// SQLite's freelist and get reused), so counting them would keep a full cache "over the limit"
