@@ -446,13 +446,15 @@ lane_E() {
         note "E  FAIL  setup: the canary's heap overflow didn't reach a log_path report file, so the preloaded runtime isn't at work or its reports go nowhere; see $OUT/E-canary.log"; FAILED+=(E); return
     fi
     note "E  canary: the preloaded runtime reported a heap-buffer-overflow into its report file, as required"
-    env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider tests/unit >"$unit" 2>&1 || rc=1
-    env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider --backend=oxide tests/conformance >"$conf" 2>&1 || rc=1
+    # ASan's slowdown takes the property tests past the default 60 s timeout (test_keys and the
+    # FanoutCache model on 5acc8fc), so the lane gets lane D's 600 s.
+    env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider -o timeout=600 tests/unit >"$unit" 2>&1 || rc=1
+    env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider -o timeout=600 --backend=oxide tests/conformance >"$conf" 2>&1 || rc=1
     # Again with background maintenance running every 10 ms in every cache (plan 28): the conformance
     # suite and the unit tests where it meets forks, threads and transactions.
     local maint="$OUT/E-maintenance.log"
-    env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider --maintenance-interval=0.01 --backend=oxide \
-        tests/conformance "${MAINTENANCE_UNITS[@]}" >"$maint" 2>&1 || rc=1
+    env "${run_env[@]}" "$venv/bin/pytest" -q -p no:cacheprovider -o timeout=600 --maintenance-interval=0.01 \
+        --backend=oxide tests/conformance "${MAINTENANCE_UNITS[@]}" >"$maint" 2>&1 || rc=1
     local verdict=0 results files
     files=$(collect_reports "$reports" "$OUT/E-reports.log")
     note "E  ${files% *} process(es) wrote a report file, ${files#* } with a report in it"
