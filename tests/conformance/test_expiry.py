@@ -1,9 +1,11 @@
 """Expiry semantics, driven entirely by the fake clock."""
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.conformance.backends import Backend
 from tests.conformance.conftest import FakeClock
 
 
@@ -54,6 +56,9 @@ def test_expired_entry_misses_on_every_read(cache: Any, fake_clock: FakeClock) -
         cache['k']
 
 
+@pytest.mark.diverges(
+    backend='oxide', ref='D-060', reason='len() and iteration hide expired entries', raises=AssertionError
+)
 def test_expired_entry_still_counted_until_expire(cache: Any, fake_clock: FakeClock) -> None:
     cache.set('k', 'v', expire=1)
     volume_before = cache.volume()
@@ -67,6 +72,31 @@ def test_expired_entry_still_counted_until_expire(cache: Any, fake_clock: FakeCl
     assert cache.expire() == 1
     assert len(cache) == 0
     assert list(cache.iterkeys()) == []
+
+
+@pytest.mark.backend_only('oxide')
+def test_an_expired_entry_leaves_len_and_iteration_when_it_expires(
+    cache: Any, cache_dir: Path, backend: Backend, fake_clock: FakeClock
+) -> None:
+    cache.set('k', 'v', expire=1)
+    cache.set(7, 'typed', expire=1)
+    cache.set('stays', 'v')
+    volume_before = cache.volume()
+    assert len(cache) == 3
+    fake_clock.advance(2)
+    # Gone from every count and listing at once, though nothing has removed the rows yet.
+    assert len(cache) == 1
+    assert list(cache.iterkeys()) == ['stays']
+    assert list(cache.iterkeys(reverse=True)) == ['stays']
+    assert list(cache.iterkeys(prefix='k')) == []
+    assert list(cache) == ['stays']
+    assert list(reversed(cache)) == ['stays']
+    # Still stored, and still in volume(), until something sweeps them.
+    assert backend.stored_rows(cache_dir) == 3
+    assert cache.volume() == volume_before
+    assert cache.expire() == 2
+    assert len(cache) == 1
+    assert backend.stored_rows(cache_dir) == 1
 
 
 def test_clear_counts_expired_entries(cache: Any, fake_clock: FakeClock) -> None:

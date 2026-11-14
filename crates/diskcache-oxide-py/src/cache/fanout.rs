@@ -443,9 +443,11 @@ impl FanoutCache {
 
     // -- over every shard, under one deadline ---------------------------------------------------
 
+    /// The entries live now in every shard: expired ones not yet swept don't count (D-060).
     fn __len__(&self, py: Python<'_>) -> PyResult<usize> {
         self.refuse_fan_out("len()")?;
-        let counts = self.every_shard(py, Store::len)?;
+        let now = self.config.now(py)?;
+        let counts = self.every_shard(py, |store, timeout| store.live_len(timeout, now))?;
         Ok(counts.into_iter().map(|n| usize::try_from(n).unwrap_or(0)).sum())
     }
 
@@ -1076,7 +1078,7 @@ impl FanoutKeyIterator {
         Self { cache, prefix, walk: Mutex::new(walk) }
     }
 
-    /// The next page of `shard`'s keys after `cursor`, waiting no later than `deadline`.
+    /// The next page of `shard`'s keys live at `now` after `cursor`, waiting no later than `deadline`.
     fn page(
         &self,
         shard: usize,
@@ -1084,11 +1086,12 @@ impl FanoutKeyIterator {
         order: Order,
         cursor: &Cursor,
         deadline: Instant,
+        now: f64,
     ) -> Result<(Vec<OwnedKey>, Cursor), Error> {
         let handle = &self.cache.get().shards[shard];
         let left = deadline.saturating_duration_since(Instant::now());
         let left = handle.ensure_open(left)?;
-        handle.store.keys_page_of(size, left, order, self.prefix.as_deref(), cursor)
+        handle.store.keys_page_of(size, left, order, self.prefix.as_deref(), cursor, now)
     }
 }
 
@@ -1132,7 +1135,9 @@ impl FanoutKeyIterator {
                 }
                 let (at, order) =
                     if *reverse { (shards - 1 - *shard, Order::InsertedReverse) } else { (*shard, Order::Inserted) };
-                let (keys, next) = self.page(at, PAGE, order, cursor, deadline).map_err(whole)?;
+                // Each page hides what has expired by the time it's read (D-060).
+                let now = self.cache.get().config.now(py)?;
+                let (keys, next) = self.page(at, PAGE, order, cursor, deadline, now).map_err(whole)?;
                 if keys.is_empty() {
                     *shard += 1;
                     *cursor = Cursor::Start;
@@ -1144,9 +1149,11 @@ impl FanoutKeyIterator {
             Walk::Merge { reverse, heads, shards, pending } => {
                 let size = merge_page(shards.len());
                 let order = Order::Key { reverse: *reverse };
+                // The clock is read only when a page is, once for every page this call reads.
+                let now = if pending.is_empty() { 0.0 } else { self.cache.get().config.now(py)? };
                 while let Some(&shard) = pending.last() {
                     let state = &mut shards[shard];
-                    let (keys, next) = self.page(shard, size, order, &state.cursor, deadline).map_err(whole)?;
+                    let (keys, next) = self.page(shard, size, order, &state.cursor, deadline, now).map_err(whole)?;
                     let mut keys = VecDeque::from(keys);
                     if let Some(key) = keys.pop_front() {
                         state.cursor = next;

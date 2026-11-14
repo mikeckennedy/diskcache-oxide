@@ -772,7 +772,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="done-expiry-thats-exact-for-counts-and-listings-0.3.5" class="level2">
 <h2 class="anchored" data-anchor-id="done-expiry-thats-exact-for-counts-and-listings-0.3.5">Done: expiry that’s exact for counts and listings (0.3.5)</h2>
-<p>An entry leaves <code>len()</code>, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>, <code>iter()</code> and <code>reversed()</code> the moment it expires, as it always left <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> and <code>in</code> (D-060). Its space is still freed by the next writes or a scheduled <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>; the background sweeper below makes that automatic.</p>
+<p>An entry leaves <code>len()</code>, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>, <code>iter()</code> and <code>reversed()</code> the moment it expires, as it always left <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> and <code>in</code> (D-060). Its space is still freed by the next writes or a scheduled <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>; background maintenance, below, makes that automatic.</p>
 </section>
 <section id="next" class="level2">
 <h2 class="anchored" data-anchor-id="next">Next</h2>
@@ -786,8 +786,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </thead>
 <tbody>
 <tr class="odd">
-<td><strong>Background expiry sweeper</strong></td>
-<td>Expired entries’ space freed with no scheduled <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>. One small Rust thread per process sweeps every open cache, spread evenly over the interval (four caches on a 60 s interval sweep at 0:00, 0:15, 0:30 and 0:45), and the processes sharing a cache take turns, so eight workers don’t all sweep it. A cache with nothing expired is only read, never locked, and a cache left over its size limit with no writes coming is trimmed back to it.</td>
+<td><strong>Background maintenance</strong></td>
+<td>A cache that looks after itself, with no scheduled <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>. One small Rust thread per process frees expired entries’ space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache. The caches are spread evenly over the interval (four caches on the default 5 minutes take turns at 0:00, 1:15, 2:30 and 3:45), the processes sharing a cache take turns so eight workers don’t all do the same work, and a cache with nothing to do is only read, never locked.</td>
 </tr>
 <tr class="even">
 <td><strong>Django cache backend</strong></td>

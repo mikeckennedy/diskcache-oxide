@@ -54,12 +54,12 @@ def prepared(make_cache: Callable[..., Any], cache_dir: Path, backend: Backend) 
     return cache
 
 
-def _add_expired_row(cache: Any, clock: FakeClock) -> None:
+def _add_expired_row(cache: Any, clock: FakeClock, cache_dir: Path, backend: Backend) -> None:
     # Created last: any later set would sweep it.
     cache.set('gone', 'x', expire=10)
     clock.advance(20)
     assert 'gone' not in cache
-    assert len(cache) == 5, 'the expired row should still be stored'
+    assert backend.stored_rows(cache_dir) == 5, 'the expired row should still be stored'
 
 
 WRITE_OPS: dict[str, Callable[[Any], Any]] = {
@@ -83,14 +83,14 @@ def test_write_times_out_under_write_lock(
     op: Callable[[Any], Any],
 ) -> None:
     # An expired row is present, so expire() (and the sweep in set) has real work that needs the lock.
-    _add_expired_row(prepared, fake_clock)
+    _add_expired_row(prepared, fake_clock, cache_dir, backend)
     with held_lock(backend.db_path(cache_dir), 'IMMEDIATE'):
         start = time.perf_counter()
         with pytest.raises(backend.timeout_error):
             op(prepared)
         # Observed about 60 ms for a 50 ms timeout. Only a generous upper bound is asserted.
         assert time.perf_counter() - start < UPPER_BOUND
-    assert len(prepared) == 5, 'the timed-out write changed the row count'
+    assert backend.stored_rows(cache_dir) == 5, 'the timed-out write changed the row count'
 
 
 def test_writes_succeed_after_lock_released(prepared: Any, cache_dir: Path, backend: Backend) -> None:
@@ -107,6 +107,19 @@ def test_writes_succeed_after_lock_released(prepared: Any, cache_dir: Path, back
 
 BIG = object()  # stands for big_value(backend) in READ_OPS
 
+
+class Listed:
+    """An expected count or listing that includes the expired 'gone' on diskcache and the fork, and
+    leaves it out on oxide, which hides expired rows from len() and iteration (D-060)."""
+
+    def __init__(self, stored: Any, live: Any) -> None:
+        self.stored = stored
+        self.live = live
+
+    def on(self, backend: Backend) -> Any:
+        return self.live if backend.name == 'oxide' else self.stored
+
+
 READ_OPS: dict[str, tuple[Callable[[Any], Any], Any]] = {
     'get_hit': (lambda c: c.get('k'), 'v'),
     'get_expired': (lambda c: c.get('gone'), None),
@@ -114,9 +127,9 @@ READ_OPS: dict[str, tuple[Callable[[Any], Any], Any]] = {
     'get_spilled': (lambda c: c.get('big'), BIG),
     'contains': (lambda c: 'k' in c, True),
     'contains_expired': (lambda c: 'gone' in c, False),
-    'len': (lambda c: len(c), 5),
-    'iterkeys': (lambda c: list(c.iterkeys()), ['big', 'gone', 'k', 'n', 't']),
-    'iter': (lambda c: list(c), ['k', 'n', 't', 'big', 'gone']),
+    'len': (lambda c: len(c), Listed(5, 4)),
+    'iterkeys': (lambda c: list(c.iterkeys()), Listed(['big', 'gone', 'k', 'n', 't'], ['big', 'k', 'n', 't'])),
+    'iter': (lambda c: list(c), Listed(['k', 'n', 't', 'big', 'gone'], ['k', 'n', 't', 'big'])),
     'volume': (lambda c: c.volume() > 0, True),
 }
 
@@ -132,7 +145,9 @@ def test_reads_never_write(
 ) -> None:
     if expected is BIG:
         expected = big_value(backend)
-    _add_expired_row(prepared, fake_clock)
+    elif isinstance(expected, Listed):
+        expected = expected.on(backend)
+    _add_expired_row(prepared, fake_clock, cache_dir, backend)
 
     with SqlitePeer(backend.db_path(cache_dir)) as peer:
         before = peer.data_version()

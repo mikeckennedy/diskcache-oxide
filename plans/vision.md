@@ -11,6 +11,8 @@ Ideas that aren't ready to plan: worth remembering, not committed to. When one b
 
 **The idea:** expire on a timer, so "expires at noon" means gone at noon everywhere, not just for lookups. Pieces, roughly in the order they'd be worth doing:
 
+**Status (2026-11-13):** items 1 and 3 and the refinement below shipped in 0.3.5 as D-060. The sweeper (2) grew into background maintenance, [plan 28](28-background-maintenance.md): one thread per process doing all of a cache's housekeeping, with the stores spread across the interval (Michael), instead of a thread per store.
+
 1. **Filter listings at query time:** `__iter__`/`iterkeys()` skip rows with `expire_time <= now`. It's cheap (the keyset pages already run a query) and exact, with no thread. It diverges from diskcache, so it would need a divergence entry.
 2. **A background sweeper per store** (also the home of WAL checkpointing, Phase 2.5 item 10 in the roadmap, so this thread is now planned rather than only an idea): a Rust thread, so no Python and no interpreter involvement, that runs the existing chunked `expire()` every interval (say once a minute; configurable, off-able).
    - It first probes for any expired row (a cheap read), so an idle or tidy cache never takes the write lock.

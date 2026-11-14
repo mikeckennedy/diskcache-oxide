@@ -153,7 +153,7 @@ A separate phase, because the concurrency core is where serious bugs would hide,
   7. `pop` decodes Python inside its write transaction. A pickle `__setstate__` that writes the same cache waits out the full timeout behind its own transaction. Copy the bytes, and decode after `COMMIT`.
   8. Close-then-reuse and a close/open race can leave two `Store`s for one file: decide retirement under the registry mutex, and look up or revive on rejoin.
   9. The pool's `max_idle` stays at the first handle's `max_connections`; raise it on `join`, as `cache_pages` is.
-  10. **Built-in WAL management (found by the soak, 2026-10-28; Michael).** With readers in other processes, a burst of writes can't wrap the WAL, so the file grows and never shrinks: 538 MiB-1.1 GiB in a 3.14t reproduction. Done as Phase 2.5 step 1: `wal_size_limit` (default 64 MiB), D-024. Design and results are in `plans/06-phase-2.5-concurrency-review.md`. The forced checkpoint moves to the background maintenance thread when that lands.
+  10. **Built-in WAL management (found by the soak, 2026-10-28; Michael).** With readers in other processes, a burst of writes can't wrap the WAL, so the file grows and never shrinks: 538 MiB-1.1 GiB in a 3.14t reproduction. Done as Phase 2.5 step 1: `wal_size_limit` (default 64 MiB), D-024. Design and results are in `plans/06-phase-2.5-concurrency-review.md`. The forced checkpoint moves to the background maintenance thread when that lands ([plan 28](28-background-maintenance.md), decision 10).
   - Plus the cheap first step towards real parking: spin about 2-5 µs, then `yield_now`, before each 50 µs sleep. Real parking needs `unsafe` (a futex or `os_sync_wait_on_address`) in a small separate crate, since core forbids `unsafe`.
 - Exit: all review findings resolved or explicitly accepted, and a clean 24-hour soak on macOS plus a clean multi-hour soak on Linux.
 
@@ -207,6 +207,13 @@ Each item gets conformance tests against diskcache first. Candidate groups, each
   - **One connection budget for the whole FanoutCache**, not `max_connections` per shard, so the memory bound (D-023) still holds.
 - **6d. Deque and Index.** Deferred until someone asks ([plan 24](24-phase-6-parity.md), decision 9).
 - **6e. Recipes:** Lock, RLock, BoundedSemaphore, throttle, barrier, memoize_stampede.
+
+### Expiry that keeps itself accurate, and background maintenance ([plan 28](28-background-maintenance.md))
+
+From [vision.md](vision.md#expiry-that-keeps-itself-accurate-michael-2026-10-28), in two steps:
+
+1. **Done (0.3.5): hide expired rows everywhere (D-060).** `len()`, `iterkeys()`, `iter()` and `reversed()` leave out an entry the moment it expires, by the cache's clock, as lookups always did. `len()` is the stored total less the expired rows not yet removed, counted through the partial `cache_expire` index. After this, when a row is physically removed affects only disk space, never what a caller reads.
+2. **Next, after 0.3.5 and before the Django backend (Michael): background maintenance (plan 28, draft, reviewed once).** One Rust thread per process, not one per cache (Michael, 2026-11-13), doing a cache's housekeeping rather than only expiry: expire and cull, the WAL checkpoint, the value-folder sweep (FanoutCache shards included), and perhaps idle connection trimming. It serves every open store, each `Cache` and each `FanoutCache` shard, spread evenly over the interval: with the default 300 s and four caches, at 0:00, 1:15, 2:30 and 3:45. `maintenance_interval=` is set when the cache is created (0 for off). A `settings` row holding the last sweep time lets the processes sharing a cache take turns, and a tidy cache is only read, never locked. Failures are counted in `stats()` and logged once from the next Python call. It's the Full release tier: maintenance, locks, the fork gate and a new thread.
 
 ### Phase 7 (very speculative): A cache server, as a separate product
 

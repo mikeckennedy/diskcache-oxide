@@ -17,11 +17,13 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 - A cache directory holding another on-disk format opens the `diskcache-oxide-format-N` subdirectory with a warning instead of raising `FormatMismatchError` (D-059). `FormatMismatchError` is now raised only for another format inside that subdirectory. `directory` on `Cache` and `FanoutCache` reports where the cache really is, the subdirectory after such a move; a pickled handle keeps the directory as passed and resolves it again. A `Caches` registry no longer hands out a `NullCache` for a format change.
 - A plain `Cache` opened on a `FanoutCache` shard directory in an older format raises `LayoutMismatchError`, as it always did for a current one, rather than `FormatMismatchError`.
 - `FanoutCache(directory, shards=n)` on a root that records another count no longer raises: it opens with the stored count and logs a `WARNING` once per process. The new keyword `raise_on_mismatch=True` restores the `LayoutMismatchError`, and `Caches.register(..., raise_on_mismatch=True)` turns it into an open failure (a reported `NullCache`). A root in another on-disk format redirects to its versioned subdirectory either way. The `LayoutMismatchError` for settings that don't fit the stored count now says `shards=n was asked for` rather than `is registered with`, since a plain `FanoutCache` raises it too.
+- `len()`, `iterkeys()`, `iter()` and `reversed()` leave out an entry the moment it expires, as `get` and `in` already did, on `Cache` and `FanoutCache` (D-060). Before, an expired entry was counted and listed until a `set()`, `expire()` or `cull()` removed its row, so a cache that's mostly read could report entries nobody could read. Nothing is written by the check; the rows and their space, in `volume()`, still go only when something removes them, so a scheduled `expire()` is still how a mostly-read cache frees space. `len()` now also counts the expired rows not yet removed, through the expiry index, so it costs a little more while such rows are waiting.
 
 ### Fixed
 
 - `import diskcache_oxide` no longer calls `os.register_at_fork` where it doesn't exist.
 - A value file that hits a full quota (`EDQUOT`) now raises `OSError` with `errno.ENOSPC`, as a full disk does, since a full disk is recognized by the error's kind rather than one Unix error number.
+- `iter(cache)` and `reversed(cache)` no longer sort the whole table for every page of keys. Without SQLite statistics, the planner read insertion order through the key index and sorted it, so walking a large cache took time in proportion to its size for every 512 keys (about 2 s for 200,000 entries on an M5 Max, now 22 ms); each page now seeks on the row id.
 
 ### Documentation
 

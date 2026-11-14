@@ -55,6 +55,7 @@ def test_expire_removes_only_expired(cache: Any, fake_clock: FakeClock) -> None:
     assert cache.expire() == 0
 
 
+@pytest.mark.diverges(backend='oxide', ref='D-060', reason='len() hides expired entries', raises=AssertionError)
 def test_len_counts_entries(cache: Any, fake_clock: FakeClock) -> None:
     assert len(cache) == 0
     for i in range(4):

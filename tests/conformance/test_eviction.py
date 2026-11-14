@@ -195,20 +195,20 @@ def test_expired_entries_are_culled_before_older_live_ones(
 
 @pytest.mark.requires('cull_limit')
 def test_set_sweeps_expired_entries_without_size_pressure(
-    make_cache: Callable[..., Any], cache_dir: Path, fake_clock: FakeClock
+    make_cache: Callable[..., Any], cache_dir: Path, backend: Backend, fake_clock: FakeClock
 ) -> None:
     # Surprising but observed: with no size_limit pressure at all, a set still removes expired
-    # entries, at most cull_limit of them per set.
+    # entries, at most cull_limit of them per set. Counted on disk: oxide's len() hides them (D-060).
     cache = make_cache(cache_dir)
     for i in range(15):
         fake_clock.advance(1)
         cache.set(key(i), i, expire=1_000)
     fake_clock.advance(2_000)
-    assert len(cache) == 15
+    assert backend.stored_rows(cache_dir) == 15
 
     fake_clock.advance(1)
     cache.set('new', 1)
-    assert len(cache) == 15 + 1 - DEFAULT_CULL_LIMIT
+    assert backend.stored_rows(cache_dir) == 15 + 1 - DEFAULT_CULL_LIMIT
 
     fake_clock.advance(1)
     cache.set('newer', 1)

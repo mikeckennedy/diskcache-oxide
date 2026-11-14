@@ -27,7 +27,7 @@ import pytest
 import xxhash
 from diskcache_oxide import Cache, FanoutCache, Key, LayoutMismatchError, Timeout
 
-from tests.conformance.proc_workers import SqlitePeer
+from tests.conformance.proc_workers import SqlitePeer, stored_rows
 from tests.keys import str_keys
 from tests.platforms import unix_only
 from tests.unit.fork_timeout_scenarios import fds_inside
@@ -499,6 +499,11 @@ def _locked(root: Path, shards: list[int], mode: str = 'IMMEDIATE') -> Generator
         yield
 
 
+def _stored(root: Path, shards: int = 8) -> int:
+    """Rows on disk in every shard, expired ones included: `len()` hides expired rows (D-060)."""
+    return stored_rows(*(root / f'{shard:03d}' / DB for shard in range(shards)))
+
+
 def _expired_cache(root: Path, keys: list[str], shards: int = 8) -> tuple[FanoutCache, list[int]]:
     """A cache holding `keys`, every one already expired (so `clear`, `expire` and `cull` each remove
     them all), and how many of them each shard holds."""
@@ -525,7 +530,8 @@ def test_a_locked_shard_fails_alone_and_the_error_says_how_far_the_call_got(tmp_
     assert error.removed == len(keys) - counts[3], 'every other shard was still done'
     assert f'FanoutCache.{op}() failed on shard 3 of 8; it removed {error.removed} entries in all' in error.__notes__
     assert 'after 0.2 s' in str(error), 'the timeout names the whole call budget'
-    assert len(cache) == counts[3]
+    assert len(cache) == 0, 'every entry has expired'
+    assert _stored(tmp_path) == counts[3]
     assert REMOVALS[op](cache) == counts[3], 'unlocked, the shard is done'
     cache.close()
 
@@ -585,7 +591,8 @@ def test_at_a_zero_timeout_every_idle_shard_is_still_emptied(tmp_path: Path) -> 
     keys = [f'k{i}' for i in range(2_000)]
     cache, _ = _expired_cache(tmp_path, keys)
     cache.set('live', 'v')  # Its set sweeps a few expired rows from its shard, as any set does.
-    expired = len(cache) - 1
+    assert len(cache) == 1
+    expired = _stored(tmp_path) - 1
     assert expired > len(keys) - 20
     assert cache.expire(timeout=0) == expired
     assert cache.cull(timeout=0) == 0

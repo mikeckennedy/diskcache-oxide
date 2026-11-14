@@ -130,6 +130,13 @@ class Backend:
     def db_path(self, directory: Path) -> Path:
         return Path(directory) / self.db_filename
 
+    def stored_rows(self, directory: Path) -> int:
+        """Rows on disk, expired ones included, counted by a SQLite peer in another process. On oxide
+        `len()` hides expired rows (D-060), so tests that watch rows being swept count them here."""
+        from tests.conformance.proc_workers import stored_rows
+
+        return stored_rows(self.db_path(directory))
+
     def spill_files(self, directory: Path) -> set[Path]:
         """Every file in the cache directory that isn't the database or its WAL/SHM files."""
         root = Path(directory)

@@ -698,9 +698,9 @@ class Cache:
 
         A prefix is an indexed range scan, so it costs time in proportion to the matches, not the
         size of the cache. Keys are fetched a page at a time with no lock held in between, so
-        deleting keys while iterating is safe. Expired entries not yet removed are included. Like a
-        generator, an iterator serves one thread at a time: `next()` raises `ValueError` while
-        another thread is inside it.
+        deleting keys while iterating is safe. Expired entries are skipped, whether or not their rows
+        have been removed yet (D-060). Like a generator, an iterator serves one thread at a time:
+        `next()` raises `ValueError` while another thread is inside it.
 
         Args:
             prefix: Only yield keys that start with this string.
@@ -1039,13 +1039,15 @@ class Cache:
         """`key in cache`: True if the key holds a live (unexpired) value. False if the check failed under
         `durable=True`."""
     def __len__(self) -> int:
-        """The number of entries, including expired entries not yet removed."""
+        """The number of live entries. An entry stops counting the moment it expires, whether or not
+        its row has been removed yet (D-060)."""
     def __bool__(self) -> bool:
         """Always True, even when empty, so `if cache:` means "caching is on"."""
     def __iter__(self) -> Iterator[Key]:
         """Iterate over keys in insertion order. An overwrite keeps its key's place.
 
-        As with `iterkeys()`, `next()` raises `ValueError` while another thread is inside it.
+        As with `iterkeys()`, expired entries are skipped, and `next()` raises `ValueError` while
+        another thread is inside it.
         """
     def __enter__(self) -> Self:
         """Return the cache, for `with Cache(...) as cache:`."""
@@ -1531,7 +1533,7 @@ class FanoutCache:
         first `next()` reads every shard once, and later ones read a shard only when its page runs
         out. No connection or lock is held between `next()` calls. As on `Cache`, it isn't a
         snapshot: a key stored or deleted while it runs may or may not be yielded, but none is
-        yielded twice and the order holds. Expired entries not yet removed are included. `next()`
+        yielded twice and the order holds. Expired entries are skipped, as on `Cache`. `next()`
         raises `ValueError` while another thread is inside it.
 
         Args:
@@ -1574,7 +1576,7 @@ class FanoutCache:
     def __contains__(self, key: object, /) -> bool:
         """`key in cache`, as on `Cache`."""
     def __len__(self) -> int:
-        """The number of entries in every shard, including expired entries not yet removed.
+        """The number of live entries in every shard: expired ones don't count, as on `Cache`.
 
         Raises on any shard's failure, under `durable=True` too.
         """

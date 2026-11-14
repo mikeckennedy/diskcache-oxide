@@ -242,7 +242,7 @@ class CacheLike(Protocol):
         """`key in cache`: True if the key holds a live value."""
 
     def __len__(self) -> int:
-        """The number of entries."""
+        """The number of live entries: expired ones don't count."""
 
     def __bool__(self) -> bool:
         """True if caching is on, so `if cache:` reads naturally."""

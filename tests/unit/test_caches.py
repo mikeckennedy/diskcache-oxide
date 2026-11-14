@@ -470,7 +470,7 @@ def test_admin_calls_on_a_cache_that_cant_open(base: Path, caplog: pytest.LogCap
 
 
 def test_clear_and_expire_all_take_a_timeout(base: Path) -> None:
-    from tests.conformance.proc_workers import SqlitePeer
+    from tests.conformance.proc_workers import SqlitePeer, stored_rows
 
     caches = Caches(base, timeout=60)
     caches.register('a')
@@ -485,7 +485,8 @@ def test_clear_and_expire_all_take_a_timeout(base: Path) -> None:
         assert caches.expire_all(timeout=0.2) == {'a': None}
         assert time.monotonic() - started < 5
         peer.rollback()
-    left = len(caches['a'])  # A set may sweep rows that expired before it.
+    # A set may sweep rows that expired before it. Counted on disk: len() hides expired rows (D-060).
+    left = stored_rows(base / 'a' / 'diskcache-oxide.sqlite')
     assert caches.expire_all(timeout=5) == {'a': left}
     caches.close_all()
 

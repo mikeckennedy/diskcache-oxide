@@ -118,12 +118,13 @@ def test_a_pull_takes_an_item_of_a_nested_prefix(cache: Any) -> None:
 @pytest.mark.diverges(
     backend='oxide', ref='D-055', reason='peek never writes: an expired head is left', raises=AssertionError
 )
-def test_peek_deletes_the_expired_heads_it_passes(cache: Any, fake_clock: Any) -> None:
+def test_peek_deletes_the_expired_heads_it_passes(cache: Any, cache_dir: Path, backend: Any, fake_clock: Any) -> None:
     cache.push('old', expire=1)
     cache.push('new')
     fake_clock.advance(10)
     assert cache.peek() == (START + 1, 'new')
-    assert len(cache) == 1
+    # Counted on disk: oxide's len() would hide the expired row either way (D-060).
+    assert backend.stored_rows(cache_dir) == 1
 
 
 @pytest.mark.diverges(backend='oxide', ref='D-057', reason='push raises past its range', raises=OverflowError)

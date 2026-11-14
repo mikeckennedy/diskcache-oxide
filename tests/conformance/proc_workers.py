@@ -84,6 +84,17 @@ def integrity(db_path: Path) -> str:
     return proc.stdout.strip()
 
 
+def stored_rows(*db_paths: Path) -> int:
+    """Rows on disk in every database named, expired ones included, counted by a SQLite peer in
+    another process. oxide's `len()` hides expired rows (D-060), so a test that watches rows being
+    removed, or proves a refused call removed none, counts them here."""
+    total = 0
+    for db_path in db_paths:
+        with SqlitePeer(db_path) as peer:
+            total += peer.row_count()
+    return total
+
+
 class SqlitePeer:
     """Client for the `peer` command: a second SQLite connection living in its own process."""
 
@@ -125,6 +136,11 @@ class SqlitePeer:
 
     def data_version(self) -> int:
         return int(self._ask('data_version'))
+
+    def row_count(self) -> int:
+        """The rows stored, expired ones included: what `len()` can't say on a backend that hides
+        expired rows (D-060)."""
+        return int(self._ask('rows'))
 
     def close(self) -> None:
         if self._proc.stdin and not self._proc.stdin.closed:
@@ -169,6 +185,8 @@ def _peer_main(db_path: str) -> int:
                     reply = 'released'
                 elif command == ['data_version']:
                     reply = str(con.execute('PRAGMA data_version').fetchone()[0])
+                elif command == ['rows']:
+                    reply = str(con.execute('SELECT COUNT(*) FROM cache').fetchone()[0])
                 else:
                     reply = f'error: unknown command {line.strip()!r}'
             except sqlite3.Error as ex:

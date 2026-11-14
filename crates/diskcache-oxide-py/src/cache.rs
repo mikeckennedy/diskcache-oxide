@@ -366,9 +366,13 @@ impl Cache {
         retrying(py, false, || self.config.contains(py, &self.handle, k.key()))
     }
 
-    fn __len__(&self) -> PyResult<usize> {
-        let count =
-            self.handle.run(self.config.timeout, |timeout| self.handle.store.len(timeout)).map_err(to_py_err)?;
+    /// The entries live now: expired ones not yet swept don't count (D-060).
+    fn __len__(&self, py: Python<'_>) -> PyResult<usize> {
+        let now = self.config.now(py)?;
+        let count = self
+            .handle
+            .run(self.config.timeout, |timeout| self.handle.store.live_len(timeout, now))
+            .map_err(to_py_err)?;
         Ok(usize::try_from(count).unwrap_or(0))
     }
 
@@ -2005,10 +2009,12 @@ impl KeyIterator {
             return Ok(None);
         }
         let cache = self.cache.get();
+        // Each page hides what has expired by the time it's read (D-060).
+        let now = cache.config.now(py)?;
         let (keys, next) = cache
             .handle
             .run(cache.config.timeout, |timeout| {
-                cache.handle.store.keys_page(timeout, self.order, self.prefix.as_deref(), &state.cursor)
+                cache.handle.store.keys_page(timeout, self.order, self.prefix.as_deref(), &state.cursor, now)
             })
             .map_err(to_py_err)?;
         if keys.is_empty() {

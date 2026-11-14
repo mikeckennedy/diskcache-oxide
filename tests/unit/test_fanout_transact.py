@@ -22,6 +22,7 @@ import pytest
 from diskcache_oxide import Cache, Caches, FanoutCache, Key, NullCache, ShardedCacheLike, Timeout, TransactionAborted
 from diskcache_oxide._core import Transaction
 
+from tests.conformance.proc_workers import stored_rows
 from tests.keys import str_keys
 from tests.unit.test_durable import SHORT, peer_holding_the_write_lock
 
@@ -252,8 +253,11 @@ def test_every_call_over_every_shard_raises_inside_the_block(cache: FanoutCache,
             call(cache)
         cache.set(a, 2)
     assert cache.get(a) == 2, 'the refusal broke the transaction'
-    assert len(cache) == 2, 'the refused call removed something'
+    # Counted on disk: len() hides the expired row (D-060), removed or not.
+    shards = (Path(cache.directory) / f'{shard:03d}' / 'diskcache-oxide.sqlite' for shard in range(SHARDS))
+    assert stored_rows(*shards) == 2, 'the refused call removed something'
     assert cache.get(other) is None  # Expired, but still stored: the count above includes it.
+    assert len(cache) == 1
     call(cache)  # The refusal ends with the block.
 
 

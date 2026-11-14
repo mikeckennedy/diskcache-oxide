@@ -288,15 +288,17 @@ impl Store {
         }
     }
 
-    /// The next page of keys after `cursor`, at most [`PAGE`]. An empty page means the end.
+    /// The next page of keys live at `now` after `cursor`, at most [`PAGE`]. An empty page means the
+    /// end. Expired rows not yet swept are skipped, as every lookup skips them (D-060).
     pub fn keys_page(
         &self,
         timeout: Duration,
         order: Order,
         prefix: Option<&str>,
         cursor: &Cursor,
+        now: f64,
     ) -> Result<(Vec<OwnedKey>, Cursor)> {
-        self.keys_page_of(PAGE, timeout, order, prefix, cursor)
+        self.keys_page_of(PAGE, timeout, order, prefix, cursor, now)
     }
 
     /// [`Store::keys_page`] with pages of at most `size` keys (at least 1), for a `FanoutCache`
@@ -308,11 +310,12 @@ impl Store {
         order: Order,
         prefix: Option<&str>,
         cursor: &Cursor,
+        now: f64,
     ) -> Result<(Vec<OwnedKey>, Cursor)> {
         let size = size.max(1);
         let upper = prefix.and_then(prefix_upper);
         let range = prefix.map(|lower| (lower, upper.as_deref()));
-        self.read(timeout, |conn| page(conn, timeout, order, range, cursor, size))
+        self.read(timeout, |conn| page(conn, timeout, order, range, cursor, size, now))
     }
 
     /// The next `store_seq` to be handed out: every row stored before now has a smaller one.
@@ -407,28 +410,41 @@ fn collect_removed(
 }
 
 /// The statement for one page in key order. Every one binds `?1` the key type, `?2` the lower bound,
-/// `?3` the upper bound and `?4` the page size. There's one per shape of the range, and no statement
+/// `?3` the upper bound, `?4` the page size and `?5` the time, before which an expiry hides the row. There's one per shape of the range, and no statement
 /// has an optional condition: `?3 IS NULL OR key < ?3` can't be used to seek or to stop, so each page
 /// would scan from the prefix's start, or, past the prefix's end, to the end of the table. That made a
 /// walk quadratic. The soak's end-of-run check of 4.5M rows took about 5 minutes.
 fn key_page_sql(reverse: bool, after_cursor: bool, has_upper: bool) -> &'static str {
     match (reverse, after_cursor, has_upper) {
-        (false, false, false) => "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 ORDER BY key LIMIT ?4",
-        (false, false, true) => {
-            "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 AND key < ?3 ORDER BY key LIMIT ?4"
+        (false, false, false) => {
+            "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 AND (expire_time IS NULL OR expire_time > ?5) ORDER BY key LIMIT ?4"
         }
-        (false, true, false) => "SELECT key FROM cache WHERE key_type = ?1 AND key > ?2 ORDER BY key LIMIT ?4",
+        (false, false, true) => {
+            "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 AND key < ?3 AND (expire_time IS NULL OR expire_time > ?5) ORDER BY key LIMIT ?4"
+        }
+        (false, true, false) => {
+            "SELECT key FROM cache WHERE key_type = ?1 AND key > ?2 AND (expire_time IS NULL OR expire_time > ?5) ORDER BY key LIMIT ?4"
+        }
         (false, true, true) => {
-            "SELECT key FROM cache WHERE key_type = ?1 AND key > ?2 AND key < ?3 ORDER BY key LIMIT ?4"
+            "SELECT key FROM cache WHERE key_type = ?1 AND key > ?2 AND key < ?3 AND (expire_time IS NULL OR expire_time > ?5) ORDER BY key LIMIT ?4"
         }
         // A reverse page's top is the cursor or the prefix's end, whichever applies, so only whether
         // there is one matters.
-        (true, false, false) => "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 ORDER BY key DESC LIMIT ?4",
+        (true, false, false) => {
+            "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 AND (expire_time IS NULL OR expire_time > ?5) ORDER BY key DESC LIMIT ?4"
+        }
         (true, _, _) => {
-            "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 AND key < ?3 ORDER BY key DESC LIMIT ?4"
+            "SELECT key FROM cache WHERE key_type = ?1 AND key >= ?2 AND key < ?3 AND (expire_time IS NULL OR expire_time > ?5) ORDER BY key DESC LIMIT ?4"
         }
     }
 }
+
+/// One page in insertion order, binding `?1` the cursor's id, `?2` and `?3` the key types, `?4` the
+/// page size and `?5` the time.
+const INSERTED_SQL: &str = "SELECT id, key_type, key FROM cache WHERE id > ?1 AND +key_type IN (?2, ?3) \
+     AND (expire_time IS NULL OR expire_time > ?5) ORDER BY id LIMIT ?4";
+const INSERTED_REVERSE_SQL: &str = "SELECT id, key_type, key FROM cache WHERE id < ?1 AND +key_type IN (?2, ?3) \
+     AND (expire_time IS NULL OR expire_time > ?5) ORDER BY id DESC LIMIT ?4";
 
 fn page(
     conn: &Connection,
@@ -437,6 +453,7 @@ fn page(
     prefix: Option<(&str, Option<&str>)>,
     cursor: &Cursor,
     size: i64,
+    now: f64,
 ) -> Result<(Vec<OwnedKey>, Cursor)> {
     let sqlite = |e| Error::from_sqlite(e, timeout);
     // A prefix's bounds: its start, and the first string past every one that starts with it.
@@ -451,16 +468,13 @@ fn page(
                 _ => 0,
             };
             // Every key type this build knows; a later build's key types stay invisible, as typed keys
-            // are to 0.1.2.
-            let sql = if reverse {
-                "SELECT id, key_type, key FROM cache WHERE id < ?1 AND key_type IN (?2, ?3) ORDER BY id DESC LIMIT ?4"
-            } else {
-                "SELECT id, key_type, key FROM cache WHERE id > ?1 AND key_type IN (?2, ?3) ORDER BY id LIMIT ?4"
-            };
+            // are to 0.1.2. The `+` keeps the planner on the rowid: without statistics it otherwise
+            // picks `cache_key` for `key_type` and sorts the whole table for every page.
+            let sql = if reverse { INSERTED_REVERSE_SQL } else { INSERTED_SQL };
             let rows: Vec<(i64, OwnedKey)> = conn
                 .prepare_cached(sql)
                 .and_then(|mut stmt| {
-                    stmt.query_map((after, KEY_TYPE_STR, KEY_TYPE_TYPED, size), |r| {
+                    stmt.query_map((after, KEY_TYPE_STR, KEY_TYPE_TYPED, size, now), |r| {
                         Ok((r.get(0)?, stored_key(r.get(1)?, r.get_ref(2)?)))
                     })?
                     .map(|row| row.map(|(id, key)| key.map(|k| (id, k))))
@@ -486,7 +500,7 @@ fn page(
                 let keys: Vec<Result<OwnedKey>> = conn
                     .prepare_cached(key_page_sql(reverse, str_after.is_some(), upper.is_some()))
                     .and_then(|mut stmt| {
-                        stmt.query_map((KEY_TYPE_STR, low, high, limit), |r| {
+                        stmt.query_map((KEY_TYPE_STR, low, high, limit, now), |r| {
                             Ok(stored_key(KEY_TYPE_STR, r.get_ref(0)?))
                         })?
                         .collect()
@@ -511,7 +525,7 @@ fn page(
                     let keys: Vec<Result<OwnedKey>> = conn
                         .prepare_cached(sql)
                         .and_then(|mut stmt| {
-                            stmt.query_map((KEY_TYPE_TYPED, lo, hi, limit), |r| {
+                            stmt.query_map((KEY_TYPE_TYPED, lo, hi, limit, now), |r| {
                                 Ok(stored_key(KEY_TYPE_TYPED, r.get_ref(0)?))
                             })?
                             .collect()
@@ -535,7 +549,7 @@ fn page(
                         let mut keys = typed_page(size)?;
                         let left = size - i64::try_from(keys.len()).unwrap_or(size);
                         if left > 0 {
-                            keys.extend(str_page_from_end(conn, timeout, left)?);
+                            keys.extend(str_page_from_end(conn, timeout, left, now)?);
                         }
                         keys
                     }
@@ -548,12 +562,14 @@ fn page(
 }
 
 /// The last `limit` str keys, newest key first: a reverse walk crossing from the typed keys.
-fn str_page_from_end(conn: &Connection, timeout: Duration, limit: i64) -> Result<Vec<OwnedKey>> {
+fn str_page_from_end(conn: &Connection, timeout: Duration, limit: i64, now: f64) -> Result<Vec<OwnedKey>> {
     let keys: Vec<Result<OwnedKey>> = conn
         .prepare_cached(key_page_sql(true, false, false))
         .and_then(|mut stmt| {
-            stmt.query_map((KEY_TYPE_STR, "", None::<&str>, limit), |r| Ok(stored_key(KEY_TYPE_STR, r.get_ref(0)?)))?
-                .collect()
+            stmt.query_map((KEY_TYPE_STR, "", None::<&str>, limit, now), |r| {
+                Ok(stored_key(KEY_TYPE_STR, r.get_ref(0)?))
+            })?
+            .collect()
         })
         .map_err(|e| Error::from_sqlite(e, timeout))?;
     keys.into_iter().collect()
@@ -602,7 +618,7 @@ mod tests {
         let mut cursor = Cursor::Start;
         let mut out = Vec::new();
         loop {
-            let (keys, next) = s.keys_page(T, order, prefix, &cursor).unwrap();
+            let (keys, next) = s.keys_page(T, order, prefix, &cursor, NOW).unwrap();
             if keys.is_empty() {
                 return out;
             }
@@ -613,6 +629,55 @@ mod tests {
             }));
             cursor = next;
         }
+    }
+
+    #[test]
+    fn expired_rows_are_hidden_from_len_and_every_walk_until_swept() {
+        let tmp = TempDir::new("maint-live-walk");
+        let s = store(tmp.path());
+        // Every third key expires at NOW + 10, so most pages hold some of each.
+        let mut live = Vec::new();
+        for i in 0..60 {
+            let key = format!("k{i:02}");
+            let expires = i % 3 == 0;
+            put(&s, &key, expires.then_some(10.0));
+            if !expires {
+                live.push(key);
+            }
+        }
+        let later = NOW + 20.0;
+        assert_eq!(s.len(T).unwrap(), 60, "the expired rows are still stored");
+        assert_eq!(s.live_len(T, NOW).unwrap(), 60, "nothing has expired yet");
+        assert_eq!(s.live_len(T, later).unwrap(), 40);
+        let walk = |order: Order, prefix: Option<&str>, size: i64| {
+            let mut cursor = Cursor::Start;
+            let mut out = Vec::new();
+            loop {
+                let (keys, next) = s.keys_page_of(size, T, order, prefix, &cursor, later).unwrap();
+                if keys.is_empty() {
+                    return out;
+                }
+                out.extend(keys.into_iter().map(|k| match k {
+                    OwnedKey::Str(s) => s,
+                    typed @ OwnedKey::Typed(_) => panic!("unexpected typed key {typed:?}"),
+                }));
+                cursor = next;
+            }
+        };
+        let reversed: Vec<String> = live.iter().rev().cloned().collect();
+        for size in [1, 4, 7, 100] {
+            assert_eq!(walk(Order::Inserted, None, size), live, "insertion order, pages of {size}");
+            assert_eq!(walk(Order::InsertedReverse, None, size), reversed, "reverse insertion, pages of {size}");
+            assert_eq!(walk(Order::Key { reverse: false }, None, size), live, "key order, pages of {size}");
+            assert_eq!(walk(Order::Key { reverse: true }, None, size), reversed, "reverse key order, pages of {size}");
+            let k1: Vec<String> = live.iter().filter(|k| k.starts_with("k1")).cloned().collect();
+            assert_eq!(walk(Order::Key { reverse: false }, Some("k1"), size), k1, "a prefix, pages of {size}");
+        }
+        // Sweeping changes nothing a caller sees, only what's stored.
+        assert_eq!(s.expire(T, later).unwrap(), 20);
+        assert_eq!(s.len(T).unwrap(), 40);
+        assert_eq!(s.live_len(T, later).unwrap(), 40);
+        assert_eq!(walk(Order::Inserted, None, 7), live);
     }
 
     /// Every shape `page` can ask for, as (reverse, after a cursor, has an upper bound, what the
@@ -638,13 +703,37 @@ mod tests {
                 let detail: String = conn
                     .prepare(&plan)
                     .and_then(|mut stmt| {
-                        let params = (KEY_TYPE_STR, "a", "b", PAGE);
+                        let params = (KEY_TYPE_STR, "a", "b", PAGE, NOW);
                         stmt.query_row(params, |r| r.get(3))
                     })
                     .unwrap();
                 assert!(detail.contains(&format!("cache_key ({search})")), "{plan}: {detail}");
                 assert!(detail.starts_with("SEARCH"), "{plan}: {detail}");
             }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn an_insertion_order_page_seeks_on_the_rowid_and_never_sorts() {
+        let tmp = TempDir::new("maint-inserted-plan");
+        let s = store(tmp.path());
+        s.read(T, |conn| {
+            for (sql, search) in [(INSERTED_SQL, "rowid>?"), (INSERTED_REVERSE_SQL, "rowid<?")] {
+                let details: Vec<String> = conn
+                    .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                    .and_then(|mut stmt| {
+                        stmt.query_map((0, KEY_TYPE_STR, KEY_TYPE_TYPED, PAGE, NOW), |r| r.get(3))?.collect()
+                    })
+                    .unwrap();
+                assert_eq!(details, [format!("SEARCH cache USING INTEGER PRIMARY KEY ({search})")], "{sql}");
+            }
+            let detail: Vec<String> = conn
+                .prepare("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM cache WHERE expire_time <= ?1")
+                .and_then(|mut stmt| stmt.query_map([NOW], |r| r.get(3))?.collect())
+                .unwrap();
+            assert_eq!(detail, ["SEARCH cache USING COVERING INDEX cache_expire (expire_time<?)"], "live_len's count");
             Ok(())
         })
         .unwrap();
@@ -671,7 +760,7 @@ mod tests {
         let mut cursor = Cursor::Start;
         let mut out = Vec::new();
         loop {
-            let (keys, next) = s.keys_page_of(size, T, order, None, &cursor).unwrap();
+            let (keys, next) = s.keys_page_of(size, T, order, None, &cursor, NOW).unwrap();
             if keys.is_empty() {
                 return out;
             }
@@ -748,7 +837,9 @@ mod tests {
                 let plan = format!("EXPLAIN QUERY PLAN {}", key_page_sql(reverse, after, upper));
                 let detail: String = conn
                     .prepare(&plan)
-                    .and_then(|mut stmt| stmt.query_row((KEY_TYPE_TYPED, &b""[..], &b"\x10"[..], PAGE), |r| r.get(3)))
+                    .and_then(|mut stmt| {
+                        stmt.query_row((KEY_TYPE_TYPED, &b""[..], &b"\x10"[..], PAGE, NOW), |r| r.get(3))
+                    })
                     .unwrap();
                 assert!(detail.contains(&format!("cache_key ({search})")), "{plan}: {detail}");
             }
@@ -775,7 +866,7 @@ mod tests {
             "INSERT INTO cache (key_type, key, mode, value, size, store_time, store_seq, tag_type) VALUES (2, x'11', 1, 'v', 0, 0, 100, 0)",
         );
         for order in [Order::Inserted, Order::Key { reverse: false }, Order::Key { reverse: true }] {
-            let got = s.keys_page(T, order, None, &Cursor::Start);
+            let got = s.keys_page(T, order, None, &Cursor::Start, NOW);
             assert!(matches!(got, Err(Error::CorruptKey(_))), "{order:?}: {got:?}");
         }
     }
@@ -910,7 +1001,7 @@ mod tests {
     fn page_steps(conn: &Connection, sql: &str, low: &str, high: Option<&str>) -> (Vec<String>, i32) {
         let mut stmt = conn.prepare(sql).unwrap();
         let keys: Vec<String> = stmt
-            .query_map((KEY_TYPE_STR, low, high, PAGE), |r| r.get(0))
+            .query_map((KEY_TYPE_STR, low, high, PAGE, NOW), |r| r.get(0))
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
@@ -1004,7 +1095,7 @@ mod tests {
             let mut cursor = Cursor::Start;
             let mut small = Vec::new();
             loop {
-                let (keys, next) = s.keys_page_of(7, T, order, prefix, &cursor).unwrap();
+                let (keys, next) = s.keys_page_of(7, T, order, prefix, &cursor, NOW).unwrap();
                 assert!(keys.len() <= 7);
                 if keys.is_empty() {
                     break;
@@ -1025,7 +1116,7 @@ mod tests {
         }
         for (reverse, ahead, behind, gone) in [(false, "k90000", "k", "k01000"), (true, "k", "k90000", "k00000")] {
             let order = Order::Key { reverse };
-            let (first, cursor) = s.keys_page(T, order, Some("k"), &Cursor::Start).unwrap();
+            let (first, cursor) = s.keys_page(T, order, Some("k"), &Cursor::Start, NOW).unwrap();
             assert_eq!(i64::try_from(first.len()), Ok(PAGE));
             put(&s, ahead, None);
             put(&s, behind, None);
@@ -1033,7 +1124,7 @@ mod tests {
             let mut rest = Vec::new();
             let mut cursor = cursor;
             loop {
-                let (keys, next) = s.keys_page(T, order, Some("k"), &cursor).unwrap();
+                let (keys, next) = s.keys_page(T, order, Some("k"), &cursor, NOW).unwrap();
                 if keys.is_empty() {
                     break;
                 }

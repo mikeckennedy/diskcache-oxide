@@ -95,6 +95,9 @@ class CacheModel(RuleBasedStateMachine):
             return MISSING
         return value
 
+    def live_count(self) -> int:
+        return sum(1 for k in self.model if self.live(k) is not MISSING)
+
     def expire_time(self, expire: float | None) -> float | None:
         return None if expire is None else self.now + expire
 
@@ -174,7 +177,7 @@ class CacheModel(RuleBasedStateMachine):
         # expire(). Only a frozen clock can see that.
         self.cache.expire()
         self.model = {k: entry for k, entry in self.model.items() if entry[1] is None or entry[1] >= self.now}
-        assert len(self.cache) == len(self.model), 'expire() leaves exactly the unexpired entries'
+        assert len(self.cache) == self.live_count(), 'len() counts exactly the live entries (D-060)'
 
     @rule()
     def clear(self) -> None:
@@ -200,15 +203,14 @@ class CacheModel(RuleBasedStateMachine):
     def iterkeys(self, prefix: str | None, reverse: bool) -> None:
         keys: list[Any] = list(self.cache.iterkeys(prefix=prefix, reverse=reverse))
         assert keys == sorted(keys, key=key_order, reverse=reverse), keys
-        # A prefix walks str keys only. Expired rows not yet removed are included, so: every live
-        # key, and only keys the model holds.
+        # A prefix walks str keys only. Expired rows not yet removed are hidden (D-060), so: exactly
+        # the live keys, each once.
 
         def matches(k: Any) -> bool:
             return prefix is None or (isinstance(k, str) and k.startswith(prefix))
 
         live = {k for k in self.model if matches(k) and self.live(k) is not MISSING}
-        held = {k for k in self.model if matches(k)}
-        assert live <= set(keys) <= held, (keys, live, held)
+        assert len(keys) == len(set(keys)) and set(keys) == live, (keys, live)
 
     @rule()
     def reversed_is_iteration_backwards(self) -> None:
@@ -254,6 +256,8 @@ class CacheModel(RuleBasedStateMachine):
                 assert same(got, expected), (key, got, expected)
                 assert same(tag, self.model[key][2]), (key, tag, self.model[key][2])
                 assert key in self.cache
+        # Whatever the sweep has or hasn't removed, len() is the live entries (D-060).
+        assert len(self.cache) == self.live_count(), (len(self.cache), self.live_count())
 
 
 class FanoutCacheModel(CacheModel):

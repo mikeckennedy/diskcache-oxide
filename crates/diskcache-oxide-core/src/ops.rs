@@ -376,6 +376,20 @@ impl Store {
         })
     }
 
+    /// Entries live at `now`: the stored total less the expired rows not yet swept (D-060). The
+    /// partial `cache_expire` index reaches those directly, so the cost follows the expired backlog,
+    /// not the cache's size, and a tidy cache pays one empty index probe.
+    pub fn live_len(&self, timeout: Duration, now: f64) -> Result<i64> {
+        self.read(timeout, |conn| {
+            conn.prepare_cached(
+                "SELECT (SELECT count FROM state WHERE only = 1) - (SELECT COUNT(*) FROM cache WHERE expire_time <= ?1)",
+            )
+            .and_then(|mut stmt| stmt.query_row([now], |r| r.get::<_, i64>(0)))
+            .map(|n| n.max(0))
+            .map_err(|e| Error::from_sqlite(e, timeout))
+        })
+    }
+
     /// The database pages in use plus the value files; see `volume_in`.
     pub fn volume(&self, timeout: Duration) -> Result<i64> {
         self.read(timeout, |conn| {

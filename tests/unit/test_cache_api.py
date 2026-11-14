@@ -290,7 +290,10 @@ def test_held_maintenance_unlinks_value_files_only_once_it_commits(tmp_path: Pat
             assert after < before and len(before) - len(after) == removed
         else:
             assert after == before
-            assert len(cache) == len(before)
+            # Counted on disk: len() hides the expired row whether or not it was removed (D-060).
+            from tests.conformance.proc_workers import stored_rows
+
+            assert stored_rows(tmp_path / 'c' / 'diskcache-oxide.sqlite') == len(before)
     finally:
         cache.close()
 
@@ -330,7 +333,8 @@ def test_maintenance_takes_its_own_timeout(held_write_lock, method: str) -> None
     import threading
 
     # Each set may sweep rows that expired before it, so count what's left rather than assuming 10.
-    left = len(cache)
+    # Counted on disk, by the peer itself: len() hides expired rows (D-060).
+    left = peer.row_count()
     assert left > 0
     release = threading.Timer(0.3, peer.rollback)
     release.start()
