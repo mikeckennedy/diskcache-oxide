@@ -129,7 +129,7 @@ The number of live entries. An entry stops counting the moment it expires, wheth
 Always True, even when empty, so `if cache:` means "caching is on".
 
 [Cache.__iter__()](Cache.__iter__.md#diskcache_oxide.Cache.__iter__)  
-Iterate over keys in insertion order. An overwrite keeps its key's place.
+Iterate over keys in insertion order. An overwrite keeps its key's place. The walk covers
 
 [Cache.__enter__()](Cache.__enter__.md#diskcache_oxide.Cache.__enter__)  
 Return the cache, for `with Cache(...) as cache:`.

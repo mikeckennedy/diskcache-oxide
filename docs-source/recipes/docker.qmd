@@ -61,7 +61,7 @@ ENV EXAMPLE_ROOT=/var/lib/my-app
 CMD ["gunicorn", "-c", "gunicorn.conf.py"]
 ```
 
-Use a Debian- or Ubuntu-based image such as `python:3.14-slim`. diskcache-oxide publishes wheels for glibc Linux, not for musl, so on Alpine pip would build it from source, which needs a Rust toolchain in the image.
+Use a Debian- or Ubuntu-based image such as `python:3.14-slim`. diskcache-oxide publishes wheels for glibc Linux, not for musl, so on Alpine pip would build it from source, which needs a Rust toolchain and a C compiler in the image; [Building from source](../user-guide/building-from-source.qmd) lists them.
 
 ## Who owns the directory
 

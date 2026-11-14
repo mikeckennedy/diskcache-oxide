@@ -2075,13 +2075,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1597-L1601" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1607-L1612" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">FanoutCache</span><span class="op">.</span><span class="fu">__iter__</span>()</span></code></pre></div>
 </div>
 <div class="doc-text">
-<p>That isn’t the order keys were stored in across the cache. Otherwise as <a href="Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>.</p>
+<p>That isn’t the order keys were stored in across the cache. Each shard’s walk covers the entries there when the walk reached it, as <a href="Cache.__iter__.html#diskcache_oxide.Cache.__iter__" class="gdls-link gdls-code">Cache.__iter__</a> does. Otherwise as <a href="Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>.</p>
 </div>
 
 

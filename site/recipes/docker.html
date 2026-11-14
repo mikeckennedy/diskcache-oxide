@@ -740,7 +740,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a><span class="kw">USER</span> app</span>
 <span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a><span class="kw">ENV</span> EXAMPLE_ROOT=/var/lib/my-app</span>
 <span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a><span class="kw">CMD</span> [<span class="st">"gunicorn"</span>, <span class="st">"-c"</span>, <span class="st">"gunicorn.conf.py"</span>]</span></code></pre></div>
-<p>Use a Debian- or Ubuntu-based image such as <code>python:3.14-slim</code>. diskcache-oxide publishes wheels for glibc Linux, not for musl, so on Alpine pip would build it from source, which needs a Rust toolchain in the image.</p>
+<p>Use a Debian- or Ubuntu-based image such as <code>python:3.14-slim</code>. diskcache-oxide publishes wheels for glibc Linux, not for musl, so on Alpine pip would build it from source, which needs a Rust toolchain and a C compiler in the image; <a href="../user-guide/building-from-source.html">Building from source</a> lists them.</p>
 </section>
 <section id="who-owns-the-directory" class="level1">
 <h1>Who owns the directory</h1>

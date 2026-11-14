@@ -670,7 +670,9 @@ Always True, even when empty, so `if cache:` means "caching is on".
 
 __iter__(self) -> 'Iterator[Key]'
 
-Iterate over keys in insertion order. An overwrite keeps its key's place.
+Iterate over keys in insertion order. An overwrite keeps its key's place. The walk covers
+the entries there when it began: one stored meanwhile isn't yielded, and one deleted and
+stored again is yielded once, as in diskcache.
 
 As with `iterkeys()`, expired entries are skipped, and `next()` raises `ValueError` while
 another thread is inside it.
@@ -1231,7 +1233,8 @@ __iter__(self) -> 'Iterator[Key]'
 
 Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on.
 
-That isn't the order keys were stored in across the cache. Otherwise as `iterkeys()`.
+That isn't the order keys were stored in across the cache. Each shard's walk covers the entries
+there when the walk reached it, as `Cache.__iter__` does. Otherwise as `iterkeys()`.
 
 close(self, *, checkpoint: 'bool' = True) -> 'None'
 
@@ -2274,7 +2277,7 @@ import time
 
 from diskcache_oxide import Cache
 
-cache = Cache(tempfile.mkdtemp())
+cache = Cache(tempfile.mkdtemp(), durable=True)       # if the cache fails, a call is a miss, not an exception
 
 def popular_episodes() -> list[str]:
     episodes = cache.get('episodes:popular')          # a hit returns the copy
@@ -2406,7 +2409,7 @@ uv pip install diskcache-oxide
 ```
 
 - **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
-- **Platforms:** macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. [Windows](#windows) below says what differs there.
+- **Platforms:** macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64; anywhere else pip builds from source, which needs the latest stable Rust toolchain ([Building from source](building-from-source.qmd) walks through it). [Windows](#windows) below says what differs there.
 - **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter (`diskcache_oxide.sqlite_version()` reports the one in use).
 - **Upgrades:** a release that keeps the on-disk format opens your caches as they were, warm. One that changes it (the changelog says so first) opens a new cache in a subdirectory named for its format and logs a warning, so nothing fails at deploy; [Upgrading across a format change](../recipes/upgrading.qmd) covers cleaning up afterwards.
 
@@ -2415,8 +2418,10 @@ uv pip install diskcache-oxide
 ```python
 from diskcache_oxide import Cache
 
-cache = Cache('cache')  # a folder named "cache" in the current directory
+cache = Cache('cache', timeout=1.0, durable=True)  # a folder named "cache" in the current directory
 ```
+
+For a cache that holds copies of data you can rebuild, which is what most caches are, turn on `durable=True` with a short `timeout`. Then a full disk, an I/O error or a lock that stays busy makes a call a miss, logged, instead of an exception in the middle of a request. Leave it off for state you can't rebuild, such as sessions, job claims, locks and work queues, where a write that silently didn't happen is a bug. [A cache that can't take a request down](#a-cache-that-cant-take-a-request-down) covers what it does and what a dropped call costs.
 
 The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
 
@@ -2555,6 +2560,8 @@ try:
 except Timeout:
     ...  # the cache was too busy; carry on without it
 ```
+
+With [`durable=True`](#a-cache-that-cant-take-a-request-down), the `set` returns `False` instead, so a cache of rebuildable data needs no `try`.
 
 Maintenance calls work in chunks, so they take the write lock many times. A request-sized timeout can cut an admin `clear()` off partway through, so `clear()`, `expire()` and `cull()` each take their own `timeout=` for that call. It bounds each chunk's wait for the lock, not the whole call:
 
@@ -4400,6 +4407,225 @@ Profiling a cached `get` shows that about 60% of its time is one system call: SQ
 Past that, the [network server](roadmap.qmd) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. Measured reads drop from 1.18 µs to 0.69 µs.
 
 
+### Building from source
+
+Most people never build diskcache-oxide. PyPI has wheels for macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64, for CPython 3.14, 3.14t, 3.15 and 3.15t, and pip picks the right one. This page is for everyone else:
+
+- **No wheel for your platform.** An Intel Mac, Alpine or another musl-based Linux, Linux on an architecture other than x86_64 or aarch64, Windows on ARM. pip falls back to the source distribution on PyPI and compiles it, and it needs a Rust toolchain and a C compiler to do that.
+- **You'd rather not run prebuilt binaries.** Some teams build every native package themselves.
+- **You want to read, change or test the code.** That means a git checkout and an editable install.
+
+The engine is Rust, and it bundles its own copy of SQLite, written in C. So a build needs three things beyond Python: Rust, a C compiler, and (for a checkout) git. Python's side of the build is [maturin](https://www.maturin.rs/), which pip installs into a throwaway build environment by itself.
+
+## 1. Install the tools
+
+Rust comes from [rustup](https://rustup.rs/), the official installer, on every platform. diskcache-oxide tracks the latest stable Rust (the minimum is in `rust-version` in `Cargo.toml`, 1.99 today), and a Rust packaged by your OS is usually older than that, so use rustup even where your package manager offers Rust.
+
+
+## macOS
+
+Apple's command line tools give you the C compiler (clang) and git:
+
+```bash
+xcode-select --install
+```
+
+Then Rust:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Accept the default installation, then open a new terminal (or run `source "$HOME/.cargo/env"`) so `cargo` and `rustc` are on your `PATH`. If you use Homebrew, `brew install rustup` followed by `rustup-init` does the same thing.
+
+## Linux
+
+Install a C compiler, git and curl with your distribution's package manager:
+
+```bash
+# Debian, Ubuntu
+sudo apt install build-essential git curl
+
+# Fedora, RHEL
+sudo dnf install gcc git curl
+
+# Alpine
+apk add build-base git curl
+```
+
+Then Rust:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Accept the default installation, then open a new shell (or run `. "$HOME/.cargo/env"`) so `cargo` and `rustc` are on your `PATH`.
+
+In a Docker image, the non-interactive form is `curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal`, followed by `. "$HOME/.cargo/env"` in the same `RUN` step. The compilers make an image a lot bigger, so build in one stage and copy the virtual environment into a slim final stage; [Docker](../recipes/docker.qmd) has the layout.
+
+## Windows
+
+Rust on Windows uses Microsoft's C++ build tools (MSVC) as its linker and C compiler. Install rustup with winget, in PowerShell:
+
+```powershell
+winget install --id Rustlang.Rustup
+```
+
+or download `rustup-init.exe` from [rustup.rs](https://rustup.rs/) and run it. If the C++ build tools aren't installed, the installer offers to install them through the Visual Studio installer; accept it, or install them yourself with the **Desktop development with C++** workload of [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/). Building from a checkout also needs git:
+
+```powershell
+winget install --id Git.Git
+```
+
+Open a new terminal afterwards so `cargo`, `rustc` and `git` are on your `PATH`.
+
+
+Check the toolchain is there and recent enough:
+
+```bash
+rustc --version
+```
+
+If it reports a version below the minimum, `rustup update` brings it up to the latest stable.
+
+## 2. Install from PyPI, building it yourself
+
+On a platform with no wheel, a plain install already builds from source:
+
+```bash
+uv pip install diskcache-oxide
+```
+
+On a platform that has a wheel, ask for the source distribution explicitly. `--no-binary diskcache-oxide` applies to this one package, so your other dependencies still install from wheels:
+
+
+## macOS
+
+```bash
+uv venv --python 3.14
+uv pip install --no-binary diskcache-oxide diskcache-oxide
+```
+
+## Linux
+
+```bash
+uv venv --python 3.14
+uv pip install --no-binary diskcache-oxide diskcache-oxide
+```
+
+## Windows
+
+```powershell
+uv venv --python 3.14
+uv pip install --no-binary diskcache-oxide diskcache-oxide
+```
+
+
+With pip instead of uv, it's `pip install --no-binary diskcache-oxide diskcache-oxide` in an activated virtual environment. For the free-threaded build, create the environment with `--python 3.14t`. Each Python needs its own build: a build for 3.14 won't load on 3.14t or 3.15.
+
+The build compiles in release mode. It took about 30 seconds on a recent 18-core Mac and about a minute in an Alpine container with 6 CPUs; a machine with fewer cores takes longer. Nothing is printed while Rust compiles, so a quiet stretch is normal. Add `-v` to watch it. uv and pip cache the built wheel, so a second environment on the same Python reuses it instead of compiling again.
+
+## 3. Or work from a git checkout
+
+To change the code or run the tests, clone the repository and install it in editable mode:
+
+
+## macOS
+
+```bash
+git clone https://github.com/mikeckennedy/diskcache-oxide.git
+cd diskcache-oxide
+uv venv --python 3.14 venv
+uv pip install --python venv/bin/python --group dev -e .
+```
+
+## Linux
+
+```bash
+git clone https://github.com/mikeckennedy/diskcache-oxide.git
+cd diskcache-oxide
+uv venv --python 3.14 venv
+uv pip install --python venv/bin/python --group dev -e .
+```
+
+## Windows
+
+```powershell
+git clone https://github.com/mikeckennedy/diskcache-oxide.git
+cd diskcache-oxide
+uv venv --python 3.14 venv
+uv pip install --python venv\Scripts\python.exe --group dev -e .
+```
+
+
+The checkout pins its exact Rust version in `rust-toolchain.toml`, and rustup installs that version the first time you build inside the directory. If yours doesn't, `rustup toolchain install` (run in the checkout, with no arguments) installs the one the file names.
+
+`--group dev` adds the test tools (pytest, ruff, ty, and diskcache 5.6.3 itself, which the conformance tests compare against). After you change any Rust code, run the same `uv pip install -e .` again: the project tells uv to rebuild whenever a `.rs` or `Cargo.toml` file changes. Python changes need no rebuild.
+
+Then run the tests:
+
+
+## macOS
+
+```bash
+venv/bin/pytest                                     # oxide's own tests, plus conformance against diskcache
+venv/bin/pytest --backend=oxide tests/conformance   # the conformance tests against your build
+```
+
+Some tests open thousands of files at once. If they fail with "Too many open files", raise the limit first with `ulimit -n 10240`.
+
+## Linux
+
+```bash
+venv/bin/pytest                                     # oxide's own tests, plus conformance against diskcache
+venv/bin/pytest --backend=oxide tests/conformance   # the conformance tests against your build
+```
+
+Some tests open thousands of files at once. If they fail with "Too many open files", raise the limit first with `ulimit -n 10240`.
+
+## Windows
+
+```powershell
+venv\Scripts\pytest                                     # oxide's own tests, plus conformance against diskcache
+venv\Scripts\pytest --backend=oxide tests/conformance   # the conformance tests against your build
+```
+
+Tests for `fork()` are skipped on Windows, which has no fork.
+
+
+Plain `pytest` runs the conformance tests against diskcache, the library diskcache-oxide matches; `--backend=oxide` runs the same tests against your build. Both should pass.
+
+## 4. Check the build
+
+Whichever way you built it, this confirms the engine loads and shows the bundled SQLite:
+
+```bash
+python -c "import diskcache_oxide as d; print(d.__version__, d.sqlite_version())"
+```
+
+The wheels compile SQLite with a few flags of our own, set in `.cargo/config.toml`, which both the source distribution and the checkout carry, and a source build picks them up when it runs from the unpacked directory, as pip and uv do. To confirm they reached your build:
+
+```bash
+python -c "import diskcache_oxide as d; print([o for o in d.sqlite_compile_options() if 'MEMSTATUS' in o or 'STAT4' in o])"
+```
+
+It should print `['DEFAULT_MEMSTATUS=0']` and nothing about STAT4. If `ENABLE_STAT4` appears, the flags were lost, usually because something set `LIBSQLITE3_FLAGS` in the environment, which overrides them. The build still works, but writes and reads run noticeably slower; [Storage and WAL](storage-and-wal.qmd) and the comments in `.cargo/config.toml` explain what each flag does.
+
+## How a source build differs from a wheel
+
+The code and the on-disk format are the same, so a cache written by a source build and one written by a wheel are interchangeable. One thing differs: the published wheels are built with profile-guided optimization (PGO), which compiles the engine, runs a training workload, and compiles it again laid out for the paths that workload took. A source build skips that, so its hot paths are somewhat slower; on one Windows machine a cached read measured about 10% faster on the PGO wheel. If speed matters and your platform has wheels, use them.
+
+## When the build fails
+
+- **`cannot be built because it requires rustc 1.99 or newer`**: your Rust is older than the minimum. Run `rustup update`.
+- **`cargo` or `rustc` not found**: the shell started before rustup finished. Open a new one, or run `source "$HOME/.cargo/env"` (Windows: open a new terminal).
+- **``linker `cc` not found``, or `failed to run custom build command for libsqlite3-sys` with `Failed to find tool`**: there's no C compiler. Install the tools in [step 1](#install-the-tools) for your platform.
+- **`link.exe` not found** (Windows): the MSVC build tools are missing. Install the **Desktop development with C++** workload, then open a new terminal.
+- **The build is killed partway, with no error from Rust**: the machine, or the container, ran out of memory. Give the container more memory, or build with fewer parallel jobs by setting `CARGO_BUILD_JOBS=2`.
+
+If a build fails for a reason not listed here, please [open an issue](https://github.com/mikeckennedy/diskcache-oxide/issues) with the platform, the Python version (`python -VV`), `rustc --version`, and the output of the install with `-v`.
+
+
 ### Divergences from python-diskcache
 
 diskcache-oxide's test suite is a conformance suite: the same black-box tests run against real diskcache 5.6.3 and against diskcache-oxide. Where they behave differently, it's on purpose, and it's written down here. Running one suite against two implementations turned out to be a bug detector pointed in both directions: most of the differences below are diskcache bugs the suite found, each with a reproduction in the repository's `upstream/` folder.
@@ -4616,7 +4842,7 @@ import time
 
 from diskcache_oxide import Cache
 
-cache = Cache(tempfile.mkdtemp())
+cache = Cache(tempfile.mkdtemp(), timeout=1.0, durable=True)  # an outage is a miss, not an error
 
 def load_popular_episodes() -> list[dict]:
     time.sleep(0.2)  # stands in for a slow database query
@@ -4740,7 +4966,7 @@ from typing import Any
 from diskcache_oxide import Cache
 
 now = [1_000_000.0]                                   # a fake clock; in a real app use time.time()
-cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0], durable=True)
 refresher = ThreadPoolExecutor(max_workers=2)         # one per process, for background refreshes
 loads: list[float] = []
 
@@ -4838,7 +5064,7 @@ import httpx
 from diskcache_oxide import Cache
 
 now = [1_000_000.0]                                   # a fake clock; in a real app use time.time()
-cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0], durable=True)
 
 def max_age(response: httpx.Response) -> float | None:
     m = re.search(r'max-age=(\d+)', response.headers.get('cache-control', ''))
@@ -6010,7 +6236,7 @@ ENV EXAMPLE_ROOT=/var/lib/my-app
 CMD ["gunicorn", "-c", "gunicorn.conf.py"]
 ```
 
-Use a Debian- or Ubuntu-based image such as `python:3.14-slim`. diskcache-oxide publishes wheels for glibc Linux, not for musl, so on Alpine pip would build it from source, which needs a Rust toolchain in the image.
+Use a Debian- or Ubuntu-based image such as `python:3.14-slim`. diskcache-oxide publishes wheels for glibc Linux, not for musl, so on Alpine pip would build it from source, which needs a Rust toolchain and a C compiler in the image; [Building from source](../user-guide/building-from-source.qmd) lists them.
 
 ## Who owns the directory
 
@@ -6091,7 +6317,7 @@ import tempfile
 
 from diskcache_oxide import Cache
 
-cache = Cache(tempfile.mkdtemp(), timeout=1.0)
+cache = Cache(tempfile.mkdtemp(), timeout=1.0, durable=True)
 
 async def load_user(user_id: int) -> dict:
     await asyncio.sleep(0.001)                        # stands in for a database query
@@ -6153,7 +6379,7 @@ from starlette.concurrency import run_in_threadpool
 
 from diskcache_oxide import Cache
 
-cache = Cache('/var/cache/my-app', timeout=1.0)
+cache = Cache('/var/cache/my-app', timeout=1.0, durable=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

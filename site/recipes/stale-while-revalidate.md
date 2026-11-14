@@ -18,7 +18,7 @@ from typing import Any
 from diskcache_oxide import Cache
 
 now = [1_000_000.0]                                   # a fake clock; in a real app use time.time()
-cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0], durable=True)
 refresher = ThreadPoolExecutor(max_workers=2)         # one per process, for background refreshes
 loads: list[float] = []
 
