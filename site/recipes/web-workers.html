@@ -820,7 +820,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Maintenance</h1>
 <p>Run maintenance from one place, such as a scheduled job <a href="../recipes/run-once.html">one worker claims</a>, not from every worker:</p>
 <ul>
-<li><code>caches.expire_all()</code> and <code>sessions.expire()</code> remove expired entries and free their space. A cache that’s mostly read can accumulate expired entries, because the cleanup each <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> does is small. Once an hour is plenty for most apps.</li>
+<li>Expired entries need no job: background maintenance removes them in every cache every 5 minutes, with the workers taking turns (<code>maintenance_interval</code>). <code>caches.expire_all()</code> and <code>sessions.expire()</code> are still there for when you want it done now.</li>
 <li><a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> empties a cache’s write-ahead log after a write burst. It returns <code>False</code> instead of waiting long if workers are busy, so it’s safe to call any time.</li>
 </ul>
 </section>

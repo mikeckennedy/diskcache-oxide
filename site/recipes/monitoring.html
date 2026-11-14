@@ -695,7 +695,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-health-check" class="level1">
 <h1>A health check</h1>
 <p>Everything here reads a few numbers and never waits on writers, so it’s fine to call on every health probe:</p>
-<div id="888f3725" class="cell" data-execution_count="1">
+<div id="f0fc7ae6" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> os</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -760,7 +760,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Hits and misses across workers</h1>
 <p>The counts live in each process’s memory and are never written to the database, so reading them costs nothing. That also means a health probe that lands on one gunicorn worker sees that worker’s counts only, since its last restart; a forked child starts from zero. Every handle on one directory in a process shares one set of counts, and they survive closing the last handle.</p>
 <p>For a total across workers, have each worker add its counts to a shared counter now and then, from a timer or after every few hundred requests. Keep those counters in a small cache of their own, so reading the totals doesn’t count as lookups in the cache you’re measuring:</p>
-<div id="c7c8a2fb" class="cell" data-execution_count="2">
+<div id="95aed7e7" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>counters <span class="op">=</span> Cache(tempfile.mkdtemp())</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> publish_stats(cache: Cache, counters: Cache) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
@@ -783,7 +783,7 @@ this worker since: (0, 0)</code></pre>
 <section id="an-admin-page-for-every-cache" class="level1">
 <h1>An admin page for every cache</h1>
 <p>A <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry gives you one row per cache with <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>. It opens each registered cache, and never raises: a cache that can’t be opened gets its <code>error</code> set, with the exception’s type and message.</p>
-<div id="ea8c1b8e" class="cell" data-execution_count="3">
+<div id="3144e8f0" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> dataclasses</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Caches</span>
@@ -796,8 +796,8 @@ this worker since: (0, 0)</code></pre>
 <span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, stat <span class="kw">in</span> caches.stats().items():</span>
 <span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(dataclasses.asdict(stat) <span class="op">|</span> {<span class="st">'directory'</span>: <span class="st">'...'</span>})</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>{'name': 'general', 'directory': '...', 'enabled': True, 'count': 1, 'volume': 40960, 'error': None}
-{'name': 'pages', 'directory': '...', 'enabled': True, 'count': 0, 'volume': 40960, 'error': None}</code></pre>
+<pre><code>{'name': 'general', 'directory': '...', 'enabled': True, 'count': 1, 'volume': 40960, 'error': None, 'maintenance': {'interval': 300.0, 'turns': 0, 'removed': 0, 'failures': 0, 'last_error': None}}
+{'name': 'pages', 'directory': '...', 'enabled': True, 'count': 0, 'volume': 40960, 'error': None, 'maintenance': {'interval': 300.0, 'turns': 0, 'removed': 0, 'failures': 0, 'last_error': None}}</code></pre>
 </div>
 </div>
 <p>A cache that can’t open shows up here with <code>count</code> and <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume</a> at 0 and the reason in <code>error</code>, for example <code>LayoutMismatchError: ...</code> for a directory that holds the other kind of cache. An upgrade that changed the on-disk format doesn’t: the cache opens in its versioned subdirectory. Watch for that with the warning instead. A <code>diskcache_oxide</code> record at <code>WARNING</code> saying a directory “holds a cache made by an older diskcache-oxide” (or “still holds”) means old files are waiting for <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a>, and “made by a newer diskcache-oxide” means a process is running an older release than the one that wrote the cache (see <a href="../recipes/upgrading.html">Upgrading across a format change</a>).</p>
@@ -844,7 +844,7 @@ this worker since: (0, 0)</code></pre>
 <section id="checking-for-damage" class="level1">
 <h1>Checking for damage</h1>
 <p><a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> compares the database with the value files and returns what it found as a list of <code>warnings.WarningMessage</code>, without issuing any warnings. An empty list means nothing is wrong. Here a value file is deleted behind the cache’s back:</p>
-<div id="427d5d4e" class="cell" data-execution_count="4">
+<div id="2797fa2d" class="cell" data-execution_count="4">
 <div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> glob</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>damaged <span class="op">=</span> Cache(tempfile.mkdtemp())</span>
@@ -857,7 +857,7 @@ this worker since: (0, 0)</code></pre>
 <span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(warning.category.<span class="va">__name__</span>, <span class="bu">str</span>(warning.message).replace(damaged.directory, <span class="st">'...'</span>))</span>
 <span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'repaired:'</span>, <span class="bu">len</span>(damaged.check(fix<span class="op">=</span><span class="va">True</span>)), <span class="st">'| after:'</span>, damaged.check(), <span class="st">'| entries:'</span>, <span class="bu">len</span>(damaged))</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>UserWarning file not found: .../7f/7f77e9498e4a6725cfe1eeaa0130bdf7.val
+<pre><code>UserWarning file not found: .../be/be8cb21af8d69b1a87ca1e0e12288c87.val
 repaired: 1 | after: [] | entries: 1</code></pre>
 </div>
 </div>
@@ -891,7 +891,8 @@ repaired: 1 | after: [] | entries: 1</code></pre>
 <ul>
 <li><strong><a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> turns counting on.</strong> Its <a href="../reference/Caches.enable.html#diskcache_oxide.Caches.enable" class="gdls-link gdls-code">enable</a> argument defaults to True, so a health check that reads the counts also starts them. <code>stats(enable=False)</code> turns counting off and stops the counts where they are.</li>
 <li><strong>Counts reset on restart.</strong> Graph the hit ratio, not the raw counts, or publish the counts as above.</li>
-<li><strong><a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> includes expired entries</strong> until <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>, or the cleanup a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> does, removes them, though <code>len()</code> already leaves them out. A scheduled <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> frees their space; <code>caches.expire_all()</code> does every registered cache.</li>
+<li><strong><a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> includes expired entries</strong> until background maintenance or a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>’s cleanup removes them, though <code>len()</code> already leaves them out, so it can drop on its own between calls.</li>
+<li><strong>Background maintenance reports in <a href="../reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="gdls-link gdls-code">maintenance_stats()</a></strong>: its <code>interval</code> (0 when it’s off for the cache in this process), the <code>turns</code> that ran, the entries they <code>removed</code>, <code>failures</code> and the <code>last_error</code>. A failure is also logged once as a WARNING on the <code>diskcache_oxide</code> logger, by the next <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> or other single-key call, so a cache nobody calls shows it here only. <code>caches.stats()</code> carries it per cache as <code>maintenance</code>. Alert on <code>failures</code> going up.</li>
 <li><strong>Health checks shouldn’t write.</strong> Everything in <code>cache_health</code> is a read. <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> and <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> belong in a maintenance job.</li>
 </ul>
 

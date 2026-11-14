@@ -678,6 +678,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/Cache.maintenance_stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Cache.maintenance_stats</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/Cache.stats.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Cache.stats</span></a>
   </div>
@@ -1012,6 +1018,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/FanoutCache.maintenance_stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache.maintenance_stats</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/FanoutCache.stats.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">FanoutCache.stats</span></a>
   </div>
@@ -1210,6 +1222,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/NullCache.remove_old_formats.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">NullCache.remove_old_formats</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/NullCache.maintenance_stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">NullCache.maintenance_stats</span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1524,6 +1542,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../reference/CacheLike.remove_old_formats.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">CacheLike.remove_old_formats</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../reference/CacheLike.maintenance_stats.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">CacheLike.maintenance_stats</span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -2059,7 +2083,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L151-L1061" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L160-L1099" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">Cache</span>(</span>
@@ -2078,8 +2102,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    <span class="va">wal_size_limit</span><span class="op">=</span><span class="cn-none">None</span>,</span>
 <span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>    <span class="va">wal_checkpoint</span><span class="op">=</span><span class="st">"manual"</span>,</span>
 <span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>    <span class="va">on_decode_error</span><span class="op">=</span><span class="cn-none">None</span>,</span>
-<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    <span class="va">durable</span><span class="op">=</span><span class="cn-bool">False</span></span>
-<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    <span class="va">durable</span><span class="op">=</span><span class="cn-bool">False</span>,</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    <span class="va">maintenance_interval</span><span class="op">=</span><span class="cn-none">None</span></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
 </div>
 <div class="doc-text">
 <p>Every thread and process that opens the same directory shares one cache. The API follows <code>diskcache.Cache</code>; the deliberate differences are listed in the Divergences guide.</p>
@@ -2122,7 +2147,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><code><span class="doc-parameter-name">clock</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Callable[[], float] | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
-<p>A function returning the current time in seconds, used instead of the native clock. Tests pass <code>clock=lambda: time.time()</code> to follow a patched <code>time.time</code>.</p>
+<p>A function returning the current time in seconds, used instead of the native clock. Tests pass <code>clock=lambda: time.time()</code> to follow a patched <code>time.time</code>. A cache with its own clock gets no background maintenance in this process, which only knows the wall clock (see <code>maintenance_interval</code>).</p>
 </dd>
 <dt><code><span class="doc-parameter-name">max_connections</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
@@ -2138,7 +2163,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><code><span class="doc-parameter-name">wal_checkpoint</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Literal[<span class="st">"manual"</span>, <span class="st">"auto"</span>]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="st">"manual"</span></span></code></dt>
 <dd>
-<p><code>'manual'</code> (the default) leaves checkpoints to <a href="Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> and <a href="Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a>. <code>'auto'</code> also checkpoints after writes once the log is over <code>wal_size_limit</code>.</p>
+<p><code>'manual'</code> (the default) leaves checkpoints to <a href="Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a>, <a href="Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> and background maintenance, which checkpoints a log grown past half of <code>wal_size_limit</code>. <code>'auto'</code> also checkpoints after writes once the log is over <code>wal_size_limit</code>.</p>
 </dd>
 <dt><code><span class="doc-parameter-name">on_decode_error</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Literal[<span class="st">"raise"</span>, <span class="st">"miss"</span>] | Callable[[str, Exception], object] | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
@@ -2146,7 +2171,14 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><code><span class="doc-parameter-name">durable</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">bool</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="va">False</span></span></code></dt>
 <dd>
-Keep the cache from taking a request down, for an app whose every caller can fall back to its source of truth (default False). An outage on a single-key call (a <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, a full disk, an I/O error, a damaged database) doesn’t raise: <a href="Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> and <code>in</code> give the default or False, <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>, <a href="Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a> and <a href="Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> give False, and <a href="Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> and <a href="Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr</a> give <code>default + delta</code>. It’s reported on the <code>diskcache_oxide</code> logger, at most once a minute per kind of failure. Bugs still raise (<code>TypeError</code>, <code>ValueError</code>, <a href="UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>), as do <code>MemoryError</code> and <code>KeyboardInterrupt</code>, a <code>RecursionError</code> from encoding a value too deep for this thread’s stack, the constructor, admin calls (<code>len</code>, <a href="Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume</a>, <a href="Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear</a>, <a href="Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>, <a href="Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull</a>, <a href="Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint</a>, iteration) and anything inside a transaction held on this cache. This isn’t durability in the database sense: this option can drop writes, and a dropped <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, <a href="Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> or <a href="Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> means stale data until the entry expires, or forever if it has no expiry. See “A cache that can’t take a request down” in the Getting Started guide before you use it.
+<p>Keep the cache from taking a request down, for an app whose every caller can fall back to its source of truth (default False). An outage on a single-key call (a <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, a full disk, an I/O error, a damaged database) doesn’t raise: <a href="Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> and <code>in</code> give the default or False, <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>, <a href="Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a> and <a href="Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> give False, and <a href="Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> and <a href="Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr</a> give <code>default + delta</code>. It’s reported on the <code>diskcache_oxide</code> logger, at most once a minute per kind of failure. Bugs still raise (<code>TypeError</code>, <code>ValueError</code>, <a href="UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>), as do <code>MemoryError</code> and <code>KeyboardInterrupt</code>, a <code>RecursionError</code> from encoding a value too deep for this thread’s stack, the constructor, admin calls (<code>len</code>, <a href="Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume</a>, <a href="Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear</a>, <a href="Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>, <a href="Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull</a>, <a href="Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint</a>, iteration) and anything inside a transaction held on this cache. This isn’t durability in the database sense: this option can drop writes, and a dropped <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, <a href="Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> or <a href="Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> means stale data until the entry expires, or forever if it has no expiry. See “A cache that can’t take a request down” in the Getting Started guide before you use it.</p>
+</dd>
+<dt><code><span class="doc-parameter-name">maintenance_interval</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">float | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dd>
+How often, in seconds, background maintenance looks after this cache in this process (default None: every 5 minutes; 0 turns it off; otherwise from 1 second to a day). A thread of the library’s own, one per process, removes expired entries and their value files, trims a cache left over <a href="Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> (<a href="Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> entries at a time; never under <code>eviction_policy='none'</code> or with <a href="Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> 0), checkpoints a write-ahead log grown past its trim size (except on a cache with <code>max_connections=1</code>), and hourly clears stray temporary files and empty value folders. It never waits for a lock itself and holds the write lock only for short chunks. The caches in a process take turns across the interval, and the processes sharing a cache take turns too, so eight workers don’t all do the same work. The first turn comes one to two intervals after the cache is first opened in the process. The setting is per process and isn’t stored in the cache (it’s not a <a href="Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset()</a> key): the shortest interval any open handle on the directory asked for wins, until every handle has closed. Even a cache with nothing to do is written once an hour, to claim the folder sweep, so a read-only replica or backup should pass 0. With <code>clock</code>, there’s no background maintenance for the directory in this process while that handle is open, and an interval other than 0 raises <code>ValueError</code>. The thread stops for every <code>os.fork()</code> and starts again after it; a process that forks without Python’s at-fork hooks should pass
+<ol start="0" type="1">
+<li>See <a href="Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="gdls-link gdls-code">maintenance_stats()</a>.</li>
+</ol>
 </dd>
 </dl>
 </div>

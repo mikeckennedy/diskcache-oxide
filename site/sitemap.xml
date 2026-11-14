@@ -409,6 +409,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.maintenance_stats.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.memoize.html</loc>
     <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
@@ -668,6 +674,12 @@
   </url>
   <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.iterkeys.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.maintenance_stats.html</loc>
     <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -1051,6 +1063,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.maintenance_stats.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.memoize.html</loc>
     <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
@@ -1346,6 +1364,12 @@
   </url>
   <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.iterkeys.html</loc>
+    <lastmod>2026-11-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/reference/NullCache.maintenance_stats.html</loc>
     <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>

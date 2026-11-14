@@ -65,6 +65,9 @@ Remove the caches an older diskcache-oxide format left in this cache's directory
 [Cache.check()](Cache.check.md#diskcache_oxide.Cache.check)  
 Check the database and the value files against each other, as diskcache's `check()`.
 
+[Cache.maintenance_stats()](Cache.maintenance_stats.md#diskcache_oxide.Cache.maintenance_stats)  
+How background maintenance has gone on this cache in this process (see
+
 [Cache.stats()](Cache.stats.md#diskcache_oxide.Cache.stats)  
 `(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
 
@@ -238,6 +241,9 @@ As `Cache.remove_old_formats()`, for this cache's root directory: an older forma
 [FanoutCache.check()](FanoutCache.check.md#diskcache_oxide.FanoutCache.check)  
 Check the database and the value files against each other, as diskcache's `check()`.
 
+[FanoutCache.maintenance_stats()](FanoutCache.maintenance_stats.md#diskcache_oxide.FanoutCache.maintenance_stats)  
+How background maintenance has gone on this cache in this process (see
+
 [FanoutCache.stats()](FanoutCache.stats.md#diskcache_oxide.FanoutCache.stats)  
 `(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
 
@@ -344,6 +350,9 @@ Always `[]`: there is nothing to check.
 
 [NullCache.remove_old_formats()](NullCache.remove_old_formats.md#diskcache_oxide.NullCache.remove_old_formats)  
 Always `[]`: a `NullCache` has no directory to clean up.
+
+[NullCache.maintenance_stats()](NullCache.maintenance_stats.md#diskcache_oxide.NullCache.maintenance_stats)  
+All zero: a `NullCache` has nothing to maintain.
 
 [NullCache.stats()](NullCache.stats.md#diskcache_oxide.NullCache.stats)  
 Always `(0, 0)`: nothing is looked up.
@@ -504,6 +513,9 @@ Check the database and value files against each other; `[]` on a `NullCache`.
 
 [CacheLike.remove_old_formats()](CacheLike.remove_old_formats.md#diskcache_oxide.CacheLike.remove_old_formats)  
 Remove caches an older format left in this cache's directory; `[]` on a `NullCache`.
+
+[CacheLike.maintenance_stats()](CacheLike.maintenance_stats.md#diskcache_oxide.CacheLike.maintenance_stats)  
+How background maintenance has gone on this cache in this process; all zero on a `NullCache`.
 
 [CacheLike.stats()](CacheLike.stats.md#diskcache_oxide.CacheLike.stats)  
 `(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`.

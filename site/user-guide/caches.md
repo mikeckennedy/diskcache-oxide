@@ -171,27 +171,26 @@ caches.close_all()                  # at shutdown; `with Caches(...) as caches:`
 - [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) opens every registered cache and never raises: a cache that can't be read has its `error` set.
 - Hit and miss counts come from each cache's own [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats): `caches['pages'].stats()` turns counting on for this process, and later calls return `(hits, misses)` for this process's lookups. A disabled cache, or one that couldn't open, returns `(0, 0)`.
 - `clear(name)` raises if the cache can't be opened, so an admin page doesn't report "0 cleared" for a failure.
-- [expire_all()](../reference/Caches.expire_all.md#diskcache_oxide.Caches.expire_all) runs every cache, logging and reporting `None` for one that fails. Run it from a scheduled job rather than inside a request: a large expire takes seconds.
+- [expire_all()](../reference/Caches.expire_all.md#diskcache_oxide.Caches.expire_all) runs every cache, logging and reporting `None` for one that fails. Background maintenance already does this on its own; [expire_all()](../reference/Caches.expire_all.md#diskcache_oxide.Caches.expire_all) is for when you want it done now. Run it from a job rather than inside a request: a large expire takes seconds.
+- Each [CacheStats](../reference/CacheStats.md#diskcache_oxide.CacheStats) carries the cache's [maintenance_stats()](../reference/Cache.maintenance_stats.md#diskcache_oxide.Cache.maintenance_stats) as `maintenance`, for an admin page.
 - Maintenance calls hold the write lock once per chunk, so give them a longer `timeout=` than the request path's.
 
 
 # Coming from your own diskcache wrapper
 
-Apps that run diskcache in production tend to grow the same wrapper around it: a class that turns errors into misses, a null cache for turning caching off, and a module that creates, lists and maintains the app's caches. Talk Python's, for one, are a `DurableCache` class and a `cache_service` module, and the left column uses their names. Each piece now has a home in the library:
+Apps that run diskcache in production tend to grow the same wrapper around it: a class that turns errors into misses, a null cache for turning caching off, and a module that creates, lists and maintains the app's caches. Talk Python's, for one, are a `DurableCache` class and a `cache_service` module, and the list uses their names, wrapper first. Each piece now has a home in the library:
 
-| A typical wrapper | diskcache-oxide |
-|----|----|
-| `bool()` is always True | [Cache](../reference/Cache.md#diskcache_oxide.Cache) is always truthy (D-009); [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) is falsy |
-| `CacheProtocol` | [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike) |
-| [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), `PerfTestNullCache` | [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), and `NullCache(invalidate=real)` |
-| [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) that logs, deletes and misses on any error | `Cache(on_decode_error='miss')` or a reporting function ([details](getting-started.md#values-that-cant-be-read)) |
-| A cache that can't take a request down | `Caches(base_dir, durable=True)`, which also covers [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), whose failures such a wrapper usually raises ([details](getting-started.md#a-cache-that-cant-take-a-request-down)) |
-| `create_cache(name, size_limit)` | `caches.register(name, size_limit=...)`, then `caches[name]` |
-| `timeout=1.0` on every open | `Caches(base_dir, timeout=1.0)` |
-| A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) when opening fails | the same, reported through `on_open_error` and retried after 10 s |
-| `get_all_caches()`, `clear_*()`, `close_all_caches()` | `caches.stats()`, `caches.clear(name, timeout=...)`, `caches.close_all()` |
-| A separate maintenance handle with a 10 s timeout | `timeout=` on [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) and [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) |
-| Hourly `expire_all_caches()` inside `create_cache` | `caches.expire_all()` from a scheduled job |
+- **`bool()` is always True**: [Cache](../reference/Cache.md#diskcache_oxide.Cache) is always truthy (D-009); [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) is falsy
+- **`CacheProtocol`**: [CacheLike](../reference/CacheLike.md#diskcache_oxide.CacheLike)
+- **[NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), `PerfTestNullCache`**: [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), and `NullCache(invalidate=real)`
+- **[get](../reference/Cache.get.md#diskcache_oxide.Cache.get) that logs, deletes and misses on any error**: `Cache(on_decode_error='miss')` or a reporting function ([details](getting-started.md#values-that-cant-be-read))
+- **A cache that can't take a request down**: `Caches(base_dir, durable=True)`, which also covers [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), whose failures such a wrapper usually raises ([details](getting-started.md#a-cache-that-cant-take-a-request-down))
+- **`create_cache(name, size_limit)`**: `caches.register(name, size_limit=...)`, then `caches[name]`
+- **`timeout=1.0` on every open**: `Caches(base_dir, timeout=1.0)`
+- **A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) when opening fails**: the same, reported through `on_open_error` and retried after 10 s
+- **`get_all_caches()`, `clear_*()`, `close_all_caches()`**: `caches.stats()`, `caches.clear(name, timeout=...)`, `caches.close_all()`
+- **A separate maintenance handle with a 10 s timeout**: `timeout=` on [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) and [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull)
+- **Hourly `expire_all_caches()` inside `create_cache`**: nothing; background maintenance does it
 
 The library's self-healing read is safer than the wrapper's in three ways:
 

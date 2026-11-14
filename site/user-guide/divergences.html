@@ -1070,6 +1070,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>Count and list expired entries until something removes them</td>
 <td>Leave them out the moment they expire</td>
 </tr>
+<tr class="odd">
+<td>D-061</td>
+<td>Between calls</td>
+<td>Nothing happens: expired rows, an over-limit cache and stray files wait for a call</td>
+<td>Background maintenance looks after every open cache, every 5 minutes by default</td>
+</tr>
 </tbody>
 </table>
 </section>
@@ -1186,6 +1192,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>D-058:</strong> on Windows, diskcache can’t delete a value file while any reader has it open (Python’s <code>open()</code> doesn’t share delete) and ignores the failure, so the file stays with nothing pointing at it (upstream bug 19); one test left 154 files for 6 entries. diskcache-oxide’s readers allow the delete, so nothing leaks.</li>
 <li><strong>D-059:</strong> when a cache directory holds a cache in another diskcache-oxide format (after an upgrade or a rollback), the cache opens in the subdirectory <code>diskcache-oxide-format-N</code> with a warning, and every later open uses it; <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a> reports where the cache really is. <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a> cleans up older formats once the old workers are gone. See <a href="../recipes/upgrading.html">Upgrading across a format change</a>.</li>
 <li><strong>D-060:</strong> an expired entry leaves <code>len()</code>, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>, <code>iter()</code> and <code>reversed()</code> the moment it expires, as it already left <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> and <code>in</code>. diskcache keeps counting and listing it until a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> removes its row. Nothing is written by the check: the row and its space, in <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a>, stay until that removal, as in diskcache.</li>
+<li><strong>D-061:</strong> one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every <code>maintenance_interval</code> (default 5 minutes, 0 for off), with the caches and the processes taking turns. So an explicit <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> can return less than diskcache’s would, <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See <a href="../user-guide/storage-and-wal.html#background-maintenance">Background maintenance</a>.</li>
 <li><strong>D-025:</strong> <code>iter(cache)</code> and <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> return a native iterator, not a generator. Two threads calling <code>next()</code> on the same one at once get <code>ValueError</code> at once, as with a shared generator.</li>
 </ul>
 <section id="fanoutcache-d-032-to-d-040" class="level2">

@@ -869,56 +869,18 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="settings-passed-as-keywords" class="level2">
 <h2 class="anchored" data-anchor-id="settings-passed-as-keywords">Settings passed as keywords</h2>
 <p>diskcache takes its settings as keyword arguments (<code>Cache(directory, statistics=1)</code>). diskcache-oxide’s constructors list theirs explicitly, so a diskcache-only keyword raises <code>TypeError: unexpected keyword argument</code>. Here’s where each went:</p>
-<table class="caption-top table">
-<thead>
-<tr class="header">
-<th>diskcache keyword</th>
-<th>diskcache-oxide</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a></td>
-<td>The same, persisted in the cache (<a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> at least 1 MiB)</td>
-</tr>
-<tr class="even">
-<td><a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="gdls-link gdls-code">eviction_policy</a></td>
-<td>The same name; <code>'least-recently-stored'</code> or <code>'none'</code></td>
-</tr>
-<tr class="odd">
-<td><code>sqlite_cache_size</code></td>
-<td>The same name, in 4 KiB pages per connection; default 256 (1 MiB), not diskcache’s 8192</td>
-</tr>
-<tr class="even">
-<td><code>statistics</code></td>
-<td>Gone: call <code>cache.stats(enable=True)</code>, which counts per process, in memory (D-049)</td>
-</tr>
-<tr class="odd">
-<td><code>tag_index</code></td>
-<td>Gone: tags are always indexed</td>
-</tr>
-<tr class="even">
-<td><code>disk_min_file_size</code></td>
-<td>Gone: values of 64 KiB or more always go to files</td>
-</tr>
-<tr class="odd">
-<td><code>disk_pickle_protocol</code></td>
-<td>Gone: no pickle by default; <code>pickle=True</code> uses the highest protocol</td>
-</tr>
-<tr class="even">
-<td><code>sqlite_journal_mode</code></td>
-<td>Gone: always WAL, checked at open</td>
-</tr>
-<tr class="odd">
-<td><code>sqlite_synchronous</code></td>
-<td>Gone: always <code>NORMAL</code>, as diskcache’s default</td>
-</tr>
-<tr class="even">
-<td><code>sqlite_mmap_size</code>, <code>sqlite_auto_vacuum</code></td>
-<td>Gone: not configurable</td>
-</tr>
-</tbody>
-</table>
+<ul>
+<li><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a>: the same, persisted in the cache (<a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> at least 1 MiB)</li>
+<li><a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="gdls-link gdls-code">eviction_policy</a>: the same name; <code>'least-recently-stored'</code> or <code>'none'</code></li>
+<li><code>sqlite_cache_size</code>: the same name, in 4 KiB pages per connection; default 256 (1 MiB), not diskcache’s 8192</li>
+<li><code>statistics</code>: gone; call <code>cache.stats(enable=True)</code>, which counts per process, in memory (D-049)</li>
+<li><code>tag_index</code>: gone; tags are always indexed</li>
+<li><code>disk_min_file_size</code>: gone; values of 64 KiB or more always go to files</li>
+<li><code>disk_pickle_protocol</code>: gone; no pickle by default; <code>pickle=True</code> uses the highest protocol</li>
+<li><code>sqlite_journal_mode</code>: gone; always WAL, checked at open</li>
+<li><code>sqlite_synchronous</code>: gone; always <code>NORMAL</code>, as diskcache’s default</li>
+<li><code>sqlite_mmap_size</code>, <code>sqlite_auto_vacuum</code>: gone; not configurable</li>
+</ul>
 <p>New settings with no diskcache counterpart: <code>serializer</code>, <code>pickle</code>, <code>types</code>, <code>clock</code>, <code>max_connections</code>, <code>wal_size_limit</code>, <code>wal_checkpoint</code>, <code>on_decode_error</code> and <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a>. <a href="../reference/Cache.html"><code>Cache</code></a> lists them.</p>
 </section>
 </section>

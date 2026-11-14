@@ -88,18 +88,16 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 
 diskcache takes its settings as keyword arguments (`Cache(directory, statistics=1)`). diskcache-oxide's constructors list theirs explicitly, so a diskcache-only keyword raises `TypeError: unexpected keyword argument`. Here's where each went:
 
-| diskcache keyword | diskcache-oxide |
-|----|----|
-| [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) | The same, persisted in the cache ([size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) at least 1 MiB) |
-| [eviction_policy](../reference/Cache.eviction_policy.md#diskcache_oxide.Cache.eviction_policy) | The same name; `'least-recently-stored'` or `'none'` |
-| `sqlite_cache_size` | The same name, in 4 KiB pages per connection; default 256 (1 MiB), not diskcache's 8192 |
-| `statistics` | Gone: call `cache.stats(enable=True)`, which counts per process, in memory (D-049) |
-| `tag_index` | Gone: tags are always indexed |
-| `disk_min_file_size` | Gone: values of 64 KiB or more always go to files |
-| `disk_pickle_protocol` | Gone: no pickle by default; `pickle=True` uses the highest protocol |
-| `sqlite_journal_mode` | Gone: always WAL, checked at open |
-| `sqlite_synchronous` | Gone: always `NORMAL`, as diskcache's default |
-| `sqlite_mmap_size`, `sqlite_auto_vacuum` | Gone: not configurable |
+- [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit): the same, persisted in the cache ([size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) at least 1 MiB)
+- [eviction_policy](../reference/Cache.eviction_policy.md#diskcache_oxide.Cache.eviction_policy): the same name; `'least-recently-stored'` or `'none'`
+- `sqlite_cache_size`: the same name, in 4 KiB pages per connection; default 256 (1 MiB), not diskcache's 8192
+- `statistics`: gone; call `cache.stats(enable=True)`, which counts per process, in memory (D-049)
+- `tag_index`: gone; tags are always indexed
+- `disk_min_file_size`: gone; values of 64 KiB or more always go to files
+- `disk_pickle_protocol`: gone; no pickle by default; `pickle=True` uses the highest protocol
+- `sqlite_journal_mode`: gone; always WAL, checked at open
+- `sqlite_synchronous`: gone; always `NORMAL`, as diskcache's default
+- `sqlite_mmap_size`, `sqlite_auto_vacuum`: gone; not configurable
 
 New settings with no diskcache counterpart: `serializer`, `pickle`, `types`, `clock`, `max_connections`, `wal_size_limit`, `wal_checkpoint`, `on_decode_error` and [durable](../reference/Cache.durable.md#diskcache_oxide.Cache.durable). [`Cache`](../reference/Cache.md) lists them.
 
