@@ -33,6 +33,8 @@ def app_cache(monkeypatch):
     return null
 ```
 
+One thing a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) can't catch: it never encodes values, so a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) of a value a real cache refuses (a dataclass you haven't registered, an ORM row, a `dict` subclass) succeeds on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and raises `TypeError` in production. Keep at least one test per type you store that runs against a real [Cache](../reference/Cache.md#diskcache_oxide.Cache) on `tmp_path`, using the `cache` fixture above. It's also how you find out a type needs [`register_type`](custom-types.md).
+
 
 # Testing expiry without sleeping
 

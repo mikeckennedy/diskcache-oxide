@@ -48,6 +48,8 @@ parts/
 sdist/
 var/
 wheels/
+# The example app's Dockerfile copies this directory, so it must exist in a clone (its own .gitignore keeps the wheels out).
+!examples/webapp/wheels/
 share/python-wheels/
 *.egg-info/
 .installed.cfg

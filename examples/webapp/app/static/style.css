@@ -1,0 +1,157 @@
+/* Ledger: an instrument panel. Plex, hairline rules, tabular numbers, square controls. */
+
+:root {
+  --ground: #ffffff;
+  --panel: #f6f7f8;
+  --ink: #16181d;
+  --muted: #5c6370;
+  --rule: #e4e5e7;
+  --strong-rule: #16181d;
+  --hit: #1d4ed8;
+  --miss: #c2410c;
+  --button-ink: #ffffff;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #111317;
+    --panel: #181b20;
+    --ink: #e6e7ea;
+    --muted: #9aa1ad;
+    --rule: #2a2e35;
+    --strong-rule: #e6e7ea;
+    --hit: #7aa2ff;
+    --miss: #ff9b6a;
+    --button-ink: #111317;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 16px/1.55 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+a { color: var(--ink); text-decoration: none; }
+a:hover { color: var(--miss); }
+h1 { margin: 0; font-size: 32px; line-height: 1.15; font-weight: 600; letter-spacing: -0.02em; }
+p { margin: 0 0 14px; }
+
+.mono, code { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.hit { color: var(--hit); }
+.miss { color: var(--miss); }
+.wrap { max-width: 1200px; margin: 0 auto; padding-inline: 32px; }
+
+.label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Header and the request strip */
+.top { border-bottom: 1px solid var(--strong-rule); }
+.top .wrap { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: baseline; padding-block: 18px; }
+.brand { font-weight: 600; font-size: 18px; letter-spacing: -0.01em; }
+.top nav { display: flex; flex-wrap: wrap; gap: 24px; margin-left: auto; font-size: 14px; align-items: baseline; }
+.top nav a[aria-current='page'] { font-weight: 600; }
+.top nav form { display: inline; }
+.linkish { font: inherit; background: none; border: 0; padding: 0; color: var(--ink); cursor: pointer; }
+.linkish:hover { color: var(--miss); }
+
+.strip { background: var(--panel); border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--muted); }
+.strip .wrap { display: flex; flex-wrap: wrap; gap: 6px 24px; padding-block: 8px; }
+.strip .pid { margin-left: auto; }
+
+/* Page layout: content and an aside that stacks under it on a phone */
+main.wrap { padding-block: 40px 64px; display: flex; flex-wrap: wrap; gap: 48px; }
+.content { flex: 999 1 560px; min-width: 0; }
+aside { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 32px; }
+.page-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; margin-bottom: 20px; }
+
+/* Ruled lists */
+.table { width: 100%; }
+.row {
+  display: grid;
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--rule);
+  align-items: baseline;
+}
+.table .row.head { border-top: 1px solid var(--strong-rule); padding: 8px 0; font-size: 11px; }
+.episodes .row { grid-template-columns: 64px minmax(0, 1fr) 96px 72px; }
+.jobs .row { grid-template-columns: 72px minmax(0, 1fr) 120px 110px; font-size: 14px; }
+.scroll { overflow-x: auto; }
+.caches .row { grid-template-columns: minmax(110px, 1.1fr) minmax(150px, 1.4fr) 90px 100px 140px; min-width: 640px; font-size: 14px; }
+.num { text-align: right; font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+.title { display: block; font-size: 16px; font-weight: 500; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+.tag { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); border: 1px solid var(--rule); padding: 1px 6px; }
+
+/* The "how this was served" panel */
+.panel-title { padding-bottom: 8px; border-bottom: 1px solid var(--strong-rule); }
+.read { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 13px; }
+.read .key { min-width: 0; overflow-wrap: anywhere; }
+.read > :nth-child(even) { text-align: right; }
+.read .note { font-size: 12px; color: var(--muted); }
+
+/* Forms */
+.field { display: flex; flex-direction: column; gap: 8px; }
+input, textarea {
+  font: inherit;
+  font-size: 16px;
+  color: var(--ink);
+  background: var(--ground);
+  border: 1px solid var(--strong-rule);
+  border-radius: 0;
+  padding: 10px 12px;
+  width: 100%;
+}
+input { height: 44px; }
+textarea { line-height: 1.6; resize: vertical; }
+.button {
+  display: inline-flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 18px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px solid var(--strong-rule);
+  border-radius: 0;
+  background: var(--ink);
+  color: var(--button-ink);
+  cursor: pointer;
+}
+.button:hover { color: var(--button-ink); background: var(--miss); border-color: var(--miss); }
+.button.quiet { background: transparent; color: var(--ink); }
+.button.quiet:hover { color: var(--miss); background: transparent; border-color: var(--miss); }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; padding-top: 24px; border-top: 1px solid var(--rule); }
+.search { display: flex; }
+.search input { border-right: 0; min-width: 0; }
+.error { color: var(--miss); }
+
+.prose { font-size: 17px; line-height: 1.65; max-width: 68ch; }
+.figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); border-block: 1px solid var(--strong-rule); margin-bottom: 40px; }
+.figures > div { padding: 18px 16px 18px 0; }
+.figures .value { font-family: 'IBM Plex Mono', monospace; font-size: 28px; font-weight: 500; margin-top: 6px; }
+
+/* Phones: tighter gutters, fewer columns */
+@media (max-width: 640px) {
+  .wrap { padding-inline: 16px; }
+  main.wrap { padding-block: 28px 48px; gap: 36px; }
+  h1 { font-size: 28px; }
+  .top .wrap { gap: 4px 24px; padding-block: 14px; }
+  .top nav { margin-left: 0; width: 100%; gap: 20px; }
+  .strip .pid { margin-left: 0; }
+  .episodes .row { grid-template-columns: 44px minmax(0, 1fr) 56px; gap: 12px; }
+  .episodes .row > :nth-child(3) { display: none; }
+  .jobs .row { grid-template-columns: 64px minmax(0, 1fr) 64px 48px; gap: 10px; }
+}

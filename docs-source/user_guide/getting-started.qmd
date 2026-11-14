@@ -14,13 +14,14 @@ pip install diskcache-oxide
 - **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
 - **Platforms:** macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. [Windows](#windows) below says what differs there.
 - **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter (`diskcache_oxide.sqlite_version()` reports the one in use).
+- **Upgrades:** a release that keeps the on-disk format opens your caches as they were, warm. One that changes it (the changelog says so first) opens a new cache in a subdirectory named for its format and logs a warning, so nothing fails at deploy; [Upgrading across a format change](../recipes/upgrading.qmd) covers cleaning up afterwards.
 
 ## Open a cache
 
 ```python
 from diskcache_oxide import Cache
 
-cache = Cache('/var/cache/my-app')
+cache = Cache('cache')  # a folder named "cache" in the current directory
 ```
 
 The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
@@ -29,10 +30,12 @@ So a cron job, an admin script or a container running as a different user can't 
 
 Every process that should share the cache opens the same path. Inside one process, opening the same directory twice gives two handles on one shared engine, with one connection pool between them.
 
+On your laptop any folder you own will do. In production, give the app a directory it owns on a local disk, such as `/var/lib/my-app/cache/<name>` (systemd's `StateDirectory=my-app` creates `/var/lib/my-app` for the service's user, and `/var/cache` is often root-owned). On Windows, use a folder under `%LOCALAPPDATA%` for a per-user app. [Sharing a cache across web workers](../recipes/web-workers.qmd#the-recommended-setup) has the layout we recommend for an app with several caches, and [Docker and Compose](../recipes/docker.qmd) the container version.
+
 ### Close it, or use `with`
 
 ```python
-with Cache('/var/cache/my-app') as cache:
+with Cache('cache') as cache:
     cache.set('greeting', 'hello')
 ```
 
@@ -161,7 +164,7 @@ What else `Timeout` can mean, and what to do about every other exception the lib
 A cache outlives the code that filled it. Deploy a rename of a class you pickled, or have a disk hand back damaged bytes, and a row that read fine yesterday raises today. By default `get` raises, as diskcache does. But a cache is only a copy of data you can rebuild, so most apps would rather treat that row as a miss and move on. `on_decode_error` does that:
 
 ```python
-cache = Cache('/var/cache/my-app', pickle=True, on_decode_error='miss')
+cache = Cache('cache', pickle=True, on_decode_error='miss')
 cache.get('homepage')  # None if the stored value can't be decoded; the bad row is deleted
 ```
 
@@ -172,34 +175,14 @@ cache.get('homepage')  # None if the stored value can't be decoded; the bad row 
 
 It covers `get`, `cache[key]` (which raises `KeyError`) and `pop`. A row that stays (a foreign value, or a bad one whose delete had to be skipped) fails on every read, so each stored version is reported once per cache handle, not on every read.
 
-`pop` decodes the value before it deletes the row, so a value that another version or host might read survives it. This table is the usual path; the fallback described below it removes the row first:
-
-| What went wrong | `'raise'` | `'miss'` or a function | `durable=True`, with its default `'miss'` or a function |
-|---|---|---|---|
-| A foreign value | raises `ForeignValueError`, row kept | returns the default and reports, row kept | the same as `'miss'` |
-| `UnsafeValueError` | raises, row kept | raises, row kept | raises, row kept |
-| An unreadable value (malformed bytes, a failing unpickle, a registered type's `decode` raising about the row) | deletes that version, then raises | deletes that version, returns the default and reports | the same as `'miss'` |
-| An unreadable value, and that delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default and reports both, row kept |
-| `Timeout`, an I/O error or `RecursionError` from a pickle hook or a registered type's `decode` | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
-| `RecursionError` from a value too deep for this thread's stack | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
-| `MemoryError` or a `BaseException` from a pickle hook or a `decode` | raises, row kept | raises, row kept | raises, row kept |
-| The value decoded, and the delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default, never the value, row kept |
-
-`durable=True` with an explicit `on_decode_error='raise'` follows the `'raise'` column, except that when an unreadable value's delete fails it raises the decode error rather than the delete's.
-
-If that delete itself fails, for example with `Timeout`, its error is raised under every policy with the decode error as its `__cause__`, unless `durable=True`, and the row stays.
-
-A value still goes to exactly one caller, because `pop` deletes only the version it decoded. A `pop` that loses that delete to another writer reads again, and after 8 losses it falls back to removing the row first and decoding afterwards, so it can't starve. If its `timeout` has run out by the time it loses, it raises `Timeout` instead: this `pop` deletes nothing, and whatever the other writer left stays. There are two limits:
-
-- That fallback is the one place a failed decode can cost the value, because the row is already gone: a foreign value in a known mode, or any error from a pickle hook (`Timeout`, `MemoryError`, an I/O error). It's possible on a heavily overwritten key, since a `pop` can lose while it queues for the write lock. How often it happens hasn't been measured yet.
-- Like `get`, `pop` doesn't wait to clean up a row whose large value file has gone missing. It returns the default, and if the write lock is busy the row can stay until a later `pop` or write removes it.
+`pop` decodes the value before it deletes the row, so a value another version or host might read survives it. What each policy does with each kind of failure, for `get` and `pop`, is in [Reading damaged values](errors.qmd#reading-damaged-values).
 
 ## A cache that can't take a request down
 
-It's 3 a.m., the disk under `/var/cache` is full, and every request that writes to the cache is now a 500. Nothing the cache held was precious: it was all a copy of something the database still has. If every caller can fall back to its source of truth, an outage in the cache should cost you speed, not requests. `durable=True` makes that the rule for the calls a request makes:
+It's 3 a.m., the disk under the cache is full, and every request that writes to the cache is now a 500. Nothing the cache held was precious: it was all a copy of something the database still has. If every caller can fall back to its source of truth, an outage in the cache should cost you speed, not requests. `durable=True` makes that the rule for the calls a request makes:
 
 ```python
-cache = Cache('/var/cache/my-app', timeout=1.0, durable=True)
+cache = Cache('cache', timeout=1.0, durable=True)
 page = cache.get('homepage')  # None if the cache is locked, full, broken or the disk failed
 ```
 
@@ -252,13 +235,13 @@ Every swallowed failure is counted in one of three groups, and logged on the `di
 | Failing | `ERROR` | Everything else: a full disk, an I/O error, a damaged database |
 | Lost invalidations | `ERROR` | Any failed `delete` |
 
-Each group logs its first failure at once, then at most once a minute per cache handle, with counts by operation since its last line: `get: 1204, set: 37`. An outage can be thousands of failures a second, and that's one line a minute. Failures after a group's last line stay counted until its next one, or until you call `close()`, which logs what's left. Dropping a handle without `close()` doesn't. An outage that ends within the minute can therefore show only its first failure until then, which is why each line says more may follow. A hook outage on a read is reported once per stored version, as in the `pop` table above, and counted here as busy for a timeout and failing otherwise, with no line of its own: the group's next line includes it. Time comes from the failing call's clock, so `clock=` drives it in tests. `cache._durable_stats()` has the running totals by group and operation, the place to look for "how many invalidations did we lose?". It's a private hook for now, like `_wal_stats()`.
+Each group logs its first failure at once, then at most once a minute per cache handle, with counts by operation since its last line: `get: 1204, set: 37`. An outage can be thousands of failures a second, and that's one line a minute. Failures after a group's last line stay counted until its next one, or until you call `close()`, which logs what's left. Dropping a handle without `close()` doesn't. An outage that ends within the minute can therefore show only its first failure until then, which is why each line says more may follow. A hook outage on a read is reported once per stored version, as in the table in [Reading damaged values](errors.qmd#reading-damaged-values), and counted here as busy for a timeout and failing otherwise, with no line of its own: the group's next line includes it. Time comes from the failing call's clock, so `clock=` drives it in tests. `cache._durable_stats()` has the running totals by group and operation, the place to look for "how many invalidations did we lose?". It's a private hook for now, like `_wal_stats()`.
 
 The limit is per handle, so a `with Cache(...)` per request logs on every request during an outage. A handle from `Caches` is opened once, so it isn't affected.
 
 ## More than one process writing
 
-A single `Cache` has one write lock per directory. Reads never wait for it, but every write does, so eight worker processes that all bump counters are eight writers lining up for one lock. If your app runs several worker processes that write often (counters, rate limits, job claims), open a [`FanoutCache`](fanoutcache.qmd) instead: it spreads the keys over several databases, each with its own lock, and in the repository's benchmark it holds its rate at 8 processes where a plain `Cache` falls to about 40% of its one-process rate. For one process, or mostly reads, a plain `Cache` is the simpler choice.
+A single `Cache` has one write lock per directory. Reads never wait for it, but every write does, so eight worker processes that all bump counters are eight writers lining up for one lock. Start with plain caches anyway: most apps mostly read, a plain cache uses less memory (one connection pool, not one per shard), and its writes take about 20 µs. If one cache that many processes write to (counters, rate limits) does show the lines, open it as a [`FanoutCache`](fanoutcache.qmd): it spreads the keys over several databases, each with its own lock, and in the repository's benchmark it holds its rate at 8 processes where a plain `Cache` falls to about 40% of its one-process rate.
 
 ## Shutting down
 
@@ -272,8 +255,8 @@ The API and the guarantees are the same on Windows, with these differences:
 
 - **No `fork()`.** Windows has no fork, so `multiprocessing` starts each worker fresh and each opens its own handle. The [fork guarantees](concurrency-and-forks.qmd) are Unix-only; threads and processes are safe everywhere.
 - **An open cache's directory can't be deleted.** Windows won't delete a file a process has open, and SQLite keeps the database open for as long as any handle is. `close()` every handle first: a closed cache's directory deletes cleanly. A delete attempted while it's open fails with `PermissionError`, and may still remove some large values' files on the way, which then read as misses.
-- **New directories take their parent's permissions.** On macOS and Linux a cache directory is created owner-only (0700); on Windows it inherits its parent's access control list.
-- **Other programs holding a file.** Antivirus, the search indexer and backup tools can hold a large value's file for a moment. A read or a delete waits that out for about 50 ms. A read still blocked after that raises (or, on a `durable=True` cache, is a miss, and the entry stays); a file a delete couldn't remove is left on disk with no entry, outside `size_limit`, until `check(fix=True)` removes it (it removes a file no entry names once the file is an hour old). Excluding cache directories from real-time antivirus scanning avoids this and can make them faster.
+- **New directories take their parent's permissions.** On macOS and Linux a cache directory is created owner-only (0700); on Windows it inherits its parent's access control list, so where you put it decides who can read and write it. For an app run by one user, a folder under `%LOCALAPPDATA%` is private to that user: `platformdirs.user_cache_dir('my-app', 'my-company')` gives `%LOCALAPPDATA%\my-company\my-app\Cache`. Avoid `C:\ProgramData`, where by default any user can create files, and so could change what your app reads. For a directory elsewhere, remove inherited access and grant only the account the app runs as: `icacls D:\caches\my-app /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"` in Command Prompt, or `"$env:USERNAME:(OI)(CI)F"` in PowerShell.
+- **Other programs holding a file.** Antivirus, the search indexer and backup tools can hold a large value's file for a moment. A read or a delete waits that out for about 50 ms. A read still blocked after that raises (or, on a `durable=True` cache, is a miss, and the entry stays); a file a delete couldn't remove is left on disk with no entry, outside `size_limit`, until `check(fix=True)` removes it (it removes a file no entry names once the file is an hour old). Excluding cache directories from real-time antivirus scanning avoids this and can make them faster (with Microsoft Defender, `Add-MpPreference -ExclusionPath <directory>` in an administrator PowerShell). It's a speed option, not a fix: our Windows stress tests pass with Defender scanning, and a cache can hold bytes fetched from elsewhere, so weigh what the exclusion lets through.
 - **Long paths work.** A cache directory can be deeper than Windows's 260-character limit, whether or not the machine enables long paths.
 
 ## Testing code that uses a cache

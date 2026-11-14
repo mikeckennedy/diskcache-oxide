@@ -78,7 +78,29 @@ print(f"diskcache_oxide {d.__version__} on {sys.version.split()[0]} ({build}), S
         "$env/bin/pytest" -q -p no:cacheprovider -m slow
         "$env/bin/pytest" -q -p no:cacheprovider -m slow --backend=oxide tests/conformance
     fi
+
+    # The example app (examples/webapp), on 3.14 and 3.14t: its `example` dependency group, its type
+    # check (the repo-wide ty run excludes it), and its tests, multi-process gunicorn run included.
+    if [[ "$python" == 3.14 || "$python" == 3.14t ]]; then
+        uv export --quiet --locked --only-group example --no-emit-project --no-hashes --format requirements-txt \
+            | uv pip install --quiet --python "$env/bin/python" -r -
+        "$env/bin/ty" check --python "$env" examples/webapp
+        "$env/bin/pytest" -q -p no:cacheprovider -c examples/webapp/pyproject.toml examples/webapp/tests
+    fi
 done
+
+# The example app stays out of what we ship: maturin builds the wheel from python/ only, and this
+# checks the source distribution too.
+step 'sdist leaves out examples/'
+sdist_dir="$(mktemp -d)"
+uvx --from 'maturin>=1.15,<2' maturin sdist --out "$sdist_dir" >/dev/null  # errors still show
+# Listed into a variable first, so a missing tarball or a failed tar stops the script under set -e.
+sdist_listing="$(tar tzf "$sdist_dir"/*.tar.gz)"
+rm -rf "$sdist_dir"
+if grep -q '/examples/' <<<"$sdist_listing"; then
+    echo 'examples/ ended up in the sdist' >&2
+    exit 1
+fi
 
 # The memory-instrumented build: SQLite's memory statistics on (they cost a process-wide mutex per
 # allocation, so the shipped build turns them off). Free-threaded, since that's where memory grows

@@ -23,6 +23,14 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 - `import diskcache_oxide` no longer calls `os.register_at_fork` where it doesn't exist.
 - A value file that hits a full quota (`EDQUOT`) now raises `OSError` with `errno.ENOSPC`, as a full disk does, since a full disk is recognized by the error's kind rather than one Unix error number.
 
+### Documentation
+
+- An example app in `examples/webapp`: a FastAPI app with gunicorn, a background worker and Docker Compose, built the way the docs recommend, with tests that run it as real processes. Every page shows which cache reads served it.
+- One recommended production setup throughout the docs: a durable `Caches` registry with `timeout=1.0` for data that can be rebuilt, and state (sessions, job claims, locks, queues) in plain caches opened directly, with eviction off, under one `/var/lib/my-app` directory. The Caches guide explains why state never goes through the registry.
+- New pages: Docker and Compose (volumes, a fixed UID, ownership, Kubernetes, disk sizing, backups, cleanup after a format change) and Troubleshooting (start from the symptom).
+- Corrected: the docs no longer claim network filesystems are detected at open. SQLite can't tell, so keep caches on a local disk.
+- Also new: a keyword table and the state-copying loop in Switching from diskcache, Windows notes in Getting started, a Prometheus collector in Monitoring, a `dictConfig` that keeps the `diskcache_oxide` logger, and API reference sections for types, memoize, coordination and every error.
+
 ## [0.2.3] - 2026-11-12
 
 **Delete your caches when you upgrade.** This release changes the on-disk format (format 3, for tags and the eviction policy). Opening a cache made by 0.1.2 raises `FormatMismatchError`, naming the database: stop every process using the cache, delete its directory (a FanoutCache's whole root, never one shard), and it's recreated empty on the next open. 0.1.2 refuses a format-3 cache the same way, and neither version writes anything into the other's. A 0.1.2 worker still running when its cache is deleted and recreated can't change the new one either: once it opens the new file, its writes, deletes and maintenance calls fail with "no such table" (only a `touch` gets through), because format 3 renames the table they all use.

@@ -1,6 +1,6 @@
 # Recipes
 
-A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you'd reach for one, then shows the pattern, then says where it stops working. The examples with output under them run against diskcache-oxide every time these docs are built.
+A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you'd reach for one, then shows the pattern, then says where it stops working. The examples with output under them run against diskcache-oxide every time these docs are built, and the [example app](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp) puts most of these recipes together in one FastAPI app, tested.
 
 
 # Caching
@@ -39,6 +39,8 @@ For locks, semaphores and a throttle that hold across every process, see the [Co
 # Deployment and testing
 
 **[Sharing a cache across web workers](web-workers.md).** Where to put the cache directory, when to open it with gunicorn, uvicorn, FastAPI, Flask, Django and Celery, how to keep a busy cache from slowing requests, and what to do at shutdown.
+
+**[Docker and Compose](docker.md).** One named volume for the caches and state, a fixed non-root user, the ownership rules that otherwise end in `PermissionError`, Kubernetes volumes, disk sizing, and the cleanup step after a format change.
 
 **[Using the cache from asyncio](asyncio.md).** Read inline, write off the loop, and keep transactions on one thread, in FastAPI, Starlette or aiohttp.
 

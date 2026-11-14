@@ -87,7 +87,7 @@ Two things can make a claim vanish early, and both argue for keeping claims out 
 A separate cache directory just for coordination, which is never swapped for a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and never evicts (`eviction_policy='none'`, so only expired claims go), avoids both:
 
 ``` python
-coordination = Cache('/var/cache/my-app-coordination', eviction_policy='none')
+coordination = Cache('/var/lib/my-app/state/coordination', timeout=3.0, eviction_policy='none')
 ```
 
 A claim is the right tool when a worker that loses should skip the job. When it should wait its turn instead, use a [Lock](../reference/Lock.md#diskcache_oxide.Lock) or a [BoundedSemaphore](../reference/BoundedSemaphore.md#diskcache_oxide.BoundedSemaphore) from [Coordination](../user-guide/coordination.md), on the same coordination cache.

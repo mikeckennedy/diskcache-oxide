@@ -566,6 +566,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/troubleshooting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Troubleshooting</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Vision and roadmap</span></a>
   </div>
@@ -698,7 +704,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>A cache directory is shared by every process on the machine that opens it, and <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a>, <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> and <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> are atomic across all of them. That makes it a place to coordinate work as well as cache it: one worker at a time on a job, at most a few at once on a slow API, a rate limit every worker respects. diskcache-oxide ships diskcache’s coordination recipes for that, under the same names.</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, Lock, RLock, BoundedSemaphore, Averager, throttle, barrier</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>locks <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app/locks'</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span></code></pre></div>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>locks <span class="op">=</span> Cache(<span class="st">'/var/lib/my-app/state/coordination'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span></code></pre></div>
+<p>Coordination is state, not cache: open it as a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> of its own, not durable and not through a registry, with eviction off so a live lock is never evicted for size. Keep it out of your caches’ directories: a directory is a cache or a parent of caches, never both, because maintenance treats a cache’s two-character subdirectories as its own value folders. <a href="../user-guide/caches.html#state-isnt-cache">State isn’t cache</a> explains each choice, and the <a href="../recipes/web-workers.html#the-recommended-setup">recommended setup</a> shows where it fits.</p>
 <p>Two common jobs don’t need a lock at all. When only one worker should run a job and the others should skip it, an <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> claim is simpler: see <a href="../recipes/run-once.html">Running a job once across workers</a>. To hand work items to whichever worker is free, use a queue: see <a href="../recipes/work-queues.html">Work queues</a>.</p>
 <section id="lock" class="level1">
 <h1>Lock</h1>

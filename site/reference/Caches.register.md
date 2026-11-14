@@ -42,7 +42,7 @@ An unknown [Cache](Cache.md#diskcache_oxide.Cache) (or [FanoutCache](FanoutCache
 ## Examples
 
 ``` python
-caches.register('pages', size_limit=2 * 2**30)      # /var/cache/my-app/pages
+caches.register('pages', size_limit=2 * 2**30)      # /var/lib/my-app/cache/pages
 caches.register('objects', pickle=True, directory='/mnt/fast/objects')
 caches.register('rate_limits', shards=8)            # a FanoutCache; read with fanout()
 ```

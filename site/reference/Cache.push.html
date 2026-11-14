@@ -2133,7 +2133,7 @@ The item’s key. With <code>durable=True</code>, None if the write failed (noth
 </section>
 <section id="examples" class="level2 doc-examples">
 <h2 class="doc-examples">Examples</h2>
-<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>jobs <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app/jobs'</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>jobs <span class="op">=</span> Cache(<span class="st">'/var/lib/my-app/state/jobs'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>jobs.push({<span class="st">'episode'</span>: <span class="dv">512</span>}, prefix<span class="op">=</span><span class="st">'transcode'</span>)   <span class="co"># 'transcode-500000000000000'</span></span></code></pre></div>
 
 

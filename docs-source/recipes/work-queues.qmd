@@ -148,11 +148,11 @@ print(jobs.evict('upload:batch-7'), 'cancelled; next:', jobs.pull(prefix='transc
 The queue calls are on `Cache` only: a queue spread over shards would have no order. If your app's main cache is a `FanoutCache`, open the queue as a plain `Cache` in a directory of its own. A `Cache` opened on the `FanoutCache`'s directory raises `LayoutMismatchError`.
 
 ```python
-cache = FanoutCache('/var/cache/my-app', shards=8)
-jobs = Cache('/var/cache/my-app-jobs', eviction_policy='none')
+cache = FanoutCache('/var/lib/my-app/cache/pages', shards=8)
+jobs = Cache('/var/lib/my-app/state/jobs', timeout=3.0, eviction_policy='none')
 ```
 
-A separate directory is a good idea in any app: the queue gets its own eviction policy, and switching the main cache off can't touch it.
+A separate directory is a good idea in any app: the queue gets its own eviction policy, and switching the main cache off can't touch it. A queue is state, so open it directly, not through a [`Caches`](../user-guide/caches.qmd) registry: on the `NullCache` a registry hands out when a cache can't open, `push()` stores nothing. See [State isn't cache](../user-guide/caches.qmd#state-isnt-cache).
 
 ## Things to know
 

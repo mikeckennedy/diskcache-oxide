@@ -2,6 +2,8 @@
 
 Sooner or later a traceback ends in `diskcache_oxide`, and the question is whether it's your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that `except` clauses you already have keep working: [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) is a `TimeoutError`, [TransactionAborted](../reference/TransactionAborted.md#diskcache_oxide.TransactionAborted) is a `RuntimeError`, [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) is a `TypeError`, [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) is a `ValueError`. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you'll get.
 
+If you're starting from a symptom rather than an exception (every lookup misses, the disk keeps growing), see [Troubleshooting](troubleshooting.md).
+
 | Exception | Base classes | Where |
 |----|----|----|
 | [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) | `TimeoutError` (so `OSError`) | any call that waits for a lock or a fork |
@@ -124,9 +126,36 @@ By default a read raises these, as diskcache does. A cache holds copies, so most
 - Pass a function instead to report it yourself: `on_decode_error=lambda key, exc: sentry.capture(exc)`. From a [Caches](../reference/Caches.md#diskcache_oxide.Caches) registry it's called as `(name, key, exc)`.
 - For a [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError) that keeps coming back, upgrade the older readers to the version that wrote the value, or stop the newer writer from sharing the directory. For a missing time zone, install the host's zone data.
 
-The full table of what each policy does with each failure is in [Values that can't be read](getting-started.md#values-that-cant-be-read).
+The full table of what each policy does with each failure is in [Reading damaged values](#reading-damaged-values), below.
 
 [CorruptKeyError](../reference/CorruptKeyError.md#diskcache_oxide.CorruptKeyError), another subclass, comes from iterating a cache (`for key in cache`, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys)) when a stored key's bytes are damaged, which takes a damaged database page or file. Iteration raises rather than skip the key. Run `cache.check()` to see what else is damaged, or delete the directory: a cache can always start cold.
+
+
+# Reading damaged values
+
+What each `on_decode_error` policy does with each kind of failure, for [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) (and, for the cases that apply to it, [get](../reference/Cache.get.md#diskcache_oxide.Cache.get)). The policies themselves are introduced in [Values that can't be read](getting-started.md#values-that-cant-be-read).
+
+[pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) decodes the value before it deletes the row, so a value that another version or host might read survives it. This table is the usual path; the fallback described below it removes the row first.
+
+| What went wrong | `'raise'` | `'miss'` or a function | `durable=True`, with its default `'miss'` or a function |
+|----|----|----|----|
+| A foreign value | raises [ForeignValueError](../reference/ForeignValueError.md#diskcache_oxide.ForeignValueError), row kept | returns the default and reports, row kept | the same as `'miss'` |
+| [UnsafeValueError](../reference/UnsafeValueError.md#diskcache_oxide.UnsafeValueError) | raises, row kept | raises, row kept | raises, row kept |
+| An unreadable value (malformed bytes, a failing unpickle, a registered type's `decode` raising about the row) | deletes that version, then raises | deletes that version, returns the default and reports | the same as `'miss'` |
+| An unreadable value, and that delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default and reports both, row kept |
+| [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), an I/O error or `RecursionError` from a pickle hook or a registered type's `decode` | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
+| `RecursionError` from a value too deep for this thread's stack | raises, row kept | raises, row kept | returns the default, row kept, reported once per stored version |
+| `MemoryError` or a `BaseException` from a pickle hook or a `decode` | raises, row kept | raises, row kept | raises, row kept |
+| The value decoded, and the delete fails | raises the delete's error, row kept | raises the delete's error, row kept | returns the default, never the value, row kept |
+
+`durable=True` with an explicit `on_decode_error='raise'` follows the `'raise'` column, except that when an unreadable value's delete fails it raises the decode error rather than the delete's.
+
+If that delete itself fails, for example with [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), its error is raised under every policy with the decode error as its `__cause__`, unless `durable=True`, and the row stays.
+
+A value still goes to exactly one caller, because [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) deletes only the version it decoded. A [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) that loses that delete to another writer reads again, and after 8 losses it falls back to removing the row first and decoding afterwards, so it can't starve. If its [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout) has run out by the time it loses, it raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) instead: this [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) deletes nothing, and whatever the other writer left stays. There are two limits:
+
+- That fallback is the one place a failed decode can cost the value, because the row is already gone: a foreign value in a known mode, or any error from a pickle hook ([Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), `MemoryError`, an I/O error). It's possible on a heavily overwritten key, since a [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) can lose while it queues for the write lock. How often it happens hasn't been measured yet.
+- Like [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) doesn't wait to clean up a row whose large value file has gone missing. It returns the default, and if the write lock is busy the row can stay until a later [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) or write removes it.
 
 
 # A cache in another format: a warning, not an error
@@ -169,7 +198,7 @@ Use the class the directory was created with, and for a [FanoutCache](../referen
 RuntimeError: the cache requires WAL journal mode, but SQLite is using "delete"
 ```
 
-SQLite refused write-ahead logging, which diskcache-oxide requires for readers and a writer to work at the same time. That happens on network filesystems (NFS, SMB) and some FUSE mounts. The cache has to live on a local disk: `/var/cache/<app>`, or a Docker volume on the host's disk. See [Pick a directory](../recipes/web-workers.md#pick-a-directory).
+SQLite refused write-ahead logging, which diskcache-oxide requires for readers and a writer to work at the same time. That happens on some FUSE mounts and other filesystems without the shared memory WAL needs. The cache has to live on a local disk: `/var/lib/<app>`, or a Docker volume on the host's disk. Don't take a successful open as proof the filesystem is fine: on NFS, SMB, EFS or Azure Files SQLite usually accepts WAL and then its locks don't hold, which this check can't detect. See [Pick a directory](../recipes/web-workers.md#pick-a-directory).
 
 
 # `OSError`
@@ -210,7 +239,21 @@ It always raises, under `durable=True` too, including when SQLite runs out of me
 
 # Log lines, when the library was told not to raise
 
-These settings turn failures into log lines on the `diskcache_oxide` logger instead of exceptions. Make sure that logger reaches your logging setup, since the line is then the only signal.
+These settings turn failures into log lines on the `diskcache_oxide` logger instead of exceptions. Make sure that logger reaches your logging setup, since the line is then the only signal. The library adds no handler of its own, so its records go wherever the root logger's do. One trap: `logging.config.dictConfig` defaults to `disable_existing_loggers: True`, and the `diskcache_oxide` logger exists from the moment the package is imported, so a config applied afterwards that doesn't name it silences it, and every durable outage report with it. Name it, and keep existing loggers:
+
+``` python
+import logging.config
+
+logging.config.dictConfig({
+    'version': 1,
+    'disable_existing_loggers': False,  # the default True would silence diskcache_oxide
+    'formatters': {'plain': {'format': '%(asctime)s %(levelname)s %(name)s: %(message)s'}},
+    'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'}},
+    'loggers': {'diskcache_oxide': {'level': 'INFO', 'handlers': ['console'], 'propagate': False}},
+})
+```
+
+With gunicorn, put the same dictionary in `logconfig_dict` in `gunicorn.conf.py` so the workers' logging and the library's go to one place. Records carry extra fields (the format-redirect warning has [directory](../reference/Cache.directory.md#diskcache_oxide.Cache.directory), `using`, `found` and `found_in`; a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)'s shard-count warning `stored_shards` and `requested_shards`, and a registry's shard-count error `cache`, [directory](../reference/Cache.directory.md#diskcache_oxide.Cache.directory), `stored_shards` and `registered_shards`), which a structured formatter or Sentry picks up as attributes.
 
 - **`on_decode_error='miss'`** logs a warning for each stored version it couldn't read, once per cache handle, and deletes the row if no build could read it.
 - **`durable=True`** counts every swallowed failure in one of three groups and logs each group's first failure at once, then at most once a minute per cache handle, with counts by operation since its last line (`get: 1204, set: 37`). Busy (a [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout)) logs at `WARNING`, failing (a full disk, an I/O error, a damaged database) at `ERROR`, and lost invalidations (any failed [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete), whose entry can now be served stale) at `ERROR`. An outage that ends within the minute shows only its first failure until the next line, so each line says more may follow. [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) logs what's left.

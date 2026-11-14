@@ -641,24 +641,27 @@ section.level2:first-of-type > h2:first-child,
 <section id="an-app-with-several-caches" class="level2">
 <h2 class="anchored" data-anchor-id="an-app-with-several-caches">An app with several caches</h2>
 <p>Most apps end up with more than one cache: rendered pages, API responses, sessions, rate limits, each with its own size and settings. <a href="reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> is the registry for them. You register each cache once at startup, and a lookup by name opens it on first use and returns the same object every time after that. If a cache can’t open (a full disk, a permissions problem), the lookup returns a <a href="reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> instead of raising, so requests carry on without that cache while the error is logged, and the registry tries again every 10 seconds until the real one is back. One call switches a cache off for a load test, and <a href="reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> gives an admin page every cache’s entries, size and errors.</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Caches</span>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache, Caches</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>caches <span class="op">=</span> Caches(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)  <span class="co"># settings here apply to every cache</span></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'pages'</span>, size_limit<span class="op">=</span><span class="dv">2</span> <span class="op">*</span> <span class="dv">2</span><span class="op">**</span><span class="dv">30</span>)</span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'sessions'</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)  <span class="co"># never evicted for size</span></span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'rate_limits'</span>, shards<span class="op">=</span><span class="dv">8</span>)  <span class="co"># a FanoutCache, for many writers</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Rebuildable data: durable, so an outage is a miss, never an error page.</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>caches <span class="op">=</span> Caches(<span class="st">'/var/lib/my-app/cache'</span>, durable<span class="op">=</span><span class="va">True</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'pages'</span>, size_limit<span class="op">=</span><span class="dv">2</span> <span class="op">*</span> <span class="dv">2</span><span class="op">**</span><span class="dv">30</span>)</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'api'</span>, size_limit<span class="op">=</span><span class="dv">256</span> <span class="op">*</span> <span class="dv">2</span><span class="op">**</span><span class="dv">20</span>)</span>
 <span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>html <span class="op">=</span> caches[<span class="st">'pages'</span>].get(<span class="st">'/about'</span>)  <span class="co"># opens on first use, the same object after that</span></span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>caches[<span class="st">'sessions'</span>].<span class="bu">set</span>(<span class="st">'session:9f2c'</span>, {<span class="st">'user'</span>: <span class="dv">42</span>}, expire<span class="op">=</span><span class="dv">3600</span>)</span>
-<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>caches.fanout(<span class="st">'rate_limits'</span>).incr(<span class="st">'ip:203.0.113.7'</span>)</span>
-<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>caches.disable(<span class="st">'pages'</span>)  <span class="co"># a load test without the page cache: no call site changes</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>caches.disable(<span class="st">'pages'</span>)  <span class="co"># a load test without the page cache: no call site changes</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, stat <span class="kw">in</span> caches.stats().items():  <span class="co"># for an admin page</span></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(name, stat.count, stat.volume, stat.error)</span>
 <span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, stat <span class="kw">in</span> caches.stats().items():  <span class="co"># for an admin page</span></span>
-<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(name, stat.count, stat.volume, stat.error)</span>
-<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>caches.close_all()  <span class="co"># at shutdown</span></span></code></pre></div>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="co"># State (sessions, claims, queues) is a plain Cache, opened directly: a lost write must raise.</span></span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>sessions <span class="op">=</span> Cache(<span class="st">'/var/lib/my-app/state/sessions'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a>sessions.<span class="bu">set</span>(<span class="st">'session:9f2c'</span>, {<span class="st">'user'</span>: <span class="dv">42</span>}, expire<span class="op">=</span><span class="dv">3600</span>)</span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a>caches.close_all()  <span class="co"># at shutdown</span></span>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>sessions.close()</span></code></pre></div>
 <p>Talk Python runs its eight caches this way. <a href="./user-guide/caches.html">Named caches</a> covers the registry in full.</p>
+<p>The <a href="https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp">example app</a> is this setup in a whole FastAPI app, with gunicorn, a background worker and Docker Compose: a durable registry for pages, slow lookups and rate limits, and plain caches for sessions, job claims and a work queue. Every page shows which cache reads served it.</p>
 </section>
 <section id="where-this-is-going" class="level2">
 <h2 class="anchored" data-anchor-id="where-this-is-going">Where this is going</h2>
@@ -726,6 +729,7 @@ Note
 <li><a href="./user-guide/getting-started.html">Getting started</a>: create a cache, store and read values, expiry, counters, eviction, timeouts and <code>durable=True</code>.</li>
 <li><a href="./user-guide/switching-from-diskcache.html">Switching from diskcache</a>: what changes, and why.</li>
 <li><a href="./user-guide/errors.html">Errors and what to do about them</a>: every exception the library raises, what it means and the fix.</li>
+<li><a href="./user-guide/troubleshooting.html">Troubleshooting</a>: start from the symptom, such as every lookup missing, a disk that keeps growing, slow writes or <code>PermissionError</code>.</li>
 <li><a href="./user-guide/roadmap.html">Vision and roadmap</a>: what exists today and what’s coming.</li>
 <li><a href="./user-guide/serialization.html">Serialization</a>: msgpack and JSON with exact types, and why pickle is opt-in.</li>
 <li><a href="./user-guide/null-cache.html">NullCache</a>: caching switched off without changing call sites.</li>
@@ -737,7 +741,8 @@ Note
 <li><a href="./user-guide/storage-and-wal.html">Storage and WAL</a>: what’s on disk, memory bounds, and the write-ahead log.</li>
 <li><a href="./user-guide/performance.html">Performance</a>: the measured numbers, and where the next speedups come from.</li>
 <li><a href="./user-guide/divergences.html">Divergences</a>: every deliberate difference from diskcache, with the reason.</li>
-<li><a href="./recipes/index.html">Recipes</a>: caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidation by prefix or tag, your own types, job claims, rate limiting, counters, work queues, single-use keys, sessions, web workers, asyncio, monitoring, upgrading across a format change, and testing.</li>
+<li><a href="./recipes/index.html">Recipes</a>: caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidation by prefix or tag, your own types, job claims, rate limiting, counters, work queues, single-use keys, sessions, web workers, Docker and Compose, asyncio, monitoring, upgrading across a format change, and testing.</li>
+<li><a href="https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp">Example app</a>: a FastAPI app built the way these docs recommend, with Docker Compose and tests.</li>
 <li><a href="./skills.html">Agent skill</a>: a cheat sheet for AI coding agents, with <a href="llms.txt">llms.txt</a> and <a href="llms-full.txt">llms-full.txt</a> alongside.</li>
 </ul>
 

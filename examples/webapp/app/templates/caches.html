@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Caches · Backend Notes{% endblock %}
+{% block content %}
+<section class="content" style="flex-basis: 100%;">
+  <div class="page-head">
+    <h1>Caches</h1>
+    <span class="mono muted" style="font-size: 12px;">{{ root }} · local only</span>
+  </div>
+  {% set entries = rows | sum(attribute='count') %}
+  {% set volume = rows | sum(attribute='volume') %}
+  <div class="figures">
+    <div><div class="label">Entries</div><div class="value">{{ '{:,}'.format(entries) }}</div><div class="muted" style="font-size: 12px;">every cache</div></div>
+    <div><div class="label">On disk</div><div class="value">{{ volume | size }}</div><div class="muted" style="font-size: 12px;">database and values</div></div>
+    <div><div class="label">Caches</div><div class="value">{{ rows | length }}</div><div class="muted" style="font-size: 12px;">registry and state</div></div>
+  </div>
+  <div class="scroll">
+    <div class="table caches">
+      <div class="row head label"><span>Cache</span><span>Kind</span><span class="num">Entries</span><span class="num">Size</span><span class="num">Hits / misses*</span></div>
+      {% for r in rows %}
+        <div class="row">
+          <span class="mono" style="font-weight: 500;">{{ r.name }}</span>
+          <span class="muted">{{ r.kind }}{% if r.error %} · <span class="error">{{ r.error }}</span>{% endif %}</span>
+          <span class="num">{{ '{:,}'.format(r.count) }}</span>
+          <span class="num">{{ r.volume | size }}</span>
+          <span class="num">{% if r.hits is none %}—{% else %}{{ r.hits }} / {{ r.misses }}{% endif %}</span>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+  <p class="muted" style="font-size: 13px; margin-top: 20px; max-width: 80ch;">* This worker's only (pid {{ pid }}): <code>stats()</code> counts per process, so another reload may be answered by another worker. Entries and sizes are shared by every worker.</p>
+</section>
+{% endblock %}

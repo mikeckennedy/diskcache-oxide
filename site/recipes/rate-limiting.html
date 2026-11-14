@@ -572,6 +572,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Docker and Compose</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Invalidating groups of keys</span></a>
   </div>
@@ -683,7 +689,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-fixed-window-limiter" class="level1">
 <h1>A fixed-window limiter</h1>
 <p>Each client gets a counter for the current window, with the window’s number in the key. When the window ends, requests move on to a new key and the old one simply expires.</p>
-<div id="eb215350" class="cell" data-execution_count="1">
+<div id="b9e9635c" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -730,6 +736,7 @@ True</code></pre>
 <h1>Things to know</h1>
 <ul>
 <li><strong>Fixed windows allow short bursts at the boundary.</strong> A client can make 100 requests at the end of one minute and 100 more at the start of the next. For most APIs that’s fine. If it isn’t, check both the current and the previous window and weight the previous one by how much of it overlaps the last 60 seconds (a sliding-window estimate).</li>
+<li><strong>Behind a proxy, <code>request.client.host</code> is the proxy.</strong> Behind nginx, a load balancer or another container, every request comes from the proxy’s address, so every client shares one limit. Have the server trust the proxy’s forwarded headers instead of parsing <code>X-Forwarded-For</code> yourself: uvicorn’s <code>--forwarded-allow-ips</code> (gunicorn’s <code>forwarded_allow_ips</code>) names the proxies whose headers count, and then <code>request.client.host</code> is the real client. In Compose the proxy is another container, so its address isn’t the default <code>127.0.0.1</code>, and it can change when the container is recreated: give the Compose network’s subnet instead, since both accept CIDR ranges (<code>docker network inspect</code> shows it).</li>
 <li><strong>It’s per machine.</strong> Every worker on one machine shares the count, but two machines behind a load balancer each have their own. Sharing one cache across machines would take the network server on the <a href="../user-guide/roadmap.html">roadmap</a>, which is still speculative.</li>
 <li><strong>Fail open on a busy cache.</strong> If you set a short <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> on the cache so that requests never wait long, catch <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> and allow the request rather than failing it:</li>
 </ul>

@@ -20,6 +20,35 @@ cache = Cache('/var/cache/my-app-oxide')
 
 diskcache-oxide stores its data in `diskcache-oxide.sqlite`, not diskcache's `cache.db`, and never opens or converts a diskcache database. The two can even share a directory without seeing each other's data. Your cache starts cold after the switch, which for a cache is usually fine. The cleanest switch gives diskcache-oxide a new directory and deletes the old one once every worker has moved. If the two share a directory, diskcache's files are `cache.db*` and its value folders, which nest two levels deep (`3f/a2/….val`); diskcache-oxide's folders are one level deep and hold `.val` files directly, so a two-hex-digit folder that contains folders is diskcache's.
 
+### State that isn't cache
+
+A cold start costs a cache nothing but speed. Some of what apps keep in diskcache isn't cache, though: sessions, queued jobs, counters, a `Deque` or `Index`. Deal with those before you switch. Drain a queue with the old code first, and flush counters. See [State that isn't really cache](../recipes/upgrading.qmd#state-that-isnt-really-cache), which applies here too. For entries you must keep, copy them across once, with every writer stopped:
+
+```python
+import time
+
+import diskcache
+from diskcache_oxide import Cache
+
+MISSING = object()
+old = diskcache.Cache('/var/cache/my-app')
+new = Cache('/var/lib/my-app/state/sessions', eviction_policy='none')
+
+for key in old.iterkeys():
+    value, expire_time, tag = old.get(key, default=MISSING, expire_time=True, tag=True)
+    if value is MISSING:
+        continue  # expired, or deleted while copying
+    expire = None if expire_time is None else expire_time - time.time()
+    if expire is not None and expire <= 0:
+        continue
+    try:
+        new.set(key, value, expire=expire, tag=tag)
+    except TypeError as exc:  # a key or value diskcache-oxide can't store without pickle
+        print(f'skipped {key!r}: {exc}')
+```
+
+Keys and values go through diskcache-oxide's rules: a key that isn't a [key type](#keys), or a value of a class you haven't [registered](serialization.qmd#your-own-types), raises `TypeError` and is skipped. Register your types before the loop, or open the new cache with `pickle=True` if it really holds arbitrary objects. A `Deque` or `Index` has no equivalent yet: copy its items into a [work queue](../recipes/work-queues.qmd) or plain keys.
+
 ### Upgrading diskcache-oxide
 
 During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. 0.2.3 was one: it added tags and the eviction policy, as format 3. Since 0.3.5, a release that meets a cache in another format doesn't fail: it opens a new, empty cache in the subdirectory `diskcache-oxide-format-N` and logs a warning, so old and new workers each keep a working cache during a rolling deploy. Once the old workers are gone, `remove_old_formats()` removes the old cache. A release that keeps the format keeps your caches warm. The details, including what to do about queues and sessions first, are in [Upgrading across a format change](../recipes/upgrading.qmd).
@@ -50,6 +79,27 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | `check()` | Supported | Supported, with differences (D-050) |
 | Locks, semaphores, `throttle`, `barrier`, `Averager`, `memoize_stampede` | Supported | Supported, with differences; see [Coordination](coordination.qmd) |
 | `Deque`, `Index`, `DjangoCache`, `disk=`, `read=` | Supported | Not available |
+
+`DjangoCache`: keep Django's cache on diskcache until diskcache-oxide's Django backend ships (it's next on the [roadmap](roadmap.qmd#next)), and use diskcache-oxide directly for everything else.
+
+### Settings passed as keywords
+
+diskcache takes its settings as keyword arguments (`Cache(directory, statistics=1)`). diskcache-oxide's constructors list theirs explicitly, so a diskcache-only keyword raises `TypeError: unexpected keyword argument`. Here's where each went:
+
+| diskcache keyword | diskcache-oxide |
+|---|---|
+| `size_limit`, `cull_limit` | The same, persisted in the cache (`size_limit` at least 1 MiB) |
+| `eviction_policy` | The same name; `'least-recently-stored'` or `'none'` |
+| `sqlite_cache_size` | The same name, in 4 KiB pages per connection; default 256 (1 MiB), not diskcache's 8192 |
+| `statistics` | Gone: call `cache.stats(enable=True)`, which counts per process, in memory (D-049) |
+| `tag_index` | Gone: tags are always indexed |
+| `disk_min_file_size` | Gone: values of 64 KiB or more always go to files |
+| `disk_pickle_protocol` | Gone: no pickle by default; `pickle=True` uses the highest protocol |
+| `sqlite_journal_mode` | Gone: always WAL, checked at open |
+| `sqlite_synchronous` | Gone: always `NORMAL`, as diskcache's default |
+| `sqlite_mmap_size`, `sqlite_auto_vacuum` | Gone: not configurable |
+
+New settings with no diskcache counterpart: `serializer`, `pickle`, `types`, `clock`, `max_connections`, `wal_size_limit`, `wal_checkpoint`, `on_decode_error` and `durable`. [`Cache`](../reference/Cache.qmd) lists them.
 
 ## Values: no pickle unless you ask
 

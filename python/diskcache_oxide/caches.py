@@ -2,11 +2,15 @@
 
 An app registers its caches once, by name, then looks them up wherever it needs one:
 
-    caches = Caches('/var/cache/app', timeout=1.0, on_decode_error='miss')
+    caches = Caches('/var/lib/app/cache', durable=True, timeout=1.0)
     caches.register('general')
     caches.register('show_pages', size_limit=2 * 2**30)
 
     caches['general'].set('key', 'value')
+
+A registry is for caches, data that can be rebuilt. State (sessions, job claims, locks, queues) is
+opened with `Cache(...)` directly: a registry hands out a `NullCache` when a cache can't open, and
+on one `add()` always wins and `push()` stores nothing.
 
 **Sharded caches.** `register('rate_limits', shards=8)` registers a `FanoutCache`, which takes the same
 settings. Plain caches are read with `caches[name]` (typed `TransactionalCacheLike`, so
@@ -157,7 +161,7 @@ class Caches[N: str = str]:
         ```python
         from diskcache_oxide import Caches
 
-        caches = Caches('/var/cache/my-app', timeout=1.0, on_decode_error='miss')
+        caches = Caches('/var/lib/my-app/cache', durable=True, timeout=1.0)
         caches.register('general')
         caches.register('pages', size_limit=2 * 2**30)
         caches.register('rate_limits', shards=8)
@@ -239,7 +243,7 @@ class Caches[N: str = str]:
 
         Examples:
             ```python
-            caches.register('pages', size_limit=2 * 2**30)      # /var/cache/my-app/pages
+            caches.register('pages', size_limit=2 * 2**30)      # /var/lib/my-app/cache/pages
             caches.register('objects', pickle=True, directory='/mnt/fast/objects')
             caches.register('rate_limits', shards=8)            # a FanoutCache; read with fanout()
             ```

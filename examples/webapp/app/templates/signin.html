@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Backend Notes{% endblock %}
+{% block content %}
+<form class="content" method="post" action="/signin?next={{ next | urlencode }}" style="max-width: 420px; display: flex; flex-direction: column; gap: 20px;">
+  <h1>Sign in</h1>
+  <p class="muted">Editors sign in to change episodes. Any address and password work in this demo.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <div class="field">
+    <label class="label" for="email">Email</label>
+    <input id="email" name="email" type="email" placeholder="you@example.com" autocomplete="username" required>
+  </div>
+  <div class="field">
+    <label class="label" for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+  </div>
+  <button class="button" type="submit" style="justify-content: center;">Sign in</button>
+  <p class="mono muted" style="font-size: 12px;">
+    {{ signin_limit }} attempts a minute per client{% if attempts_left is not none %} · {{ attempts_left }} left{% endif %}
+  </p>
+</form>
+<aside style="border-left: 1px solid var(--rule); padding-left: 32px;">
+  <div>
+    <div class="label" style="padding-bottom: 8px;">Where a session lives</div>
+    <p style="font-size: 14px;">Sessions are state, not cache, so they live in <code>state/sessions</code>: a plain <code>Cache</code>, not durable, with eviction off. If the write fails, sign-in fails with a 503 page instead of pretending to work.</p>
+    <p class="muted" style="font-size: 14px;">The cookie is HttpOnly and SameSite=Lax, and holds only a random session id.</p>
+  </div>
+</aside>
+{% endblock %}

@@ -63,6 +63,8 @@ def health_cache() -> dict:
 
 In FastAPI the same function body works under `@app.get('/health/cache')`. Keep the endpoint behind your admin auth or on an internal port: the numbers aren't secret, but there's no reason to publish them.
 
+In Kubernetes or behind a load balancer, use it as a *readiness* check, never a liveness check. A liveness failure restarts the process, and a cache outage is exactly what `durable=True` absorbs: restarting for it only adds a cold start.
+
 
 # What the numbers mean
 
@@ -150,6 +152,32 @@ def clear_cache(name: str) -> dict:
 `caches.clear()` raises if the cache can't be opened, so the page never reports "0 removed" for a failure. It works on a disabled cache too. Give it a longer `timeout=` than the request path's, since it holds the write lock once per chunk. For the rest of the registry's admin calls, see [Admin and shutdown](../user-guide/caches.md#admin-and-shutdown).
 
 
+# Prometheus
+
+A custom collector reads the registry at scrape time, so there's nothing to update on each request. Entry counts and sizes come from the caches themselves, so every worker reports the same numbers and gunicorn's Prometheus multiprocess mode isn't needed for them:
+
+``` python
+from prometheus_client.core import REGISTRY, GaugeMetricFamily
+
+
+class CacheCollector:
+    def collect(self):
+        entries = GaugeMetricFamily('app_cache_entries', 'Entries in each cache', labels=['cache'])
+        size = GaugeMetricFamily('app_cache_bytes', 'Bytes on disk for each cache', labels=['cache'])
+        up = GaugeMetricFamily('app_cache_up', '1 if the cache opened, 0 if not', labels=['cache'])
+        for name, stat in caches.stats().items():
+            entries.add_metric([name], stat.count)
+            size.add_metric([name], stat.volume)
+            up.add_metric([name], 0 if stat.error else 1)
+        yield from (entries, size, up)
+
+
+REGISTRY.register(CacheCollector())
+```
+
+Hit and miss counts are per process ([stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) counts in memory), so under several workers a scrape sees only the worker that answered it. Count them in the cache itself if you need them across workers: [Hits and misses across workers](#hits-and-misses-across-workers) above shows how.
+
+
 # The write-ahead log
 
 `wal_mib` in the health check is the size of `diskcache-oxide.sqlite-wal` beside the database. At normal load `wal_size_limit` keeps it at a few MiB. A burst of writes with readers in other processes can leave it much larger, and in the default `wal_checkpoint='manual'` mode it stays that size until something checkpoints it.
@@ -177,7 +205,7 @@ print('repaired:', len(damaged.check(fix=True)), '| after:', damaged.check(), '|
 ```
 
 
-    UserWarning file not found: .../bc/bc8becbf5a9e3218779302278d8566c5.val
+    UserWarning file not found: .../86/86c109b8ce2257cf8e5dabffc1f7e2f6.val
     repaired: 1 | after: [] | entries: 1
 
 

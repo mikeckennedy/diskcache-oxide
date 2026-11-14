@@ -8,7 +8,7 @@ Every app with two caches eventually grows a file called something like `cache_s
 ```python
 from diskcache_oxide import Caches
 
-caches = Caches('/var/cache/my-app', timeout=1.0, on_decode_error='miss')
+caches = Caches('/var/lib/my-app/cache', durable=True, timeout=1.0)
 caches.register('general')
 caches.register('pages', size_limit=2 * 2**30)
 
@@ -16,7 +16,9 @@ caches['general'].set('greeting', 'hello')
 caches['pages'].get('/about')
 ```
 
-Settings passed to `Caches` apply to every cache, and `register` can override them for one. Each cache lives in a directory named after it under the base directory, unless you pass `directory=`.
+Settings passed to `Caches` apply to every cache, and `register` can override them for one. Each cache lives in a directory named after it under the base directory, unless you pass `directory=`. The base directory holds caches; it isn't one itself, so don't open a `Cache` on it.
+
+A registry is for caches: data you can rebuild, where an outage should mean a miss. That's why the examples here pass `durable=True` and a short `timeout`. Sessions, job claims, locks and work queues are state, and they don't belong in a registry: see [State isn't cache](#state-isnt-cache) below.
 
 One setting works differently here: a function passed as `on_decode_error` is called as `report(name, key, exc)`, with the cache's name first, so one reporter can serve every cache. (On a plain `Cache` it's `report(key, exc)`.) A function that doesn't take three arguments is rejected when you create the registry or register the cache.
 
@@ -30,7 +32,7 @@ A cache opens on its first lookup, and every lookup after that returns the same 
 from typing import Literal
 
 CacheName = Literal['general', 'pages']
-caches: Caches[CacheName] = Caches('/var/cache/my-app')
+caches: Caches[CacheName] = Caches('/var/lib/my-app/cache')
 caches['genral']  # ty: invalid argument
 ```
 
@@ -61,7 +63,19 @@ caches.fanout('rate_limits').incr('ip:203.0.113.7')
 
 A plain cache is read with `caches[name]` and a sharded one with `caches.fanout(name)`, typed `FanoutCache | NullCache`, because its `transact` takes a key. Reading a name the wrong way raises `TypeError`. Passing `shards` at all picks the kind, even `shards=None`, so a config file that writes `shards: null` for "none" would register a `FanoutCache`: leave it out. A directory that holds the other kind of cache fails to open with `LayoutMismatchError`, and the lookup returns a `NullCache` like any failed open.
 
-A sharded cache keeps the shard count it was created with. `register('rate_limits', shards=16)` on a folder that already has 8 shards opens it with 8, logs a `WARNING` saying so and how to apply 16, and logs one `ERROR` per process so an error tracker hears of it. Every process then routes keys by the same count, so a deploy that changes `shards=` keeps working while old and new workers overlap. The registered count applies only to a new folder: to change it, delete the folder with every worker stopped, for example at deploy. A folder deleted while old workers still run is re-created by whichever process opens it first, with that process's count. One case is still a `NullCache`: a `size_limit` or `max_connections` that fits the registered count but is too small to split over the folder's count (at least one connection and 1 MiB a shard) fails with `LayoutMismatchError` naming both counts. A setting that's wrong for the registered count itself still raises `ValueError` from the lookup, as any bad setting does. A direct `FanoutCache(path, shards=16)` on that folder opens with 8 too, and logs its own `WARNING`. Pass `raise_on_mismatch=True`, to `register()` or to `FanoutCache`, to make another count an error instead: in the registry that's an open failure, so the lookup returns a reported `NullCache`. Everything else on this page (`disable`, `stats`, `clear`, `expire_all`, `close_all`) works the same for both kinds.
+A sharded cache keeps the shard count it was created with. Every process then routes keys by the same count, so a deploy that changes `shards=` keeps working while old and new workers overlap. When the folder already has another count than the registration:
+
+- The cache opens with the count on disk. The registry logs a `WARNING` saying so and how to apply the new count, and one `ERROR` per process so an error tracker hears of it.
+- To apply the new count, delete the folder with every worker stopped, for example at deploy. A folder deleted while old workers still run is re-created by whichever process opens it first, with that process's count.
+- A `size_limit` or `max_connections` that fits the registered count but can't be split over the folder's (each shard needs at least one connection and 1 MiB) fails with `LayoutMismatchError` naming both counts, and the lookup returns a `NullCache`. A setting that's wrong for the registered count itself still raises `ValueError` from the lookup, as any bad setting does.
+- `register(..., raise_on_mismatch=True)` makes any other count an open failure instead, so the lookup returns a reported `NullCache`. A direct `FanoutCache(path, shards=16)` behaves the same way: the stored count with a `WARNING`, or `LayoutMismatchError` with `raise_on_mismatch=True`.
+
+```python
+caches.register('rate_limits', shards=16)  # the folder has 8: opens with 8, and warns
+caches.fanout('rate_limits').shards        # 8
+```
+
+Everything else on this page (`disable`, `stats`, `clear`, `expire_all`, `close_all`) works the same for both kinds.
 
 ## Switching caches off
 
@@ -110,21 +124,35 @@ def episode(number: int) -> dict:
 
 It stores under the same keys as `@caches['episodes'].memoize(expire=600)` would, and it follows recovery and the switches. Building the wrapper on every call added about 2 µs per call when we measured it. To forget one result, build the key the same way: `caches['episodes'].delete(caches['episodes'].memoize()(episode.__wrapped__).__cache_key__(42))`.
 
-## Locks, claims and queues
+## State isn't cache
 
-Give coordination its own registered cache, with settings that suit it:
+Sessions, job claims, locks and work queues look like cache entries, but losing one isn't a miss: it's a forced logout, a job that runs twice, a lock two workers hold at once, a job that vanishes. Open each of them as a plain `Cache`, directly, not through the registry:
 
 ```python
-caches = Caches('/var/cache/my-app', timeout=1.0, durable=True)
-caches.register('pages')
-caches.register('locks', durable=False, eviction_policy='none')
+from pathlib import Path
+
+from diskcache_oxide import Cache
+
+STATE = Path('/var/lib/my-app/state')
+sessions = Cache(STATE / 'sessions', timeout=3.0, eviction_policy='none')
+coordination = Cache(STATE / 'coordination', timeout=3.0, eviction_policy='none')
+jobs = Cache(STATE / 'jobs', timeout=3.0, eviction_policy='none')
 ```
 
-The [coordination recipes](coordination.qmd) (`Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, `Averager`) raise `TypeError` on a `durable=True` cache, since a dropped `delete` would leave a lock held, so a registry whose defaults include `durable=True` needs `durable=False` on this one. `eviction_policy='none'` stops a size-limit eviction from removing a lock or a claim that's still live. Give those entries an `expire` instead.
+Why not the registry: a registry hands out a [`NullCache`](null-cache.qmd) whenever a cache can't open, and while one is disabled, whatever `durable` says. On a `NullCache`:
 
-The recipes also raise `TypeError` on a `NullCache`, so while `locks` is disabled or can't open, `Lock(caches['locks'], ...)` raises where it would otherwise have taken the lock. That's on purpose: a lock that every caller holds at once is worse than an error. Catch it where losing the lock means skipping the work. The decorators `@throttle(...)` and `@barrier(...)` check their cache when they decorate, so one applied to `caches['locks']` at import time raises at import if that cache can't open.
+- `add()` always returns `True`, so every worker wins a job claim and the job runs once per worker.
+- `push()` returns a key and stores nothing, so a queued job is gone.
+- `set()` returns `True`, so a login "succeeds" and the next request is logged out.
+- The [coordination recipes](coordination.qmd) (`Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, `Averager`) raise `TypeError`, on purpose: a lock that every caller holds at once is worse than an error.
 
-The [queue calls](../recipes/work-queues.qmd) (`push`, `pull`, `peek`, `peekitem`) are on `caches[name]`, so register a queue's cache without `shards=`: a `FanoutCache` has no queue calls. While that cache is disabled or can't open, `push` returns a key and stores nothing, and the job is gone. If a lost job matters, check `caches['jobs'].enabled` before you push, or open the queue's cache with `Cache(...)` directly so that a failure raises.
+Why not `durable=True`: a durable handle drops a write it can't make and reports it later. For a claim that means `add()` returns `False`, so nobody runs the job; for a session, a login that silently didn't happen. The coordination recipes refuse a durable cache with `TypeError` for the same reason. Without `durable`, the failure raises (`Timeout`, `OSError`) and the app decides: a 503 page in a request, a retry in a worker.
+
+Why `eviction_policy='none'`: eviction removes the least recently stored entries first, and a long-lived session or a claim that's still live is exactly that. With eviction off, an entry goes only when it expires or you delete it, so give claims and locks an `expire`.
+
+The registry's directory check can't see caches you open yourself, so keep state out of the registry's base directory: a later `register('sessions')` would otherwise share a store with the one you opened. The [recommended setup](../recipes/web-workers.qmd#the-recommended-setup) puts state in a sibling `state/` directory for that reason.
+
+The [queue calls](../recipes/work-queues.qmd) are on `Cache` only, so a queue's cache is never a `FanoutCache`.
 
 ## Admin and shutdown
 

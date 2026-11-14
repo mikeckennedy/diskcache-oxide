@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}#{{ number }} · Backend Notes{% endblock %}
+{% block content %}
+<article class="content">
+  <a class="mono muted" href="/" style="font-size: 12px;">← All episodes</a>
+  {{ body | safe }}
+  <div class="actions" style="margin-top: 32px;">
+    {% if user %}
+      <a class="button" href="/episodes/{{ number }}/edit">Edit episode</a>
+      <form method="post" action="/episodes/{{ number }}/transcript">
+        <input type="hidden" name="csrf" value="{{ user.csrf }}">
+        <button class="button quiet" type="submit">Request a transcript</button>
+      </form>
+    {% else %}
+      <a class="button quiet" href="/signin?next=/episodes/{{ number }}">Sign in to edit</a>
+    {% endif %}
+  </div>
+</article>
+<aside>
+  {% with heading = 'How this page was served' %}{% include "_reads.html" %}{% endwith %}
+  <div>
+    <div class="label panel-title">Tag on the cached fragment</div>
+    <p class="mono" style="font-size: 13px; margin-top: 10px;">episode:{{ number }}</p>
+    <p class="muted" style="font-size: 13px;">Saving an edit runs <code>pages.evict('episode:{{ number }}')</code>, so every copy goes at once. The fragment also expires within 10 minutes.</p>
+  </div>
+</aside>
+{% endblock %}

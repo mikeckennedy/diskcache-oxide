@@ -67,6 +67,7 @@ user_guide:
       - getting-started.qmd
       - switching-from-diskcache.qmd
       - errors.qmd
+      - troubleshooting.qmd
       - roadmap.qmd
   - section: "Core Features"
     contents:

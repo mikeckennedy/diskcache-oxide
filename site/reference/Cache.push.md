@@ -61,6 +61,6 @@ The queue's numbers are used up on that side (D-057).
 ## Examples
 
 ``` python
-jobs = Cache('/var/cache/my-app/jobs', eviction_policy='none')
+jobs = Cache('/var/lib/my-app/state/jobs', timeout=3.0, eviction_policy='none')
 jobs.push({'episode': 512}, prefix='transcode')   # 'transcode-500000000000000'
 ```

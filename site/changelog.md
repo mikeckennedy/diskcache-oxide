@@ -30,6 +30,15 @@ This changelog is generated automatically from [GitHub Releases](https://github.
 - A value file that hits a full quota (`EDQUOT`) now raises `OSError` with `errno.ENOSPC`, as a full disk does, since a full disk is recognized by the error's kind rather than one Unix error number.
 
 
+### Documentation
+
+- An example app in `examples/webapp`: a FastAPI app with gunicorn, a background worker and Docker Compose, built the way the docs recommend, with tests that run it as real processes. Every page shows which cache reads served it.
+- One recommended production setup throughout the docs: a durable [Caches](reference/Caches.html#diskcache_oxide.Caches) registry with `timeout=1.0` for data that can be rebuilt, and state (sessions, job claims, locks, queues) in plain caches opened directly, with eviction off, under one `/var/lib/my-app` directory. The Caches guide explains why state never goes through the registry.
+- New pages: Docker and Compose (volumes, a fixed UID, ownership, Kubernetes, disk sizing, backups, cleanup after a format change) and Troubleshooting (start from the symptom).
+- Corrected: the docs no longer claim network filesystems are detected at open. SQLite can't tell, so keep caches on a local disk.
+- Also new: a keyword table and the state-copying loop in Switching from diskcache, Windows notes in Getting started, a Prometheus collector in Monitoring, a `dictConfig` that keeps the `diskcache_oxide` logger, and API reference sections for types, memoize, coordination and every error.
+
+
 # v0.2.3
 
 *2026-11-12* · [GitHub](https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.2.3)

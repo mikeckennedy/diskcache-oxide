@@ -27,6 +27,41 @@ ul.task-list li input[type="checkbox"] {
   margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
   vertical-align: middle;
 }
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
 </style>
 
 
@@ -37,7 +72,7 @@ ul.task-list li input[type="checkbox"] {
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../user-guide/roadmap.html" rel="next">
+<link href="../user-guide/troubleshooting.html" rel="next">
 <link href="../user-guide/switching-from-diskcache.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
@@ -531,6 +566,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/troubleshooting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Troubleshooting</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Vision and roadmap</span></a>
   </div>
@@ -631,6 +672,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#runtimeerror-from-a-transaction" id="toc-runtimeerror-from-a-transaction" class="nav-link" data-scroll-target="#runtimeerror-from-a-transaction"><code>RuntimeError</code> from a transaction</a></li>
   <li><a href="#unsafevalueerror-a-pickled-value-read-without-pickletrue" id="toc-unsafevalueerror-a-pickled-value-read-without-pickletrue" class="nav-link" data-scroll-target="#unsafevalueerror-a-pickled-value-read-without-pickletrue"><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>: a pickled value, read without <code>pickle=True</code></a></li>
   <li><a href="#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" id="toc-corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" class="nav-link" data-scroll-target="#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded"><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> and <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>: a value that can’t be decoded</a></li>
+  <li><a href="#reading-damaged-values" id="toc-reading-damaged-values" class="nav-link" data-scroll-target="#reading-damaged-values">Reading damaged values</a></li>
   <li><a href="#a-cache-in-another-format-a-warning-not-an-error" id="toc-a-cache-in-another-format-a-warning-not-an-error" class="nav-link" data-scroll-target="#a-cache-in-another-format-a-warning-not-an-error">A cache in another format: a warning, not an error</a></li>
   <li><a href="#formatmismatcherror-a-database-this-version-cant-read" id="toc-formatmismatcherror-a-database-this-version-cant-read" class="nav-link" data-scroll-target="#formatmismatcherror-a-database-this-version-cant-read"><a href="../reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>: a database this version can’t read</a></li>
   <li><a href="#layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory" id="toc-layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory" class="nav-link" data-scroll-target="#layoutmismatcherror-the-wrong-kind-of-cache-for-the-directory"><a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a>: the wrong kind of cache for the directory</a></li>
@@ -673,6 +715,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 
 <p>Sooner or later a traceback ends in <code>diskcache_oxide</code>, and the question is whether it’s your bug, an outage, or two processes disagreeing about what a directory is for. diskcache-oxide raises when something is wrong rather than guessing, and each exception is chosen so that <code>except</code> clauses you already have keep working: <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> is a <code>TimeoutError</code>, <a href="../reference/TransactionAborted.html#diskcache_oxide.TransactionAborted" class="gdls-link gdls-code">TransactionAborted</a> is a <code>RuntimeError</code>, <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> is a <code>TypeError</code>, <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> is a <code>ValueError</code>. This page is the field guide: every exception, what it means, and what to do. The last section covers the log lines the library writes when it has been told not to raise, because then a log line is the only evidence you’ll get.</p>
+<p>If you’re starting from a symptom rather than an exception (every lookup misses, the disk keeps growing), see <a href="../user-guide/troubleshooting.html">Troubleshooting</a>.</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
@@ -806,8 +849,80 @@ CorruptValueError: ...</code></pre>
 <li>Pass a function instead to report it yourself: <code>on_decode_error=lambda key, exc: sentry.capture(exc)</code>. From a <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry it’s called as <code>(name, key, exc)</code>.</li>
 <li>For a <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a> that keeps coming back, upgrade the older readers to the version that wrote the value, or stop the newer writer from sharing the directory. For a missing time zone, install the host’s zone data.</li>
 </ul>
-<p>The full table of what each policy does with each failure is in <a href="../user-guide/getting-started.html#values-that-cant-be-read">Values that can’t be read</a>.</p>
+<p>The full table of what each policy does with each failure is in <a href="#reading-damaged-values">Reading damaged values</a>, below.</p>
 <p><a href="../reference/CorruptKeyError.html#diskcache_oxide.CorruptKeyError" class="gdls-link gdls-code">CorruptKeyError</a>, another subclass, comes from iterating a cache (<code>for key in cache</code>, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>) when a stored key’s bytes are damaged, which takes a damaged database page or file. Iteration raises rather than skip the key. Run <code>cache.check()</code> to see what else is damaged, or delete the directory: a cache can always start cold.</p>
+</section>
+<section id="reading-damaged-values" class="level1">
+<h1>Reading damaged values</h1>
+<p>What each <code>on_decode_error</code> policy does with each kind of failure, for <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> (and, for the cases that apply to it, <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>). The policies themselves are introduced in <a href="../user-guide/getting-started.html#values-that-cant-be-read">Values that can’t be read</a>.</p>
+<p><a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> decodes the value before it deletes the row, so a value that another version or host might read survives it. This table is the usual path; the fallback described below it removes the row first.</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>What went wrong</th>
+<th><code>'raise'</code></th>
+<th><code>'miss'</code> or a function</th>
+<th><code>durable=True</code>, with its default <code>'miss'</code> or a function</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>A foreign value</td>
+<td>raises <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>, row kept</td>
+<td>returns the default and reports, row kept</td>
+<td>the same as <code>'miss'</code></td>
+</tr>
+<tr class="even">
+<td><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a></td>
+<td>raises, row kept</td>
+<td>raises, row kept</td>
+<td>raises, row kept</td>
+</tr>
+<tr class="odd">
+<td>An unreadable value (malformed bytes, a failing unpickle, a registered type’s <code>decode</code> raising about the row)</td>
+<td>deletes that version, then raises</td>
+<td>deletes that version, returns the default and reports</td>
+<td>the same as <code>'miss'</code></td>
+</tr>
+<tr class="even">
+<td>An unreadable value, and that delete fails</td>
+<td>raises the delete’s error, row kept</td>
+<td>raises the delete’s error, row kept</td>
+<td>returns the default and reports both, row kept</td>
+</tr>
+<tr class="odd">
+<td><a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, an I/O error or <code>RecursionError</code> from a pickle hook or a registered type’s <code>decode</code></td>
+<td>raises, row kept</td>
+<td>raises, row kept</td>
+<td>returns the default, row kept, reported once per stored version</td>
+</tr>
+<tr class="even">
+<td><code>RecursionError</code> from a value too deep for this thread’s stack</td>
+<td>raises, row kept</td>
+<td>raises, row kept</td>
+<td>returns the default, row kept, reported once per stored version</td>
+</tr>
+<tr class="odd">
+<td><code>MemoryError</code> or a <code>BaseException</code> from a pickle hook or a <code>decode</code></td>
+<td>raises, row kept</td>
+<td>raises, row kept</td>
+<td>raises, row kept</td>
+</tr>
+<tr class="even">
+<td>The value decoded, and the delete fails</td>
+<td>raises the delete’s error, row kept</td>
+<td>raises the delete’s error, row kept</td>
+<td>returns the default, never the value, row kept</td>
+</tr>
+</tbody>
+</table>
+<p><code>durable=True</code> with an explicit <code>on_decode_error='raise'</code> follows the <code>'raise'</code> column, except that when an unreadable value’s delete fails it raises the decode error rather than the delete’s.</p>
+<p>If that delete itself fails, for example with <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, its error is raised under every policy with the decode error as its <code>__cause__</code>, unless <code>durable=True</code>, and the row stays.</p>
+<p>A value still goes to exactly one caller, because <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> deletes only the version it decoded. A <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> that loses that delete to another writer reads again, and after 8 losses it falls back to removing the row first and decoding afterwards, so it can’t starve. If its <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> has run out by the time it loses, it raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> instead: this <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> deletes nothing, and whatever the other writer left stays. There are two limits:</p>
+<ul>
+<li>That fallback is the one place a failed decode can cost the value, because the row is already gone: a foreign value in a known mode, or any error from a pickle hook (<a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, <code>MemoryError</code>, an I/O error). It’s possible on a heavily overwritten key, since a <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> can lose while it queues for the write lock. How often it happens hasn’t been measured yet.</li>
+<li>Like <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> doesn’t wait to clean up a row whose large value file has gone missing. It returns the default, and if the write lock is busy the row can stay until a later <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> or write removes it.</li>
+</ul>
 </section>
 <section id="a-cache-in-another-format-a-warning-not-an-error" class="level1">
 <h1>A cache in another format: a warning, not an error</h1>
@@ -833,7 +948,7 @@ CorruptValueError: ...</code></pre>
 <section id="runtimeerror-the-filesystem-cant-run-sqlite-in-wal-mode" class="level1">
 <h1><code>RuntimeError</code>: the filesystem can’t run SQLite in WAL mode</h1>
 <pre class="text"><code>RuntimeError: the cache requires WAL journal mode, but SQLite is using "delete"</code></pre>
-<p>SQLite refused write-ahead logging, which diskcache-oxide requires for readers and a writer to work at the same time. That happens on network filesystems (NFS, SMB) and some FUSE mounts. The cache has to live on a local disk: <code>/var/cache/&lt;app&gt;</code>, or a Docker volume on the host’s disk. See <a href="../recipes/web-workers.html#pick-a-directory">Pick a directory</a>.</p>
+<p>SQLite refused write-ahead logging, which diskcache-oxide requires for readers and a writer to work at the same time. That happens on some FUSE mounts and other filesystems without the shared memory WAL needs. The cache has to live on a local disk: <code>/var/lib/&lt;app&gt;</code>, or a Docker volume on the host’s disk. Don’t take a successful open as proof the filesystem is fine: on NFS, SMB, EFS or Azure Files SQLite usually accepts WAL and then its locks don’t hold, which this check can’t detect. See <a href="../recipes/web-workers.html#pick-a-directory">Pick a directory</a>.</p>
 </section>
 <section id="oserror" class="level1">
 <h1><code>OSError</code></h1>
@@ -876,7 +991,17 @@ CorruptValueError: ...</code></pre>
 </section>
 <section id="log-lines-when-the-library-was-told-not-to-raise" class="level1">
 <h1>Log lines, when the library was told not to raise</h1>
-<p>These settings turn failures into log lines on the <code>diskcache_oxide</code> logger instead of exceptions. Make sure that logger reaches your logging setup, since the line is then the only signal.</p>
+<p>These settings turn failures into log lines on the <code>diskcache_oxide</code> logger instead of exceptions. Make sure that logger reaches your logging setup, since the line is then the only signal. The library adds no handler of its own, so its records go wherever the root logger’s do. One trap: <code>logging.config.dictConfig</code> defaults to <code>disable_existing_loggers: True</code>, and the <code>diskcache_oxide</code> logger exists from the moment the package is imported, so a config applied afterwards that doesn’t name it silences it, and every durable outage report with it. Name it, and keep existing loggers:</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> logging.config</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>logging.config.dictConfig({</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">'version'</span>: <span class="dv">1</span>,</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">'disable_existing_loggers'</span>: <span class="va">False</span>,  <span class="co"># the default True would silence diskcache_oxide</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">'formatters'</span>: {<span class="st">'plain'</span>: {<span class="st">'format'</span>: <span class="st">'</span><span class="sc">%(asctime)s</span><span class="st"> </span><span class="sc">%(levelname)s</span><span class="st"> </span><span class="sc">%(name)s</span><span class="st">: </span><span class="sc">%(message)s</span><span class="st">'</span>}},</span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">'handlers'</span>: {<span class="st">'console'</span>: {<span class="st">'class'</span>: <span class="st">'logging.StreamHandler'</span>, <span class="st">'formatter'</span>: <span class="st">'plain'</span>}},</span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">'loggers'</span>: {<span class="st">'diskcache_oxide'</span>: {<span class="st">'level'</span>: <span class="st">'INFO'</span>, <span class="st">'handlers'</span>: [<span class="st">'console'</span>], <span class="st">'propagate'</span>: <span class="va">False</span>}},</span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div>
+<p>With gunicorn, put the same dictionary in <code>logconfig_dict</code> in <code>gunicorn.conf.py</code> so the workers’ logging and the library’s go to one place. Records carry extra fields (the format-redirect warning has <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a>, <code>using</code>, <code>found</code> and <code>found_in</code>; a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s shard-count warning <code>stored_shards</code> and <code>requested_shards</code>, and a registry’s shard-count error <code>cache</code>, <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a>, <code>stored_shards</code> and <code>registered_shards</code>), which a structured formatter or Sentry picks up as attributes.</p>
 <ul>
 <li><strong><code>on_decode_error='miss'</code></strong> logs a warning for each stored version it couldn’t read, once per cache handle, and deletes the row if no build could read it.</li>
 <li><strong><code>durable=True</code></strong> counts every swallowed failure in one of three groups and logs each group’s first failure at once, then at most once a minute per cache handle, with counts by operation since its last line (<code>get: 1204, set: 37</code>). Busy (a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>) logs at <code>WARNING</code>, failing (a full disk, an I/O error, a damaged database) at <code>ERROR</code>, and lost invalidations (any failed <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, whose entry can now be served stale) at <code>ERROR</code>. An outage that ends within the minute shows only its first failure until the next line, so each line says more may follow. <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> logs what’s left.</li>
@@ -1314,8 +1439,8 @@ CorruptValueError: ...</code></pre>
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../user-guide/roadmap.html" class="pagination-link" aria-label="Vision and roadmap">
-        <span class="nav-page-text">Vision and roadmap</span> <i class="bi bi-arrow-right-short"></i>
+      <a href="../user-guide/troubleshooting.html" class="pagination-link" aria-label="Troubleshooting">
+        <span class="nav-page-text">Troubleshooting</span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

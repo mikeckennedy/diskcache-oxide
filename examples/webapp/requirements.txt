@@ -1,0 +1,8 @@
+# The Docker image's dependencies. The version pin moves with each release; before a version is on
+# PyPI, build the image with a local wheel instead (see the Dockerfile).
+diskcache-oxide==0.3.5
+fastapi>=0.120
+jinja2>=3.1
+python-multipart>=0.0.20
+gunicorn>=23
+uvicorn-worker>=0.4

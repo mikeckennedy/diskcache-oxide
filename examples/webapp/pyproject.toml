@@ -1,0 +1,18 @@
+# The example app's own test settings. It isn't a package to publish: its dependencies are in
+# requirements.txt (for the Docker image) and in the repository's `example` dependency group (for
+# scripts/check.sh). Run its tests from the repository root:
+#   venv/bin/pytest -c examples/webapp/pyproject.toml examples/webapp/tests
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+timeout = 120
+timeout_method = "signal"
+filterwarnings = [
+    # starlette.testclient asks for a newer HTTP client than FastAPI pins; nothing to do with the app.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
+markers = [
+    "processes: starts gunicorn and a worker as real processes (Unix only)",
+]

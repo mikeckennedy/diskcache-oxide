@@ -124,7 +124,7 @@ if (job := take(jobs)) is not None:       # another worker picks it up
 
 
     transcoding 513
-    1 requeued: ('transcode-500000000000000', {'id': 'b83ed81f362942c286e7f48c0e117c14', 'episode': 514, 'step': 'transcode'})
+    1 requeued: ('transcode-500000000000000', {'id': '88cdce279be94fb28aa61a2f5005bf18', 'episode': 514, 'step': 'transcode'})
     transcoding 514
 
 
@@ -186,11 +186,11 @@ print(jobs.evict('upload:batch-7'), 'cancelled; next:', jobs.pull(prefix='transc
 The queue calls are on [Cache](../reference/Cache.md#diskcache_oxide.Cache) only: a queue spread over shards would have no order. If your app's main cache is a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache), open the queue as a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) in a directory of its own. A [Cache](../reference/Cache.md#diskcache_oxide.Cache) opened on the [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)'s directory raises [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError).
 
 ``` python
-cache = FanoutCache('/var/cache/my-app', shards=8)
-jobs = Cache('/var/cache/my-app-jobs', eviction_policy='none')
+cache = FanoutCache('/var/lib/my-app/cache/pages', shards=8)
+jobs = Cache('/var/lib/my-app/state/jobs', timeout=3.0, eviction_policy='none')
 ```
 
-A separate directory is a good idea in any app: the queue gets its own eviction policy, and switching the main cache off can't touch it.
+A separate directory is a good idea in any app: the queue gets its own eviction policy, and switching the main cache off can't touch it. A queue is state, so open it directly, not through a [`Caches`](../user-guide/caches.md) registry: on the [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) a registry hands out when a cache can't open, [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push) stores nothing. See [State isn't cache](../user-guide/caches.md#state-isnt-cache).
 
 
 # Things to know

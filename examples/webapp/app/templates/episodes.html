@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Episodes · Backend Notes{% endblock %}
+{% block content %}
+<section class="content">
+  <div class="page-head">
+    <h1>{% if q %}Search: {{ q }}{% else %}Episodes{% endif %}</h1>
+    <span class="mono muted" style="font-size: 12px;">newest first</span>
+  </div>
+  {{ body | safe }}
+</section>
+<aside>
+  <form class="field" method="get" action="/">
+    <label class="label" for="q">Search</label>
+    <div class="search">
+      <input id="q" name="q" type="search" value="{{ q }}" placeholder="sqlite, rust, deploys…">
+      <button class="button" type="submit">Search</button>
+    </div>
+    <span class="mono muted" style="font-size: 12px;">
+      {{ search_limit }} searches a minute per client{% if searches_left is not none %} · {{ searches_left }} left{% endif %}
+    </span>
+  </form>
+  {% with heading = 'Cache reads on this page' %}{% include "_reads.html" %}{% endwith %}
+  <p class="muted" style="font-size: 13px;">The list comes from a deliberately slow loader. Reload and watch it come back from the cache instead.</p>
+</aside>
+{% endblock %}

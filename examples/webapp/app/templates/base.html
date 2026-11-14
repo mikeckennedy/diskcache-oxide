@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Backend Notes{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="/">Backend Notes</a>
+      <span class="mono muted" style="font-size: 12px;">example app · diskcache-oxide {{ version }}</span>
+      <nav aria-label="Main">
+        <a href="/" {% if section == 'episodes' %}aria-current="page"{% endif %}>Episodes</a>
+        <a href="/jobs" {% if section == 'jobs' %}aria-current="page"{% endif %}>Jobs</a>
+        <a href="/admin/caches" {% if section == 'caches' %}aria-current="page"{% endif %}>Caches</a>
+        {% if user %}
+          <form method="post" action="/signout"><button class="linkish" type="submit">Sign out {{ user.email }}</button></form>
+        {% else %}
+          <a href="/signin" {% if section == 'signin' %}aria-current="page"{% endif %}>Sign in</a>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+  <div class="strip mono" aria-label="Cache reads for this request">
+    <div class="wrap">
+      <span>{{ request.method }} {{ request.url.path }}</span>
+      <span>{{ reads | length }} cache read{{ '' if reads | length == 1 else 's' }}</span>
+      {% set hits = reads | selectattr('hit') | list | length %}
+      <span><span class="hit">{{ hits }} hit</span> · <span class="miss">{{ reads | length - hits }} miss</span></span>
+      <span>served in {{ '%.1f' % (elapsed * 1000) }} ms</span>
+      <span class="pid">worker pid {{ pid }}</span>
+    </div>
+  </div>
+  <main class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

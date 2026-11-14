@@ -566,6 +566,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/troubleshooting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Troubleshooting</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Vision and roadmap</span></a>
   </div>
@@ -660,9 +666,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <ul class="collapse">
   <li><a href="#start-with-a-fresh-cache" id="toc-start-with-a-fresh-cache" class="nav-link active" data-scroll-target="#start-with-a-fresh-cache">Start with a fresh cache</a>
   <ul class="collapse">
+  <li><a href="#state-that-isnt-cache" id="toc-state-that-isnt-cache" class="nav-link" data-scroll-target="#state-that-isnt-cache">State that isn’t cache</a></li>
   <li><a href="#upgrading-diskcache-oxide" id="toc-upgrading-diskcache-oxide" class="nav-link" data-scroll-target="#upgrading-diskcache-oxide">Upgrading diskcache-oxide</a></li>
   </ul></li>
-  <li><a href="#what-you-might-notice" id="toc-what-you-might-notice" class="nav-link" data-scroll-target="#what-you-might-notice">What you might notice</a></li>
+  <li><a href="#what-you-might-notice" id="toc-what-you-might-notice" class="nav-link" data-scroll-target="#what-you-might-notice">What you might notice</a>
+  <ul class="collapse">
+  <li><a href="#settings-passed-as-keywords" id="toc-settings-passed-as-keywords" class="nav-link" data-scroll-target="#settings-passed-as-keywords">Settings passed as keywords</a></li>
+  </ul></li>
   <li><a href="#values-no-pickle-unless-you-ask" id="toc-values-no-pickle-unless-you-ask" class="nav-link" data-scroll-target="#values-no-pickle-unless-you-ask">Values: no pickle unless you ask</a></li>
   <li><a href="#keys" id="toc-keys" class="nav-link" data-scroll-target="#keys">Keys</a></li>
   <li><a href="#transact" id="toc-transact" class="nav-link" data-scroll-target="#transact"><code>transact()</code></a></li>
@@ -711,6 +721,31 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="start-with-a-fresh-cache" class="level1">
 <h1>Start with a fresh cache</h1>
 <p>diskcache-oxide stores its data in <code>diskcache-oxide.sqlite</code>, not diskcache’s <code>cache.db</code>, and never opens or converts a diskcache database. The two can even share a directory without seeing each other’s data. Your cache starts cold after the switch, which for a cache is usually fine. The cleanest switch gives diskcache-oxide a new directory and deletes the old one once every worker has moved. If the two share a directory, diskcache’s files are <code>cache.db*</code> and its value folders, which nest two levels deep (<code>3f/a2/….val</code>); diskcache-oxide’s folders are one level deep and hold <code>.val</code> files directly, so a two-hex-digit folder that contains folders is diskcache’s.</p>
+<section id="state-that-isnt-cache" class="level2">
+<h2 class="anchored" data-anchor-id="state-that-isnt-cache">State that isn’t cache</h2>
+<p>A cold start costs a cache nothing but speed. Some of what apps keep in diskcache isn’t cache, though: sessions, queued jobs, counters, a <code>Deque</code> or <code>Index</code>. Deal with those before you switch. Drain a queue with the old code first, and flush counters. See <a href="../recipes/upgrading.html#state-that-isnt-really-cache">State that isn’t really cache</a>, which applies here too. For entries you must keep, copy them across once, with every writer stopped:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> diskcache</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>MISSING <span class="op">=</span> <span class="bu">object</span>()</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>old <span class="op">=</span> diskcache.Cache(<span class="st">'/var/cache/my-app'</span>)</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>new <span class="op">=</span> Cache(<span class="st">'/var/lib/my-app/state/sessions'</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> key <span class="kw">in</span> old.iterkeys():</span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>    value, expire_time, tag <span class="op">=</span> old.get(key, default<span class="op">=</span>MISSING, expire_time<span class="op">=</span><span class="va">True</span>, tag<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> value <span class="kw">is</span> MISSING:</span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>        <span class="cf">continue</span>  <span class="co"># expired, or deleted while copying</span></span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>    expire <span class="op">=</span> <span class="va">None</span> <span class="cf">if</span> expire_time <span class="kw">is</span> <span class="va">None</span> <span class="cf">else</span> expire_time <span class="op">-</span> time.time()</span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> expire <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span> <span class="kw">and</span> expire <span class="op">&lt;=</span> <span class="dv">0</span>:</span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a>        <span class="cf">continue</span></span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>    <span class="cf">try</span>:</span>
+<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a>        new.<span class="bu">set</span>(key, value, expire<span class="op">=</span>expire, tag<span class="op">=</span>tag)</span>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>    <span class="cf">except</span> <span class="pp">TypeError</span> <span class="im">as</span> exc:  <span class="co"># a key or value diskcache-oxide can't store without pickle</span></span>
+<span id="cb2-20"><a href="#cb2-20" aria-hidden="true" tabindex="-1"></a>        <span class="bu">print</span>(<span class="ss">f'skipped </span><span class="sc">{</span>key<span class="sc">!r}</span><span class="ss">: </span><span class="sc">{</span>exc<span class="sc">}</span><span class="ss">'</span>)</span></code></pre></div>
+<p>Keys and values go through diskcache-oxide’s rules: a key that isn’t a <a href="#keys">key type</a>, or a value of a class you haven’t <a href="../user-guide/serialization.html#your-own-types">registered</a>, raises <code>TypeError</code> and is skipped. Register your types before the loop, or open the new cache with <code>pickle=True</code> if it really holds arbitrary objects. A <code>Deque</code> or <code>Index</code> has no equivalent yet: copy its items into a <a href="../recipes/work-queues.html">work queue</a> or plain keys.</p>
+</section>
 <section id="upgrading-diskcache-oxide" class="level2">
 <h2 class="anchored" data-anchor-id="upgrading-diskcache-oxide">Upgrading diskcache-oxide</h2>
 <p>During 0.x, a release that changes the on-disk format bumps the minor version and says so first in its changelog entry. 0.2.3 was one: it added tags and the eviction policy, as format 3. Since 0.3.5, a release that meets a cache in another format doesn’t fail: it opens a new, empty cache in the subdirectory <code>diskcache-oxide-format-N</code> and logs a warning, so old and new workers each keep a working cache during a rolling deploy. Once the old workers are gone, <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a> removes the old cache. A release that keeps the format keeps your caches warm. The details, including what to do about queues and sessions first, are in <a href="../recipes/upgrading.html">Upgrading across a format change</a>.</p>
@@ -830,15 +865,71 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </tr>
 </tbody>
 </table>
+<p><code>DjangoCache</code>: keep Django’s cache on diskcache until diskcache-oxide’s Django backend ships (it’s next on the <a href="../user-guide/roadmap.html#next">roadmap</a>), and use diskcache-oxide directly for everything else.</p>
+<section id="settings-passed-as-keywords" class="level2">
+<h2 class="anchored" data-anchor-id="settings-passed-as-keywords">Settings passed as keywords</h2>
+<p>diskcache takes its settings as keyword arguments (<code>Cache(directory, statistics=1)</code>). diskcache-oxide’s constructors list theirs explicitly, so a diskcache-only keyword raises <code>TypeError: unexpected keyword argument</code>. Here’s where each went:</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>diskcache keyword</th>
+<th>diskcache-oxide</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a></td>
+<td>The same, persisted in the cache (<a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> at least 1 MiB)</td>
+</tr>
+<tr class="even">
+<td><a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="gdls-link gdls-code">eviction_policy</a></td>
+<td>The same name; <code>'least-recently-stored'</code> or <code>'none'</code></td>
+</tr>
+<tr class="odd">
+<td><code>sqlite_cache_size</code></td>
+<td>The same name, in 4 KiB pages per connection; default 256 (1 MiB), not diskcache’s 8192</td>
+</tr>
+<tr class="even">
+<td><code>statistics</code></td>
+<td>Gone: call <code>cache.stats(enable=True)</code>, which counts per process, in memory (D-049)</td>
+</tr>
+<tr class="odd">
+<td><code>tag_index</code></td>
+<td>Gone: tags are always indexed</td>
+</tr>
+<tr class="even">
+<td><code>disk_min_file_size</code></td>
+<td>Gone: values of 64 KiB or more always go to files</td>
+</tr>
+<tr class="odd">
+<td><code>disk_pickle_protocol</code></td>
+<td>Gone: no pickle by default; <code>pickle=True</code> uses the highest protocol</td>
+</tr>
+<tr class="even">
+<td><code>sqlite_journal_mode</code></td>
+<td>Gone: always WAL, checked at open</td>
+</tr>
+<tr class="odd">
+<td><code>sqlite_synchronous</code></td>
+<td>Gone: always <code>NORMAL</code>, as diskcache’s default</td>
+</tr>
+<tr class="even">
+<td><code>sqlite_mmap_size</code>, <code>sqlite_auto_vacuum</code></td>
+<td>Gone: not configurable</td>
+</tr>
+</tbody>
+</table>
+<p>New settings with no diskcache counterpart: <code>serializer</code>, <code>pickle</code>, <code>types</code>, <code>clock</code>, <code>max_connections</code>, <code>wal_size_limit</code>, <code>wal_checkpoint</code>, <code>on_decode_error</code> and <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a>. <a href="../reference/Cache.html"><code>Cache</code></a> lists them.</p>
+</section>
 </section>
 <section id="values-no-pickle-unless-you-ask" class="level1">
 <h1>Values: no pickle unless you ask</h1>
 <p>diskcache pickles every value. That’s convenient, but anyone who can write to the cache directory can make your app run arbitrary code the next time it reads, and objects that were never meant to be cached get stored without complaint.</p>
 <p>diskcache-oxide stores values as msgpack (or JSON), and tags the types those formats would otherwise change, so tuples, sets, frozensets, datetimes, dates, Decimals, big ints, NaN, nested bytes and non-<code>str</code> dict keys all come back exactly as stored. Something that can’t be represented raises <code>TypeError</code> when you store it, not later when you read it:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'job'</span>, MyJob())</span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co"># TypeError: values of type MyJob can't be stored without pickle (only exact built-in types round-trip)</span></span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="st">'job'</span>, MyJob())</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="co"># TypeError: values of type MyJob can't be stored without pickle (only exact built-in types round-trip)</span></span></code></pre></div>
 <p>If you really do need to cache arbitrary objects, opt in for that cache:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>objects <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-objects'</span>, pickle<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>objects <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-objects'</span>, pickle<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
 <p>A cache opened without <code>pickle=True</code> never unpickles. If it finds a pickled value written by a <code>pickle=True</code> peer, it raises <a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a> and leaves the value alone. More in <a href="../user-guide/serialization.html">Serialization</a>.</p>
 </section>
 <section id="keys" class="level1">
@@ -885,12 +976,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="tests-that-patch-time.time" class="level1">
 <h1>Tests that patch <code>time.time</code></h1>
 <p>diskcache reads <code>time.time()</code> in Python, so tests could advance its clock with <code>unittest.mock.patch</code> or a freezegun-style fixture. diskcache-oxide reads the clock natively, which keeps a Python call off every operation. To make it follow a patched clock, pass <code>clock=</code>:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tmp_path, clock<span class="op">=</span><span class="kw">lambda</span>: time.time())</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> patch(<span class="st">'time.time'</span>, return_value<span class="op">=</span><span class="fl">1000.0</span>):</span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'k'</span>, <span class="st">'v'</span>, expire<span class="op">=</span><span class="dv">10</span>)</span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> patch(<span class="st">'time.time'</span>, return_value<span class="op">=</span><span class="fl">1015.0</span>):</span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">assert</span> cache.get(<span class="st">'k'</span>) <span class="kw">is</span> <span class="va">None</span></span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tmp_path, clock<span class="op">=</span><span class="kw">lambda</span>: time.time())</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> patch(<span class="st">'time.time'</span>, return_value<span class="op">=</span><span class="fl">1000.0</span>):</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'k'</span>, <span class="st">'v'</span>, expire<span class="op">=</span><span class="dv">10</span>)</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> patch(<span class="st">'time.time'</span>, return_value<span class="op">=</span><span class="fl">1015.0</span>):</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">assert</span> cache.get(<span class="st">'k'</span>) <span class="kw">is</span> <span class="va">None</span></span></code></pre></div>
 </section>
 <section id="things-that-just-get-better" class="level1">
 <h1>Things that just get better</h1>

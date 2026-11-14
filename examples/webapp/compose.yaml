@@ -1,0 +1,26 @@
+# One named volume, shared by the web app and the worker: the caches and the state live there.
+services:
+  web:
+    build: .
+    command: gunicorn -c gunicorn.conf.py
+    # Published on the host's loopback only. /admin/caches answers only on loopback, and through
+    # Docker's port mapping requests don't come from loopback, so this opens it to this machine alone.
+    ports: ["127.0.0.1:${EXAMPLE_PORT:-8000}:8000"]
+    environment:
+      # Demo only: lets this machine reach /admin/caches through the port mapping above. Leave it out
+      # in production and use `docker compose exec web curl -s localhost:8000/admin/caches` instead.
+      EXAMPLE_ADMIN_ANYWHERE: "1"
+    restart: unless-stopped
+    volumes: [appdata:/var/lib/my-app]
+    healthcheck:
+      # Readiness, not liveness: a cache outage is what durable=True absorbs.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/cache')"]
+      interval: 10s
+  worker:
+    build: .
+    command: python -m app.worker
+    volumes: [appdata:/var/lib/my-app]
+    restart: unless-stopped
+
+volumes:
+  appdata:

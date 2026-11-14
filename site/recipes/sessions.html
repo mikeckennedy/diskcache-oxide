@@ -572,6 +572,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Docker and Compose</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Invalidating groups of keys</span></a>
   </div>
@@ -682,7 +688,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>Every request arrives with a cookie and a question: who is this? A session is the one piece of per-user state almost every web app keeps server side to answer it: who’s logged in, since when, with which roles. Keeping it in a cache directory means every worker sees the same session the instant it’s written, a login on one worker is a login on all of them, and there’s no database row per request and no Redis to run. The cookie holds only a random id.</p>
 <section id="start-load-end" class="level1">
 <h1>Start, load, end</h1>
-<div id="469c4f03" class="cell" data-execution_count="1">
+<div id="d3083023" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> secrets</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -735,7 +741,7 @@ after 71 min: False</code></pre>
 <section id="log-out-everywhere" class="level1">
 <h1>Log out everywhere</h1>
 <p>A password change or a stolen laptop should end every session a user has. The second key written at login, <code>user-sessions:{user_id}:{sid}</code>, is an index for exactly this: a prefix scan finds them all.</p>
-<div id="9ba75af4" class="cell" data-execution_count="2">
+<div id="ab6a33b9" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>other <span class="op">=</span> start_session(<span class="dv">42</span>, [<span class="st">'member'</span>])</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>sid <span class="op">=</span> start_session(<span class="dv">42</span>, [<span class="st">'member'</span>])</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -759,8 +765,8 @@ after 71 min: False</code></pre>
 <p>A lost session is a forced logout, so sessions get a cache of their own, configured unlike the one for page fragments:</p>
 <ul>
 <li><strong>Nothing evicted for size.</strong> Eviction removes the least recently stored entries, and a long-lived session is exactly that. Open the session cache with <code>eviction_policy='none'</code>, so a session goes only when it expires or ends. Sessions are small (a few hundred bytes each), so 1 GiB holds millions; watch <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> if you store more per session, since under <code>'none'</code> the cache can grow past <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>.</li>
-<li><strong>Never a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>.</strong> A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> stores nothing, so nobody could log in. If the app’s other caches can be switched off through <a href="../user-guide/caches.html"><code>Caches</code></a>, register the session cache by name and leave it enabled.</li>
-<li><strong>Not <code>durable=True</code>.</strong> A dropped write there means a login that silently didn’t happen. Let <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> raise and show the user an error.</li>
+<li><strong>Never a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, so not in a registry.</strong> A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> stores nothing and its <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> returns <code>True</code>, so a login would “succeed” and the next request would be logged out. A <a href="../user-guide/caches.html"><code>Caches</code></a> registry hands one out whenever a cache can’t open or is disabled, so open the session cache with <code>Cache(...)</code> directly, as in the <a href="../recipes/web-workers.html#the-recommended-setup">recommended setup</a>: <code>Cache('/var/lib/my-app/state/sessions', timeout=3.0, eviction_policy='none')</code>.</li>
+<li><strong>Not <code>durable=True</code>.</strong> A dropped write there means a login that silently didn’t happen. Let <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> raise and show the user an error (a 503 page, say).</li>
 <li><strong>Run <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> from a scheduled job</strong>, <a href="../recipes/run-once.html">claimed by one worker</a>, so ended sessions free their space. Expired sessions are already invisible to <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get()</a>; this is housekeeping.</li>
 <li><strong>One machine.</strong> Every worker on the host shares the sessions. Behind a load balancer across several machines, use sticky sessions or a session store every machine can reach.</li>
 </ul>

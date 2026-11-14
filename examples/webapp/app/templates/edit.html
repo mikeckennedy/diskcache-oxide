@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Edit #{{ episode.number }} · Backend Notes{% endblock %}
+{% block content %}
+<form class="content" method="post" action="/episodes/{{ episode.number }}/edit" style="display: flex; flex-direction: column; gap: 24px;">
+  <a class="mono muted" href="/episodes/{{ episode.number }}" style="font-size: 12px;">← #{{ episode.number }}</a>
+  <h1>Edit episode #{{ episode.number }}</h1>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="field">
+    <label class="label" for="title">Title</label>
+    <input id="title" name="title" value="{{ episode.title }}" required>
+  </div>
+  <div class="field">
+    <label class="label" for="description">Description</label>
+    <textarea id="description" name="description" rows="6" required>{{ episode.description }}</textarea>
+  </div>
+  <div style="display: flex; flex-wrap: wrap; gap: 24px;">
+    <div class="field" style="flex: 1 1 220px;">
+      <label class="label" for="tags">Tags</label>
+      <input id="tags" name="tags" value="{{ episode.tags | join(', ') }}">
+    </div>
+    <div class="field" style="flex: 1 1 160px;">
+      <label class="label" for="minutes">Length (min)</label>
+      <input id="minutes" name="minutes" class="mono" value="{{ episode.minutes }}" inputmode="numeric" pattern="[0-9]+" required>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="button" type="submit">Save and invalidate</button>
+    <a class="button quiet" href="/episodes/{{ episode.number }}">Cancel</a>
+  </div>
+</form>
+<aside>
+  <div>
+    <div class="label panel-title">What saving does</div>
+    <ol style="margin: 12px 0 0; padding-left: 20px; font-size: 14px; line-height: 1.6;">
+      <li style="margin-bottom: 10px;">Writes the episode to the slow store.</li>
+      <li style="margin-bottom: 10px;"><code>pages.evict('episode:{{ episode.number }}')</code> removes every fragment tagged with this episode, and the loader's memoized results go too.</li>
+      <li>The next view rebuilds them. Every fragment also expires within 10 minutes, so a failed eviction can't leave it stale for long.</li>
+    </ol>
+  </div>
+  <p class="mono muted" style="font-size: 12px;">Signed in as {{ user.email }} · session in state/sessions · CSRF checked</p>
+</aside>
+{% endblock %}

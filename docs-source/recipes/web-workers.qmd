@@ -1,20 +1,70 @@
 ---
 title: "Sharing a cache across web workers"
-description: "Directory, startup, request-path timeouts and shutdown for gunicorn, uvicorn, FastAPI, Flask, Django and Celery."
+description: "The recommended production setup: a durable registry for rebuildable data, plain caches for state, one directory layout, and startup and shutdown for FastAPI, Flask, Django, Celery and pre-forking servers."
 ---
 
-Deployment is where a cache meets the real world: several worker processes that don't know each other's names, a server that forks and recycles them while they're busy, a cron job that opens the same directory on the side. diskcache-oxide is built for exactly this, so there isn't much to it. This page covers the few choices that matter and leaves out the ones that don't.
+Deployment is where a cache meets the real world: several worker processes that don't know each other's names, a server that forks and recycles them while they're busy, a cron job that opens the same directory on the side. diskcache-oxide is built for exactly this, so there isn't much to it. This page gives one setup that works, then covers the few choices that matter. The [example app](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp) runs this setup end to end.
+
+## The recommended setup
+
+Most apps keep two kinds of things in a cache directory, and they need opposite settings:
+
+- **Cache:** rendered pages, API responses, anything you can rebuild from somewhere else. If the cache has an outage, the right answer is a miss and a slower request, never an error page. These go in a [`Caches`](../user-guide/caches.qmd) registry with `durable=True`, so a lock that stays busy or a full disk turns into a miss, logged, instead of an exception.
+- **State:** sessions, job claims, locks and work queues. Here a write that silently didn't happen is a bug: a login that doesn't stick, a job that runs twice, a queued job that vanishes. These are plain `Cache`s, opened directly (never through the registry, which hands out a `NullCache` when a cache can't open), not durable, with eviction off, so a failure raises and the app can say so. [State isn't cache](../user-guide/caches.qmd#state-isnt-cache) explains why each of these breaks on a `NullCache` or a durable handle.
+
+Both live under one directory the app owns, with the caches and the state side by side:
+
+```text
+/var/lib/my-app/
+├── cache/               # the registry's base directory
+│   ├── pages/
+│   └── api/
+└── state/
+    ├── sessions/
+    ├── coordination/    # job claims and locks
+    └── jobs/            # the work queue
+```
+
+```python
+from pathlib import Path
+
+from diskcache_oxide import Cache, Caches
+
+ROOT = Path('/var/lib/my-app')
+
+# Rebuildable data: durable, so an outage is a miss, never an error page.
+caches = Caches(ROOT / 'cache', durable=True, timeout=1.0)
+caches.register('pages', size_limit=1 * 2**30)
+caches.register('api', size_limit=256 * 2**20)
+
+# State: plain caches, opened directly, not durable, never evicted for size.
+sessions = Cache(ROOT / 'state' / 'sessions', timeout=3.0, eviction_policy='none')
+coordination = Cache(ROOT / 'state' / 'coordination', timeout=3.0, eviction_policy='none')
+jobs = Cache(ROOT / 'state' / 'jobs', timeout=3.0, eviction_policy='none')
+
+
+def close_everything() -> None:
+    caches.close_all()
+    for state in (sessions, coordination, jobs):
+        state.close()
+```
+
+A few things about that layout:
+
+- **A directory is a cache or a parent of caches, never both.** `cache/` and `state/` hold caches; they aren't caches themselves. Don't open a `Cache` on `/var/lib/my-app` or on `cache/`: maintenance treats two-character subdirectories of a cache as its own value folders, so a cache nested inside another one can lose its files.
+- **Plain caches, no sharding.** One `Cache` per purpose keeps memory low, one connection pool each. Reach for a [`FanoutCache`](../user-guide/fanoutcache.qmd) only for a cache that many processes write to at once.
+- **Timeouts are short and stated.** `timeout=1.0` on the registry keeps a busy lock from holding a request for the default 60 seconds; durable doesn't bound time by itself. State caches get a few seconds, and a `Timeout` from one is an error the app handles: a 503 page in a request, a retry in a worker.
+- **`/var/lib`, not `/var/cache`,** because sessions and queues are state: a system may wipe `/var/cache` (`systemctl clean --what=cache` does), and that's fine for caches and not for logins.
 
 ## Pick a directory
 
-- **Somewhere persistent and private:** `/var/cache/<app>`, owned by the user the app runs as. diskcache-oxide creates the directory `0700` if it doesn't exist; if you create it yourself, keep it that way. Anyone who can write to a cache directory can change what your app reads from it.
-- **On a local disk.** The cache relies on SQLite's write-ahead log and shared memory, which don't work on network filesystems like NFS. diskcache-oxide checks this when it opens the cache and fails loudly instead of risking corruption.
-- **In Docker,** mount a volume for it if the cache should survive container restarts, and give every worker container on a host the same volume if they should share it.
-- **One directory per purpose.** Separate directories for page fragments, API responses, and coordination keys (job claims, rate limits) keep their size limits and eviction independent.
+- **Persistent and private.** The directory belongs to the user the app runs as. diskcache-oxide creates each cache directory `0700` if it doesn't exist; if you create them yourself, keep them that way. Anyone who can write to a cache directory can change what your app reads from it. With systemd, `StateDirectory=my-app` creates `/var/lib/my-app` owned by the service's user.
+- **On a local disk.** The cache relies on SQLite's write-ahead log and its shared-memory file, which need a local filesystem. diskcache-oxide refuses to open only when SQLite itself declines the write-ahead log (some FUSE mounts do). It can't tell that a directory is on NFS, SMB, EFS or Azure Files, where the log is usually accepted and then corrupts, so never put a cache on a network share or a Kubernetes ReadWriteMany volume.
+- **In Docker,** mount one named volume at `/var/lib/my-app` and give it to every container that should share the caches. [Docker and Compose](docker.qmd) has the Compose file, the Dockerfile, and the ownership details that otherwise end in `PermissionError`.
 
-## Open it once per process
+## Start and stop with the app
 
-Open the cache once, at startup, and share it across requests and threads. A `Cache` is safe to use from any number of threads.
+Open everything once per process, at startup, and share it across requests and threads. A `Cache` is safe to use from any number of threads. The setup above lives in a module of its own (say `caching.py`) that every entry point imports, together with the [types](custom-types.qmd) you store.
 
 ### FastAPI
 
@@ -23,18 +73,18 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from diskcache_oxide import Cache
+from myapp.caching import close_everything
 
-cache = Cache('/var/cache/my-app', timeout=1.0)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
-    cache.checkpoint()
-    cache.close()
+    close_everything()
 
 app = FastAPI(lifespan=lifespan)
 ```
+
+In async code, reads can run on the event loop and writes go through `asyncio.to_thread`: see [asyncio](asyncio.qmd).
 
 ### Flask
 
@@ -43,83 +93,65 @@ import atexit
 
 from flask import Flask
 
-from diskcache_oxide import Cache
+from myapp.caching import close_everything
 
 app = Flask(__name__)
-cache = Cache('/var/cache/my-app', timeout=1.0)
-
-@atexit.register
-def close_cache() -> None:
-    cache.checkpoint()
-    cache.close()
+atexit.register(close_everything)
 ```
 
 ### Django
 
-diskcache-oxide doesn't ship a Django cache backend yet. One is next on the [roadmap](../user-guide/roadmap.qmd#next); until then, `django.core.cache` keeps whatever it has. Open the shared cache in a module of its own and import it where it's needed; the settings module says where it lives.
-
-```python
-# myapp/caching.py
-from django.conf import settings
-
-from diskcache_oxide import Cache
-
-cache = Cache(settings.SHARED_CACHE_DIR, timeout=1.0)
-```
-
-Register the [types](custom-types.qmd) you store in the same module, so every process that imports the cache gets them too.
+diskcache-oxide doesn't ship a Django cache backend yet. One is next on the [roadmap](../user-guide/roadmap.qmd#next); until then, `django.core.cache` keeps whatever it has. Put the setup in a module of its own (`myapp/caching.py`), take `ROOT` from `settings`, and import it where it's needed.
 
 ### Celery and other background workers
 
-Celery's prefork pool, RQ and `multiprocessing` workers are pre-forking servers like gunicorn: open the cache at import time, and each child gets its own connections on first use. Register your types the same way the web workers do, or a worker that reads a web worker's value gets `ForeignValueError`. Closing at shutdown is optional; Celery's `worker_process_shutdown` signal is the place for it.
+Celery's prefork pool, RQ and `multiprocessing` with the fork start method are pre-forking servers like gunicorn: import the setup at import time, and each child gets its own connections on first use. Register your types the same way the web workers do, or a worker that reads a web worker's value gets `ForeignValueError` (or, on a durable cache, a miss and a logged warning, so every read of it goes to the source). Closing at shutdown is optional; Celery's `worker_process_shutdown` signal is the place for it.
 
 ```python
 from celery.signals import worker_process_shutdown
 
+from myapp.caching import close_everything
+
+
 @worker_process_shutdown.connect
-def close_cache(**kwargs) -> None:
-    cache.close()
+def close_caches(**kwargs) -> None:
+    close_everything()
 ```
 
-### Pre-forking servers
+### Pre-forking and spawning servers
 
-With gunicorn (including `--preload`), uvicorn `--workers`, or Celery's prefork pool, it doesn't matter whether you open the cache before or after the fork. diskcache-oxide's fork barrier makes sure no worker starts life holding half a database transaction, and each child opens its own fresh connections on first use. See [Concurrency and forks](../user-guide/concurrency-and-forks.qmd).
+With gunicorn (including `--preload`) or Celery's prefork pool, it doesn't matter whether you open the cache before or after the fork. diskcache-oxide's fork barrier makes sure no worker starts life holding half a database transaction, and each child opens its own fresh connections on first use. See [Concurrency and forks](../user-guide/concurrency-and-forks.qmd).
+
+`uvicorn --workers` doesn't fork: it starts each worker as a fresh process (the spawn start method, on every platform), so each worker imports your app and opens its caches itself. On Linux, `multiprocessing` defaults to the forkserver start method since Python 3.14, which behaves the same way. Either is fine; there's nothing to configure.
 
 ## Keep the request path fast
 
-Reads never wait for writers, so a `get` stays fast however busy the cache is. Writes are different: only one process can commit to a cache file at a time, and a write waits up to the cache's `timeout` for its turn (60 seconds by default, matching diskcache). In a web request you'd rather skip a cache write than make the user wait, so give the cache a short timeout and treat `Timeout` as "don't cache this time":
+Reads never wait for writers, so a `get` stays fast however busy the cache is. Writes are different: only one process can commit to a cache file at a time, and a write waits up to the cache's `timeout` for its turn. On the durable registry a write that runs out of time is dropped and counted, which is what you want for a page fragment: the next request writes it. On a plain cache, treat `Timeout` as "skip this time" where that's safe:
 
 ```python
 from diskcache_oxide import Timeout
 
-def cache_quietly(key: str, value: object, expire: float) -> None:
+
+def cache_quietly(cache, key: str, value: object, expire: float) -> None:
     try:
         cache.set(key, value, expire=expire)
     except Timeout:
         log.warning('cache busy; skipped storing %s', key)
 ```
 
-Under normal load a write takes about 25 µs and never comes near the timeout. The timeout matters during bursts, such as a big `clear()` from a maintenance script, and even then `clear()` steps aside between chunks to let waiting writes in.
+Under normal load a write takes about 20 µs and never comes near the timeout. The timeout matters during bursts, such as a big `clear()` from a maintenance script, and even then `clear()` steps aside between chunks to let waiting writes in.
 
 ## Maintenance
 
-Run maintenance from one place, such as a scheduled job (see [Running a job once across workers](run-once.qmd)), not from every worker:
+Run maintenance from one place, such as a scheduled job [one worker claims](run-once.qmd), not from every worker:
 
-- `cache.expire()` removes expired entries and frees their space. A cache that's mostly read can accumulate expired entries, because the cleanup each `set()` does is small. Once an hour is plenty for most apps.
-- `cache.checkpoint()` empties the write-ahead log after a write burst. It returns `False` instead of waiting long if workers are busy, so it's safe to call any time.
+- `caches.expire_all()` and `sessions.expire()` remove expired entries and free their space. A cache that's mostly read can accumulate expired entries, because the cleanup each `set()` does is small. Once an hour is plenty for most apps.
+- `checkpoint()` empties a cache's write-ahead log after a write burst. It returns `False` instead of waiting long if workers are busy, so it's safe to call any time.
 
 ## At shutdown
 
-Calling `checkpoint()` and `close()` at shutdown, as in the examples above, is optional but tidy. `checkpoint()` copies the write-ahead log into the database and truncates it, so a large log left by a burst of writes doesn't sit on disk. `close()` does the same automatically when the log is large, waiting at most a second. See [Storage and WAL](../user-guide/storage-and-wal.qmd).
+`close_all()` and `close()` at shutdown, as above, are optional but tidy. Closing copies a large write-ahead log back into the database and truncates it, waiting at most a second. Call `checkpoint()` first after a burst of writes for a more thorough job. See [Storage and WAL](../user-guide/storage-and-wal.qmd).
 
 ## Switching caching off
 
-To run with caching off (local development, or chasing a stale-data bug in production), build the cache in one factory function and return a `NullCache` when it's disabled. Nothing else in the app changes. Pass `invalidate=` so deletes still reach the real cache while it's off. See [NullCache](../user-guide/null-cache.qmd).
-
-```python
-from diskcache_oxide import Cache, CacheLike, NullCache
-
-def make_cache(settings) -> CacheLike:
-    real = Cache(settings.cache_dir, timeout=1.0)
-    return real if settings.cache_enabled else NullCache(invalidate=real)
-```
+To run with caching off (local development, or chasing a stale-data bug in production), switch the registry's caches off by name: `caches.disable('pages')`. Lookups then return a `NullCache` that still forwards deletes, so nothing stale is waiting when you switch it back on. Don't switch off state: sessions, claims and queues stop working on a `NullCache`. See [Caches](../user-guide/caches.qmd#switching-caches-off) and [NullCache](../user-guide/null-cache.qmd).

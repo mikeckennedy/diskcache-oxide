@@ -42,7 +42,7 @@ Seconds before a cache that failed to open is tried again (default 10). Lookups 
 ``` python
 from diskcache_oxide import Caches
 
-caches = Caches('/var/cache/my-app', timeout=1.0, on_decode_error='miss')
+caches = Caches('/var/lib/my-app/cache', durable=True, timeout=1.0)
 caches.register('general')
 caches.register('pages', size_limit=2 * 2**30)
 caches.register('rate_limits', shards=8)

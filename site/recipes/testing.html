@@ -572,6 +572,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Docker and Compose</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Invalidating groups of keys</span></a>
   </div>
@@ -703,11 +709,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    null <span class="op">=</span> NullCache()</span>
 <span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>    monkeypatch.<span class="bu">setattr</span>(<span class="st">'my_app.services.cache'</span>, null)</span>
 <span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> null</span></code></pre></div>
+<p>One thing a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> can’t catch: it never encodes values, so a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> of a value a real cache refuses (a dataclass you haven’t registered, an ORM row, a <code>dict</code> subclass) succeeds on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and raises <code>TypeError</code> in production. Keep at least one test per type you store that runs against a real <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> on <code>tmp_path</code>, using the <code>cache</code> fixture above. It’s also how you find out a type needs <a href="../recipes/custom-types.html"><code>register_type</code></a>.</p>
 </section>
 <section id="testing-expiry-without-sleeping" class="level1">
 <h1>Testing expiry without sleeping</h1>
 <p>diskcache-oxide reads the clock natively in Rust, so patching <code>time.time</code> doesn’t affect it on its own. Pass <code>clock=</code> instead. A small fake clock lets a test jump forward in time:</p>
-<div id="cf90b24e" class="cell" data-execution_count="1">
+<div id="013839a5" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>

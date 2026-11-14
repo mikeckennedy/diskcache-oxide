@@ -1,0 +1,14 @@
+{% set notes = {'pages': 'rendered fragment, tagged', 'data': 'slow loader, memoized', 'rate_limits': 'per-client counter', 'sessions': 'signed in (state)'} %}
+<div>
+  <div class="label panel-title">{{ heading }}</div>
+  {% for r in reads %}
+    <div class="read">
+      <span class="mono key">{{ r.cache }} · {{ r.key }}</span>
+      <span class="mono {{ 'hit' if r.hit else 'miss' }}" style="font-weight: 500;">{{ 'HIT' if r.hit else 'MISS' }}</span>
+      <span class="note">{{ notes.get(r.cache, '') }}</span>
+      <span class="mono note">{{ r.time }}</span>
+    </div>
+  {% else %}
+    <p class="muted" style="font-size: 13px; margin-top: 10px;">No cache reads on this page.</p>
+  {% endfor %}
+</div>

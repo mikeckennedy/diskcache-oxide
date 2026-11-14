@@ -545,6 +545,16 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li>A value file that hits a full quota (<code>EDQUOT</code>) now raises <code>OSError</code> with <code>errno.ENOSPC</code>, as a full disk does, since a full disk is recognized by the error’s kind rather than one Unix error number.</li>
 </ul>
 </section>
+<section id="documentation" class="level3">
+<h3 class="anchored" data-anchor-id="documentation">Documentation</h3>
+<ul>
+<li>An example app in <code>examples/webapp</code>: a FastAPI app with gunicorn, a background worker and Docker Compose, built the way the docs recommend, with tests that run it as real processes. Every page shows which cache reads served it.</li>
+<li>One recommended production setup throughout the docs: a durable <a href="reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry with <code>timeout=1.0</code> for data that can be rebuilt, and state (sessions, job claims, locks, queues) in plain caches opened directly, with eviction off, under one <code>/var/lib/my-app</code> directory. The Caches guide explains why state never goes through the registry.</li>
+<li>New pages: Docker and Compose (volumes, a fixed UID, ownership, Kubernetes, disk sizing, backups, cleanup after a format change) and Troubleshooting (start from the symptom).</li>
+<li>Corrected: the docs no longer claim network filesystems are detected at open. SQLite can’t tell, so keep caches on a local disk.</li>
+<li>Also new: a keyword table and the state-copying loop in Switching from diskcache, Windows notes in Getting started, a Prometheus collector in Monitoring, a <code>dictConfig</code> that keeps the <code>diskcache_oxide</code> logger, and API reference sections for types, memoize, coordination and every error.</li>
+</ul>
+</section>
 </section>
 <section id="v0.2.3" class="level1 changelog-version">
 <h1 class="changelog-version">v0.2.3</h1>

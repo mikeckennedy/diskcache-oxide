@@ -566,6 +566,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/troubleshooting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Troubleshooting</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Vision and roadmap</span></a>
   </div>
@@ -720,7 +726,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Processes</h1>
 <p>Any number of processes can open the same directory, each with its own <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. That’s the normal deployment: every gunicorn or uvicorn worker opens the cache at startup. A <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> or <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> also pickles, so you can pass one to a <code>multiprocessing</code> or <code>ProcessPoolExecutor</code> worker: the copy reopens the same directory with the options the handle was opened with.</p>
 <ul>
-<li><strong>WAL mode, always.</strong> SQLite runs in write-ahead-log mode, so readers never block writers and writers never block readers. One writer at a time commits to each database file. diskcache-oxide checks that WAL mode is really on when it opens a cache, and fails loudly if it isn’t (on some network filesystems, for example).</li>
+<li><strong>WAL mode, always.</strong> SQLite runs in write-ahead-log mode, so readers never block writers and writers never block readers. One writer at a time commits to each database file. diskcache-oxide checks that WAL mode is really on when it opens a cache, and fails loudly if SQLite declined it (some FUSE mounts do). That check can’t detect a network filesystem: on NFS, SMB, EFS or Azure Files SQLite usually accepts WAL and its locks then don’t hold, so keep caches on a local disk.</li>
 <li><strong>Atomic across processes.</strong> <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a>, <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a>, <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr()</a> and every other write is a single transaction. Two processes can’t both win an <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a>, and two <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> calls never lose an update. <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> is a read and then a transaction that deletes exactly the version it read, so two processes can’t both get the same value.</li>
 <li><strong>Maintenance that doesn’t destroy work.</strong> Every write gets a new sequence number. <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> and <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> note the latest number when they start and only touch older rows, so writes from other processes that land while they run are kept.</li>
 <li><strong>Large values are always whole.</strong> A process reading a large value while another overwrites it gets the old value or the new one, never a miss. (diskcache’s standalone reproduction of that race sees about 40 misses in every 325,000 reads.)</li>

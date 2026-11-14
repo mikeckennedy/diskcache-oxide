@@ -5,8 +5,10 @@ A cache directory is shared by every process on the machine that opens it, and [
 ``` python
 from diskcache_oxide import Cache, Lock, RLock, BoundedSemaphore, Averager, throttle, barrier
 
-locks = Cache('/var/cache/my-app/locks', eviction_policy='none')
+locks = Cache('/var/lib/my-app/state/coordination', timeout=3.0, eviction_policy='none')
 ```
+
+Coordination is state, not cache: open it as a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) of its own, not durable and not through a registry, with eviction off so a live lock is never evicted for size. Keep it out of your caches' directories: a directory is a cache or a parent of caches, never both, because maintenance treats a cache's two-character subdirectories as its own value folders. [State isn't cache](caches.md#state-isnt-cache) explains each choice, and the [recommended setup](../recipes/web-workers.md#the-recommended-setup) shows where it fits.
 
 Two common jobs don't need a lock at all. When only one worker should run a job and the others should skip it, an [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) claim is simpler: see [Running a job once across workers](../recipes/run-once.md). To hand work items to whichever worker is free, use a queue: see [Work queues](../recipes/work-queues.md).
 

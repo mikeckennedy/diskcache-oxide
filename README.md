@@ -26,9 +26,11 @@ if popular is None:
 if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
     print('this worker refreshes the feeds')
 
+
 @cache.memoize(expire=600)
 def episode(number: int) -> dict:
     return {'number': number}  # stand-in for a database read
+
 
 cache.close()  # at shutdown
 ```
@@ -38,26 +40,30 @@ cache.close()  # at shutdown
 Most apps end up with more than one cache: rendered pages, API responses, sessions, rate limits, each with its own size and settings. `Caches` is the registry for them. You register each cache once at startup, and a lookup by name opens it on first use and returns the same object every time after that. If a cache can't open (a full disk, a permissions problem), the lookup returns a `NullCache` instead of raising, so requests carry on without that cache while the error is logged, and the registry tries again every 10 seconds until the real one is back. One call switches a cache off for a load test, and `stats()` gives an admin page every cache's entries, size and errors.
 
 ```python
-from diskcache_oxide import Caches
+from diskcache_oxide import Cache, Caches
 
-caches = Caches('/var/cache/my-app', timeout=1.0)  # settings here apply to every cache
+# Rebuildable data: durable, so an outage is a miss, never an error page.
+caches = Caches('/var/lib/my-app/cache', durable=True, timeout=1.0)
 caches.register('pages', size_limit=2 * 2**30)
-caches.register('sessions', eviction_policy='none')  # never evicted for size
-caches.register('rate_limits', shards=8)  # a FanoutCache, for many writers
+caches.register('api', size_limit=256 * 2**20)
 
 html = caches['pages'].get('/about')  # opens on first use, the same object after that
-caches['sessions'].set('session:9f2c', {'user': 42}, expire=3600)
-caches.fanout('rate_limits').incr('ip:203.0.113.7')
-
 caches.disable('pages')  # a load test without the page cache: no call site changes
 
 for name, stat in caches.stats().items():  # for an admin page
     print(name, stat.count, stat.volume, stat.error)
 
+# State (sessions, claims, queues) is a plain Cache, opened directly: a lost write must raise.
+sessions = Cache('/var/lib/my-app/state/sessions', timeout=3.0, eviction_policy='none')
+sessions.set('session:9f2c', {'user': 42}, expire=3600)
+
 caches.close_all()  # at shutdown
+sessions.close()
 ```
 
 Talk Python runs its eight caches this way. [Named caches](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html) covers the registry in full.
+
+The [example app](examples/webapp) is this setup in a whole FastAPI app, with gunicorn, a background worker and Docker Compose: a durable registry for pages, slow lookups and rate limits, and plain caches for sessions, job claims and a work queue. Every page shows which cache reads served it.
 
 ## Status
 
@@ -133,9 +139,10 @@ The docs publish an [agent skill](https://mkennedy.codes/docs/diskcache-oxide/sk
 - [User guide](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html): a [primer for anyone new to caching](https://mkennedy.codes/docs/diskcache-oxide/user-guide/new-to-caching.html), getting started, serialization, `FanoutCache`, transactions, coordination (locks, semaphores, throttles), concurrency and forks, and storage and the WAL.
 - [Named caches (`Caches`)](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html) and [`NullCache`](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html): several caches in one app, and turning caching off.
 - [Upgrading across a format change](https://mkennedy.codes/docs/diskcache-oxide/recipes/upgrading.html) and [Monitoring](https://mkennedy.codes/docs/diskcache-oxide/recipes/monitoring.html).
-- [Recipes](https://mkennedy.codes/docs/diskcache-oxide/recipes/): caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidating groups (by prefix or by tag), your own types, run-once jobs, rate limiting, counters, work queues, single-use keys, sessions, web workers, asyncio and testing.
+- [Recipes](https://mkennedy.codes/docs/diskcache-oxide/recipes/): caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidating groups (by prefix or by tag), your own types, run-once jobs, rate limiting, counters, work queues, single-use keys, sessions, web workers, Docker and Compose, asyncio, monitoring and testing.
+- [Example app](examples/webapp): a FastAPI app built the way the docs recommend, with Docker Compose and tests.
 - [API reference](https://mkennedy.codes/docs/diskcache-oxide/reference/): every class, method and exception.
-- [Errors and what to do about them](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html).
+- [Errors and what to do about them](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html) and [Troubleshooting](https://mkennedy.codes/docs/diskcache-oxide/user-guide/troubleshooting.html).
 - Questions and bug reports: [GitHub issues](https://github.com/mikeckennedy/diskcache-oxide/issues).
 
 To work on diskcache-oxide itself, see the [repository](https://github.com/mikeckennedy/diskcache-oxide), whose [CLAUDE.md](https://github.com/mikeckennedy/diskcache-oxide/blob/main/CLAUDE.md) has the layout, the build and test commands, and the project's conventions.

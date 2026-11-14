@@ -1,0 +1,16 @@
+<div class="table episodes">
+  <div class="row head label"><span>No.</span><span>Title</span><span>Date</span><span class="num">Length</span></div>
+  {% for e in episodes %}
+    <a class="row" href="/episodes/{{ e.number }}">
+      <span class="mono muted" style="font-size: 14px;">#{{ e.number }}</span>
+      <span style="min-width: 0;">
+        <span class="title">{{ e.title }}</span>
+        <span class="meta">with {{ e.guest }} {% for t in e.tags %}<span class="tag">{{ t }}</span>{% endfor %}</span>
+      </span>
+      <span class="mono muted" style="font-size: 13px;">{{ e.published }}</span>
+      <span class="num" style="font-size: 13px;">{{ e.minutes }} min</span>
+    </a>
+  {% else %}
+    <p class="muted" style="padding-top: 14px; border-top: 1px solid var(--rule);">No episodes match.</p>
+  {% endfor %}
+</div>

@@ -572,6 +572,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Docker and Compose</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Invalidating groups of keys</span></a>
   </div>
@@ -700,7 +706,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="see-it-work" class="level1">
 <h1>See it work</h1>
 <p>Here eight threads race for the same claim. Processes behave the same way.</p>
-<div id="6b245ea7" class="cell" data-execution_count="1">
+<div id="4ce388bb" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -749,7 +755,7 @@ claim holds: 7</code></pre>
 <li><strong>Eviction.</strong> When a cache is over its <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, it evicts the least recently stored entries, and a claim is exactly the kind of small, rarely written entry that goes first. If it’s evicted before it expires, a second worker can claim the job.</li>
 </ul>
 <p>A separate cache directory just for coordination, which is never swapped for a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and never evicts (<code>eviction_policy='none'</code>, so only expired claims go), avoids both:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>coordination <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-coordination'</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>coordination <span class="op">=</span> Cache(<span class="st">'/var/lib/my-app/state/coordination'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span></code></pre></div>
 <p>A claim is the right tool when a worker that loses should skip the job. When it should wait its turn instead, use a <a href="../reference/Lock.html#diskcache_oxide.Lock" class="gdls-link gdls-code">Lock</a> or a <a href="../reference/BoundedSemaphore.html#diskcache_oxide.BoundedSemaphore" class="gdls-link gdls-code">BoundedSemaphore</a> from <a href="../user-guide/coordination.html">Coordination</a>, on the same coordination cache.</p>
 
 

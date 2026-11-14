@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Jobs · Backend Notes{% endblock %}
+{% block content %}
+<section class="content">
+  <h1 style="margin-bottom: 8px;">Jobs</h1>
+  <p class="muted" style="margin-bottom: 28px;">Jobs go into a queue in <code>state/jobs</code>, and each one is handed to exactly one worker. A job a worker dies on goes back on the queue after its lease, three times at most; a job that raises is listed as failed.</p>
+  <div class="table jobs">
+    <div class="row head label"><span>Job</span><span>Task</span><span>State</span><span class="num">Took</span></div>
+    {% for j in snap.queued %}
+      <div class="row"><span class="mono muted">{{ j.id }}</span><span>{{ j.kind }}{% if j.episode %} for #{{ j.episode }}{% endif %}</span><span class="mono muted">queued{% if j.attempts %} (try {{ j.attempts }}){% endif %}</span><span class="num muted">—</span></div>
+    {% endfor %}
+    {% for j in snap.running %}
+      <div class="row"><span class="mono muted">{{ j.id }}</span><span>{{ j.kind }}{% if j.episode %} for #{{ j.episode }}{% endif %}</span><span class="mono hit">running</span><span class="num">{{ '%.0f' % j.took }} s</span></div>
+    {% endfor %}
+    {% for j in snap.done %}
+      <div class="row"><span class="mono muted">{{ j.id }}</span><span>{{ j.kind }}{% if j.episode %} for #{{ j.episode }}{% endif %}</span><span class="mono">done</span><span class="num">{{ '%.1f' % j.took }} s</span></div>
+    {% endfor %}
+    {% for j in snap.failed %}
+      <div class="row"><span class="mono muted">{{ j.id }}</span><span>{{ j.kind }}{% if j.episode %} for #{{ j.episode }}{% endif %}<span class="meta error">{{ j.error }}</span></span><span class="mono miss">failed</span><span class="num muted">—</span></div>
+    {% endfor %}
+    {% if not (snap.queued or snap.running or snap.done or snap.failed) %}
+      <p class="muted" style="padding-top: 14px; border-top: 1px solid var(--rule);">No jobs yet. Sign in and request a transcript from an episode page.</p>
+    {% endif %}
+  </div>
+</section>
+<aside>
+  <div>
+    <div class="label panel-title">Workers</div>
+    {% for name, w in snap.workers.items() %}
+      <div class="read"><span class="mono key">{{ name }}</span><span class="muted">{{ w.doing }}</span></div>
+    {% else %}
+      <p class="muted" style="font-size: 13px; margin-top: 10px;">No worker running. Start one with <code>python -m app.worker</code>.</p>
+    {% endfor %}
+  </div>
+  <div>
+    <div class="label panel-title">Sitemap claim, this period</div>
+    {% if claim %}
+      <p style="font-size: 14px; margin-top: 10px;">Claimed by <span class="mono">pid {{ claim.pid }}</span> with <code>add()</code>, {{ '%.0f' % (now - claim.at) }} s ago. The other web workers skipped it and queued nothing.</p>
+    {% else %}
+      <p class="muted" style="font-size: 14px; margin-top: 10px;">Not claimed yet: the next visit to the episode list claims it and queues the job.</p>
+    {% endif %}
+  </div>
+  <div>
+    <div class="label panel-title">Sitemap lock</div>
+    <p style="font-size: 14px; margin-top: 10px;">{% if locked %}Held: a worker is rewriting <code>sitemap.xml</code>.{% else %}Free.{% endif %} Workers take it with <code>Lock</code>, which waits its turn; requests never do.</p>
+  </div>
+</aside>
+{% endblock %}

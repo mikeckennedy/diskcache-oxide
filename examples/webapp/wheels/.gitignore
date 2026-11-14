@@ -1,0 +1,3 @@
+# Local diskcache-oxide wheels for building the image before a release is on PyPI.
+*
+!.gitignore

@@ -536,6 +536,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Docker and Compose</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Invalidating groups of keys</span></a>
   </div>
@@ -640,7 +646,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </header>
 
 
-<p>A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you’d reach for one, then shows the pattern, then says where it stops working. The examples with output under them run against diskcache-oxide every time these docs are built.</p>
+<p>A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you’d reach for one, then shows the pattern, then says where it stops working. The examples with output under them run against diskcache-oxide every time these docs are built, and the <a href="https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp">example app</a> puts most of these recipes together in one FastAPI app, tested.</p>
 <section id="caching" class="level1">
 <h1>Caching</h1>
 <p><strong><a href="../recipes/caching-expensive-calls.html">Caching expensive calls</a>.</strong> The cache-aside pattern, and <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, which turns a function into a cached one keyed on its arguments.</p>
@@ -665,6 +671,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="deployment-and-testing" class="level1">
 <h1>Deployment and testing</h1>
 <p><strong><a href="../recipes/web-workers.html">Sharing a cache across web workers</a>.</strong> Where to put the cache directory, when to open it with gunicorn, uvicorn, FastAPI, Flask, Django and Celery, how to keep a busy cache from slowing requests, and what to do at shutdown.</p>
+<p><strong><a href="../recipes/docker.html">Docker and Compose</a>.</strong> One named volume for the caches and state, a fixed non-root user, the ownership rules that otherwise end in <code>PermissionError</code>, Kubernetes volumes, disk sizing, and the cleanup step after a format change.</p>
 <p><strong><a href="../recipes/asyncio.html">Using the cache from asyncio</a>.</strong> Read inline, write off the loop, and keep transactions on one thread, in FastAPI, Starlette or aiohttp.</p>
 <p><strong><a href="../recipes/monitoring.html">Watching a cache in production</a>.</strong> A health check and an admin endpoint: entries, bytes on disk, hit ratio across workers, the size limit, the write-ahead log, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> for damage, and the log lines worth alerting on.</p>
 <p><strong><a href="../recipes/upgrading.html">Upgrading across a format change</a>.</strong> When a release changes the on-disk format: the new release opens its own cache in a versioned subdirectory, old and new workers run side by side, <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a> cleans up afterwards, and what to do first about queues, counters and sessions.</p>

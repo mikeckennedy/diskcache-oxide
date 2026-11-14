@@ -53,7 +53,7 @@ Least-recently-stored eviction means a [get](../reference/Cache.get.md#diskcache
 Some entries mustn't disappear just because the cache got full: a lock, a job claim, the items in a work queue. For a cache that holds those, turn eviction off:
 
 ``` python
-locks = Cache('/var/cache/my-app-locks', eviction_policy='none')
+locks = Cache('/var/lib/my-app/state/coordination', eviction_policy='none')
 ```
 
 Under `'none'`, no write and no [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) evicts for size. Expired entries are still removed: each write sweeps up to [cull_limit](../reference/Cache.cull_limit.md#diskcache_oxide.Cache.cull_limit) of them, [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) and [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) remove the rest, and [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) returns how many it removed. The cache can grow past [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), so give the entries an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) and keep them apart from your general-purpose cache, which should go on evicting.

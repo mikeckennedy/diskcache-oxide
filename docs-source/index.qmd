@@ -51,26 +51,30 @@ And here is what it does under load. Every thread shares one cache, the x axis a
 Most apps end up with more than one cache: rendered pages, API responses, sessions, rate limits, each with its own size and settings. `Caches` is the registry for them. You register each cache once at startup, and a lookup by name opens it on first use and returns the same object every time after that. If a cache can't open (a full disk, a permissions problem), the lookup returns a `NullCache` instead of raising, so requests carry on without that cache while the error is logged, and the registry tries again every 10 seconds until the real one is back. One call switches a cache off for a load test, and `stats()` gives an admin page every cache's entries, size and errors.
 
 ```python
-from diskcache_oxide import Caches
+from diskcache_oxide import Cache, Caches
 
-caches = Caches('/var/cache/my-app', timeout=1.0)  # settings here apply to every cache
+# Rebuildable data: durable, so an outage is a miss, never an error page.
+caches = Caches('/var/lib/my-app/cache', durable=True, timeout=1.0)
 caches.register('pages', size_limit=2 * 2**30)
-caches.register('sessions', eviction_policy='none')  # never evicted for size
-caches.register('rate_limits', shards=8)  # a FanoutCache, for many writers
+caches.register('api', size_limit=256 * 2**20)
 
 html = caches['pages'].get('/about')  # opens on first use, the same object after that
-caches['sessions'].set('session:9f2c', {'user': 42}, expire=3600)
-caches.fanout('rate_limits').incr('ip:203.0.113.7')
-
 caches.disable('pages')  # a load test without the page cache: no call site changes
 
 for name, stat in caches.stats().items():  # for an admin page
     print(name, stat.count, stat.volume, stat.error)
 
+# State (sessions, claims, queues) is a plain Cache, opened directly: a lost write must raise.
+sessions = Cache('/var/lib/my-app/state/sessions', timeout=3.0, eviction_policy='none')
+sessions.set('session:9f2c', {'user': 42}, expire=3600)
+
 caches.close_all()  # at shutdown
+sessions.close()
 ```
 
 Talk Python runs its eight caches this way. [Named caches](user-guide/caches.qmd) covers the registry in full.
+
+The [example app](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp) is this setup in a whole FastAPI app, with gunicorn, a background worker and Docker Compose: a durable registry for pages, slow lookups and rate limits, and plain caches for sessions, job claims and a work queue. Every page shows which cache reads served it.
 
 ## Where this is going
 
@@ -135,6 +139,7 @@ Read them in order for the whole story, or jump straight to the one that bit you
 - [Getting started](user-guide/getting-started.qmd): create a cache, store and read values, expiry, counters, eviction, timeouts and `durable=True`.
 - [Switching from diskcache](user-guide/switching-from-diskcache.qmd): what changes, and why.
 - [Errors and what to do about them](user-guide/errors.qmd): every exception the library raises, what it means and the fix.
+- [Troubleshooting](user-guide/troubleshooting.qmd): start from the symptom, such as every lookup missing, a disk that keeps growing, slow writes or `PermissionError`.
 - [Vision and roadmap](user-guide/roadmap.qmd): what exists today and what's coming.
 - [Serialization](user-guide/serialization.qmd): msgpack and JSON with exact types, and why pickle is opt-in.
 - [NullCache](user-guide/null-cache.qmd): caching switched off without changing call sites.
@@ -146,5 +151,6 @@ Read them in order for the whole story, or jump straight to the one that bit you
 - [Storage and WAL](user-guide/storage-and-wal.qmd): what's on disk, memory bounds, and the write-ahead log.
 - [Performance](user-guide/performance.qmd): the measured numbers, and where the next speedups come from.
 - [Divergences](user-guide/divergences.qmd): every deliberate difference from diskcache, with the reason.
-- [Recipes](recipes/index.qmd): caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidation by prefix or tag, your own types, job claims, rate limiting, counters, work queues, single-use keys, sessions, web workers, asyncio, monitoring, upgrading across a format change, and testing.
+- [Recipes](recipes/index.qmd): caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidation by prefix or tag, your own types, job claims, rate limiting, counters, work queues, single-use keys, sessions, web workers, Docker and Compose, asyncio, monitoring, upgrading across a format change, and testing.
+- [Example app](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp): a FastAPI app built the way these docs recommend, with Docker Compose and tests.
 - [Agent skill](skills.qmd): a cheat sheet for AI coding agents, with [llms.txt](llms.txt) and [llms-full.txt](llms-full.txt) alongside.
