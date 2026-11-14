@@ -182,6 +182,7 @@ mod tests {
             auto_checkpoint: false,
             role: Role::Plain,
             default_size_limit: DEFAULT_SIZE_LIMIT,
+            maintenance: crate::background::Maintenance::OFF,
         }
     }
 

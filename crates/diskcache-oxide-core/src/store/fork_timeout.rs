@@ -35,6 +35,7 @@ fn options(dir: &Path, timeout: Duration) -> OpenOptions {
         auto_checkpoint: false,
         role: crate::open::Role::Plain,
         default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
+        maintenance: crate::background::Maintenance::OFF,
     }
 }
 

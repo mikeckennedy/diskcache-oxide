@@ -332,6 +332,7 @@ mod tests {
             auto_checkpoint: false,
             role: Role::Plain,
             default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
+            maintenance: crate::background::Maintenance::OFF,
         }
     }
 

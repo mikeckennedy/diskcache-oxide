@@ -115,7 +115,6 @@ crate::sync::thread_local! {
 /// interpreter shutdown (plan 28, decision 2). Such a thread holds no interpreter to release, so
 /// running the work directly is all the blocker would have done. Never call it on a thread the
 /// interpreter knows: every wait there would then run attached, breaking the gate's rules.
-#[cfg_attr(not(test), expect(dead_code, reason = "plan 28 step 4's maintenance thread calls it"))]
 pub(crate) fn mark_native_thread() {
     NATIVE.with(|native| native.set(true));
 }
@@ -849,6 +848,7 @@ pub fn begin_fork() {
     let guard = GATE.begin_fork();
     crate::pool::quiesce_all();
     crate::store::quiesce_registry();
+    crate::background::worker::quiesce();
     crate::pool::close_idle_all();
     HELD_FORK.with(|held| *held.borrow_mut() = Some(guard));
 }

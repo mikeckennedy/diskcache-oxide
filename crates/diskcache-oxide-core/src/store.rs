@@ -139,6 +139,8 @@ pub struct OpenOptions {
     /// [`crate::schema::DEFAULT_SIZE_LIMIT`] for a plain cache, a shard's share of it for a
     /// `FanoutCache` (plan 13, section 4). An existing database keeps what it stores.
     pub default_size_limit: i64,
+    /// What this handle asks of background maintenance (plan 28).
+    pub maintenance: crate::background::Maintenance,
 }
 
 /// One database file's shared state. See the module docs.
@@ -207,13 +209,11 @@ pub struct Store {
 /// ends the turn: field order drops the store reference last, and every lease the turn took has
 /// already gone back by then.
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code, reason = "plan 28 step 4's maintenance thread calls it"))]
 pub(crate) struct BackgroundTurn<'a> {
     store: &'a Store,
     _turn: crate::genlock::SlotPermit<'a>,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "plan 28 step 4's maintenance thread calls it"))]
 impl BackgroundTurn<'_> {
     /// Runs `read` on a pooled connection only if that needs no waiting at all: a free slot, no fork
     /// pending, a live store, and no busy wait inside SQLite. None means it didn't run, or ran into
@@ -705,7 +705,7 @@ impl Store {
             wal_path: db_path.with_extension("sqlite-wal"),
             handles: AtomicIsize::new(1),
             deferred_releases: AtomicUsize::new(0),
-            upkeep: crate::background::Upkeep::default(),
+            upkeep: Self::new_upkeep(&gate, &stores, options.maintenance),
             left_files: AtomicU64::new(0),
             size_limit: AtomicI64::new(limits.size_limit),
             cull_limit: AtomicI64::new(limits.cull_limit),
@@ -715,8 +715,7 @@ impl Store {
             // `prepare` just checked the stamp against it.
             role: options.role,
         });
-        stores.retain(|weak| weak.strong_count() > 0);
-        stores.push(Arc::downgrade(&store));
+        store.register(&gate, &mut stores);
         drop(stores);
         // Seed the pool with the connection the open sequence used.
         store.adopt(&gate, conn, generation, options.max_connections);
@@ -856,6 +855,16 @@ impl Store {
         };
         *slot = Some(pin);
         self.retired.store(false, Ordering::Release);
+        // No handle from before is open now: a `clock=` veto ends, and the schedule moves past any
+        // ticks it slept through (plan 28).
+        let on = {
+            let mut tending = self.upkeep.tending_under(stores);
+            tending.schedule.revive(crate::background::worker::mono_ms());
+            tending.schedule.is_on()
+        };
+        if on {
+            crate::background::worker::ensure_running(stores);
+        }
         (true, None)
     }
 
@@ -885,6 +894,7 @@ impl Store {
         if options.auto_checkpoint {
             self.auto_checkpoint.store(true, Ordering::Release);
         }
+        self.join_maintenance(options.maintenance, timeout);
         if options.requested == Requested::default() {
             return Ok(());
         }
@@ -1110,6 +1120,103 @@ impl Store {
         }
     }
 
+    /// A new store's maintenance state, under the registry: its schedule placed among the other
+    /// stores' (plan 28, decision 7).
+    fn new_upkeep(
+        gate: &SharedGuard<'_>,
+        stores: &MutexGuard<'_, Vec<Weak<Self>>>,
+        asked: crate::background::Maintenance,
+    ) -> crate::background::Upkeep {
+        use crate::background::schedule::Schedule;
+        let now = crate::background::worker::mono_ms();
+        let others: Vec<_> = stores
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter_map(|other| other.upkeep.tending(gate).schedule.spread())
+            .collect();
+        let mut schedule = Schedule::new(now, asked.interval_ms, others);
+        if asked.own_clock {
+            schedule.veto();
+        }
+        crate::background::Upkeep::new(schedule, now)
+    }
+
+    /// Adds a new store to the registry, pruning dead entries, and wakes background maintenance if
+    /// the store wants it.
+    fn register(self: &Arc<Self>, gate: &SharedGuard<'_>, stores: &mut MutexGuard<'_, Vec<Weak<Self>>>) {
+        stores.retain(|weak| weak.strong_count() > 0);
+        stores.push(Arc::downgrade(self));
+        if self.upkeep.tending(gate).schedule.is_on() {
+            crate::background::worker::ensure_running(stores);
+        }
+    }
+
+    /// Merges a joining handle's maintenance request into the store's (plan 28, decision 3): the
+    /// shortest interval wins, and a handle with its own clock vetoes it. Best effort within
+    /// `timeout`: behind a fork that outlasts it, the request is dropped, never the open.
+    fn join_maintenance(&self, asked: crate::background::Maintenance, timeout: Duration) {
+        if asked == crate::background::Maintenance::OFF {
+            return;
+        }
+        let Some(gate) = GATE.enter_shared_until(lockwait::deadline_after(Instant::now(), timeout)) else {
+            return;
+        };
+        let stores = registry(&gate);
+        let now = crate::background::worker::mono_ms();
+        // The others' first, one at a time: never two stores' schedules at once.
+        let others: Vec<_> = stores
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|other| !std::ptr::eq(Arc::as_ptr(other), self))
+            .filter_map(|other| other.upkeep.tending(&gate).schedule.spread())
+            .collect();
+        let on = {
+            let mut tending = self.upkeep.tending(&gate);
+            tending.schedule.join(now, asked.interval_ms, others);
+            if asked.own_clock {
+                tending.schedule.veto();
+            }
+            tending.schedule.is_on()
+        };
+        if on {
+            crate::background::worker::ensure_running(&stores);
+        }
+    }
+
+    /// How background maintenance has gone on this store in this process (plan 28, decision 16), or
+    /// None behind a pending fork.
+    #[must_use]
+    pub fn maintenance_health(&self) -> Option<crate::background::Health> {
+        let gate = GATE.try_enter_shared()?;
+        Some(self.upkeep.tending(&gate).health.clone())
+    }
+
+    /// The failure a maintenance turn raised since the last call, if any, for the caller to log once:
+    /// one relaxed load when there's none, so the request path can ask every time (decision 16).
+    #[must_use]
+    pub fn take_maintenance_warning(&self) -> Option<String> {
+        if !self.upkeep.take_warning() {
+            return None;
+        }
+        let Some(gate) = GATE.try_enter_shared() else {
+            // Behind a fork: ask again on a later call.
+            self.upkeep.raise_warning();
+            return None;
+        };
+        self.upkeep.tending(&gate).health.last_error.clone()
+    }
+
+    /// Every store in the registry, collected under it and returned after it's released, so no
+    /// `Arc` is ever dropped under the registry mutex (the caller drops them under its level).
+    pub(crate) fn all_in_registry(gate: &SharedGuard<'_>) -> Vec<Arc<Self>> {
+        registry(gate).iter().filter_map(Weak::upgrade).collect()
+    }
+
+    /// Runs `f` under the registry.
+    pub(crate) fn with_registry<T>(gate: &SharedGuard<'_>, f: impl FnOnce(&MutexGuard<'_, Vec<Weak<Self>>>) -> T) -> T {
+        f(&registry(gate))
+    }
+
     pub(crate) fn is_retired(&self) -> bool {
         self.retired.load(Ordering::Acquire)
     }
@@ -1119,7 +1226,6 @@ impl Store {
     /// open when the last `close()` returns (D-018). The turn holds no gate level while it runs;
     /// each read and write enters on its own and refuses once the store has retired. None means no
     /// turn: retired, or behind a fork. Called with no gate level held.
-    #[cfg_attr(not(test), expect(dead_code, reason = "plan 28 step 4's maintenance thread calls it"))]
     pub(crate) fn begin_background_turn(&self) -> Option<BackgroundTurn<'_>> {
         debug_assert_eq!(GATE.own_depth(), 0, "a background turn begins with no gate level held");
         let gate = GATE.try_enter_shared()?;
@@ -2541,6 +2647,7 @@ mod tests {
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
             default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
+            maintenance: crate::background::Maintenance::OFF,
         }
     }
 

@@ -97,7 +97,6 @@ pub(crate) struct TurnReport {
     pub error: Option<Error>,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "plan 28 step 4's maintenance thread calls it"))]
 impl TurnReport {
     pub(crate) const fn cut_short(&self) -> bool {
         self.stopped.is_some()
@@ -129,7 +128,6 @@ struct Tidy {
     to_evict: bool,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "plan 28 step 4's maintenance thread calls it"))]
 impl Store {
     /// Runs `tasks` on this store as one maintenance turn at wall time `now` (seconds), on a store
     /// whose maintenance interval is `interval`. None means no turn: the store has retired, a fork is

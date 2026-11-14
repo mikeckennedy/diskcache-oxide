@@ -600,6 +600,7 @@ mod tests {
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
             default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
+            maintenance: crate::background::Maintenance::OFF,
         })
         .unwrap()
     }
@@ -1314,6 +1315,7 @@ mod tests {
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
             default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
+            maintenance: crate::background::Maintenance::OFF,
         })
         .unwrap();
         let blob = vec![1u8; 30_000];

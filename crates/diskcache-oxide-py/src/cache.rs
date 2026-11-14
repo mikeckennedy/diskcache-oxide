@@ -850,6 +850,7 @@ impl Settings {
             auto_checkpoint: self.auto_checkpoint,
             role,
             default_size_limit: DEFAULT_SIZE_LIMIT,
+            maintenance: diskcache_oxide_core::background::Maintenance::OFF,
         }
     }
 }

@@ -120,6 +120,7 @@ fn installed_before_the_first_connection() {
         auto_checkpoint: false,
         role: Role::Plain,
         default_size_limit: DEFAULT_SIZE_LIMIT,
+        maintenance: diskcache_oxide_core::background::Maintenance::OFF,
     })
     .unwrap();
     assert_eq!(store.len(Duration::from_secs(5)).unwrap(), 0);

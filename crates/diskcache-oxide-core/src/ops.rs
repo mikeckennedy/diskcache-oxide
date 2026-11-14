@@ -1656,6 +1656,7 @@ mod tests {
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
             default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
+            maintenance: crate::background::Maintenance::OFF,
         })
         .unwrap()
     }
@@ -2655,6 +2656,7 @@ mod reprepare_guard {
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
             default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
+            maintenance: crate::background::Maintenance::OFF,
         })
         .unwrap();
         for i in 0..300 {
