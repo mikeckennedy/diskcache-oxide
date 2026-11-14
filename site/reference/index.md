@@ -120,7 +120,7 @@ A write transaction, for `with cache.transact() as tx:`.
 `key in cache`: True if the key holds a live (unexpired) value. False if the check failed under
 
 [Cache.__len__()](Cache.__len__.md#diskcache_oxide.Cache.__len__)  
-The number of entries, including expired entries not yet removed.
+The number of live entries. An entry stops counting the moment it expires, whether or not
 
 [Cache.__bool__()](Cache.__bool__.md#diskcache_oxide.Cache.__bool__)  
 Always True, even when empty, so `if cache:` means "caching is on".
@@ -266,7 +266,7 @@ Close this handle on every shard, as `Cache.close()` does for one.
 `key in cache`, as on `Cache`.
 
 [FanoutCache.__len__()](FanoutCache.__len__.md#diskcache_oxide.FanoutCache.__len__)  
-The number of entries in every shard, including expired entries not yet removed.
+The number of live entries in every shard: expired ones don't count, as on `Cache`.
 
 [FanoutCache.__bool__()](FanoutCache.__bool__.md#diskcache_oxide.FanoutCache.__bool__)  
 Always True, even when empty, so `if cache:` means "caching is on".
@@ -554,7 +554,7 @@ Close this handle and return its connections.
 `key in cache`: True if the key holds a live value.
 
 [CacheLike.__len__()](CacheLike.__len__.md#diskcache_oxide.CacheLike.__len__)  
-The number of entries.
+The number of live entries: expired ones don't count.
 
 [CacheLike.__bool__()](CacheLike.__bool__.md#diskcache_oxide.CacheLike.__bool__)  
 True if caching is on, so `if cache:` reads naturally.

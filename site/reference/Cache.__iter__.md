@@ -11,4 +11,4 @@ Cache.__iter__()
 ```
 
 
-As with [iterkeys()](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys), `next()` raises `ValueError` while another thread is inside it.
+As with [iterkeys()](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys), expired entries are skipped, and `next()` raises `ValueError` while another thread is inside it.

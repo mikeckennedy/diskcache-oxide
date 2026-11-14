@@ -1,7 +1,7 @@
 ## FanoutCache.\_\_len\_\_()
 
 
-The number of entries in every shard, including expired entries not yet removed.
+The number of live entries in every shard: expired ones don't count, as on [Cache](Cache.md#diskcache_oxide.Cache).
 
 
 Usage

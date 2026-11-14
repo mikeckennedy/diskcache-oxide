@@ -83,12 +83,18 @@ Tags and the eviction policy changed the on-disk format. 0.2.3 refuses a cache m
 A release that meets a cache in another on-disk format opens a cache of its own in a versioned subdirectory and logs a warning, instead of refusing to open, so old and new workers keep running side by side during a deploy. [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats) cleans up the old cache once its workers are gone. See [Upgrading across a format change](../recipes/upgrading.md).
 
 
+## Done: expiry that's exact for counts and listings (0.3.5)
+
+An entry leaves `len()`, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys), `iter()` and `reversed()` the moment it expires, as it always left [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) and `in` (D-060). Its space is still freed by the next writes or a scheduled [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire); the background sweeper below makes that automatic.
+
+
 ## Next
 
 In roughly this order:
 
 | What | What it delivers |
 |----|----|
+| **Background expiry sweeper** | Expired entries' space freed with no scheduled [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire). One small Rust thread per process sweeps every open cache, spread evenly over the interval (four caches on a 60 s interval sweep at 0:00, 0:15, 0:30 and 0:45), and the processes sharing a cache take turns, so eight workers don't all sweep it. A cache with nothing expired is only read, never locked, and a cache left over its size limit with no writes coming is trimmed back to it. |
 | **Django cache backend** | A diskcache-oxide backend for Django's cache framework, tested against Django's own cache test suite. It's a big job, so it gets a phase of its own. |
 | **Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
 | **`AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. It starts as an experiment and ships only if it earns its place; if it doesn't, this page will say why. |
@@ -109,7 +115,6 @@ In roughly this order:
 
 Ideas being considered, not yet committed to:
 
-- **Expiry that's exact everywhere.** Lookups already treat an expired entry as gone at the moment it expires. The plan is to make `len()` and iteration do the same, and move the physical cleanup to a small background sweeper written in Rust, coordinated across processes so eight workers don't all sweep at once.
 - **A large-file cache**, handing out an open file rather than a path, which is where diskcache's `read=True` would fit.
 - **Encryption at rest**, if a real need appears: SQLCipher for the database, authenticated encryption for spill files.
 

@@ -65,7 +65,7 @@ In Kubernetes or behind a load balancer, use it as a *readiness* check, never a 
 ## What the numbers mean
 
 - **`enabled`** is False for a `NullCache`. If the cache comes from a [`Caches`](../user-guide/caches.qmd) registry, that's what a lookup hands out while the cache can't open, so `enabled: false` on a cache you never switched off means something is wrong. The log says what.
-- **`len(cache)`** counts entries, including expired ones not yet removed. It's read from a stored total, so it costs the same on a cache of ten entries or ten million.
+- **`len(cache)`** counts live entries: an entry stops counting the moment it expires, even before its row is removed. It's a stored total less the expired rows still on disk, so it costs the same on a cache of ten entries or ten million, plus a little for each expired entry nothing has removed yet.
 - **`volume()`** is the cache's size in bytes: the database pages in use plus the value files. It leaves out the write-ahead log and pages freed by deletes, which SQLite keeps in the file for reuse, so `du` on the directory can show more. `check(fix=True)` (below) gives the freed pages back.
 - **`size_limit` and `eviction_policy`.** Under the default `'least-recently-stored'`, a full cache sits close to its limit, and that's normal: each `set()` that finds it over the limit evicts the oldest entries. Under `'none'` nothing is evicted for size, so `percent_of_limit` can pass 100. On a [sessions](sessions.qmd) or [work queue](work-queues.qmd) cache, that's the number to alert on. Both attributes are the values this process last saw; `cache.reset('size_limit')` and `cache.reset('eviction_policy')` read what's stored now, in case another process changed them.
 - **Hits and misses** count `get` and `cache[key]` in this process. An expired entry, and a value answered as a miss by `on_decode_error`, count as misses. `in`, `pop` and iteration don't count, and a `durable=True` outage answered as a miss counts as nothing. A `FanoutCache` sums its shards, and a `NullCache` always reports `(0, 0)`.
@@ -215,7 +215,7 @@ The exact messages, and what to do about each, are in [Errors and what to do abo
 
 - **`stats()` turns counting on.** Its `enable` argument defaults to True, so a health check that reads the counts also starts them. `stats(enable=False)` turns counting off and stops the counts where they are.
 - **Counts reset on restart.** Graph the hit ratio, not the raw counts, or publish the counts as above.
-- **`len()` includes expired entries** until `expire()`, or the cleanup a `set()` does, removes them. A scheduled `expire()` keeps it honest; `caches.expire_all()` does every registered cache.
+- **`volume()` includes expired entries** until `expire()`, or the cleanup a `set()` does, removes them, though `len()` already leaves them out. A scheduled `expire()` frees their space; `caches.expire_all()` does every registered cache.
 - **Health checks shouldn't write.** Everything in `cache_health` is a read. `check()` and `checkpoint()` belong in a maintenance job.
 
 ```{python}

@@ -15,7 +15,7 @@ Cache.iterkeys(
 ```
 
 
-A prefix is an indexed range scan, so it costs time in proportion to the matches, not the size of the cache. Keys are fetched a page at a time with no lock held in between, so deleting keys while iterating is safe. Expired entries not yet removed are included. Like a generator, an iterator serves one thread at a time: `next()` raises `ValueError` while another thread is inside it.
+A prefix is an indexed range scan, so it costs time in proportion to the matches, not the size of the cache. Keys are fetched a page at a time with no lock held in between, so deleting keys while iterating is safe. Expired entries are skipped, whether or not their rows have been removed yet (D-060). Like a generator, an iterator serves one thread at a time: `next()` raises `ValueError` while another thread is inside it.
 
 
 ## Parameters

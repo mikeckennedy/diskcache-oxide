@@ -2058,7 +2058,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1525-L1544" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1527-L1546" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">FanoutCache</span><span class="op">.</span><span class="sig-name">iterkeys</span>(
@@ -2068,7 +2068,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 )</span></code></pre></div>
 </div>
 <div class="doc-text">
-<p>The same order <a href="Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">Cache.iterkeys</a> gives for the same keys (code-point order, like <code>sorted()</code>): a merge of every shard’s sorted keys. Each shard keeps a small page of keys buffered, so the first <code>next()</code> reads every shard once, and later ones read a shard only when its page runs out. No connection or lock is held between <code>next()</code> calls. As on <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, it isn’t a snapshot: a key stored or deleted while it runs may or may not be yielded, but none is yielded twice and the order holds. Expired entries not yet removed are included. <code>next()</code> raises <code>ValueError</code> while another thread is inside it.</p>
+<p>The same order <a href="Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">Cache.iterkeys</a> gives for the same keys (code-point order, like <code>sorted()</code>): a merge of every shard’s sorted keys. Each shard keeps a small page of keys buffered, so the first <code>next()</code> reads every shard once, and later ones read a shard only when its page runs out. No connection or lock is held between <code>next()</code> calls. As on <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, it isn’t a snapshot: a key stored or deleted while it runs may or may not be yielded, but none is yielded twice and the order holds. Expired entries are skipped, as on <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. <code>next()</code> raises <code>ValueError</code> while another thread is inside it.</p>
 </div>
 <section id="parameters" class="level2 doc-parameters">
 <h2 class="doc-parameters">Parameters</h2>

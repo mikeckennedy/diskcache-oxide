@@ -9,7 +9,7 @@ Every Python web app arrives at the same crossroads. A query that was fine at la
 
 [python-diskcache](https://github.com/grantjenks/python-diskcache) showed there was a third road: a cache that is just a directory. Every thread and every process on the machine opens the same path and sees the same entries, and the entries are still there tomorrow, because a directory doesn't restart. No daemon, no network hop, no second system to keep alive. It's the kind of idea that sounds too simple to be fast, and for years that was the catch. diskcache itself has had no commits since 2023, and its issues and pull requests go unanswered.
 
-diskcache-oxide removes the catch. It keeps the diskcache API you already know and rebuilds everything beneath it for where Python is going: many cores, many worker processes, free-threaded CPython, and async frameworks that can't afford a slow call on the event loop. The engine is Rust. The storage is SQLite. The Python layer is as thin as it can be. One thread gets nearly 700,000 cache operations a second out of a `Cache`, and eight threads sharing it still get that rate while python-diskcache's falls below 20,000. Nothing on your disk is a pickle unless you asked for one, and memory and disk use stay where you set them.
+diskcache-oxide removes the catch. It keeps the diskcache API you already know and rebuilds everything beneath it for where Python is going: many cores, many worker processes, free-threaded CPython, and async frameworks that can't afford a slow call on the event loop. The engine is Rust. The storage is SQLite. The Python layer is as thin as it can be. One thread gets nearly 700,000 cache operations a second out of a `Cache`, and eight threads sharing it still get that rate while python-diskcache's falls below 20,000. Nothing on your disk is a pickle unless you asked for one (increasing compatibility and security), and memory and disk use stay where you set them.
 
 **Source on GitHub: <https://github.com/mikeckennedy/diskcache-oxide>** · [Issues](https://github.com/mikeckennedy/diskcache-oxide/issues)
 
@@ -26,7 +26,7 @@ cache = Cache('/var/cache/my-app', durable=True)
 def popular_episodes() -> list[dict]:
     if (episodes := cache.get('episodes:popular')) is not None:
         return episodes
-    episodes = db.load_popular_episodes()
+    episodes = db.load_popular_episodes()  # slow-ish
     cache.set('episodes:popular', episodes, expire=300)
     return episodes
 
@@ -71,6 +71,8 @@ sessions.set('session:9f2c', {'user': 42}, expire=3600)
 caches.close_all()  # at shutdown
 sessions.close()
 ```
+
+An entry is gone the moment it expires, for every read, `len()` and iteration. Its space is freed later: each `set()` clears a few expired entries, and nothing sweeps in the background yet, so run `caches.expire_all()` and `sessions.expire()` from a scheduled job about once an hour. [Web workers](recipes/web-workers.qmd) shows where that job goes.
 
 Talk Python runs its eight caches this way. [Named caches](user-guide/caches.qmd) covers the registry in full.
 

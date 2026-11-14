@@ -15,7 +15,7 @@ FanoutCache.iterkeys(
 ```
 
 
-The same order [Cache.iterkeys](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) gives for the same keys (code-point order, like `sorted()`): a merge of every shard's sorted keys. Each shard keeps a small page of keys buffered, so the first `next()` reads every shard once, and later ones read a shard only when its page runs out. No connection or lock is held between `next()` calls. As on [Cache](Cache.md#diskcache_oxide.Cache), it isn't a snapshot: a key stored or deleted while it runs may or may not be yielded, but none is yielded twice and the order holds. Expired entries not yet removed are included. `next()` raises `ValueError` while another thread is inside it.
+The same order [Cache.iterkeys](Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) gives for the same keys (code-point order, like `sorted()`): a merge of every shard's sorted keys. Each shard keeps a small page of keys buffered, so the first `next()` reads every shard once, and later ones read a shard only when its page runs out. No connection or lock is held between `next()` calls. As on [Cache](Cache.md#diskcache_oxide.Cache), it isn't a snapshot: a key stored or deleted while it runs may or may not be yielded, but none is yielded twice and the order holds. Expired entries are skipped, as on [Cache](Cache.md#diskcache_oxide.Cache). `next()` raises `ValueError` while another thread is inside it.
 
 
 ## Parameters

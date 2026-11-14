@@ -2069,7 +2069,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 )</span></code></pre></div>
 </div>
 <div class="doc-text">
-<p>A prefix is an indexed range scan, so it costs time in proportion to the matches, not the size of the cache. Keys are fetched a page at a time with no lock held in between, so deleting keys while iterating is safe. Expired entries not yet removed are included. Like a generator, an iterator serves one thread at a time: <code>next()</code> raises <code>ValueError</code> while another thread is inside it.</p>
+<p>A prefix is an indexed range scan, so it costs time in proportion to the matches, not the size of the cache. Keys are fetched a page at a time with no lock held in between, so deleting keys while iterating is safe. Expired entries are skipped, whether or not their rows have been removed yet (D-060). Like a generator, an iterator serves one thread at a time: <code>next()</code> raises <code>ValueError</code> while another thread is inside it.</p>
 </div>
 <section id="parameters" class="level2 doc-parameters">
 <h2 class="doc-parameters">Parameters</h2>

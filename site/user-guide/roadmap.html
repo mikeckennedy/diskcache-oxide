@@ -643,6 +643,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#done-parity-with-diskcache-0.2.3" id="toc-done-parity-with-diskcache-0.2.3" class="nav-link" data-scroll-target="#done-parity-with-diskcache-0.2.3">Done: parity with diskcache (0.2.3)</a></li>
   <li><a href="#done-windows-0.3.5" id="toc-done-windows-0.3.5" class="nav-link" data-scroll-target="#done-windows-0.3.5">Done: Windows (0.3.5)</a></li>
   <li><a href="#done-upgrades-across-a-format-change-0.3.5" id="toc-done-upgrades-across-a-format-change-0.3.5" class="nav-link" data-scroll-target="#done-upgrades-across-a-format-change-0.3.5">Done: upgrades across a format change (0.3.5)</a></li>
+  <li><a href="#done-expiry-thats-exact-for-counts-and-listings-0.3.5" id="toc-done-expiry-thats-exact-for-counts-and-listings-0.3.5" class="nav-link" data-scroll-target="#done-expiry-thats-exact-for-counts-and-listings-0.3.5">Done: expiry that’s exact for counts and listings (0.3.5)</a></li>
   <li><a href="#next" id="toc-next" class="nav-link" data-scroll-target="#next">Next</a></li>
   <li><a href="#decided-against-and-why" id="toc-decided-against-and-why" class="nav-link" data-scroll-target="#decided-against-and-why">Decided against, and why</a></li>
   </ul></li>
@@ -769,6 +770,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h2 class="anchored" data-anchor-id="done-upgrades-across-a-format-change-0.3.5">Done: upgrades across a format change (0.3.5)</h2>
 <p>A release that meets a cache in another on-disk format opens a cache of its own in a versioned subdirectory and logs a warning, instead of refusing to open, so old and new workers keep running side by side during a deploy. <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a> cleans up the old cache once its workers are gone. See <a href="../recipes/upgrading.html">Upgrading across a format change</a>.</p>
 </section>
+<section id="done-expiry-thats-exact-for-counts-and-listings-0.3.5" class="level2">
+<h2 class="anchored" data-anchor-id="done-expiry-thats-exact-for-counts-and-listings-0.3.5">Done: expiry that’s exact for counts and listings (0.3.5)</h2>
+<p>An entry leaves <code>len()</code>, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>, <code>iter()</code> and <code>reversed()</code> the moment it expires, as it always left <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> and <code>in</code> (D-060). Its space is still freed by the next writes or a scheduled <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>; the background sweeper below makes that automatic.</p>
+</section>
 <section id="next" class="level2">
 <h2 class="anchored" data-anchor-id="next">Next</h2>
 <p>In roughly this order:</p>
@@ -781,18 +786,22 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </thead>
 <tbody>
 <tr class="odd">
+<td><strong>Background expiry sweeper</strong></td>
+<td>Expired entries’ space freed with no scheduled <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>. One small Rust thread per process sweeps every open cache, spread evenly over the interval (four caches on a 60 s interval sweep at 0:00, 0:15, 0:30 and 0:45), and the processes sharing a cache take turns, so eight workers don’t all sweep it. A cache with nothing expired is only read, never locked, and a cache left over its size limit with no writes coming is trimmed back to it.</td>
+</tr>
+<tr class="even">
 <td><strong>Django cache backend</strong></td>
 <td>A diskcache-oxide backend for Django’s cache framework, tested against Django’s own cache test suite. It’s a big job, so it gets a phase of its own.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><strong>Free-threaded performance</strong></td>
 <td>Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that’s the first target.</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><strong><code>AsyncCache</code></strong></td>
 <td>An async API for asyncio frameworks that can’t slow down the sync one, including <code>transact_async()</code>. It starts as an experiment and ships only if it earns its place; if it doesn’t, this page will say why.</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><strong>Network server</strong></td>
 <td>Stage 3, above. Speculative, and a separate product if it happens.</td>
 </tr>
@@ -815,7 +824,6 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Further out</h1>
 <p>Ideas being considered, not yet committed to:</p>
 <ul>
-<li><strong>Expiry that’s exact everywhere.</strong> Lookups already treat an expired entry as gone at the moment it expires. The plan is to make <code>len()</code> and iteration do the same, and move the physical cleanup to a small background sweeper written in Rust, coordinated across processes so eight workers don’t all sweep at once.</li>
 <li><strong>A large-file cache</strong>, handing out an open file rather than a path, which is where diskcache’s <code>read=True</code> would fit.</li>
 <li><strong>Encryption at rest</strong>, if a real need appears: SQLCipher for the database, authenticated encryption for spill files.</li>
 </ul>

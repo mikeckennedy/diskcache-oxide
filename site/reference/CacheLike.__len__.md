@@ -1,7 +1,7 @@
 ## CacheLike.\_\_len\_\_()
 
 
-The number of entries.
+The number of live entries: expired ones don't count.
 
 
 Usage

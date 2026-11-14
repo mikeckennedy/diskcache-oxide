@@ -631,7 +631,8 @@ __contains__(self, key: 'object', /) -> 'bool'
 
 __len__(self) -> 'int'
 
-The number of entries, including expired entries not yet removed.
+The number of live entries. An entry stops counting the moment it expires, whether or not
+its row has been removed yet (D-060).
 
 __bool__(self) -> 'bool'
 
@@ -641,7 +642,8 @@ __iter__(self) -> 'Iterator[Key]'
 
 Iterate over keys in insertion order. An overwrite keeps its key's place.
 
-As with `iterkeys()`, `next()` raises `ValueError` while another thread is inside it.
+As with `iterkeys()`, expired entries are skipped, and `next()` raises `ValueError` while
+another thread is inside it.
 
 __enter__(self) -> 'Self'
 
@@ -748,9 +750,9 @@ Iterate over keys in sorted order, optionally only those starting with `prefix`.
 
 A prefix is an indexed range scan, so it costs time in proportion to the matches, not the
 size of the cache. Keys are fetched a page at a time with no lock held in between, so
-deleting keys while iterating is safe. Expired entries not yet removed are included. Like a
-generator, an iterator serves one thread at a time: `next()` raises `ValueError` while
-another thread is inside it.
+deleting keys while iterating is safe. Expired entries are skipped, whether or not their rows
+have been removed yet (D-060). Like a generator, an iterator serves one thread at a time:
+`next()` raises `ValueError` while another thread is inside it.
 
 Args:
     prefix: Only yield keys that start with this string.
@@ -1219,7 +1221,7 @@ __contains__(self, key: 'object', /) -> 'bool'
 
 __len__(self) -> 'int'
 
-The number of entries in every shard, including expired entries not yet removed.
+The number of live entries in every shard: expired ones don't count, as on `Cache`.
 
 Raises on any shard's failure, under `durable=True` too.
 
@@ -1270,7 +1272,7 @@ a merge of every shard's sorted keys. Each shard keeps a small page of keys buff
 first `next()` reads every shard once, and later ones read a shard only when its page runs
 out. No connection or lock is held between `next()` calls. As on `Cache`, it isn't a
 snapshot: a key stored or deleted while it runs may or may not be yielded, but none is
-yielded twice and the order holds. Expired entries not yet removed are included. `next()`
+yielded twice and the order holds. Expired entries are skipped, as on `Cache`. `next()`
 raises `ValueError` while another thread is inside it.
 
 Args:
@@ -1722,7 +1724,7 @@ __contains__(self, key: 'object', /) -> 'bool'
 
 __len__(self) -> 'int'
 
-The number of entries.
+The number of live entries: expired ones don't count.
 
 __bool__(self) -> 'bool'
 
@@ -2384,6 +2386,7 @@ value, expires_at = cache.get('user:42', expire_time=True)
 - Keys are `str`, `bytes`, `int`, `float`, `bool`, `None`, or tuples of those, such as `('user', 42)`. They're compared by exact type, so `1`, `1.0` and `True` are three keys. Anything else (a `list`, a `dict`, an object) raises `TypeError`; build a tuple or a string instead.
 - Values can be `str`, `bytes`, `int`, `float`, `bool`, `None`, `Decimal`, and lists, tuples, dicts, sets, frozensets, datetimes and dates made of those. They come back as the types you stored. See [Serialization](serialization.qmd).
 - `expire` is in seconds. Leave it out for an entry that never expires. `touch(key, expire=...)` changes the expiry of an existing entry.
+- An entry is gone the moment it expires: `get`, `in`, `add`, `len()` and iteration all stop seeing it at once. Its row and any value file stay on disk, and in `volume()`, until something removes them. Each `set()` removes a few, and `expire()` removes the rest, so a cache that's mostly read should call `expire()` (or `caches.expire_all()`) from a scheduled job, about hourly. Nothing does this in the background yet; it's on the [roadmap](roadmap.qmd).
 
 ### Dictionary syntax
 
@@ -3169,12 +3172,17 @@ Tags and the eviction policy changed the on-disk format. 0.2.3 refuses a cache m
 
 A release that meets a cache in another on-disk format opens a cache of its own in a versioned subdirectory and logs a warning, instead of refusing to open, so old and new workers keep running side by side during a deploy. `remove_old_formats()` cleans up the old cache once its workers are gone. See [Upgrading across a format change](../recipes/upgrading.qmd).
 
+### Done: expiry that's exact for counts and listings (0.3.5)
+
+An entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it expires, as it always left `get` and `in` (D-060). Its space is still freed by the next writes or a scheduled `expire()`; the background sweeper below makes that automatic.
+
 ### Next
 
 In roughly this order:
 
 | What | What it delivers |
 |---|---|
+| **Background expiry sweeper** | Expired entries' space freed with no scheduled `expire()`. One small Rust thread per process sweeps every open cache, spread evenly over the interval (four caches on a 60 s interval sweep at 0:00, 0:15, 0:30 and 0:45), and the processes sharing a cache take turns, so eight workers don't all sweep it. A cache with nothing expired is only read, never locked, and a cache left over its size limit with no writes coming is trimmed back to it. |
 | **Django cache backend** | A diskcache-oxide backend for Django's cache framework, tested against Django's own cache test suite. It's a big job, so it gets a phase of its own. |
 | **Free-threaded performance** | Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target. |
 | **`AsyncCache`** | An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. It starts as an experiment and ships only if it earns its place; if it doesn't, this page will say why. |
@@ -3193,7 +3201,6 @@ In roughly this order:
 
 Ideas being considered, not yet committed to:
 
-- **Expiry that's exact everywhere.** Lookups already treat an expired entry as gone at the moment it expires. The plan is to make `len()` and iteration do the same, and move the physical cleanup to a small background sweeper written in Rust, coordinated across processes so eight workers don't all sweep at once.
 - **A large-file cache**, handing out an open file rather than a path, which is where diskcache's `read=True` would fit.
 - **Encryption at rest**, if a real need appears: SQLCipher for the database, authenticated encryption for spill files.
 
@@ -4373,6 +4380,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-057 | `push()` past its range, a bad `side` | Leaves the range, then `IntegrityError`; `KeyError` | `OverflowError`; `ValueError` |
 | D-058 | Windows: deleting or overwriting a large value while it's being read | Leaks its file, outside `size_limit` | Removes it |
 | D-059 | A directory holding another diskcache-oxide format | (no such thing) `directory` is the one passed | Opens `diskcache-oxide-format-N` inside it; `directory` says so |
+| D-060 | `len()` and iteration | Count and list expired entries until something removes them | Leave them out the moment they expire |
 
 ## Safety
 
@@ -4481,6 +4489,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-054 to D-057:** the queue calls. A queue's items are only keys of its exact shape, so floats, ordinary keys that share the prefix and nested queues never mix in (upstream bugs 17 and 18); `peek()` and `peekitem()` write only what `get` would and never hang on a missing value file (bug 16); `pull()` decodes before it deletes, on every path, so an item this process can't read stays queued; and `push()` raises `OverflowError` rather than leave its range or overwrite a key. See [Work queues](../recipes/work-queues.qmd).
 - **D-058:** on Windows, diskcache can't delete a value file while any reader has it open (Python's `open()` doesn't share delete) and ignores the failure, so the file stays with nothing pointing at it (upstream bug 19); one test left 154 files for 6 entries. diskcache-oxide's readers allow the delete, so nothing leaks.
 - **D-059:** when a cache directory holds a cache in another diskcache-oxide format (after an upgrade or a rollback), the cache opens in the subdirectory `diskcache-oxide-format-N` with a warning, and every later open uses it; `directory` reports where the cache really is. `remove_old_formats()` cleans up older formats once the old workers are gone. See [Upgrading across a format change](../recipes/upgrading.qmd).
+- **D-060:** an expired entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it expires, as it already left `get` and `in`. diskcache keeps counting and listing it until a `set()`, `expire()` or `cull()` removes its row. Nothing is written by the check: the row and its space, in `volume()`, stay until that removal, as in diskcache.
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)
@@ -6140,7 +6149,7 @@ In Kubernetes or behind a load balancer, use it as a *readiness* check, never a 
 ## What the numbers mean
 
 - **`enabled`** is False for a `NullCache`. If the cache comes from a [`Caches`](../user-guide/caches.qmd) registry, that's what a lookup hands out while the cache can't open, so `enabled: false` on a cache you never switched off means something is wrong. The log says what.
-- **`len(cache)`** counts entries, including expired ones not yet removed. It's read from a stored total, so it costs the same on a cache of ten entries or ten million.
+- **`len(cache)`** counts live entries: an entry stops counting the moment it expires, even before its row is removed. It's a stored total less the expired rows still on disk, so it costs the same on a cache of ten entries or ten million, plus a little for each expired entry nothing has removed yet.
 - **`volume()`** is the cache's size in bytes: the database pages in use plus the value files. It leaves out the write-ahead log and pages freed by deletes, which SQLite keeps in the file for reuse, so `du` on the directory can show more. `check(fix=True)` (below) gives the freed pages back.
 - **`size_limit` and `eviction_policy`.** Under the default `'least-recently-stored'`, a full cache sits close to its limit, and that's normal: each `set()` that finds it over the limit evicts the oldest entries. Under `'none'` nothing is evicted for size, so `percent_of_limit` can pass 100. On a [sessions](sessions.qmd) or [work queue](work-queues.qmd) cache, that's the number to alert on. Both attributes are the values this process last saw; `cache.reset('size_limit')` and `cache.reset('eviction_policy')` read what's stored now, in case another process changed them.
 - **Hits and misses** count `get` and `cache[key]` in this process. An expired entry, and a value answered as a miss by `on_decode_error`, count as misses. `in`, `pop` and iteration don't count, and a `durable=True` outage answered as a miss counts as nothing. A `FanoutCache` sums its shards, and a `NullCache` always reports `(0, 0)`.
@@ -6290,7 +6299,7 @@ The exact messages, and what to do about each, are in [Errors and what to do abo
 
 - **`stats()` turns counting on.** Its `enable` argument defaults to True, so a health check that reads the counts also starts them. `stats(enable=False)` turns counting off and stops the counts where they are.
 - **Counts reset on restart.** Graph the hit ratio, not the raw counts, or publish the counts as above.
-- **`len()` includes expired entries** until `expire()`, or the cleanup a `set()` does, removes them. A scheduled `expire()` keeps it honest; `caches.expire_all()` does every registered cache.
+- **`volume()` includes expired entries** until `expire()`, or the cleanup a `set()` does, removes them, though `len()` already leaves them out. A scheduled `expire()` frees their space; `caches.expire_all()` does every registered cache.
 - **Health checks shouldn't write.** Everything in `cache_health` is a read. `check()` and `checkpoint()` belong in a maintenance job.
 
 ### Upgrading across a format change

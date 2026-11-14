@@ -70,6 +70,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-057 | `push()` past its range, a bad `side` | Leaves the range, then `IntegrityError`; `KeyError` | `OverflowError`; `ValueError` |
 | D-058 | Windows: deleting or overwriting a large value while it's being read | Leaks its file, outside `size_limit` | Removes it |
 | D-059 | A directory holding another diskcache-oxide format | (no such thing) `directory` is the one passed | Opens `diskcache-oxide-format-N` inside it; `directory` says so |
+| D-060 | `len()` and iteration | Count and list expired entries until something removes them | Leave them out the moment they expire |
 
 ## Safety
 
@@ -178,6 +179,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-054 to D-057:** the queue calls. A queue's items are only keys of its exact shape, so floats, ordinary keys that share the prefix and nested queues never mix in (upstream bugs 17 and 18); `peek()` and `peekitem()` write only what `get` would and never hang on a missing value file (bug 16); `pull()` decodes before it deletes, on every path, so an item this process can't read stays queued; and `push()` raises `OverflowError` rather than leave its range or overwrite a key. See [Work queues](../recipes/work-queues.qmd).
 - **D-058:** on Windows, diskcache can't delete a value file while any reader has it open (Python's `open()` doesn't share delete) and ignores the failure, so the file stays with nothing pointing at it (upstream bug 19); one test left 154 files for 6 entries. diskcache-oxide's readers allow the delete, so nothing leaks.
 - **D-059:** when a cache directory holds a cache in another diskcache-oxide format (after an upgrade or a rollback), the cache opens in the subdirectory `diskcache-oxide-format-N` with a warning, and every later open uses it; `directory` reports where the cache really is. `remove_old_formats()` cleans up older formats once the old workers are gone. See [Upgrading across a format change](../recipes/upgrading.qmd).
+- **D-060:** an expired entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it expires, as it already left `get` and `in`. diskcache keeps counting and listing it until a `set()`, `expire()` or `cull()` removes its row. Nothing is written by the check: the row and its space, in `volume()`, stay until that removal, as in diskcache.
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)

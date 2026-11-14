@@ -57,7 +57,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Cache.__setitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__setitem__.html): `cache[key] = value`: store a value that never expires, like `set()`. Under `durable=True` a failed write is
 - [Cache.__delitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__delitem__.html): `del cache[key]`: remove the entry, or raise `KeyError` if it's missing or expired, or the delete failed
 - [Cache.__contains__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__contains__.html): `key in cache`: True if the key holds a live (unexpired) value. False if the check failed under
-- [Cache.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__len__.html): The number of entries, including expired entries not yet removed
+- [Cache.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__len__.html): The number of live entries. An entry stops counting the moment it expires, whether or not
 - [Cache.__bool__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__bool__.html): Always True, even when empty, so `if cache:` means "caching is on"
 - [Cache.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__iter__.html): Iterate over keys in insertion order. An overwrite keeps its key's place
 - [Cache.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__enter__.html): Return the cache, for `with Cache(...) as cache:`
@@ -109,7 +109,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [FanoutCache.__setitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__setitem__.html): `cache[key] = value`, as on `Cache`
 - [FanoutCache.__delitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__delitem__.html): `del cache[key]`, as on `Cache`
 - [FanoutCache.__contains__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__contains__.html): `key in cache`, as on `Cache`
-- [FanoutCache.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__len__.html): The number of entries in every shard, including expired entries not yet removed
+- [FanoutCache.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__len__.html): The number of live entries in every shard: expired ones don't count, as on `Cache`
 - [FanoutCache.__bool__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__bool__.html): Always True, even when empty, so `if cache:` means "caching is on"
 - [FanoutCache.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__enter__.html): Return the cache, for `with FanoutCache(...) as cache:`
 - [FanoutCache.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/FanoutCache.__exit__.html): Close the cache, as `close()` does
@@ -210,7 +210,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [CacheLike.__setitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__setitem__.html): `cache[key] = value`: store a value that never expires
 - [CacheLike.__delitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__delitem__.html): `del cache[key]`: remove the entry, or raise `KeyError`
 - [CacheLike.__contains__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__contains__.html): `key in cache`: True if the key holds a live value
-- [CacheLike.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__len__.html): The number of entries
+- [CacheLike.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__len__.html): The number of live entries: expired ones don't count
 - [CacheLike.__bool__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__bool__.html): True if caching is on, so `if cache:` reads naturally
 - [CacheLike.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__iter__.html): Iterate over every key once. A `Cache` yields them in insertion order
 - [CacheLike.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/CacheLike.__enter__.html): Return the cache, for use in a `with` block

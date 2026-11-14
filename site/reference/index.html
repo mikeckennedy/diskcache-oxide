@@ -2173,7 +2173,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><a href="../reference/Cache.__len__.html#diskcache_oxide.Cache.__len__" class="doc-function doc-label doc-label-method">Cache.__len__()</a></dt>
 <dd>
-<p>The number of entries, including expired entries not yet removed.</p>
+<p>The number of live entries. An entry stops counting the moment it expires, whether or not</p>
 </dd>
 <dt><a href="../reference/Cache.__bool__.html#diskcache_oxide.Cache.__bool__" class="doc-function doc-label doc-label-method">Cache.__bool__()</a></dt>
 <dd>
@@ -2365,7 +2365,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><a href="../reference/FanoutCache.__len__.html#diskcache_oxide.FanoutCache.__len__" class="doc-function doc-label doc-label-method">FanoutCache.__len__()</a></dt>
 <dd>
-<p>The number of entries in every shard, including expired entries not yet removed.</p>
+<p>The number of live entries in every shard: expired ones don’t count, as on <code>Cache</code>.</p>
 </dd>
 <dt><a href="../reference/FanoutCache.__bool__.html#diskcache_oxide.FanoutCache.__bool__" class="doc-function doc-label doc-label-method">FanoutCache.__bool__()</a></dt>
 <dd>
@@ -2745,7 +2745,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><a href="../reference/CacheLike.__len__.html#diskcache_oxide.CacheLike.__len__" class="doc-function doc-label doc-label-method">CacheLike.__len__()</a></dt>
 <dd>
-<p>The number of entries.</p>
+<p>The number of live entries: expired ones don’t count.</p>
 </dd>
 <dt><a href="../reference/CacheLike.__bool__.html#diskcache_oxide.CacheLike.__bool__" class="doc-function doc-label doc-label-method">CacheLike.__bool__()</a></dt>
 <dd>

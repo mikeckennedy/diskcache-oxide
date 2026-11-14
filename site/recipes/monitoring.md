@@ -69,7 +69,7 @@ In Kubernetes or behind a load balancer, use it as a *readiness* check, never a 
 # What the numbers mean
 
 - **[enabled](../reference/Cache.enabled.md#diskcache_oxide.Cache.enabled)** is False for a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache). If the cache comes from a [`Caches`](../user-guide/caches.md) registry, that's what a lookup hands out while the cache can't open, so `enabled: false` on a cache you never switched off means something is wrong. The log says what.
-- **`len(cache)`** counts entries, including expired ones not yet removed. It's read from a stored total, so it costs the same on a cache of ten entries or ten million.
+- **`len(cache)`** counts live entries: an entry stops counting the moment it expires, even before its row is removed. It's a stored total less the expired rows still on disk, so it costs the same on a cache of ten entries or ten million, plus a little for each expired entry nothing has removed yet.
 - **[volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume)** is the cache's size in bytes: the database pages in use plus the value files. It leaves out the write-ahead log and pages freed by deletes, which SQLite keeps in the file for reuse, so `du` on the directory can show more. `check(fix=True)` (below) gives the freed pages back.
 - **[size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) and [eviction_policy](../reference/Cache.eviction_policy.md#diskcache_oxide.Cache.eviction_policy).** Under the default `'least-recently-stored'`, a full cache sits close to its limit, and that's normal: each [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) that finds it over the limit evicts the oldest entries. Under `'none'` nothing is evicted for size, so `percent_of_limit` can pass 100. On a [sessions](sessions.md) or [work queue](work-queues.md) cache, that's the number to alert on. Both attributes are the values this process last saw; `cache.reset('size_limit')` and `cache.reset('eviction_policy')` read what's stored now, in case another process changed them.
 - **Hits and misses** count [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) and `cache[key]` in this process. An expired entry, and a value answered as a miss by `on_decode_error`, count as misses. `in`, [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) and iteration don't count, and a `durable=True` outage answered as a miss counts as nothing. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) sums its shards, and a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) always reports `(0, 0)`.
@@ -205,7 +205,7 @@ print('repaired:', len(damaged.check(fix=True)), '| after:', damaged.check(), '|
 ```
 
 
-    UserWarning file not found: .../4f/4ffe32c7e819e002d9cd68d47e3cbfbf.val
+    UserWarning file not found: .../7f/7f77e9498e4a6725cfe1eeaa0130bdf7.val
     repaired: 1 | after: [] | entries: 1
 
 
@@ -244,5 +244,5 @@ The exact messages, and what to do about each, are in [Errors and what to do abo
 
 - **[stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) turns counting on.** Its [enable](../reference/Caches.enable.md#diskcache_oxide.Caches.enable) argument defaults to True, so a health check that reads the counts also starts them. `stats(enable=False)` turns counting off and stops the counts where they are.
 - **Counts reset on restart.** Graph the hit ratio, not the raw counts, or publish the counts as above.
-- **`len()` includes expired entries** until [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), or the cleanup a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) does, removes them. A scheduled [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) keeps it honest; `caches.expire_all()` does every registered cache.
+- **[volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) includes expired entries** until [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), or the cleanup a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) does, removes them, though `len()` already leaves them out. A scheduled [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) frees their space; `caches.expire_all()` does every registered cache.
 - **Health checks shouldn't write.** Everything in `cache_health` is a read. [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check) and [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) belong in a maintenance job.
