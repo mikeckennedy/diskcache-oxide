@@ -222,7 +222,9 @@ def a_joined_thread_leaves_this_interpreter_multithreaded() -> bool:
             os._exit(0)
         os.waitpid(pid, 0)
     """
-    return FORK_WARNING in run(script).stderr
+    # Twice, both warning: even a plain Linux interpreter can count a joined thread for a moment after
+    # the join (the reap wait in background/worker.rs), which would skip the assertion for nothing.
+    return all(FORK_WARNING in run(script).stderr for _ in range(2))
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='no fork() on Windows')
