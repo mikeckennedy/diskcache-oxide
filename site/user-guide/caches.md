@@ -34,6 +34,99 @@ caches: Caches[CacheName] = Caches('/var/lib/my-app/cache')
 caches['genral']  # ty: invalid argument
 ```
 
+`caches[name]` raises `KeyError` for a name nobody registered. When the name may not be there (it comes from config, or a module can't be sure setup registered it), `caches.get(name)` checks and looks up in one call, returning `None`, or a default you pass, instead:
+
+``` python
+if (pages := caches.get('pages')) is None:
+    raise RuntimeError('the pages cache was not registered')
+pages.set('/about', html)
+```
+
+The default is only for a name that was never registered. A registered cache that can't open or is switched off still comes back as a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), as it does from `caches[name]`, and a name registered with `shards=` is still a `TypeError`: read those with `fanout(name)`.
+
+
+# One module for your caches
+
+`caches['pages']` is still a string. A nicer shape for an app is one module that owns the registry and has a function per cache, so the rest of the code never indexes anything. Type `site_caches.` and the editor lists the caches the app has:
+
+``` python
+# site_caches.py
+from typing import Literal, Optional
+
+from diskcache_oxide import Caches, TransactionalCacheLike
+
+CacheName = Literal['pages', 'markdown', 'etags']
+caches: Optional[Caches[CacheName]] = None
+
+
+def setup(base_folder: str) -> None:
+    global caches
+    if caches is not None:
+        return
+
+    registry: Caches[CacheName] = Caches(base_folder, durable=True, timeout=1.0)
+    registry.register('pages')
+    registry.register('markdown')
+    registry.register('etags')
+    caches = registry
+
+
+def close() -> None:
+    global caches
+    if caches is not None:
+        caches.close_all()
+        caches = None
+
+
+def cache(name: CacheName) -> TransactionalCacheLike:
+    if caches is None:
+        raise RuntimeError('call site_caches.setup() first')
+    return caches[name]
+
+
+def pages_cache() -> TransactionalCacheLike:
+    return cache('pages')
+
+
+def markdown_cache() -> TransactionalCacheLike:
+    return cache('markdown')
+
+
+def etag_cache() -> TransactionalCacheLike:
+    return cache('etags')
+```
+
+Call `site_caches.setup(...)` once at startup and `site_caches.close()` at shutdown. Everywhere else, ask for the cache where you use it:
+
+``` python
+import site_caches
+
+def render_page(url: str) -> Response:
+    etag: Optional[str] = site_caches.etag_cache().get(url)
+    page: Optional[str] = site_caches.pages_cache().get(url)
+
+    if page is not None:
+        return Response(body=page, etag=etag)
+
+    html = render_page_contents(url)
+    etag = etag_from_body(html)
+
+    site_caches.etag_cache().set(url, etag)
+    site_caches.pages_cache().set(url, html)
+
+    return Response(body=html, etag=etag)
+```
+
+A few things make this work:
+
+- **The functions look the cache up on every call** rather than keeping it in a module variable. That's the one dict read from above, and it's what lets a cache that failed to open come back without a restart, and [disable()](../reference/Caches.disable.md#diskcache_oxide.Caches.disable) take effect.
+- **Each name is written once per cache function**, and the `Literal` makes a typo there a type error. Nothing outside the module has to spell a name at all.
+- **The registry is still there** as `site_caches.caches` for the rest: [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) for an admin page, [disable()](../reference/Caches.disable.md#diskcache_oxide.Caches.disable) for a load test. It's `None` until `setup()` runs.
+
+The two caches in `render_page` are written and evicted separately, so a page can come back with no etag: handle `etag is None` on a hit, or store `(etag, html)` as one entry in `pages`, since a tuple round-trips as a tuple.
+
+A decorator such as `@site_caches.pages_cache().memoize()` runs when its module is imported, which is before `setup()`, so it raises. Use the per-call decorator from [`memoize` on a registered cache](#memoize-on-a-registered-cache) for those.
+
 
 # When a cache can't open
 

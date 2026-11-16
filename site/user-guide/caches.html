@@ -665,6 +665,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
    
   <ul class="collapse">
   <li><a href="#lookups" id="toc-lookups" class="nav-link active" data-scroll-target="#lookups">Lookups</a></li>
+  <li><a href="#one-module-for-your-caches" id="toc-one-module-for-your-caches" class="nav-link" data-scroll-target="#one-module-for-your-caches">One module for your caches</a></li>
   <li><a href="#when-a-cache-cant-open" id="toc-when-a-cache-cant-open" class="nav-link" data-scroll-target="#when-a-cache-cant-open">When a cache can’t open</a>
   <ul class="collapse">
   <li><a href="#after-an-upgrade-that-changes-the-format" id="toc-after-an-upgrade-that-changes-the-format" class="nav-link" data-scroll-target="#after-an-upgrade-that-changes-the-format">After an upgrade that changes the format</a></li>
@@ -726,6 +727,84 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>CacheName <span class="op">=</span> Literal[<span class="st">'general'</span>, <span class="st">'pages'</span>]</span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>caches: Caches[CacheName] <span class="op">=</span> Caches(<span class="st">'/var/lib/my-app/cache'</span>)</span>
 <span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>caches[<span class="st">'genral'</span>]  <span class="co"># ty: invalid argument</span></span></code></pre></div>
+<p><code>caches[name]</code> raises <code>KeyError</code> for a name nobody registered. When the name may not be there (it comes from config, or a module can’t be sure setup registered it), <code>caches.get(name)</code> checks and looks up in one call, returning <code>None</code>, or a default you pass, instead:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> (pages <span class="op">:=</span> caches.get(<span class="st">'pages'</span>)) <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">raise</span> <span class="pp">RuntimeError</span>(<span class="st">'the pages cache was not registered'</span>)</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>pages.<span class="bu">set</span>(<span class="st">'/about'</span>, html)</span></code></pre></div>
+<p>The default is only for a name that was never registered. A registered cache that can’t open or is switched off still comes back as a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>, as it does from <code>caches[name]</code>, and a name registered with <code>shards=</code> is still a <code>TypeError</code>: read those with <code>fanout(name)</code>.</p>
+</section>
+<section id="one-module-for-your-caches" class="level1">
+<h1>One module for your caches</h1>
+<p><code>caches['pages']</code> is still a string. A nicer shape for an app is one module that owns the registry and has a function per cache, so the rest of the code never indexes anything. Type <code>site_caches.</code> and the editor lists the caches the app has:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># site_caches.py</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> typing <span class="im">import</span> Literal, Optional</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Caches, TransactionalCacheLike</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>CacheName <span class="op">=</span> Literal[<span class="st">'pages'</span>, <span class="st">'markdown'</span>, <span class="st">'etags'</span>]</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>caches: Optional[Caches[CacheName]] <span class="op">=</span> <span class="va">None</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> setup(base_folder: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>    <span class="kw">global</span> caches</span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> caches <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span></span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>    registry: Caches[CacheName] <span class="op">=</span> Caches(base_folder, durable<span class="op">=</span><span class="va">True</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)</span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a>    registry.register(<span class="st">'pages'</span>)</span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>    registry.register(<span class="st">'markdown'</span>)</span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a>    registry.register(<span class="st">'etags'</span>)</span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>    caches <span class="op">=</span> registry</span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> close() <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a>    <span class="kw">global</span> caches</span>
+<span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> caches <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a>        caches.close_all()</span>
+<span id="cb4-26"><a href="#cb4-26" aria-hidden="true" tabindex="-1"></a>        caches <span class="op">=</span> <span class="va">None</span></span>
+<span id="cb4-27"><a href="#cb4-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-28"><a href="#cb4-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-29"><a href="#cb4-29" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache(name: CacheName) <span class="op">-&gt;</span> TransactionalCacheLike:</span>
+<span id="cb4-30"><a href="#cb4-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> caches <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb4-31"><a href="#cb4-31" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">RuntimeError</span>(<span class="st">'call site_caches.setup() first'</span>)</span>
+<span id="cb4-32"><a href="#cb4-32" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> caches[name]</span>
+<span id="cb4-33"><a href="#cb4-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-34"><a href="#cb4-34" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-35"><a href="#cb4-35" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> pages_cache() <span class="op">-&gt;</span> TransactionalCacheLike:</span>
+<span id="cb4-36"><a href="#cb4-36" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> cache(<span class="st">'pages'</span>)</span>
+<span id="cb4-37"><a href="#cb4-37" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-38"><a href="#cb4-38" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-39"><a href="#cb4-39" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> markdown_cache() <span class="op">-&gt;</span> TransactionalCacheLike:</span>
+<span id="cb4-40"><a href="#cb4-40" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> cache(<span class="st">'markdown'</span>)</span>
+<span id="cb4-41"><a href="#cb4-41" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-42"><a href="#cb4-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-43"><a href="#cb4-43" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> etag_cache() <span class="op">-&gt;</span> TransactionalCacheLike:</span>
+<span id="cb4-44"><a href="#cb4-44" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> cache(<span class="st">'etags'</span>)</span></code></pre></div>
+<p>Call <code>site_caches.setup(...)</code> once at startup and <code>site_caches.close()</code> at shutdown. Everywhere else, ask for the cache where you use it:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> site_caches</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> render_page(url: <span class="bu">str</span>) <span class="op">-&gt;</span> Response:</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    etag: Optional[<span class="bu">str</span>] <span class="op">=</span> site_caches.etag_cache().get(url)</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    page: Optional[<span class="bu">str</span>] <span class="op">=</span> site_caches.pages_cache().get(url)</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> page <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> Response(body<span class="op">=</span>page, etag<span class="op">=</span>etag)</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>    html <span class="op">=</span> render_page_contents(url)</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>    etag <span class="op">=</span> etag_from_body(html)</span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>    site_caches.etag_cache().<span class="bu">set</span>(url, etag)</span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>    site_caches.pages_cache().<span class="bu">set</span>(url, html)</span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> Response(body<span class="op">=</span>html, etag<span class="op">=</span>etag)</span></code></pre></div>
+<p>A few things make this work:</p>
+<ul>
+<li><strong>The functions look the cache up on every call</strong> rather than keeping it in a module variable. That’s the one dict read from above, and it’s what lets a cache that failed to open come back without a restart, and <a href="../reference/Caches.disable.html#diskcache_oxide.Caches.disable" class="gdls-link gdls-code">disable()</a> take effect.</li>
+<li><strong>Each name is written once per cache function</strong>, and the <code>Literal</code> makes a typo there a type error. Nothing outside the module has to spell a name at all.</li>
+<li><strong>The registry is still there</strong> as <code>site_caches.caches</code> for the rest: <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> for an admin page, <a href="../reference/Caches.disable.html#diskcache_oxide.Caches.disable" class="gdls-link gdls-code">disable()</a> for a load test. It’s <code>None</code> until <code>setup()</code> runs.</li>
+</ul>
+<p>The two caches in <code>render_page</code> are written and evicted separately, so a page can come back with no etag: handle <code>etag is None</code> on a hit, or store <code>(etag, html)</code> as one entry in <code>pages</code>, since a tuple round-trips as a tuple.</p>
+<p>A decorator such as <code>@site_caches.pages_cache().memoize()</code> runs when its module is imported, which is before <code>setup()</code>, so it raises. Use the per-call decorator from <a href="#memoize-on-a-registered-cache"><code>memoize</code> on a registered cache</a> for those.</p>
 </section>
 <section id="when-a-cache-cant-open" class="level1">
 <h1>When a cache can’t open</h1>
@@ -742,8 +821,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="sharded-caches" class="level1">
 <h1>Sharded caches</h1>
 <p>Pass <code>shards=</code> to <a href="../reference/Caches.register.html#diskcache_oxide.Caches.register" class="gdls-link gdls-code">register</a> to open a <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> instead of a <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. It takes the same settings, and <code>max_connections</code> is then a total across the shards.</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'rate_limits'</span>, shards<span class="op">=</span><span class="dv">8</span>)</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>caches.fanout(<span class="st">'rate_limits'</span>).incr(<span class="st">'ip:203.0.113.7'</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'rate_limits'</span>, shards<span class="op">=</span><span class="dv">8</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>caches.fanout(<span class="st">'rate_limits'</span>).incr(<span class="st">'ip:203.0.113.7'</span>)</span></code></pre></div>
 <p>A plain cache is read with <code>caches[name]</code> and a sharded one with <code>caches.fanout(name)</code>, typed <code>FanoutCache | NullCache</code>, because its <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact</a> takes a key. Reading a name the wrong way raises <code>TypeError</code>. Passing <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> at all picks the kind, even <code>shards=None</code>, so a config file that writes <code>shards: null</code> for “none” would register a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>: leave it out. A directory that holds the other kind of cache fails to open with <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a>, and the lookup returns a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> like any failed open.</p>
 <p>A sharded cache keeps the shard count it was created with. Every process then routes keys by the same count, so a deploy that changes <code>shards=</code> keeps working while old and new workers overlap. When the folder already has another count than the registration:</p>
 <ul>
@@ -752,55 +831,55 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li>A <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> or <code>max_connections</code> that fits the registered count but can’t be split over the folder’s (each shard needs at least one connection and 1 MiB) fails with <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> naming both counts, and the lookup returns a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. A setting that’s wrong for the registered count itself still raises <code>ValueError</code> from the lookup, as any bad setting does.</li>
 <li><code>register(..., raise_on_mismatch=True)</code> makes any other count an open failure instead, so the lookup returns a reported <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>. A direct <code>FanoutCache(path, shards=16)</code> behaves the same way: the stored count with a <code>WARNING</code>, or <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> with <code>raise_on_mismatch=True</code>.</li>
 </ul>
-<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'rate_limits'</span>, shards<span class="op">=</span><span class="dv">16</span>)  <span class="co"># the folder has 8: opens with 8, and warns</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>caches.fanout(<span class="st">'rate_limits'</span>).shards        <span class="co"># 8</span></span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>caches.register(<span class="st">'rate_limits'</span>, shards<span class="op">=</span><span class="dv">16</span>)  <span class="co"># the folder has 8: opens with 8, and warns</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>caches.fanout(<span class="st">'rate_limits'</span>).shards        <span class="co"># 8</span></span></code></pre></div>
 <p>Everything else on this page (<a href="../reference/Caches.disable.html#diskcache_oxide.Caches.disable" class="gdls-link gdls-code">disable</a>, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats</a>, <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear</a>, <a href="../reference/Caches.expire_all.html#diskcache_oxide.Caches.expire_all" class="gdls-link gdls-code">expire_all</a>, <a href="../reference/Caches.close_all.html#diskcache_oxide.Caches.close_all" class="gdls-link gdls-code">close_all</a>) works the same for both kinds.</p>
 </section>
 <section id="switching-caches-off" class="level1">
 <h1>Switching caches off</h1>
-<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>caches.disable(<span class="st">'pages'</span>)   <span class="co"># later lookups return NullCache(invalidate=real)</span></span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>caches.enable(<span class="st">'pages'</span>)</span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>caches.enabled(<span class="st">'pages'</span>)   <span class="co"># False while it's off</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>caches.disable(<span class="st">'pages'</span>)   <span class="co"># later lookups return NullCache(invalidate=real)</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>caches.enable(<span class="st">'pages'</span>)</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>caches.enabled(<span class="st">'pages'</span>)   <span class="co"># False while it's off</span></span></code></pre></div>
 <p>While a cache is disabled, its lookups return <code>NullCache(invalidate=real)</code>: reads miss and writes are dropped, but <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> and <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear</a> still reach the real cache, so entries you invalidate by removing them aren’t served stale when it comes back on. Invalidating by writing doesn’t survive: an overwriting <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> or a version-bump <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> is dropped like any other write, and the old value is served again (see <a href="../user-guide/null-cache.html#keep-invalidating-while-caching-is-off-invalidate">Keep invalidating while caching is off</a>). Switches only change later lookups. Code that already holds the real <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> keeps using it, so set them at startup, before you hand caches out.</p>
 <p>If your app has its own names for what it caches (Talk Python calls them purposes), map them onto registered caches in your own code. It’s a few lines:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>PURPOSES <span class="op">=</span> {<span class="st">'rss_feed'</span>: <span class="st">'general'</span>, <span class="st">'episode_html'</span>: <span class="st">'episodes'</span>}</span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>off <span class="op">=</span> {<span class="st">'rss_feed'</span>}  <span class="co"># from your settings file</span></span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache_for(purpose: <span class="bu">str</span>) <span class="op">-&gt;</span> CacheLike:</span>
-<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>    real <span class="op">=</span> caches[PURPOSES[purpose]]</span>
-<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> NullCache(invalidate<span class="op">=</span>real) <span class="cf">if</span> purpose <span class="kw">in</span> off <span class="cf">else</span> real</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>PURPOSES <span class="op">=</span> {<span class="st">'rss_feed'</span>: <span class="st">'general'</span>, <span class="st">'episode_html'</span>: <span class="st">'episodes'</span>}</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>off <span class="op">=</span> {<span class="st">'rss_feed'</span>}  <span class="co"># from your settings file</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache_for(purpose: <span class="bu">str</span>) <span class="op">-&gt;</span> CacheLike:</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>    real <span class="op">=</span> caches[PURPOSES[purpose]]</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> NullCache(invalidate<span class="op">=</span>real) <span class="cf">if</span> purpose <span class="kw">in</span> off <span class="cf">else</span> real</span></code></pre></div>
 <p>Build the wrapper on each call rather than memoizing it: <code>caches[...]</code> is already cheap, and a memoized <code>NullCache(invalidate=...)</code> wrapped around a cache that had failed to open would never pick up its recovery.</p>
 </section>
 <section id="memoize-on-a-registered-cache" class="level1">
 <h1><a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> on a registered cache</h1>
 <p><code>@caches['episodes'].memoize()</code> does the lookup once, when the module is imported, and the decorated function keeps whatever came back. If the cache couldn’t open at that moment, the function holds a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and runs uncached until the process restarts, even after the cache recovers. <code>disable('episodes')</code> never reaches it either, because switches only change later lookups.</p>
 <p>If that matters to you, look the cache up on each call instead. A small decorator does it:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> functools</span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> memoized(name: <span class="bu">str</span>, <span class="op">**</span>options):</span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> decorator(func):</span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>        <span class="at">@functools.wraps</span>(func)</span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>        <span class="kw">def</span> wrapper(<span class="op">*</span>args, <span class="op">**</span>kwargs):</span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> caches[name].memoize(<span class="op">**</span>options)(func)(<span class="op">*</span>args, <span class="op">**</span>kwargs)</span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> wrapper</span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> decorator</span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="at">@memoized</span>(<span class="st">'episodes'</span>, expire<span class="op">=</span><span class="dv">600</span>)</span>
-<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> episode(number: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>:</span>
-<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> load_episode(number)</span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> functools</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> memoized(name: <span class="bu">str</span>, <span class="op">**</span>options):</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> decorator(func):</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>        <span class="at">@functools.wraps</span>(func)</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>        <span class="kw">def</span> wrapper(<span class="op">*</span>args, <span class="op">**</span>kwargs):</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> caches[name].memoize(<span class="op">**</span>options)(func)(<span class="op">*</span>args, <span class="op">**</span>kwargs)</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> wrapper</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> decorator</span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a><span class="at">@memoized</span>(<span class="st">'episodes'</span>, expire<span class="op">=</span><span class="dv">600</span>)</span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> episode(number: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>:</span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> load_episode(number)</span></code></pre></div>
 <p>It stores under the same keys as <code>@caches['episodes'].memoize(expire=600)</code> would, and it follows recovery and the switches. Building the wrapper on every call added about 2 µs per call when we measured it. To forget one result, build the key the same way: <code>caches['episodes'].delete(caches['episodes'].memoize()(episode.__wrapped__).__cache_key__(42))</code>.</p>
 </section>
 <section id="state-isnt-cache" class="level1">
 <h1>State isn’t cache</h1>
 <p>Sessions, job claims, locks and work queues look like cache entries, but losing one isn’t a miss: it’s a forced logout, a job that runs twice, a lock two workers hold at once, a job that vanishes. Open each of them as a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, directly, not through the registry:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>STATE <span class="op">=</span> Path(<span class="st">'/var/lib/my-app/state'</span>)</span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>sessions <span class="op">=</span> Cache(STATE <span class="op">/</span> <span class="st">'sessions'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
-<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>coordination <span class="op">=</span> Cache(STATE <span class="op">/</span> <span class="st">'coordination'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
-<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>jobs <span class="op">=</span> Cache(STATE <span class="op">/</span> <span class="st">'jobs'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>STATE <span class="op">=</span> Path(<span class="st">'/var/lib/my-app/state'</span>)</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>sessions <span class="op">=</span> Cache(STATE <span class="op">/</span> <span class="st">'sessions'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>coordination <span class="op">=</span> Cache(STATE <span class="op">/</span> <span class="st">'coordination'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>jobs <span class="op">=</span> Cache(STATE <span class="op">/</span> <span class="st">'jobs'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span></code></pre></div>
 <p>Why not the registry: a registry hands out a <a href="../user-guide/null-cache.html"><code>NullCache</code></a> whenever a cache can’t open, and while one is disabled, whatever <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a> says. On a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a>:</p>
 <ul>
 <li><a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> always returns <code>True</code>, so every worker wins a job claim and the job runs once per worker.</li>
@@ -815,10 +894,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="admin-and-shutdown" class="level1">
 <h1>Admin and shutdown</h1>
-<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>caches.stats()                      <span class="co"># {name: CacheStats(name, directory, enabled, count, volume, error)}</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>caches.clear(<span class="st">'pages'</span>, timeout<span class="op">=</span><span class="dv">10</span>)   <span class="co"># works on a disabled cache too</span></span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>caches.expire_all(timeout<span class="op">=</span><span class="dv">10</span>)       <span class="co"># {name: removed, or None if it failed}</span></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>caches.close_all()                  <span class="co"># at shutdown; `with Caches(...) as caches:` does it too</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>caches.stats()                      <span class="co"># {name: CacheStats(name, directory, enabled, count, volume, error)}</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>caches.clear(<span class="st">'pages'</span>, timeout<span class="op">=</span><span class="dv">10</span>)   <span class="co"># works on a disabled cache too</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>caches.expire_all(timeout<span class="op">=</span><span class="dv">10</span>)       <span class="co"># {name: removed, or None if it failed}</span></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>caches.close_all()                  <span class="co"># at shutdown; `with Caches(...) as caches:` does it too</span></span></code></pre></div>
 <ul>
 <li><a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> opens every registered cache and never raises: a cache that can’t be read has its <code>error</code> set.</li>
 <li>Hit and miss counts come from each cache’s own <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>: <code>caches['pages'].stats()</code> turns counting on for this process, and later calls return <code>(hits, misses)</code> for this process’s lookups. A disabled cache, or one that couldn’t open, returns <code>(0, 0)</code>.</li>

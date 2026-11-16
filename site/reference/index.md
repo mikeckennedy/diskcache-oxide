@@ -129,7 +129,7 @@ The number of live entries. An entry stops counting the moment it expires, wheth
 Always True, even when empty, so `if cache:` means "caching is on".
 
 [Cache.__iter__()](Cache.__iter__.md#diskcache_oxide.Cache.__iter__)  
-Iterate over keys in insertion order. An overwrite keeps its key's place.
+Iterate over keys in insertion order. An overwrite keeps its key's place. The walk covers
 
 [Cache.__enter__()](Cache.__enter__.md#diskcache_oxide.Cache.__enter__)  
 Return the cache, for `with Cache(...) as cache:`.
@@ -620,6 +620,9 @@ The directory the named cache is registered at. After a format change the cache 
 
 [Caches.__getitem__()](Caches.__getitem__.md#diskcache_oxide.Caches.__getitem__)  
 The named plain cache: opened on first use, then the same object every time.
+
+[Caches.get()](Caches.get.md#diskcache_oxide.Caches.get)  
+The named plain cache as `caches[name]` returns it, or `default` if no cache by that name
 
 [Caches.fanout()](Caches.fanout.md#diskcache_oxide.Caches.fanout)  
 The named sharded cache (one registered with `shards=`), looked up as `caches[name]` is.

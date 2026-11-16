@@ -60,7 +60,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Cache.__contains__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__contains__.html): `key in cache`: True if the key holds a live (unexpired) value. False if the check failed under
 - [Cache.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__len__.html): The number of live entries. An entry stops counting the moment it expires, whether or not
 - [Cache.__bool__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__bool__.html): Always True, even when empty, so `if cache:` means "caching is on"
-- [Cache.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__iter__.html): Iterate over keys in insertion order. An overwrite keeps its key's place
+- [Cache.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__iter__.html): Iterate over keys in insertion order. An overwrite keeps its key's place. The walk covers
 - [Cache.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__enter__.html): Return the cache, for `with Cache(...) as cache:`
 - [Cache.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__exit__.html): Close the cache, as `close()` does
 - [Cache.get](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.get.html): Return the value stored for `key`, or `default` if it's missing or expired
@@ -236,6 +236,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Caches.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__len__.html): How many caches are registered
 - [Caches.directory](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.directory.html): The directory the named cache is registered at. After a format change the cache itself
 - [Caches.__getitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__getitem__.html): The named plain cache: opened on first use, then the same object every time
+- [Caches.get](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.get.html): The named plain cache as `caches[name]` returns it, or `default` if no cache by that name
 - [Caches.fanout](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.fanout.html): The named sharded cache (one registered with `shards=`), looked up as `caches[name]` is
 - [Caches.disable](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.disable.html): Later lookups of these caches return `NullCache(invalidate=real)`
 - [Caches.enable](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.enable.html): Later lookups of these caches return the real cache again

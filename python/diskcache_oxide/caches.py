@@ -58,7 +58,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Self, cast
+from typing import Any, Optional, Self, cast, overload
 
 from diskcache_oxide._core import Cache, FanoutCache, Timeout, _open_fanout_keeping_stored
 from diskcache_oxide._types import MaintenanceStats
@@ -314,6 +314,35 @@ class Caches[N: str = str]:
             return cast(TransactionalCacheLike, self._resolved[name])
         except KeyError:
             return cast(TransactionalCacheLike, self._resolve(name))
+
+    @overload
+    def get(self, name: str) -> Optional[TransactionalCacheLike]: ...
+    @overload
+    def get[D](self, name: str, default: D) -> TransactionalCacheLike | D: ...
+    def get(self, name: str, default: object = None) -> object:
+        """The named plain cache as `caches[name]` returns it, or `default` if no cache by that name
+        is registered. One call instead of `name in caches` and then `caches[name]`.
+
+        `default` is for a name that was never registered, nothing else: a registered cache that
+        can't open or is disabled still comes back as a `NullCache`, as from `caches[name]`. `name`
+        is typed `str` even on a `Caches[Literal[...]]`, since asking about a name that may not be
+        there is the point.
+
+        Raises:
+            TypeError: The cache was registered with `shards=` (use `fanout(name)`), or its settings
+                are invalid.
+            ValueError: Its settings are invalid.
+
+        Examples:
+            ```python
+            if (pages := caches.get('pages')) is None:
+                raise RuntimeError('the pages cache was not registered')
+            pages.set('/about', html)
+            ```
+        """
+        if name not in self._specs:
+            return default
+        return self[cast(N, name)]
 
     def fanout(self, name: N) -> FanoutCache | NullCache:
         """The named sharded cache (one registered with `shards=`), looked up as `caches[name]` is.

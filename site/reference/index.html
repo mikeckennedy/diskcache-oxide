@@ -1701,6 +1701,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/Caches.get.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caches.get</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/Caches.fanout.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Caches.fanout</span></a>
   </div>
@@ -2209,7 +2215,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </dd>
 <dt><a href="../reference/Cache.__iter__.html#diskcache_oxide.Cache.__iter__" class="doc-function doc-label doc-label-method">Cache.__iter__()</a></dt>
 <dd>
-<p>Iterate over keys in insertion order. An overwrite keeps its key’s place.</p>
+<p>Iterate over keys in insertion order. An overwrite keeps its key’s place. The walk covers</p>
 </dd>
 <dt><a href="../reference/Cache.__enter__.html#diskcache_oxide.Cache.__enter__" class="doc-function doc-label doc-label-method">Cache.__enter__()</a></dt>
 <dd>
@@ -2854,6 +2860,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dt><a href="../reference/Caches.__getitem__.html#diskcache_oxide.Caches.__getitem__" class="doc-function doc-label doc-label-method">Caches.__getitem__()</a></dt>
 <dd>
 <p>The named plain cache: opened on first use, then the same object every time.</p>
+</dd>
+<dt><a href="../reference/Caches.get.html#diskcache_oxide.Caches.get" class="doc-function doc-label doc-label-method">Caches.get()</a></dt>
+<dd>
+<p>The named plain cache as <code>caches[name]</code> returns it, or <code>default</code> if no cache by that name</p>
 </dd>
 <dt><a href="../reference/Caches.fanout.html#diskcache_oxide.Caches.fanout" class="doc-function doc-label doc-label-method">Caches.fanout()</a></dt>
 <dd>
