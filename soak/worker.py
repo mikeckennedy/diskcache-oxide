@@ -1933,8 +1933,11 @@ def main() -> int:
 
     # A short background maintenance interval for every cache this worker opens without its own, set
     # by soak --maintenance-interval (plan 28); the soak's tooling, not the library, reads it.
-    interval = float(os.environ.get('DCO_MAINTENANCE_INTERVAL', '0') or 0)
-    if interval:
+    # 'off' (soak --no-maintenance) turns it off, the A/B control.
+    raw = os.environ.get('DCO_MAINTENANCE_INTERVAL', '')
+    if raw == 'off':
+        _core._set_default_maintenance_interval(0)
+    elif interval := float(raw or 0):
         _core._set_default_maintenance_interval(interval)
 
     mode, run_dir = sys.argv[1], Path(sys.argv[2])
