@@ -15,20 +15,48 @@ cache.shard_of('ip:203.0.113.7')   # 0 to 7, the same in every process and every
 
 # Should you use it?
 
-Use [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) when **several processes write to the same cache**. Use a plain [`Cache`](getting-started.md) when they don't. The numbers come from the benchmark in the repository (`bench/fanout.py`, release builds, a 99:1 get:set mix with 1 KB values on a Mac with 18 cores):
+Use a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) for a cache that **many writers share**: a web server with several worker processes (a web garden), many threads on free-threaded Python, or a write-heavy load. It's faster in all three, by up to 4x, and it costs about 10 MiB more memory per process than a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache). A plain [`Cache`](getting-started.md) stays the default, and the [recommended setup](../recipes/web-workers.md#the-recommended-setup) uses one for every cache: it's smaller, it keeps fewer files, and it's the only kind with queues and full transactions. Make the one cache your workers write to most a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) when its numbers matter.
+
+The numbers below come from the benchmark in the repository (`bench/fanout.py`, the released 0.3.5 wheels, a Mac Studio with 18 cores, 1 KB values over 50,000 keys, three rounds; `bench/results/fanout-3.14.10-studio-scaling.txt` and `fanout-3.14.10t-studio-scaling.txt`).
+
+**Several processes.** Each worker process opens the cache and does 99 reads to 1 write, on Python 3.14:
 
 
 | Processes | Plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) | `FanoutCache(shards=8)` | diskcache `FanoutCache(8)` |
 |----|----|----|----|
-| 1 | 660k ops/s | 714k | 396k |
-| 4 | 607k | 1,553k | 987k |
-| 8 | 262k | 1,496k | 1,238k |
+| 1 | 424k ops/s | 462k | 340k |
+| 4 | 522k | 1,048k | 770k |
+| 8 | 269k | 1,108k | 982k |
 
 
-- **It removes the multi-process write-lock ceiling.** A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) peaks at two processes and then falls, because the 1% of operations that are writes all queue on one database file's write lock. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) keeps climbing and holds its rate: 5.7x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) at 8 processes, and 1.2x diskcache's [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache). If your app runs a pre-forking server with a worker per core and writes often (counters, rate limits, job claims), this is the case it's for.
-- **It does not yet make threads sharing one handle scale on free-threaded Python.** Four threads on one [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) handle read no faster than, and on Linux slower than, four threads on a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache), and well short of four separate handles. A larger `max_connections` helps but doesn't close the gap. This is a limit in what threads on one handle share, it's being worked on, and no numbers are promised here. If your concern is read throughput from many threads in one process, a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) doesn't fix it today.
-- **On GIL builds, threads are flat for every diskcache-oxide cache,** as the GIL says they must be, and a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) is about 10 to 15% ahead of a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) on that mix at one thread. It's well ahead of stock diskcache, which collapses as threads are added.
-- **A single process with a few threads and few writes gains little.** You pay the cost of more files (below) for a benefit you won't see.
+- **It removes the write-lock ceiling.** A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) stops climbing past a few processes and then falls, because the 1% of operations that are writes all queue on one database file's write lock. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) keeps climbing: 4.1x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) at 8 processes, and 1.13x diskcache's own [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache). A pre-forking server (gunicorn, uvicorn workers) with a worker per core is this case.
+- **Writes make the gap wider.** At 90 reads to 10 writes with 8 processes, a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) gets 137k ops/s and a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) 450k (3.3x); at 50:50, 37k against 117k.
+
+**Several threads in one process.** Threads share one handle, with hot keys (a few keys read far more than the rest, as a real site's pages are):
+
+| Threads | 3.14t: plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) | 3.14t: `FanoutCache(shards=8)` | 3.14: plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) | 3.14: `FanoutCache(shards=8)` |
+|----|----|----|----|----|
+| 1 | 537k ops/s | 591k | 538k | 591k |
+| 4 | 701k | 1,012k | 512k | 565k |
+| 8 | 525k | 900k | 507k | 571k |
+
+- **On free-threaded Python, a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) lets threads scale.** At 8 threads it's 1.7x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) with hot keys and 2.0x with keys spread evenly (699k against 347k), and 2.2x at 90:10 (301k against 136k).
+- **On GIL builds, threads are flat for every cache,** as the GIL says they must be, and a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) is about 10% ahead at every thread count. diskcache, by comparison, falls from 360-400k at one thread to about 20k at 8.
+
+**Large values.** A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) keeps the slowest writes of large values far shorter: with 64 KiB values and one thread on 3.14, one [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) in a thousand takes 3-4 ms on a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) and 0.1-0.2 ms on a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache), because each shard's database and write-ahead log are smaller and checkpoint faster (`bench/results/fanout-3.14.10-studio.txt`, sizing group).
+
+**What it costs.** Each shard has its own SQLite connections and page caches, so a process holds more memory. RSS growth per process, with 99:1 and 1 KB values:
+
+| Case | Plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) | `FanoutCache(shards=8)` | diskcache `FanoutCache(8)` |
+|----|----|----|----|
+| 1 process, 1 thread, 3.14 | 3.3 MiB | 13.6 MiB | 65.8 MiB |
+| 1 process, 1 thread, 3.14t | 5.0 MiB | 15.4 MiB | 66.5 MiB |
+| each of 8 processes, 3.14t | 5.1 MiB | 8.3 MiB | 7.9 MiB |
+| 1 process, 8 threads, 3.14t | 16.1 MiB | 24.7 MiB | 77.1 MiB |
+
+- **About 10 MiB more per process at most**, so 80 MiB across 8 workers, still a fifth of what diskcache's [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) takes in one process. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) thread holds 1. Pass `sqlite_cache_size=64` to give each a 256 KiB page cache instead: on these runs it cut the extra memory by about three quarters (one thread on 3.14: 5.9 MiB against 13.6) and kept the speed within about 5% in most cases, 11% at worst (`bench/results/fanout-3.14.10-studio.txt` and `fanout-3.14.10t-studio.txt`, page-cache groups; see [Choosing `shards` and `max_connections`](#choosing-shards-and-max_connections)).
+- **More files.** Each shard is a database, a write-ahead log and a shared-memory file, and the process holds descriptors for them (below).
+- **Less for a single process with few writes.** A read-mostly cache in one process on a GIL build gains about 10% for that memory and those files.
 
 Single-key reads and writes cost the same as on [Cache](../reference/Cache.md#diskcache_oxide.Cache) plus the hash, which is about the cost of one more string hash, while no transaction is open in the process (see `transact(key=)` below).
 

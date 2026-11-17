@@ -1,0 +1,88 @@
+groups scaling: 7 variants, 140 threads/procs runs per round, small on 7, 3 round(s)
+  filled oxide-cache: 50,000 keys x 1,024 B in 1.3 s
+round 1/3: oxide-cache done (load 3.1, 0.5 min)
+  filled oxide-cache-c16: 50,000 keys x 1,024 B in 1.3 s
+round 1/3: oxide-cache-c16 done (load 3.2, 1.0 min)
+  filled oxide-fanout8: 50,000 keys x 1,024 B in 1.4 s
+round 1/3: oxide-fanout8 done (load 3.5, 1.5 min)
+  filled oxide-fanout8-c16: 50,000 keys x 1,024 B in 1.5 s
+round 1/3: oxide-fanout8-c16 done (load 4.1, 2.0 min)
+  filled oxide-fanout8-cs32: 50,000 keys x 1,024 B in 1.4 s
+round 1/3: oxide-fanout8-cs32 done (load 4.1, 2.5 min)
+  filled stock-cache: 50,000 keys x 1,024 B in 1.7 s
+round 1/3: stock-cache done (load 4.1, 3.0 min)
+  filled stock-fanout8: 50,000 keys x 1,024 B in 1.8 s
+round 1/3: stock-fanout8 done (load 3.9, 3.5 min)
+round 2/3: oxide-cache-c16 done (load 3.6, 4.0 min)
+round 2/3: oxide-fanout8 done (load 3.5, 4.5 min)
+round 2/3: oxide-fanout8-c16 done (load 3.7, 4.9 min)
+round 2/3: oxide-fanout8-cs32 done (load 3.4, 5.4 min)
+round 2/3: stock-cache done (load 2.8, 5.9 min)
+round 2/3: stock-fanout8 done (load 3.4, 6.4 min)
+round 2/3: oxide-cache done (load 3.9, 6.9 min)
+round 3/3: oxide-fanout8 done (load 4.4, 7.4 min)
+round 3/3: oxide-fanout8-c16 done (load 5.5, 7.8 min)
+round 3/3: oxide-fanout8-cs32 done (load 5.5, 8.3 min)
+round 3/3: stock-cache done (load 4.4, 8.8 min)
+round 3/3: stock-fanout8 done (load 3.8, 9.3 min)
+round 3/3: oxide-cache done (load 4.4, 9.8 min)
+round 3/3: oxide-cache-c16 done (load 4.7, 10.2 min)
+
+Python 3.14.10t, 50,000 keys x 1 KB, medians over 3 round(s)
+
+[scaling: does sharding scale, and what does it cost] Throughput, ops/s (spread = (max - min) / median across rounds)
+case                                  oxide-cache    oxide-cache-c16      oxide-fanout8  oxide-fanout8-c16 oxide-fanout8-cs32        stock-cache      stock-fanout8
+-- 99:1 (headline), 1,024 B values
+procs-uniform-1                          428k  0%           424k  1%           465k  2%           468k  1%           416k  1%           390k  4%           368k  1%
+procs-uniform-4                          520k  2%           527k  1%         1,044k  1%         1,046k  0%         1,030k  1%           455k  2%           797k  1%
+procs-uniform-8                          267k  2%           263k  4%         1,113k  1%         1,115k  0%         1,110k  1%           430k  2%         1,003k  0%
+procs-zipf-1                             540k  2%           539k  1%           589k 12%           599k  4%           509k  3%           424k  1%           390k  1%
+procs-zipf-4                             579k  4%           594k  2%         1,268k  3%         1,275k  1%         1,249k  2%           519k 24%           867k  3%
+procs-zipf-8                             279k  3%           264k  4%         1,259k  5%         1,274k  1%         1,272k  1%           468k  4%         1,084k  1%
+small-1t                                 977k  3%           987k  2%           925k  7%           932k  1%           926k  3%           557k  1%           479k  1%
+small-4t-shared                        1,473k 13%         1,461k  9%         1,537k  2%         1,533k  1%         1,525k  1%           784k  2%           891k  2%
+small-4t-separate                      1,748k  7%         1,762k  7%         1,848k  6%         1,847k  5%         1,786k  4%         1,323k  1%         1,219k  3%
+threads-uniform-1                        422k  3%           422k  0%           462k  1%           459k  1%           414k  2%           380k  2%           357k  1%
+threads-uniform-4                        498k  3%           498k  1%           824k  0%           825k  1%           764k  1%           364k  0%           394k  1%
+threads-uniform-8                        347k  6%           352k  2%           699k  2%           700k  1%           568k  2%           377k  2%           309k  1%
+threads-zipf-1                           537k  0%           538k  1%           591k  4%           590k  1%           502k  0%           417k  1%           379k  1%
+threads-zipf-4                           701k  1%           694k  1%         1,012k  1%         1,011k  1%           938k  0%           392k  2%           408k  1%
+threads-zipf-8                           525k  1%           527k  2%           900k  2%           878k  3%           750k  3%           408k  1%           313k  1%
+-- 90:10 (stress case, write-heavy), 1,024 B values
+procs-uniform-90to10-8                   137k  9%           147k  4%           446k  2%           449k  1%           449k  2%           134k  3%           241k  1%
+procs-zipf-90to10-8                      141k  8%           151k  2%           527k  5%           532k  1%           533k  1%           166k  1%           260k  0%
+threads-uniform-90to10-8                 136k  2%           135k  2%           301k  2%           296k  2%           295k  1%           130k  4%           189k  2%
+threads-zipf-90to10-8                    171k  2%           171k  1%           428k  2%           434k  3%           429k  1%           154k  8%           200k  1%
+-- 50:50 (stress case, write-heavy), 1,024 B values
+procs-uniform-50to50-8                    37k  7%            37k  1%           118k  6%           117k  4%           118k  3%            38k  2%            60k  3%
+procs-zipf-50to50-8                       37k  2%            37k  2%           137k  5%           133k  5%           135k  3%            50k  7%            68k  1%
+threads-uniform-50to50-8                  40k  3%            41k  4%            82k  1%            82k  5%            81k  3%            37k  3%            56k  1%
+threads-zipf-50to50-8                     57k  2%            56k  1%           117k  6%           115k  2%           117k  0%            48k  2%            63k  1%
+
+[scaling: does sharding scale, and what does it cost] Memory, RSS growth per process in MiB: current after the window / peak (procs: the median process)
+case                                  oxide-cache    oxide-cache-c16      oxide-fanout8  oxide-fanout8-c16 oxide-fanout8-cs32        stock-cache      stock-fanout8
+-- 99:1 (headline), 1,024 B values
+procs-uniform-1                         5.0 / 5.0          5.0 / 5.0        15.4 / 15.4        15.5 / 15.5          6.5 / 6.5        63.2 / 63.2        66.5 / 66.6
+procs-uniform-4                         4.9 / 5.0          5.0 / 5.1          9.5 / 9.5          9.6 / 9.6          6.6 / 6.6         4.6 / 14.4        10.8 / 15.4
+procs-uniform-8                         5.1 / 5.1          5.1 / 5.1          8.3 / 8.3          8.3 / 8.3          6.8 / 6.8          2.9 / 9.2         7.9 / 11.2
+procs-zipf-1                            4.8 / 4.8          4.8 / 4.8        15.3 / 15.3        15.3 / 15.3          6.4 / 6.4        33.6 / 33.6        35.7 / 35.7
+procs-zipf-4                            4.5 / 4.5          4.5 / 4.5          7.9 / 7.9          7.9 / 7.9          6.4 / 6.4          3.7 / 8.8         7.9 / 10.6
+procs-zipf-8                            4.6 / 4.6          4.6 / 4.6          7.4 / 7.4          7.4 / 7.4          6.7 / 6.7          2.9 / 7.3          6.4 / 8.1
+threads-uniform-1                       5.5 / 5.5          5.6 / 5.6        16.0 / 16.1        16.1 / 16.1          7.1 / 7.1      125.4 / 125.4      131.4 / 131.4
+threads-uniform-4                     10.5 / 10.6        10.2 / 10.3        21.8 / 22.0        21.9 / 22.1        11.2 / 11.4        31.5 / 35.9        84.1 / 88.2
+threads-uniform-8                     16.1 / 16.4        15.8 / 16.1        24.7 / 25.1        25.3 / 25.7        14.1 / 14.5        56.0 / 56.0       77.1 / 117.9
+threads-zipf-1                          5.4 / 5.4          5.4 / 5.5        15.9 / 15.9        15.0 / 15.0          6.2 / 6.2        65.2 / 65.2        71.7 / 71.7
+threads-zipf-4                          9.3 / 9.5          9.5 / 9.6        18.2 / 18.3        18.5 / 18.7        11.3 / 11.5        22.5 / 30.2        57.4 / 60.0
+threads-zipf-8                        14.0 / 14.4        14.0 / 14.2        20.8 / 21.1        20.8 / 21.1        14.2 / 14.5        51.1 / 51.2        83.5 / 84.0
+-- 90:10 (stress case, write-heavy), 1,024 B values
+procs-uniform-90to10-8                  4.9 / 5.0          4.9 / 5.0          6.9 / 6.9          7.0 / 7.0          6.8 / 6.8         7.9 / 26.5          5.5 / 8.8
+procs-zipf-90to10-8                     4.6 / 4.6          4.7 / 4.7          6.6 / 6.6          6.6 / 6.6          6.5 / 6.5         6.4 / 16.7          4.7 / 7.1
+threads-uniform-90to10-8              10.2 / 10.5        10.8 / 11.1        18.0 / 18.4        19.4 / 19.7        14.4 / 14.7      103.8 / 103.9        72.0 / 74.3
+threads-zipf-90to10-8                 10.3 / 10.7        10.6 / 11.0        16.2 / 16.5        16.2 / 16.6        14.5 / 14.9        62.5 / 62.6        63.1 / 63.2
+-- 50:50 (stress case, write-heavy), 1,024 B values
+procs-uniform-50to50-8                  5.3 / 5.4          5.4 / 5.4          6.6 / 6.6          6.7 / 6.7          6.5 / 6.6        10.1 / 16.1          5.7 / 7.2
+procs-zipf-50to50-8                     4.8 / 4.8          4.8 / 4.8          6.4 / 6.4          6.5 / 6.5          6.4 / 6.4         8.4 / 13.3          4.4 / 6.0
+threads-uniform-50to50-8              10.4 / 10.7        10.4 / 10.8        17.3 / 17.7        17.0 / 17.3        14.3 / 14.7      130.9 / 131.0        69.5 / 70.1
+threads-zipf-50to50-8                 10.4 / 10.8        10.8 / 11.1        16.1 / 16.4        16.0 / 16.4        14.2 / 14.6        90.3 / 90.4        64.0 / 64.5
+
+Wrote /Users/michaelkennedy/dco-bench/run3/fanout-314t.json (10.2 min)
