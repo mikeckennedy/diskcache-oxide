@@ -22,7 +22,7 @@ Caches.register(
 `name: N`  
 The cache's name. Without [directory](Cache.directory.md#diskcache_oxide.Cache.directory), it's also the directory's name under `base_dir`, so it must be a plain name: no path separators, not `.` or `..`.
 
-`directory: str | os.PathLike[str] | None = None`  
+`directory: Optional[str | os.PathLike[str]] = None`  
 Put this cache somewhere else.
 
 `**settings: Any`  

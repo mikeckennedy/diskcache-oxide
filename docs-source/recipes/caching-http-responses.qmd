@@ -20,7 +20,7 @@ import httpx
 from diskcache_oxide import Cache
 
 now = [1_000_000.0]                                   # a fake clock; in a real app use time.time()
-cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0], durable=True)
 
 def max_age(response: httpx.Response) -> float | None:
     m = re.search(r'max-age=(\d+)', response.headers.get('cache-control', ''))

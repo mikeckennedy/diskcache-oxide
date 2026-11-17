@@ -82,6 +82,7 @@ user_guide:
   - section: "Background & Reference"
     contents:
       - performance.qmd
+      - building-from-source.qmd
       - divergences.qmd
 
 sections:

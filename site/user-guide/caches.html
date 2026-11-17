@@ -648,6 +648,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/building-from-source.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Building from source</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/divergences.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
@@ -741,70 +747,32 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Caches, TransactionalCacheLike</span>
 <span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>CacheName <span class="op">=</span> Literal[<span class="st">'pages'</span>, <span class="st">'markdown'</span>, <span class="st">'etags'</span>]</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>CacheName <span class="op">=</span> Literal[<span class="st">'pages'</span>, <span class="st">'etags'</span>]</span>
 <span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>caches: Optional[Caches[CacheName]] <span class="op">=</span> <span class="va">None</span></span>
 <span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> setup(base_folder: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
 <span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>    <span class="kw">global</span> caches</span>
-<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> caches <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
-<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span></span>
-<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>    registry: Caches[CacheName] <span class="op">=</span> Caches(base_folder, durable<span class="op">=</span><span class="va">True</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)</span>
-<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a>    registry.register(<span class="st">'pages'</span>)</span>
-<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>    registry.register(<span class="st">'markdown'</span>)</span>
-<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a>    registry.register(<span class="st">'etags'</span>)</span>
-<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>    caches <span class="op">=</span> registry</span>
-<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> close() <span class="op">-&gt;</span> <span class="va">None</span>:</span>
-<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a>    <span class="kw">global</span> caches</span>
-<span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> caches <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
-<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a>        caches.close_all()</span>
-<span id="cb4-26"><a href="#cb4-26" aria-hidden="true" tabindex="-1"></a>        caches <span class="op">=</span> <span class="va">None</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>    registry: Caches[CacheName] <span class="op">=</span> Caches(base_folder, durable<span class="op">=</span><span class="va">True</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)</span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>    registry.register(<span class="st">'pages'</span>)</span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>    registry.register(<span class="st">'etags'</span>)</span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>    caches <span class="op">=</span> registry</span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache(name: CacheName) <span class="op">-&gt;</span> TransactionalCacheLike:</span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> caches <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">RuntimeError</span>(<span class="st">'call site_caches.setup() first'</span>)</span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> caches[name]</span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> pages_cache() <span class="op">-&gt;</span> TransactionalCacheLike:</span>
+<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> cache(<span class="st">'pages'</span>)</span>
+<span id="cb4-26"><a href="#cb4-26" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-27"><a href="#cb4-27" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-28"><a href="#cb4-28" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-29"><a href="#cb4-29" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache(name: CacheName) <span class="op">-&gt;</span> TransactionalCacheLike:</span>
-<span id="cb4-30"><a href="#cb4-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> caches <span class="kw">is</span> <span class="va">None</span>:</span>
-<span id="cb4-31"><a href="#cb4-31" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">RuntimeError</span>(<span class="st">'call site_caches.setup() first'</span>)</span>
-<span id="cb4-32"><a href="#cb4-32" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> caches[name]</span>
-<span id="cb4-33"><a href="#cb4-33" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-34"><a href="#cb4-34" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-35"><a href="#cb4-35" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> pages_cache() <span class="op">-&gt;</span> TransactionalCacheLike:</span>
-<span id="cb4-36"><a href="#cb4-36" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> cache(<span class="st">'pages'</span>)</span>
-<span id="cb4-37"><a href="#cb4-37" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-38"><a href="#cb4-38" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-39"><a href="#cb4-39" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> markdown_cache() <span class="op">-&gt;</span> TransactionalCacheLike:</span>
-<span id="cb4-40"><a href="#cb4-40" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> cache(<span class="st">'markdown'</span>)</span>
-<span id="cb4-41"><a href="#cb4-41" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-42"><a href="#cb4-42" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-43"><a href="#cb4-43" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> etag_cache() <span class="op">-&gt;</span> TransactionalCacheLike:</span>
-<span id="cb4-44"><a href="#cb4-44" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> cache(<span class="st">'etags'</span>)</span></code></pre></div>
-<p>Call <code>site_caches.setup(...)</code> once at startup and <code>site_caches.close()</code> at shutdown. Everywhere else, ask for the cache where you use it:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> site_caches</span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> render_page(url: <span class="bu">str</span>) <span class="op">-&gt;</span> Response:</span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    etag: Optional[<span class="bu">str</span>] <span class="op">=</span> site_caches.etag_cache().get(url)</span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    page: Optional[<span class="bu">str</span>] <span class="op">=</span> site_caches.pages_cache().get(url)</span>
-<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> page <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
-<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> Response(body<span class="op">=</span>page, etag<span class="op">=</span>etag)</span>
-<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>    html <span class="op">=</span> render_page_contents(url)</span>
-<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>    etag <span class="op">=</span> etag_from_body(html)</span>
-<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>    site_caches.etag_cache().<span class="bu">set</span>(url, etag)</span>
-<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>    site_caches.pages_cache().<span class="bu">set</span>(url, html)</span>
-<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> Response(body<span class="op">=</span>html, etag<span class="op">=</span>etag)</span></code></pre></div>
-<p>A few things make this work:</p>
-<ul>
-<li><strong>The functions look the cache up on every call</strong> rather than keeping it in a module variable. That’s the one dict read from above, and it’s what lets a cache that failed to open come back without a restart, and <a href="../reference/Caches.disable.html#diskcache_oxide.Caches.disable" class="gdls-link gdls-code">disable()</a> take effect.</li>
-<li><strong>Each name is written once per cache function</strong>, and the <code>Literal</code> makes a typo there a type error. Nothing outside the module has to spell a name at all.</li>
-<li><strong>The registry is still there</strong> as <code>site_caches.caches</code> for the rest: <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> for an admin page, <a href="../reference/Caches.disable.html#diskcache_oxide.Caches.disable" class="gdls-link gdls-code">disable()</a> for a load test. It’s <code>None</code> until <code>setup()</code> runs.</li>
-</ul>
-<p>The two caches in <code>render_page</code> are written and evicted separately, so a page can come back with no etag: handle <code>etag is None</code> on a hit, or store <code>(etag, html)</code> as one entry in <code>pages</code>, since a tuple round-trips as a tuple.</p>
-<p>A decorator such as <code>@site_caches.pages_cache().memoize()</code> runs when its module is imported, which is before <code>setup()</code>, so it raises. Use the per-call decorator from <a href="#memoize-on-a-registered-cache"><code>memoize</code> on a registered cache</a> for those.</p>
+<span id="cb4-28"><a href="#cb4-28" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> etag_cache() <span class="op">-&gt;</span> TransactionalCacheLike:</span>
+<span id="cb4-29"><a href="#cb4-29" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> cache(<span class="st">'etags'</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>html <span class="op">=</span> site_caches.pages_cache().get(url)</span></code></pre></div>
+<p>The functions look the cache up on every call rather than keeping it in a variable, which is what lets a cache that failed to open come back, and <a href="../reference/Caches.disable.html#diskcache_oxide.Caches.disable" class="gdls-link gdls-code">disable()</a> take effect. The recipe <a href="../recipes/site-caches.html">One typed module for your caches</a> has the whole module, with shutdown, <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, tests and where the pattern stops.</p>
 </section>
 <section id="when-a-cache-cant-open" class="level1">
 <h1>When a cache can’t open</h1>

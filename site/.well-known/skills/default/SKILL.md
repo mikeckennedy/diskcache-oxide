@@ -17,23 +17,17 @@ Install with `pip install diskcache-oxide` (CPython 3.14 or 3.15, GIL or free-th
 ## Use
 
 ```python
-from diskcache_oxide import Cache, Timeout
+from diskcache_oxide import Cache
 
 # Open once per process and share it across threads; every worker opens the same path.
-cache = Cache('/var/cache/my-app', timeout=1.0)
+# durable=True for rebuildable data: a busy lock, full disk or I/O error is a logged miss, never an exception.
+cache = Cache('/var/cache/my-app', timeout=1.0, durable=True)
 
-cache.set('episodes:popular', episodes, expire=300)  # always give cached values an expire
-episodes = cache.get('episodes:popular')  # None (or default=) on a miss
-
-# Atomic across processes: exactly one caller gets True.
-if cache.add('job:refresh', os.getpid(), expire=3600):
-    refresh()
-
-try:
-    cache.set(key, value, expire=60)
-except Timeout:  # the write lock stayed busy for `timeout`: skip the cache, never fail the request
-    pass
+cache.set('episodes:popular', episodes, expire=300)  # always give cached values an expire; False if dropped
+episodes = cache.get('episodes:popular')  # None (or default=) on a miss or an outage
 ```
+
+Default to `durable=True` for any cache of data the app can rebuild. Leave it off for state (sessions, job claims, locks, counters, queues), where a dropped write is a bug; there a busy write lock raises `Timeout` after `timeout`, which the caller handles.
 
 An app with several caches registers them once and looks them up by name; a cache that can't open comes back as a `NullCache` and is retried after 10 s. The recommended production setup: a durable registry for rebuildable data, and state (sessions, job claims, locks, queues) as plain caches opened directly, never through the registry (a `NullCache`'s `add()` always wins and its `push()` stores nothing) and never durable, under one directory the app owns:
 
@@ -105,12 +99,12 @@ In tests: `Cache(tmp_path / 'cache')` per test, `NullCache()` where caching must
 
 ## API
 
-- `Cache(directory, timeout=None, *, size_limit=None, cull_limit=None, eviction_policy=None, serializer='msgpack', pickle=False, types=None, clock=None, max_connections=None, sqlite_cache_size=None, wal_size_limit=None, wal_checkpoint='manual', on_decode_error=None, durable=False)`: raises `ValueError`/`TypeError` for bad settings, `LayoutMismatchError` or `FormatMismatchError` for a directory this build can't use, `Timeout` if another process holds it locked. Defaults: `timeout` 60 s, `size_limit` 1 GiB, `cull_limit` 10, `max_connections` 8, `wal_size_limit` 64 MiB.
+- `Cache(directory, timeout=None, *, size_limit=None, cull_limit=None, eviction_policy=None, serializer='msgpack', pickle=False, types=None, clock=None, max_connections=None, sqlite_cache_size=None, wal_size_limit=None, wal_checkpoint='manual', on_decode_error=None, durable=False, maintenance_interval=None)`: raises `ValueError`/`TypeError` for bad settings, `LayoutMismatchError` or `FormatMismatchError` for a directory this build can't use, `Timeout` if another process holds it locked. Defaults: `timeout` 60 s, `size_limit` 1 GiB, `cull_limit` 10, `max_connections` 8, `wal_size_limit` 64 MiB.
 - `get(key, default=None, *, expire_time=False, tag=False, retry=False)`, `set(key, value, expire=None, *, tag=None, retry=False) -> bool`, `add(key, value, expire=None, *, tag=None, retry=False) -> bool`, `delete(key, *, retry=False) -> bool`, `pop(key, default=None, *, expire_time=False, tag=False, retry=False)`, `touch(key, expire=None, *, retry=False) -> bool`, `incr(key, delta=1, default=0, *, retry=False)`, `decr(...)`, `memoize(name=None, typed=False, expire=None, tag=None, ignore=())`, `iterkeys(*, prefix=None, reverse=False)`, `expire(*, timeout=None, retry=False) -> int`, `clear(*, timeout=None, retry=False) -> int`, `evict(tag, *, timeout=None, retry=False) -> int`, `cull(*, timeout=None, retry=False) -> int`, `reset(key, value=ENOVAL)`, `stats(enable=True, reset=False)`, `check(fix=False, retry=False)`, `push`, `pull`, `peek`, `peekitem`, `volume() -> int`, `checkpoint(*, timeout=None) -> bool` (False when busy, never raises for that), `close(*, checkpoint=True)`, `transact(retry=False)`; plus `cache[key]`, `cache[key] = value` (never expires), `del cache[key]`, `key in cache`, `len(cache)`, `iter(cache)`, `reversed(cache)`, `with`. Properties: `directory`, `timeout`, `size_limit`, `cull_limit`, `eviction_policy`, `enabled`, `durable`.
 - `FanoutCache(directory, timeout=None, *, shards=None, ..., raise_on_mismatch=False)` (a `shards=` that differs from the root's stored count keeps the stored count and logs a `WARNING`, or raises `LayoutMismatchError` with `raise_on_mismatch=True`; a root in another format redirects either way) with the same settings, single-key methods, `memoize`, `evict`, `stats`, `check` and `reset` (a `size_limit` is split across shards), no queue calls, plus `shards`, `shard_of(key) -> int` and `transact(*, key, retry=False)`. Its `clear`/`expire`/`cull`/`checkpoint` share one `timeout` across the shards and, on failure, raise with `failed_shards` and `removed` attributes.
 - `remove_old_formats() -> list[str]` on `Cache` and `FanoutCache` (`[]` on `NullCache`): removes caches in an older on-disk format from the cache's directory and returns the paths removed. No check for other processes: call it only once every older worker has stopped. `directory` is where the cache really is (the versioned subdirectory after a format change); reopen with the original directory, not `directory`.
 - `NullCache(directory=None, timeout=None, *, ..., invalidate=None)`: accepts and ignores `Cache`'s settings; `get`/`pop` return the default, `set`/`add` return True, `incr` returns `default + delta`, everything else is 0, False or empty; `transact()` is a no-op yielding itself.
-- `Caches(base_dir, *, on_open_error=None, retry_open_after=10.0, **defaults)`: `register(name, *, directory=None, **settings)`, `caches[name]`, `fanout(name)`, `disable(*names)`, `enable(*names)`, `enabled(name)`, `stats() -> dict[name, CacheStats]`, `clear(name, *, timeout=None)` (raises if it can't open), `expire_all(*, timeout=None)`, `remove_old_formats() -> dict[name, list[str] | None]`, `close_all()`, `with`.
+- `Caches(base_dir, *, on_open_error=None, retry_open_after=10.0, **defaults)`: `register(name, *, directory=None, **settings)`, `caches[name]`, `fanout(name)`, `disable(*names)`, `enable(*names)`, `enabled(name)`, `stats() -> dict[name, CacheStats]`, `clear(name, *, timeout=None)` (raises if it can't open), `expire_all(*, timeout=None)`, `remove_old_formats() -> dict[name, Optional[list[str]]]`, `close_all()`, `with`.
 - Protocols: `CacheLike`, `TransactionalCacheLike` (adds `transact(retry=False)` and `push`/`pull`/`peek`/`peekitem`), `ShardedCacheLike` (adds `transact(*, key, retry=False)`). `Cache` and `NullCache` are transactional; `FanoutCache` and `NullCache` are sharded.
 - `register_type(cls, *, name, encode=None, decode=None)`, `unregister_type(cls) -> bool`, `registered_types() -> dict[str, type]`, on the process-wide `registry: TypeRegistry`; `TypeRegistry()` with the same `register`/`unregister`/`registered` for one cache's `types=`. Own built-in types can't be registered (`ValueError`); one of `encode`/`decode` alone, a non-dataclass with neither, or a dataclass with an `InitVar` is `TypeError`.
 - Exceptions: `Timeout(TimeoutError)`, `TransactionBusy(Timeout)`, `TransactionAborted(RuntimeError)`, `UnsafeValueError(TypeError)`, `CorruptValueError(ValueError)`, `CorruptKeyError(CorruptValueError)` (iteration met a stored key it can't read), `ForeignValueError(CorruptValueError)`, `FormatMismatchError(RuntimeError)`, `LayoutMismatchError(FormatMismatchError, ValueError)`.

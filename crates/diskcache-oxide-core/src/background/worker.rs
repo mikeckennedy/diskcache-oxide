@@ -51,7 +51,8 @@ const STARVED_INTERVALS: u64 = 3;
 
 /// The thread's handle and the process generation it was started in. Locked only under the store
 /// registry, so a fork (which takes the gate exclusively) never finds it held.
-static THREAD: Mutex<Option<(u64, JoinHandle<()>)>> = Mutex::new(None);
+/// The thread returns its kernel task id when it ends (0 off Linux), for [`wait_until_reaped`].
+static THREAD: Mutex<Option<(u64, JoinHandle<u64>)>> = Mutex::new(None);
 
 /// Forks in progress that stopped the thread. While it's above zero the thread stops at its next
 /// check and nothing starts a new one.
@@ -152,7 +153,36 @@ pub(crate) fn stop_for_fork() {
         && started_in == gate::generation()
     {
         handle.thread().unpark();
-        let _ = handle.join();
+        // A thread that panicked gives no tid and isn't waited for; `pass` panics are caught anyway.
+        wait_until_reaped(handle.join().unwrap_or(0));
+    }
+}
+
+/// How long [`wait_until_reaped`] waits at most. The longest wait in the gate's container was about
+/// 20 µs, in a plain C loop; the bound is for the slow cases (a sanitizer, a loaded machine), and when
+/// it runs out the fork goes ahead, at worst with the warning the wait is there to avoid.
+const REAP_WAIT: Duration = Duration::from_millis(50);
+
+/// This thread's kernel task id, from `/proc/thread-self` (`PID/task/TID`), or 0 off Linux.
+fn os_tid() -> u64 {
+    std::fs::read_link("/proc/thread-self").ok().and_then(|link| link.file_name()?.to_str()?.parse().ok()).unwrap_or(0)
+}
+
+/// Waits, up to [`REAP_WAIT`], for a joined thread to leave the kernel's thread count. On Linux
+/// `pthread_join` returns once the kernel clears the thread's tid, early in its exit, but the count
+/// `CPython` reads to decide whether `os.fork()` warns (`/proc/self/stat`) drops only when the thread
+/// is reaped a moment later, as its `/proc/self/task` entry goes. A fork landing in between warned:
+/// about 0.2% of joins in the gate's Linux container (2026-11-14, a C loop of `pthread_create`,
+/// `pthread_join` and a read of the count), more often under `AddressSanitizer`'s slowdown. Off Linux,
+/// with no tid, it returns at once.
+fn wait_until_reaped(tid: u64) {
+    if tid == 0 {
+        return;
+    }
+    let task = format!("/proc/self/task/{tid}");
+    let deadline = Instant::now() + REAP_WAIT;
+    while std::fs::exists(&task).unwrap_or(false) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_micros(20));
     }
 }
 
@@ -182,8 +212,9 @@ pub(crate) fn resume_after_fork(child: bool) {
     drop(stores);
 }
 
-fn run() {
+fn run() -> u64 {
     gate::mark_native_thread();
+    let tid = os_tid();
     while !stopping() {
         match catch_unwind(AssertUnwindSafe(pass)) {
             Ok(Some(wait)) => std::thread::park_timeout(wait),
@@ -194,6 +225,7 @@ fn run() {
             }
         }
     }
+    tid
 }
 
 /// Enters the gate, waiting behind a pending fork with a growing pause, or None once the thread is

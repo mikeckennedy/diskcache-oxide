@@ -24,7 +24,7 @@ def start_session(user_id: int, roles: list[str]) -> str:
     sessions.set(f'user-sessions:{user_id}:{sid}', True, expire=ABSOLUTE)
     return sid
 
-def load_session(sid: str) -> dict | None:
+def load_session(sid: str) -> Optional[dict]:
     data, expires_at = sessions.get(f'session:{sid}', expire_time=True)
     if data is None or now[0] - data['started'] > ABSOLUTE:
         return None

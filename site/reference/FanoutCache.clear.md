@@ -21,7 +21,7 @@ Every shard's starting point is taken before anything is removed, so writes that
 ## Parameters
 
 
-`timeout: float | None = None`  
+`timeout: Optional[float] = None`  
 As for [expire](Cache.expire.md#diskcache_oxide.Cache.expire): one budget for the whole call.
 
 `retry: bool = ``False`  

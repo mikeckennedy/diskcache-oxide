@@ -12,7 +12,7 @@ import time
 
 from diskcache_oxide import Cache
 
-cache = Cache(tempfile.mkdtemp())
+cache = Cache(tempfile.mkdtemp(), timeout=1.0, durable=True)  # an outage is a miss, not an error
 
 def load_popular_episodes() -> list[dict]:
     time.sleep(0.2)  # stands in for a slow database query
@@ -36,7 +36,7 @@ print(f'cached:      {(time.perf_counter() - start) * 1000:.1f} µs per call')  
 ```
 
 
-    first call:  204.7 ms
+    first call:  202.1 ms
     cached:      1.2 µs per call
 
 

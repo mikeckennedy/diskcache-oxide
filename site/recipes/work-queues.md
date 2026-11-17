@@ -85,7 +85,7 @@ import uuid
 def enqueue(cache: Cache, episode: int) -> None:
     cache.push({'id': uuid.uuid4().hex, 'episode': episode, 'step': 'transcode'}, prefix='transcode')
 
-def take(cache: Cache) -> dict | None:
+def take(cache: Cache) -> Optional[dict]:
     """The next job, recorded as running in the same transaction; None if the queue is empty."""
     with cache.transact():
         key, job = cache.pull(prefix='transcode')
@@ -124,7 +124,7 @@ if (job := take(jobs)) is not None:       # another worker picks it up
 
 
     transcoding 513
-    1 requeued: ('transcode-500000000000000', {'id': '88cdce279be94fb28aa61a2f5005bf18', 'episode': 514, 'step': 'transcode'})
+    1 requeued: ('transcode-500000000000000', {'id': '83f78e2f7e414edea259a1d6e87f9492', 'episode': 514, 'step': 'transcode'})
     transcoding 514
 
 
@@ -141,7 +141,7 @@ jobs.push({'to': 'sam@example.com', 'template': 'welcome'}, prefix='email')
 jobs.push({'episode': 515, 'step': 'transcode'}, prefix='transcode')
 jobs.push({'episode': 516, 'step': 'transcode'}, prefix='urgent')
 
-def next_job(cache: Cache, queues: tuple[str, ...] = ('urgent', 'transcode', 'email')) -> tuple[str, dict] | None:
+def next_job(cache: Cache, queues: tuple[str, ...] = ('urgent', 'transcode', 'email')) -> Optional[tuple[str, dict]]:
     for queue in queues:
         key, job = cache.pull(prefix=queue)
         if key is not None:

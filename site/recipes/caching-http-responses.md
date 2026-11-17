@@ -19,9 +19,9 @@ import httpx
 from diskcache_oxide import Cache
 
 now = [1_000_000.0]                                   # a fake clock; in a real app use time.time()
-cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0], durable=True)
 
-def max_age(response: httpx.Response) -> float | None:
+def max_age(response: httpx.Response) -> Optional[float]:
     m = re.search(r'max-age=(\d+)', response.headers.get('cache-control', ''))
     return float(m.group(1)) if m else None
 
@@ -59,7 +59,7 @@ Here it runs against a mock upstream that counts its requests:
 
 
 ``` python
-seen: list[str | None] = []
+seen: list[Optional[str]] = []
 
 def upstream(request: httpx.Request) -> httpx.Response:
     seen.append(request.headers.get('If-None-Match'))

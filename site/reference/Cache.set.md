@@ -30,7 +30,7 @@ The key.
 `value: Any`  
 The value: `str`, `bytes`, numbers, `Decimal`, `bool`, `None`, and lists, tuples, dicts, sets, frozensets, datetimes and dates of those, or anything picklable with `pickle=True`.
 
-`expire: float | None = None`  
+`expire: Optional[float] = None`  
 Seconds until the entry expires, or None for never.
 
 `tag: Key = None`  

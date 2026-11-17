@@ -1697,12 +1697,22 @@ def main() -> int:
             'the default, leaves the library default (5 minutes); a short one (5) has it running all the time.'
         ),
     )
+    parser.add_argument(
+        '--no-maintenance',
+        action='store_true',
+        help=(
+            'Turn background maintenance off in every cache the workers open, as the library behaved before '
+            'plan 28: the control for an A/B against the default interval.'
+        ),
+    )
     parser.add_argument('--seed', type=int, default=int(time.time()) % 100_000)
     parser.add_argument('--out', default=str(REPO / 'soak-results'))
     args = parser.parse_args()
-    if args.maintenance_interval:
-        # The workers inherit the environment and apply it at startup.
-        os.environ['DCO_MAINTENANCE_INTERVAL'] = str(args.maintenance_interval)
+    if args.no_maintenance and args.maintenance_interval:
+        parser.error('--no-maintenance and --maintenance-interval contradict each other')
+    if args.maintenance_interval or args.no_maintenance:
+        # The workers inherit the environment and apply it at startup; 'off' sets the default to 0.
+        os.environ['DCO_MAINTENANCE_INTERVAL'] = 'off' if args.no_maintenance else str(args.maintenance_interval)
     if not args.hours and not args.minutes:
         parser.error('give --hours and/or --minutes')
     if args.auto_stores and not last_python_is_free_threaded(args.pythons):

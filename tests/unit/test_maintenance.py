@@ -206,6 +206,27 @@ def test_the_fork_warning_this_test_looks_for_is_real() -> None:
     assert FORK_WARNING in run(script).stderr
 
 
+def a_joined_thread_leaves_this_interpreter_multithreaded() -> bool:
+    # Under ThreadSanitizer (sanitizer lane D), the runtime's pthread_create interceptor starts TSan's
+    # own background thread the first time any thread is created, and it lives as long as the process:
+    # after one thread is started and joined, every fork() warns, cache or no cache (checked in lane D's
+    # container, 2026-11-14: two OS threads where a plain interpreter has one). There the warning can't
+    # tell whether maintenance stopped for the fork, so the test below skips that one assertion.
+    script = """
+        import os, threading
+        t = threading.Thread(target=lambda: None)
+        t.start()
+        t.join()
+        pid = os.fork()
+        if pid == 0:
+            os._exit(0)
+        os.waitpid(pid, 0)
+    """
+    # Twice, both warning: even a plain Linux interpreter can count a joined thread for a moment after
+    # the join (the reap wait in background/worker.rs), which would skip the assertion for nothing.
+    return all(FORK_WARNING in run(script).stderr for _ in range(2))
+
+
 @pytest.mark.skipif(sys.platform == 'win32', reason='no fork() on Windows')
 def test_forking_with_maintenance_running_never_warns_and_both_sides_carry_on(tmp_path: Path) -> None:
     script = """
@@ -235,7 +256,8 @@ def test_forking_with_maintenance_running_never_warns_and_both_sides_carry_on(tm
     done = run(script, str(tmp_path / 'c'))
     assert done.returncode == 0, done.stderr
     assert 'child 0' in done.stdout and 'parent True' in done.stdout, (done.stdout, done.stderr)
-    assert FORK_WARNING not in done.stderr, done.stderr
+    if not a_joined_thread_leaves_this_interpreter_multithreaded():
+        assert FORK_WARNING not in done.stderr, done.stderr
 
 
 def test_the_interpreter_exits_cleanly_mid_turn(tmp_path: Path) -> None:

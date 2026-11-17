@@ -17,7 +17,7 @@ FanoutCache.checkpoint(
 ## Parameters
 
 
-`timeout: float | None = None`  
+`timeout: Optional[float] = None`  
 Seconds to keep retrying busy shards, for the whole call (default: the cache's [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout)). A shard reached after it's spent still gets one try.
 
 

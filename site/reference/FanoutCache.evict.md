@@ -25,7 +25,7 @@ FanoutCache.evict(
 `tag: Key`  
 The tag.
 
-`timeout: float | None = None`  
+`timeout: Optional[float] = None`  
 As for [expire](Cache.expire.md#diskcache_oxide.Cache.expire): one budget for the whole call.
 
 `retry: bool = ``False`  

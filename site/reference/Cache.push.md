@@ -28,7 +28,7 @@ The queue's name, or None for the int queue.
 `side: bool = ``"back"`  
 `'back'` (the default) or `'front'`.
 
-`expire: float | None = None`  
+`expire: Optional[float] = None`  
 Seconds until the item expires, or None for never.
 
 `tag: Key = None`  
@@ -41,7 +41,7 @@ As for [set()](Cache.set.md#diskcache_oxide.Cache.set).
 ## Returns
 
 
-`int | None | str | None | int | str | None`  
+`Optional[int] | Optional[str] | Optional[int | str]`  
 The item's key. With `durable=True`, None if the write failed (nothing was stored).
 
 

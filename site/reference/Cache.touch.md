@@ -22,7 +22,7 @@ Cache.touch(
 `key: Key`  
 The key.
 
-`expire: float | None = None`  
+`expire: Optional[float] = None`  
 Seconds from now until the entry expires, or None to make it never expire.
 
 `retry: bool = ``False`  

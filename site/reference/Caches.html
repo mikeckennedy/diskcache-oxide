@@ -2111,7 +2111,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Where the caches live: each one in <code>base_dir/&lt;name&gt;</code> unless <a href="Caches.register.html#diskcache_oxide.Caches.register" class="gdls-link gdls-code">register</a> says otherwise. Created when the first cache opens.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">on_open_error</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Callable[[str, Exception], object] | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">on_open_error</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[Callable[[str, Exception], object]]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>Called as <code>on_open_error(name, exc)</code> when a cache can’t open (default: log at ERROR on the <code>diskcache_oxide</code> logger, or at WARNING with no traceback for a <a href="Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>). Whatever it raises is logged.</p>
 </dd>

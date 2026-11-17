@@ -2045,7 +2045,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>A cache key: <code>str</code>, <code>bytes</code>, <code>int</code> (64-bit), <code>float</code> (not NaN), <code>bool</code>, <code>None</code>, or a tuple of those,</p>
 </div>
 <div class="doc-signature doc-type-alias">
-<p><code><span class="doc-type-alias-keyword kw">type</span> <span class="doc-parameter-name">Key</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">str | bytes | int | float | bool | None | tuple[Key, …]</span></code></p>
+<p><code><span class="doc-type-alias-keyword kw">type</span> <span class="doc-parameter-name">Key</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">Optional[str | bytes | int | float | bool | tuple[Key, …]]</span></code></p>
 </div>
 <div class="doc-text">
 <p>nested up to 32 deep. Only the exact types; keys compare by exact type, so <code>1</code>, <code>1.0</code> and <code>True</code> are three keys.</p>

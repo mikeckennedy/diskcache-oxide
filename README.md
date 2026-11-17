@@ -16,6 +16,8 @@ import os
 from diskcache_oxide import Cache
 
 cache = Cache('/tmp/my-app-cache', durable=True)  # every worker opens the same directory
+# Claims get their own plain cache: durable can drop a write, and a claim must not be dropped silently.
+claims = Cache('/tmp/my-app-claims', eviction_policy='none')
 
 popular = cache.get('episodes:popular')
 if popular is None:
@@ -23,7 +25,7 @@ if popular is None:
     cache.set('episodes:popular', popular, expire=300)
 
 # Only one worker runs the hourly job: add() is atomic across processes.
-if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
+if claims.add('job:refresh-feeds', os.getpid(), expire=3600):
     print('this worker refreshes the feeds')
 
 
@@ -33,6 +35,7 @@ def episode(number: int) -> dict:
 
 
 cache.close()  # at shutdown
+claims.close()
 ```
 
 ## An app with several caches

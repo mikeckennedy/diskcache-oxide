@@ -10,7 +10,7 @@ uv pip install diskcache-oxide
 ```
 
 - **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
-- **Platforms:** macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. [Windows](#windows) below says what differs there.
+- **Platforms:** macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64; anywhere else pip builds from source, which needs the latest stable Rust toolchain ([Building from source](building-from-source.md) walks through it). [Windows](#windows) below says what differs there.
 - **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter ([diskcache_oxide.sqlite_version()](../reference/sqlite_version.md#diskcache_oxide.sqlite_version) reports the one in use).
 - **Upgrades:** a release that keeps the on-disk format opens your caches as they were, warm. One that changes it (the changelog says so first) opens a new cache in a subdirectory named for its format and logs a warning, so nothing fails at deploy; [Upgrading across a format change](../recipes/upgrading.md) covers cleaning up afterwards.
 
@@ -20,8 +20,10 @@ uv pip install diskcache-oxide
 ``` python
 from diskcache_oxide import Cache
 
-cache = Cache('cache')  # a folder named "cache" in the current directory
+cache = Cache('cache', timeout=1.0, durable=True)  # a folder named "cache" in the current directory
 ```
+
+For a cache that holds copies of data you can rebuild, which is what most caches are, turn on `durable=True` with a short [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout). Then a full disk, an I/O error or a lock that stays busy makes a call a miss, logged, instead of an exception in the middle of a request. Leave it off for state you can't rebuild, such as sessions, job claims, locks and work queues, where a write that silently didn't happen is a bug. [A cache that can't take a request down](#a-cache-that-cant-take-a-request-down) covers what it does and what a dropped call costs.
 
 The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
 
@@ -170,6 +172,8 @@ try:
 except Timeout:
     ...  # the cache was too busy; carry on without it
 ```
+
+With [`durable=True`](#a-cache-that-cant-take-a-request-down), the [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) returns `False` instead, so a cache of rebuildable data needs no `try`.
 
 Maintenance calls work in chunks, so they take the write lock many times. A request-sized timeout can cut an admin [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) off partway through, so [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) and [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) each take their own `timeout=` for that call. It bounds each chunk's wait for the lock, not the whole call:
 

@@ -38,6 +38,8 @@ For locks, semaphores and a throttle that hold across every process, see the [Co
 
 # Deployment and testing
 
+**[One typed module for your caches](site-caches.md).** Wrap the [Caches](../reference/Caches.md#diskcache_oxide.Caches) registry in a module with a function per cache, so the app gets autocomplete and type checking instead of string lookups scattered through the code.
+
 **[Sharing a cache across web workers](web-workers.md).** Where to put the cache directory, when to open it with gunicorn, uvicorn, FastAPI, Flask, Django and Celery, how to keep a busy cache from slowing requests, and what to do at shutdown.
 
 **[Docker and Compose](docker.md).** One named volume for the caches and state, a fixed non-root user, the ownership rules that otherwise end in `PermissionError`, Kubernetes volumes, disk sizing, and the cleanup step after a format change.

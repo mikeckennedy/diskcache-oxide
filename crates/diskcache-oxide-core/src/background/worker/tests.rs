@@ -297,3 +297,28 @@ fn a_lock_held_elsewhere_starves_the_store_and_its_release_ends_the_streak() {
     assert!(eventually(Duration::from_secs(5), || store.len(T).unwrap() == 0), "never swept after the release");
     store.release_handle();
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_joined_thread_is_out_of_the_kernel_count_once_its_reap_is_waited_for() {
+    // The fork stop's join, then wait_until_reaped: past it, the joined thread's task entry is gone,
+    // which is when the count CPython reads before warning on fork drops. Many rounds, since a join
+    // returns ahead of the reap only now and then.
+    for _ in 0..2000 {
+        let tid = std::thread::spawn(os_tid).join().unwrap();
+        assert_ne!(tid, 0, "no tid from /proc/thread-self");
+        wait_until_reaped(tid);
+        assert!(!Path::new(&format!("/proc/self/task/{tid}")).exists(), "thread {tid} still listed");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_reap_wait_is_bounded() {
+    // A thread that never goes (this one, alive) must not hold the fork hook: the wait gives up after
+    // REAP_WAIT and the fork goes ahead.
+    let started = Instant::now();
+    wait_until_reaped(os_tid());
+    let waited = started.elapsed();
+    assert!(waited >= REAP_WAIT && waited < Duration::from_secs(2), "{waited:?}");
+}

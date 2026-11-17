@@ -25,7 +25,7 @@ Works in chunks as [clear](Cache.clear.md#diskcache_oxide.Cache.clear) does, and
 `tag: Key`  
 The tag.
 
-`timeout: float | None = None`  
+`timeout: Optional[float] = None`  
 Seconds each chunk may wait for the write lock (another thread's or another process's), for this call only (default: the cache's [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout)). It bounds each wait, not the whole call.
 
 `retry: bool = ``False`  

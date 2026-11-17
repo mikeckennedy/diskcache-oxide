@@ -70,10 +70,10 @@ The class. Not one of the codec's own exact types (`str`, `int`, `dict`, `dateti
 `name: str`  
 The tag written into every row. Yours, so a class rename never orphans stored rows.
 
-`encode: Callable[[T], object] | None = None`  
+`encode: Optional[Callable[[T], object]] = None`  
 Instance to a storable value.
 
-`decode: Callable[[Any], T] | None = None`  
+`decode: Optional[Callable[[Any], T]] = None`  
 That value back to an instance.
 
 

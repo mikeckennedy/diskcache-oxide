@@ -2088,7 +2088,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/null.py#L171-L726" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/null.py#L171-L730" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">NullCache</span>(</span>
@@ -2119,11 +2119,11 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h2 class="doc-parameters">Parameters</h2>
 <div class="doc-definition-items">
 <dl>
-<dt><code><span class="doc-parameter-name">directory</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">str | os.PathLike[str] | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">directory</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[str | os.PathLike[str]]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>Accepted and ignored, like every other <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> argument, so switching between the two is a one-line change.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">invalidate</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">CacheLike | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">invalidate</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[CacheLike]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 A real cache to forward removals to (<a href="Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, <a href="Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a>, <a href="Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear</a>, <a href="Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict</a> and <a href="Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys</a>), so invalidation by removal still lands while caching is off. Writes aren’t forwarded: an overwriting <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> or a version-bump <a href="Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> is dropped, and the old value is served once caching is back on.
 </dd>

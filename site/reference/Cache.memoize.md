@@ -23,13 +23,13 @@ A call's key is `(name,) + args + (None,)` and then each keyword argument's name
 ## Parameters
 
 
-`name: str | None = None`  
+`name: Optional[str] = None`  
 The key's first element, in place of the function's qualified name.
 
 `typed: bool = ``False`  
 Also key on each argument's type, as `'module.qualname'` (D-045), so `f(1)` and `f(1.0)` are two entries.
 
-`expire: float | None = None`  
+`expire: Optional[float] = None`  
 Seconds until a stored result expires; `None` never. Zero or negative never stores, as in diskcache.
 
 `tag: Key = None`  

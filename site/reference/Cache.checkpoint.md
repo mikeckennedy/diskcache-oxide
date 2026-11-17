@@ -20,7 +20,7 @@ With readers in other processes, a burst of writes can leave the log much larger
 ## Parameters
 
 
-`timeout: float | None = None`  
+`timeout: Optional[float] = None`  
 Seconds to keep retrying while other processes or a pending fork are busy (default: the cache's [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout)).
 
 

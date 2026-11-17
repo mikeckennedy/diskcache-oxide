@@ -22,7 +22,7 @@ import time
 
 from diskcache_oxide import Cache
 
-cache = Cache(tempfile.mkdtemp())
+cache = Cache(tempfile.mkdtemp(), durable=True)       # if the cache fails, a call is a miss, not an exception
 
 def popular_episodes() -> list[str]:
     episodes = cache.get('episodes:popular')          # a hit returns the copy
@@ -39,8 +39,8 @@ for attempt in ('first call', 'second call'):
 ```
 
 
-    first call: 53.00 ms
-    second call: 0.02 ms
+    first call: 55.26 ms
+    second call: 0.01 ms
 
 
 That shape, check the cache, do the work on a miss, store the result, is called **cache-aside**, and it's the one you'll use most. `@cache.memoize()` wraps it up as a decorator; the [caching recipe](../recipes/caching-expensive-calls.md) shows how.
