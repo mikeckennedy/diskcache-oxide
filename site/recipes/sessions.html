@@ -72,8 +72,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../recipes/single-use-keys.html" rel="next">
-<link href="../recipes/run-once.html" rel="prev">
+<link href="../recipes/asyncio.html" rel="next">
+<link href="../recipes/single-use-keys.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
@@ -507,7 +507,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="1" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -540,114 +540,162 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
  <span class="menu-text">Recipes</span></a>
   </div>
 </li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/asyncio.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Using the cache from asyncio</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/caching-expensive-calls.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Caching expensive calls</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/caching-http-responses.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Caching responses from other services</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/counters.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Counting things</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/custom-types.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storing your own types</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Docker and Compose</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Invalidating groups of keys</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Watching a cache in production</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Rate limiting</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/run-once.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Running a job once across workers</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/sessions.html" class="sidebar-item-text sidebar-link active">
- <span class="menu-text">Server-side sessions</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/single-use-keys.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Single-use keys</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/site-caches.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">One typed module for your caches</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/stale-while-revalidate.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Serving stale values while refreshing</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/testing.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Testing code that uses a cache</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Upgrading across a format change</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" aria-controls="quarto-sidebar-section-1" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-1-label">Setting up your caches</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-1" aria-labelledby="quarto-sidebar-section-1-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../recipes/web-workers.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Sharing a cache across web workers</span></a>
   </div>
 </li>
-        <li class="sidebar-item">
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/site-caches.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">One typed module for your caches</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" aria-controls="quarto-sidebar-section-2" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-2-label">Caching</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-2" aria-labelledby="quarto-sidebar-section-2-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/caching-expensive-calls.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caching expensive calls</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/stale-while-revalidate.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Serving stale values while refreshing</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/caching-http-responses.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caching responses from other services</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Invalidating groups of keys</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/custom-types.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Storing your own types</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" aria-controls="quarto-sidebar-section-3" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-3-label">Coordinating workers</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-3" aria-labelledby="quarto-sidebar-section-3-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/run-once.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Running a job once across workers</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Rate limiting</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/counters.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Counting things</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../recipes/work-queues.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Work queues</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/single-use-keys.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Single-use keys</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" aria-controls="quarto-sidebar-section-4" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-4-label">State</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-4" aria-labelledby="quarto-sidebar-section-4-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/sessions.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">Server-side sessions</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" aria-controls="quarto-sidebar-section-5" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-5-label">Async code</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-5" aria-labelledby="quarto-sidebar-section-5-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/asyncio.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Using the cache from asyncio</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" aria-controls="quarto-sidebar-section-6" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-6-label">Deployment and testing</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-6" aria-labelledby="quarto-sidebar-section-6-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Docker and Compose</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/testing.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Testing code that uses a cache</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
     </ul>
     </div>
 </nav>
@@ -694,44 +742,45 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>Every request arrives with a cookie and a question: who is this? A session is the one piece of per-user state almost every web app keeps server side to answer it: who’s logged in, since when, with which roles. Keeping it in a cache directory means every worker sees the same session the instant it’s written, a login on one worker is a login on all of them, and there’s no database row per request and no Redis to run. The cookie holds only a random id.</p>
 <section id="start-load-end" class="level1">
 <h1>Start, load, end</h1>
-<div id="d9f62502" class="cell" data-execution_count="1">
+<div id="741a4009" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> secrets</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>now <span class="op">=</span> [<span class="fl">1_000_000.0</span>]                                   <span class="co"># a fake clock; in a real app use time.time()</span></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>sessions <span class="op">=</span> Cache(tempfile.mkdtemp(), clock<span class="op">=</span><span class="kw">lambda</span>: now[<span class="dv">0</span>], eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>IDLE <span class="op">=</span> <span class="dv">30</span> <span class="op">*</span> <span class="dv">60</span>          <span class="co"># a session ends after 30 minutes without a request</span></span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>ABSOLUTE <span class="op">=</span> <span class="dv">12</span> <span class="op">*</span> <span class="dv">3600</span>    <span class="co"># and 12 hours after login, however active</span></span>
-<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> start_session(user_id: <span class="bu">int</span>, roles: <span class="bu">list</span>[<span class="bu">str</span>]) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
-<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>    sid <span class="op">=</span> secrets.token_urlsafe(<span class="dv">32</span>)</span>
-<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    sessions.<span class="bu">set</span>(<span class="ss">f'session:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>, {<span class="st">'user_id'</span>: user_id, <span class="st">'roles'</span>: roles, <span class="st">'started'</span>: now[<span class="dv">0</span>]}, expire<span class="op">=</span>IDLE)</span>
-<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>    sessions.<span class="bu">set</span>(<span class="ss">f'user-sessions:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>, <span class="va">True</span>, expire<span class="op">=</span>ABSOLUTE)</span>
-<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> sid</span>
-<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> load_session(sid: <span class="bu">str</span>) <span class="op">-&gt;</span> Optional[<span class="bu">dict</span>]:</span>
-<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    data, expires_at <span class="op">=</span> sessions.get(<span class="ss">f'session:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>, expire_time<span class="op">=</span><span class="va">True</span>)</span>
-<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> data <span class="kw">is</span> <span class="va">None</span> <span class="kw">or</span> now[<span class="dv">0</span>] <span class="op">-</span> data[<span class="st">'started'</span>] <span class="op">&gt;</span> ABSOLUTE:</span>
-<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">None</span></span>
-<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> expires_at <span class="op">-</span> now[<span class="dv">0</span>] <span class="op">&lt;</span> IDLE <span class="op">/</span> <span class="dv">2</span>:                <span class="co"># slide the idle timeout, but not on every request</span></span>
-<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>        sessions.touch(<span class="ss">f'session:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>, expire<span class="op">=</span>IDLE)</span>
-<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> data</span>
-<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> end_session(sid: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
-<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>    data <span class="op">=</span> sessions.pop(<span class="ss">f'session:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>)</span>
-<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> data <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
-<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>        sessions.delete(<span class="ss">f'user-sessions:</span><span class="sc">{</span>data[<span class="st">"user_id"</span>]<span class="sc">}</span><span class="ss">:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>)</span>
-<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>sid <span class="op">=</span> start_session(<span class="dv">42</span>, [<span class="st">'member'</span>])</span>
-<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>now[<span class="dv">0</span>] <span class="op">+=</span> <span class="dv">20</span> <span class="op">*</span> <span class="dv">60</span></span>
-<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'after 20 min:'</span>, load_session(sid) <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>)   <span class="co"># active, and the timeout slides</span></span>
-<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>now[<span class="dv">0</span>] <span class="op">+=</span> <span class="dv">20</span> <span class="op">*</span> <span class="dv">60</span></span>
-<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'after 40 min:'</span>, load_session(sid) <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>)   <span class="co"># still active: the last request was 20 min ago</span></span>
-<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>now[<span class="dv">0</span>] <span class="op">+=</span> <span class="dv">31</span> <span class="op">*</span> <span class="dv">60</span></span>
-<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'after 71 min:'</span>, load_session(sid) <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>)   <span class="co"># idle too long</span></span></code></pre></div>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> typing <span class="im">import</span> Optional</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>now <span class="op">=</span> [<span class="fl">1_000_000.0</span>]                                   <span class="co"># a fake clock; in a real app use time.time()</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>sessions <span class="op">=</span> Cache(tempfile.mkdtemp(), clock<span class="op">=</span><span class="kw">lambda</span>: now[<span class="dv">0</span>], eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>IDLE <span class="op">=</span> <span class="dv">30</span> <span class="op">*</span> <span class="dv">60</span>          <span class="co"># a session ends after 30 minutes without a request</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>ABSOLUTE <span class="op">=</span> <span class="dv">12</span> <span class="op">*</span> <span class="dv">3600</span>    <span class="co"># and 12 hours after login, however active</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> start_session(user_id: <span class="bu">int</span>, roles: <span class="bu">list</span>[<span class="bu">str</span>]) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    sid <span class="op">=</span> secrets.token_urlsafe(<span class="dv">32</span>)</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>    sessions.<span class="bu">set</span>(<span class="ss">f'session:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>, {<span class="st">'user_id'</span>: user_id, <span class="st">'roles'</span>: roles, <span class="st">'started'</span>: now[<span class="dv">0</span>]}, expire<span class="op">=</span>IDLE)</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>    sessions.<span class="bu">set</span>(<span class="ss">f'user-sessions:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>, <span class="va">True</span>, expire<span class="op">=</span>ABSOLUTE)</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> sid</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> load_session(sid: <span class="bu">str</span>) <span class="op">-&gt;</span> Optional[<span class="bu">dict</span>]:</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>    data, expires_at <span class="op">=</span> sessions.get(<span class="ss">f'session:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>, expire_time<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> data <span class="kw">is</span> <span class="va">None</span> <span class="kw">or</span> now[<span class="dv">0</span>] <span class="op">-</span> data[<span class="st">'started'</span>] <span class="op">&gt;</span> ABSOLUTE:</span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">None</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> expires_at <span class="op">-</span> now[<span class="dv">0</span>] <span class="op">&lt;</span> IDLE <span class="op">/</span> <span class="dv">2</span>:                <span class="co"># slide the idle timeout, but not on every request</span></span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>        sessions.touch(<span class="ss">f'session:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>, expire<span class="op">=</span>IDLE)</span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> data</span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> end_session(sid: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>    data <span class="op">=</span> sessions.pop(<span class="ss">f'session:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>)</span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> data <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>        sessions.delete(<span class="ss">f'user-sessions:</span><span class="sc">{</span>data[<span class="st">"user_id"</span>]<span class="sc">}</span><span class="ss">:</span><span class="sc">{</span>sid<span class="sc">}</span><span class="ss">'</span>)</span>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>sid <span class="op">=</span> start_session(<span class="dv">42</span>, [<span class="st">'member'</span>])</span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a>now[<span class="dv">0</span>] <span class="op">+=</span> <span class="dv">20</span> <span class="op">*</span> <span class="dv">60</span></span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'after 20 min:'</span>, load_session(sid) <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>)   <span class="co"># active, and the timeout slides</span></span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>now[<span class="dv">0</span>] <span class="op">+=</span> <span class="dv">20</span> <span class="op">*</span> <span class="dv">60</span></span>
+<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'after 40 min:'</span>, load_session(sid) <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>)   <span class="co"># still active: the last request was 20 min ago</span></span>
+<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a>now[<span class="dv">0</span>] <span class="op">+=</span> <span class="dv">31</span> <span class="op">*</span> <span class="dv">60</span></span>
+<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'after 71 min:'</span>, load_session(sid) <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>)   <span class="co"># idle too long</span></span></code></pre></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>after 20 min: True
 after 40 min: True
@@ -747,7 +796,7 @@ after 71 min: False</code></pre>
 <section id="log-out-everywhere" class="level1">
 <h1>Log out everywhere</h1>
 <p>A password change or a stolen laptop should end every session a user has. The second key written at login, <code>user-sessions:{user_id}:{sid}</code>, is an index for exactly this: a prefix scan finds them all.</p>
-<div id="43481970" class="cell" data-execution_count="2">
+<div id="4a9e52c3" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>other <span class="op">=</span> start_session(<span class="dv">42</span>, [<span class="st">'member'</span>])</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>sid <span class="op">=</span> start_session(<span class="dv">42</span>, [<span class="st">'member'</span>])</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1197,13 +1246,13 @@ after 71 min: False</code></pre>
   </script>
 <nav class="page-navigation" aria-label="Page">
   <div class="nav-page nav-page-previous">
-      <a href="../recipes/run-once.html" class="pagination-link" aria-label="Running a job once across workers">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Running a job once across workers</span>
+      <a href="../recipes/single-use-keys.html" class="pagination-link" aria-label="Single-use keys">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Single-use keys</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../recipes/single-use-keys.html" class="pagination-link" aria-label="Single-use keys">
-        <span class="nav-page-text">Single-use keys</span> <i class="bi bi-arrow-right-short"></i>
+      <a href="../recipes/asyncio.html" class="pagination-link" aria-label="Using the cache from asyncio">
+        <span class="nav-page-text">Using the cache from asyncio</span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

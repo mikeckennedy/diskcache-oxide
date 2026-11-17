@@ -472,7 +472,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="1" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -783,7 +783,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="done-background-maintenance-0.3.5" class="level2">
 <h2 class="anchored" data-anchor-id="done-background-maintenance-0.3.5">Done: background maintenance (0.3.5)</h2>
-<p>A cache looks after itself, with no <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> to schedule. One small Rust thread per process frees expired entries’ space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (<code>maintenance_interval</code>). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don’t all do the same work, a cache with nothing to do is only read, and the thread steps aside for every request and every fork. See <a href="../user-guide/storage-and-wal.html#background-maintenance">Background maintenance</a>.</p>
+<p>A cache looks after itself, with no <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> to schedule. One small Rust thread per process frees expired entries’ space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (<code>maintenance_interval</code>). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don’t all do the same work, a cache with nothing to do is written only once an hour, to coordinate them (<code>maintenance_interval=0</code> for none), and the thread holds the write lock only for short chunks and stops for every <code>os.fork()</code>. See <a href="../user-guide/storage-and-wal.html#background-maintenance">Background maintenance</a>.</p>
 </section>
 <section id="next" class="level2">
 <h2 class="anchored" data-anchor-id="next">Next</h2>

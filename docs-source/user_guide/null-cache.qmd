@@ -41,6 +41,8 @@ Every row of this table follows from that sentence, so you never have to guess, 
 | iteration, `iterkeys()`, `reversed(cache)` | nothing | it's empty |
 | `stats()`, `check()` | `(0, 0)`, `[]` | nothing is looked up or stored |
 | `remove_old_formats()` | `[]` | there's no directory to clean up |
+| `checkpoint()` | `True` | there's no write-ahead log to reset |
+| `maintenance_stats()` | all zeros, `last_error` `None` | there's nothing to maintain |
 | `bool(cache)`, `cache.enabled` | `False` | caching is off |
 
 The constructor accepts the same arguments as `Cache` and ignores them, and the directory is optional. Bad arguments still raise as they would on `Cache` (a list as a key or a tag, `expire=True`, `side='middle'` on a queue call), and a memoized function's arguments are still checked as keys, so a call that would raise on a real cache raises here too. Values are the exception. A `NullCache` never encodes them, so `set()` accepts a value a real cache would refuse with `TypeError` (see [Serialization](serialization.qmd#what-isnt-stored)), and so does a memoized function that returns one. A test suite that runs only against a `NullCache` won't catch those.
@@ -115,7 +117,7 @@ def load_user(user_id: str, cache: CacheLike) -> dict:
     return user
 ```
 
-It covers everything the two share: the reads and writes with their `tag=` and `retry=` options, `memoize`, `evict`, the maintenance calls, `stats`, `check` and `reset`, iteration, and the `durable` and `eviction_policy` attributes. A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `CacheLike` keep identical public signatures, so they can't drift apart.
+It covers everything the two share: the reads and writes with their `tag=` and `retry=` options, `memoize`, `evict`, the maintenance calls, `stats`, `maintenance_stats`, `check`, `reset` and `remove_old_formats`, iteration, and the `durable` and `eviction_policy` attributes. A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `CacheLike` keep identical public signatures, so they can't drift apart.
 
 ## `transact()` and `TransactionalCacheLike`
 

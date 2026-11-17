@@ -13,7 +13,7 @@ caches['general'].set('greeting', 'hello')
 caches['pages'].get('/about')
 ```
 
-Settings passed to [Caches](../reference/Caches.md#diskcache_oxide.Caches) apply to every cache, and [register](../reference/Caches.register.md#diskcache_oxide.Caches.register) can override them for one. Each cache lives in a directory named after it under the base directory, unless you pass `directory=`. The base directory holds caches; it isn't one itself, so don't open a [Cache](../reference/Cache.md#diskcache_oxide.Cache) on it.
+Settings passed to [Caches](../reference/Caches.md#diskcache_oxide.Caches) apply to every cache, and [register](../reference/Caches.register.md#diskcache_oxide.Caches.register) can override them for one. That includes `maintenance_interval`: `Caches(base_dir, maintenance_interval=600)` gives every cache's [background maintenance](storage-and-wal.md#background-maintenance) a 10-minute interval, and `register('pages', maintenance_interval=0)` turns it off for that cache, unless another handle on it in the process asked for an interval. Each cache lives in a directory named after it under the base directory, unless you pass `directory=`. The base directory holds caches; it isn't one itself, so don't open a [Cache](../reference/Cache.md#diskcache_oxide.Cache) on it.
 
 A registry is for caches: data you can rebuild, where an outage should mean a miss. That's why the examples here pass `durable=True` and a short [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout). Sessions, job claims, locks and work queues are state, and they don't belong in a registry: see [State isn't cache](#state-isnt-cache) below.
 
@@ -129,7 +129,7 @@ caches.register('rate_limits', shards=16)  # the folder has 8: opens with 8, and
 caches.fanout('rate_limits').shards        # 8
 ```
 
-Everything else on this page ([disable](../reference/Caches.disable.md#diskcache_oxide.Caches.disable), [stats](../reference/Cache.stats.md#diskcache_oxide.Cache.stats), [clear](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire_all](../reference/Caches.expire_all.md#diskcache_oxide.Caches.expire_all), [close_all](../reference/Caches.close_all.md#diskcache_oxide.Caches.close_all)) works the same for both kinds.
+Everything else on this page ([disable](../reference/Caches.disable.md#diskcache_oxide.Caches.disable), [stats](../reference/Cache.stats.md#diskcache_oxide.Cache.stats), [clear](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire_all](../reference/Caches.expire_all.md#diskcache_oxide.Caches.expire_all), [remove_old_formats](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats), [close_all](../reference/Caches.close_all.md#diskcache_oxide.Caches.close_all)) works the same for both kinds.
 
 
 # Switching caches off
@@ -215,7 +215,7 @@ The [queue calls](../recipes/work-queues.md) are on [Cache](../reference/Cache.m
 # Admin and shutdown
 
 ``` python
-caches.stats()                      # {name: CacheStats(name, directory, enabled, count, volume, error)}
+caches.stats()                      # {name: CacheStats(name, directory, enabled, count, volume, error, maintenance)}
 caches.clear('pages', timeout=10)   # works on a disabled cache too
 caches.expire_all(timeout=10)       # {name: removed, or None if it failed}
 caches.close_all()                  # at shutdown; `with Caches(...) as caches:` does it too

@@ -139,6 +139,7 @@ reference:
       contents:
         - Caches
         - CacheStats
+        - MaintenanceStats
     - title: Errors
       desc: "Exceptions raised by cache operations."
       contents:

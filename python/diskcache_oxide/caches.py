@@ -46,7 +46,7 @@ lookups only. Code that already holds the real
 `Cache` keeps it, so set them at startup, before handing caches out.
 
 **What stays in the app:** reading settings files and environment variables, mapping the app's own
-names (purposes) onto these caches, descriptions for an admin page, and when to run `expire_all()`.
+names (purposes) onto these caches, and descriptions for an admin page.
 """
 
 from __future__ import annotations

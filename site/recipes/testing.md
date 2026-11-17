@@ -92,6 +92,15 @@ def test_sessions_expire(cache, clock):
 If your tests already patch `time.time` (with `unittest.mock`, freezegun or time-machine) and you want the cache to follow along, pass `clock=lambda: time.time()`. The lambda looks up `time.time` on every call, so it sees the patched version.
 
 
+# Background maintenance in tests
+
+Background maintenance runs on the wall clock, so it never runs for a cache with its own `clock`: leave `maintenance_interval` out, or pass 0, since any other value with `clock=` raises `ValueError`. One `clock=` handle turns maintenance off for its directory in the whole process, other handles on it included, until every handle on that directory has closed.
+
+A cache's first turn comes at least one interval after it opens, so a test shorter than 5 minutes never sees maintenance at the default. A long run, or a suite that sets a short `maintenance_interval`, can see it remove expired entries between two lines of a test, which changes what an [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) or [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) returns and what [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) says. Pass `maintenance_interval=0` to every handle the test opens on those directories: one that asks for an interval keeps maintenance on for all of them.
+
+A hand-written fake that stands in for a cache, typed as [`CacheLike`](../user-guide/null-cache.md#cachelike), needs [maintenance_stats()](../reference/Cache.maintenance_stats.md#diskcache_oxide.Cache.maintenance_stats) and [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats) too. [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) already has both.
+
+
 # Testing code that runs in several processes
 
 Code that relies on the cache being shared, like a job claim or a rate limit, can be tested for real: start processes with `multiprocessing` and point them at the same `tmp_path` directory. diskcache-oxide is safe with every start method, including fork.

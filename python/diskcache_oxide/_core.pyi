@@ -175,7 +175,8 @@ class Cache:
     `diskcache.Cache`; the deliberate differences are listed in the Divergences guide.
 
     Args:
-        directory: The cache directory. It's created (owner-only, `0700`) if it doesn't exist. If
+        directory: The cache directory. It's created (owner-only, `0700`, on Unix; on Windows it inherits its parent's
+            permissions) if it doesn't exist. If
             it holds a cache in another on-disk format (an older or newer release's), the cache
             opens in its subdirectory `diskcache-oxide-format-N` instead, N being this release's
             format, and logs a warning on the `diskcache_oxide` logger once per process. Once that
@@ -251,8 +252,10 @@ class Cache:
             and the processes sharing a cache take turns too, so eight workers don't all do the same
             work. The first turn comes one to two intervals after the cache is first opened in the
             process. The setting is per process and isn't stored in the cache (it's not a `reset()`
-            key): the shortest interval any open handle on the directory asked for wins, until every
-            handle has closed. Even a cache with nothing to do is written once an hour, to claim the
+            key): the shortest nonzero interval any handle on the directory asked for applies, and it
+            never lengthens until every handle has closed. A handle that passes 0 doesn't count, so
+            maintenance is off only when every handle on the directory in this process passed 0.
+            Even a cache with nothing to do is written once an hour, to claim the
             folder sweep, so a read-only replica or backup should pass 0. With `clock`, there's no
             background maintenance for the directory in this process while that handle is open, and
             an interval other than 0 raises `ValueError`. The thread stops for every `os.fork()` and
@@ -701,7 +704,8 @@ class Cache:
         logged once per streak, as a WARNING on the `diskcache_oxide` logger, by the next single-key
         call on the cache (`get`, `set`, `incr` and the like); a cache nobody calls shows it here
         only. A thread that couldn't be started counts as failures too. On a `FanoutCache`, every
-        shard's counts summed, the largest interval, and the first shard's last error."""
+        shard's counts summed, the largest interval, and the last error of the first shard, in shard
+        order, that has one."""
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
 
@@ -1550,7 +1554,8 @@ class FanoutCache:
         logged once per streak, as a WARNING on the `diskcache_oxide` logger, by the next single-key
         call on the cache (`get`, `set`, `incr` and the like); a cache nobody calls shows it here
         only. A thread that couldn't be started counts as failures too. On a `FanoutCache`, every
-        shard's counts summed, the largest interval, and the first shard's last error."""
+        shard's counts summed, the largest interval, and the last error of the first shard, in shard
+        order, that has one."""
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """`(hits, misses)` of `get` and `cache[key]` in this process, as diskcache's `stats()`.
 

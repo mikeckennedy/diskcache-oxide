@@ -16,7 +16,8 @@ Every thread and process that opens the same directory shares one cache. The API
 `diskcache.Cache`; the deliberate differences are listed in the Divergences guide.
 
 Args:
-    directory: The cache directory. It's created (owner-only, `0700`) if it doesn't exist. If
+    directory: The cache directory. It's created (owner-only, `0700`, on Unix; on Windows it inherits its parent's
+        permissions) if it doesn't exist. If
         it holds a cache in another on-disk format (an older or newer release's), the cache
         opens in its subdirectory `diskcache-oxide-format-N` instead, N being this release's
         format, and logs a warning on the `diskcache_oxide` logger once per process. Once that
@@ -92,8 +93,10 @@ Args:
         and the processes sharing a cache take turns too, so eight workers don't all do the same
         work. The first turn comes one to two intervals after the cache is first opened in the
         process. The setting is per process and isn't stored in the cache (it's not a `reset()`
-        key): the shortest interval any open handle on the directory asked for wins, until every
-        handle has closed. Even a cache with nothing to do is written once an hour, to claim the
+        key): the shortest nonzero interval any handle on the directory asked for applies, and it
+        never lengthens until every handle has closed. A handle that passes 0 doesn't count, so
+        maintenance is off only when every handle on the directory in this process passed 0.
+        Even a cache with nothing to do is written once an hour, to claim the
         folder sweep, so a read-only replica or backup should pass 0. With `clock`, there's no
         background maintenance for the directory in this process while that handle is open, and
         an interval other than 0 raises `ValueError`. The thread stops for every `os.fork()` and
@@ -394,7 +397,8 @@ ran, the entries they removed, failures, and the last failure's message. A failu
 logged once per streak, as a WARNING on the `diskcache_oxide` logger, by the next single-key
 call on the cache (`get`, `set`, `incr` and the like); a cache nobody calls shows it here
 only. A thread that couldn't be started counts as failures too. On a `FanoutCache`, every
-shard's counts summed, the largest interval, and the first shard's last error.
+shard's counts summed, the largest interval, and the last error of the first shard, in shard
+order, that has one.
 
 stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
 
@@ -1209,7 +1213,8 @@ ran, the entries they removed, failures, and the last failure's message. A failu
 logged once per streak, as a WARNING on the `diskcache_oxide` logger, by the next single-key
 call on the cache (`get`, `set`, `incr` and the like); a cache nobody calls shows it here
 only. A thread that couldn't be started counts as failures too. On a `FanoutCache`, every
-shard's counts summed, the largest interval, and the first shard's last error.
+shard's counts summed, the largest interval, and the last error of the first shard, in shard
+order, that has one.
 
 stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
 
@@ -1838,6 +1843,17 @@ CacheStats(name: 'str', directory: 'str', enabled: 'bool', count: 'int', volume:
 
 One cache's numbers, for an admin page. `error` says why it couldn't be read, if it couldn't.
 
+MaintenanceStats
+
+How background maintenance has gone on a cache in this process: `maintenance_stats()`.
+
+`interval` is in seconds, 0 when maintenance is off for this cache here (`maintenance_interval=0`,
+or a handle with its own `clock`). `turns` and `removed` count the turns that ran and the entries
+they removed; `failures` counts turns that failed, plus one for each stretch of 3 intervals in
+which turns found work and couldn't get to it (another connection kept the write lock).
+`last_error` is the last failure's message. On a `FanoutCache`, the counts are every shard's summed,
+`interval` is the largest, and `last_error` the first shard's that has one.
+
 
 ## Caches Methods
 
@@ -2446,7 +2462,7 @@ cache = Cache('cache', timeout=1.0, durable=True)  # a folder named "cache" in t
 
 For a cache that holds copies of data you can rebuild, which is what most caches are, turn on `durable=True` with a short `timeout`. Then a full disk, an I/O error or a lock that stays busy makes a call a miss, logged, instead of an exception in the middle of a request. Leave it off for state you can't rebuild, such as sessions, job claims, locks and work queues, where a write that silently didn't happen is a bug. [A cache that can't take a request down](#a-cache-that-cant-take-a-request-down) covers what it does and what a dropped call costs.
 
-The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
+The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`; on Windows it inherits its parent's permissions, see [Windows](#windows)). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
 
 So a cron job, an admin script or a container running as a different user can't open a directory your app created: it gets `PermissionError` ("Permission denied"). Run everything that shares a cache as the same user. Loosening the directory's mode yourself doesn't help, since the folders diskcache-oxide creates inside it for large values are owner-only too.
 
@@ -2551,14 +2567,14 @@ When the cache's on-disk volume goes over `size_limit`, each `set()` evicts up t
 
 ### Background maintenance
 
-A thread of the library's own, one per process, looks after every open cache: every `maintenance_interval` seconds (default 300, 5 minutes) it removes expired entries and their files, trims a cache that's over `size_limit` back under it, checkpoints a write-ahead log that has grown, and hourly clears stray temporary files. The caches in a process take turns across the interval, and the processes sharing a cache take turns too. It never waits for a lock and holds the write lock only for short chunks, so requests don't notice it. `cache.maintenance_stats()` says how it's going, and a failure is logged once, as a WARNING on the `diskcache_oxide` logger.
+A thread of the library's own, one per process, looks after every open cache: every `maintenance_interval` seconds (default 300, 5 minutes) it removes expired entries and their files, trims a cache that's over `size_limit` back under it, checkpoints a write-ahead log that has grown, and hourly clears stray temporary files. The caches in a process take turns across the interval, and the processes sharing a cache take turns too. It never waits for a lock and holds the write lock only for short chunks, so requests don't notice it. `cache.maintenance_stats()` says how it's going, and a failure is logged once per streak of failures, as a WARNING on the `diskcache_oxide` logger.
 
 ```python
 cache = Cache('/var/cache/my-app', maintenance_interval=60)    # every minute
 backup = Cache('/srv/replica/my-app', maintenance_interval=0)  # off: never written
 ```
 
-Pass 0 for a cache that must never be written by this process, such as a read-only replica: maintenance writes when it has work, and once an hour to coordinate the processes. A cache opened with `clock=` gets none, since the thread only knows the real time. [Storage and WAL](storage-and-wal.qmd#background-maintenance) has the whole story.
+Pass 0 for a cache that must never be written by this process, such as a read-only replica: maintenance writes when it has work, and once an hour to coordinate the processes. It's off for a cache in a process only when every handle opened on it there asked for 0: an earlier handle that asked for an interval keeps it on until every handle on the cache has closed. A cache opened with `clock=` gets none, since the thread only knows the real time. [Storage and WAL](storage-and-wal.qmd#background-maintenance) has the whole story.
 
 Maintenance calls, for when you want it done now, all safe to run while other processes use the cache:
 
@@ -2706,6 +2722,10 @@ Two tools help here:
 cache = Cache(tmp_path, clock=lambda: time.time())
 ```
 
+A cache with its own clock gets no background maintenance, which would go by the real time and remove entries your clock still calls live. Leave `maintenance_interval` out or pass 0: any other value with `clock=` raises `ValueError`. One `clock=` handle turns maintenance off for that directory in the whole process, other handles included, until every handle on it has closed.
+
+Without `clock=`, maintenance rarely matters in a test: a new cache's first turn comes at least one interval after it opens, so a test shorter than 5 minutes never sees one at the default. For a long run, or a suite that sets a short interval, pass `maintenance_interval=0` to keep what `expire()` and `cull()` return, and `volume()`, steady under your assertions.
+
 
 ### Switching from python-diskcache
 
@@ -2783,6 +2803,8 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | `retry=` | Positional; `cache[k]` retries forever | Keyword-only; `cache[k]` raises `Timeout` |
 | `stats()` | Persisted, shared by every process | Per process, in memory (D-049) |
 | `check()` | Supported | Supported, with differences (D-050) |
+| `len()` and iteration | Count and list expired entries until something removes their rows | Leave them out the moment they expire (D-060) |
+| Between calls | Nothing happens: expired rows, an over-limit cache and stray files wait for a call, so apps schedule `expire()` | Background maintenance looks after every open cache, every 5 minutes by default; nothing to schedule (D-061) |
 | Locks, semaphores, `throttle`, `barrier`, `Averager`, `memoize_stampede` | Supported | Supported, with differences; see [Coordination](coordination.qmd) |
 | `Deque`, `Index`, `DjangoCache`, `disk=`, `read=` | Supported | Not available |
 
@@ -2803,7 +2825,7 @@ diskcache takes its settings as keyword arguments (`Cache(directory, statistics=
 - `sqlite_synchronous`: gone; always `NORMAL`, as diskcache's default
 - `sqlite_mmap_size`, `sqlite_auto_vacuum`: gone; not configurable
 
-New settings with no diskcache counterpart: `serializer`, `pickle`, `types`, `clock`, `max_connections`, `wal_size_limit`, `wal_checkpoint`, `on_decode_error` and `durable`. [`Cache`](../reference/Cache.qmd) lists them.
+New settings with no diskcache counterpart: `serializer`, `pickle`, `types`, `clock`, `max_connections`, `wal_size_limit`, `wal_checkpoint`, `maintenance_interval`, `on_decode_error` and `durable`, and on a `FanoutCache`, `raise_on_mismatch`. [`Cache`](../reference/Cache.qmd) and [`FanoutCache`](../reference/FanoutCache.qmd) list them.
 
 ## Values: no pickle unless you ask
 
@@ -2887,7 +2909,7 @@ You don't have to change anything for these:
 - A child process forked while another thread was writing can always write. In diskcache it can stall for the full 60-second timeout.
 - `clear()` keeps writes that land while it runs, `expire()` removes every expired entry, and a read during an overwrite never misses.
 - File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache. A `FanoutCache` bounds them for the whole root, not per shard.
-- Opening a cache and reading from it never writes to the database.
+- Opening a cache and reading from it doesn't write to the database. Background maintenance does, when it has work and once an hour to coordinate the processes; pass `maintenance_interval=0` for a cache a process must never write.
 
 ## What diskcache doesn't have
 
@@ -2897,6 +2919,7 @@ Once you've switched, a few things are there that diskcache never offered:
 - [`NullCache`](null-cache.qmd) switches caching off without touching call sites, and [`Caches`](caches.qmd) names an app's caches, opens each on first use and hands out a `NullCache` while one can't open.
 - [`register_type()`](serialization.qmd#your-own-types) stores your own classes, dataclasses and library types without pickle.
 - A [`FanoutCache` transaction](fanoutcache.qmd#shard_of-and-transactkey) locks one shard instead of all of them.
+- [Background maintenance](storage-and-wal.qmd#background-maintenance): one thread per process removes expired entries and their files, trims a cache left over `size_limit`, checkpoints a grown write-ahead log and clears stray temporary files, for every open cache. An `expire()` you ran from cron keeps working, but has little left to do.
 - Free-threaded Python (3.14t and 3.15t) is supported and tested on every change.
 
 
@@ -2918,6 +2941,8 @@ If you're starting from a symptom rather than an exception (every lookup misses,
 | `FormatMismatchError` | `RuntimeError` | a database or manifest this version can't read, where the versioned subdirectory can't help |
 | `LayoutMismatchError` | `FormatMismatchError`, `ValueError` | opening a directory as the wrong kind of cache |
 | `TypeError`, `ValueError`, `KeyError`, `RuntimeError`, `OSError`, `OverflowError`, `AssertionError`, `MemoryError` | built-in | described below |
+| `UnknownFileWarning` | `UserWarning` | a `check()` finding, returned rather than issued (see below) |
+| `EmptyDirWarning` | `UserWarning` | never raised or issued; kept for code that imports diskcache's name |
 
 ## `TypeError` at `set()`: a value that can't be stored
 
@@ -2959,7 +2984,7 @@ The call waited the cache's `timeout` (60 s by default, or the `timeout=` passed
 What to do:
 
 - **In a request path, catch it and skip the cache.** Give the cache a short `timeout` (`Cache(path, timeout=1.0)`), and treat `Timeout` as "don't cache this time": the value is a copy, and the request can go to the source of truth. [Sharing a cache across web workers](../recipes/web-workers.qmd) has the pattern.
-- **Give maintenance its own timeout.** `clear()`, `expire()` and `cull()` take `timeout=` for that call, and bound each chunk's wait, so an admin page can pass `clear(timeout=10)` on a cache whose requests use 1 second. Run them from one scheduled job rather than from every worker.
+- **Give maintenance its own timeout.** `clear()`, `expire()` and `cull()` take `timeout=` for that call, and bound each chunk's wait, so an admin page can pass `clear(timeout=10)` on a cache whose requests use 1 second. There's nothing to schedule: background maintenance already removes expired entries, trims a cache over its limit and checkpoints the log, for every open cache. Call `expire()`, `cull()`, `clear()` or `checkpoint()` when you want it done now.
 - **Keep `transact()` blocks short**, and never `await` inside one.
 - **If many processes write often, use a [`FanoutCache`](fanoutcache.qmd).** A plain `Cache` has one write lock per directory, and eight workers that all write queue on it. Sharding gives each shard its own.
 - **Let the library answer it as a miss** with [`durable=True`](getting-started.qmd#a-cache-that-cant-take-a-request-down): single-key calls then return their miss value instead of raising, and the failure is counted and logged. Pair it with a small `timeout`, since it doesn't bound time on its own.
@@ -3101,6 +3126,12 @@ SQLite refused write-ahead logging, which diskcache-oxide requires for readers a
 - `max_connections` below `shards` on a `FanoutCache`. Each shard needs at least one connection.
 - A key on another shard inside `transact(key=...)`. The block covers one shard, and a call for a key elsewhere, reads included, can't be atomic with it. Check with `shard_of()` that the keys share a shard, or keep them in one value.
 - A `Caches` name that's taken, isn't a plain directory name, or would share a directory with another registered cache.
+- A `maintenance_interval` out of range: `maintenance_interval must be 0 (off), or from 1 to 86400 seconds (a day), got ...`, for NaN and infinity too. A `bool` or anything that isn't a number raises `TypeError` instead.
+- A nonzero `maintenance_interval` together with `clock=`: `maintenance_interval can't be used with clock=: ...`. The thread only knows the wall clock, so a cache with its own clock gets no maintenance; leave `maintenance_interval` out or pass 0. This is checked before the range.
+
+## `UnknownFileWarning` and `EmptyDirWarning`
+
+`check()` returns what it found as a list of `warnings.WarningMessage` and issues nothing through `warnings`, so these never show up as warnings on their own. A file in the cache directory or a value folder that no entry names, and that's over an hour old, is reported as `unknown file: ...` with the category `UnknownFileWarning`; `check(fix=True)` removes it when it's in a value folder. `EmptyDirWarning` is diskcache's warning for an empty folder. It's exported so code that imports it keeps working, but `check()` never reports one: empty value folders are normal on an open cache, and `check(fix=True)` sweeps them.
 
 ## `KeyError`
 
@@ -3140,9 +3171,10 @@ With gunicorn, put the same dictionary in `logconfig_dict` in `gunicorn.conf.py`
 
 - **`on_decode_error='miss'`** logs a warning for each stored version it couldn't read, once per cache handle, and deletes the row if no build could read it.
 - **`durable=True`** counts every swallowed failure in one of three groups and logs each group's first failure at once, then at most once a minute per cache handle, with counts by operation since its last line (`get: 1204, set: 37`). Busy (a `Timeout`) logs at `WARNING`, failing (a full disk, an I/O error, a damaged database) at `ERROR`, and lost invalidations (any failed `delete`, whose entry can now be served stale) at `ERROR`. An outage that ends within the minute shows only its first failure until the next line, so each line says more may follow. `close()` logs what's left.
-- **`Caches`** logs `could not open cache 'pages' at /var/cache/my-app/pages; using a NullCache, retrying in 10 s` at `ERROR` with the traceback when a cache can't open, and the same at `WARNING` without one when the open merely timed out (that's retried after at most 1 s). Pass `on_open_error=` to send it to Sentry instead.
+- **`Caches`** logs `could not open cache 'pages' at /var/cache/my-app/pages; using a NullCache, retrying in 10 s` at `ERROR` with the traceback when a cache can't open. When the open merely timed out, it logs `cache 'pages' at /var/cache/my-app/pages is busy; using a NullCache, retrying in 1 s: ...` at `WARNING`, without a traceback, and retries after at most 1 s. Both are logged only when no `on_open_error=` is set; pass one to send them to Sentry instead.
 - **`FanoutCache(directory, shards=n)`** logs `FanoutCache at /var/cache/my-app/rate_limits has 8 shards but shards=16 was asked for; using the 8 it has. ...` at `WARNING`, once per process per folder and pair of counts, when the folder has another count than `shards`. Its record carries `directory`, `stored_shards` and `requested_shards`. Pass `raise_on_mismatch=True` to raise `LayoutMismatchError` instead.
 - **`Caches`** also logs `cache 'rate_limits' at /var/cache/my-app/rate_limits has 8 shards but is registered with shards=16; using the 8 on disk. To apply shards=16, delete /var/cache/my-app/rate_limits while no process has it open` at `WARNING` each time it opens a sharded cache whose folder has another count than the registration, and once per process `a FanoutCache is registered with a shard count its folder does not have` at `ERROR`, a constant message with the details in the record's `cache`, `directory`, `stored_shards` and `registered_shards` attributes, so an error tracker groups every worker's report into one issue. The cache works throughout; this one doesn't go through `on_open_error`, since the open succeeded.
+- **Background maintenance** never raises into your code. When a turn fails (an error, or work found without getting the write lock for 3 intervals running), the next single-key call on that cache logs `background maintenance failed on the cache at /var/cache/my-app/pages: ...` at `WARNING`, with `directory` in the record. It's logged once per streak of failures, so a cache nobody calls never logs it, and a later successful turn ends the streak. `cache.maintenance_stats()` has the rest: `failures` counts every failure, not just the logged ones, and `last_error` holds the most recent failure's message.
 
 ## If it looks like a bug in diskcache-oxide
 
@@ -3155,7 +3187,7 @@ If you've read this far and the traceback still doesn't fit, it may be one. Open
 
 ## Every lookup misses
 
-- **The registry handed you a `NullCache`.** A [`Caches`](caches.qmd) lookup returns one when the cache can't open, and while it's disabled. Check `caches[name].enabled` (False on a `NullCache`) and `caches.stats()[name].error`, and look for the `could not open cache` line at `ERROR` on the `diskcache_oxide` logger.
+- **The registry handed you a `NullCache`.** A [`Caches`](caches.qmd) lookup returns one when the cache can't open, and while it's disabled. Check `caches[name].enabled` (False on a `NullCache`) and `caches.stats()[name].error`, and look on the `diskcache_oxide` logger for the `could not open cache` line at `ERROR`, or `is busy; using a NullCache` at `WARNING` when the open timed out. Both are logged only when no `on_open_error=` is set.
 - **A decorator bound a `NullCache` at import.** `@caches['x'].memoize()` looks the cache up once, when the module is imported, and keeps what it got. If the cache couldn't open then, the function runs uncached until a restart. Use the [`memoized(name)` helper](caches.qmd#memoize-on-a-registered-cache).
 - **The values are there but this process can't read them.** A value of a [registered type](serialization.qmd#your-own-types) reads as a miss in a process that hasn't registered that type, when the cache has `on_decode_error='miss'` (the default under `durable=True`), with a warning naming the tag. Register your types in a module every entry point imports: the web app, the worker, scripts.
 - **The workers aren't opening the same directory.** A relative path resolves against each process's working directory, which differs between a web server, a worker and a cron job. Use absolute paths.
@@ -3175,13 +3207,13 @@ If you've read this far and the traceback still doesn't fit, it may be one. Open
 ## Writes are slow under load
 
 - **Many processes writing one cache.** A cache has one write lock; reads never wait for it, writes queue for it. If one cache that many processes write (counters, rate limits) shows `Timeout` warnings or slow writes, make it a [`FanoutCache`](fanoutcache.qmd), which gives each shard its own lock.
-- **A big maintenance call.** `clear()`, `expire()` or `cull()` on a large cache takes the write lock in chunks and steps aside between them, but a write can still wait behind one. Run maintenance from one scheduled job, with its own `timeout=`.
+- **A big maintenance call.** `clear()`, `expire()` or `cull()` on a large cache takes the write lock in chunks and steps aside between them, but a write can still wait behind one. Background maintenance already does this work in small chunks, so call them only when you want it done now, from one place rather than every worker, with their own `timeout=`.
 - **A transaction held too long.** Everything inside `with cache.transact():` holds the write lock. Keep transactions short and do slow work outside them. See [Transactions](transactions.qmd).
 - **A slow disk.** A cache on a slow, emulated or network filesystem writes and checkpoints slowly, and on a network filesystem it isn't safe at all: keep it on a local disk.
 
 ## `PermissionError`
 
-- **Another user created the directory.** Cache directories are created owner-only (`0700`), so only the user that created one can open it. A script run with `sudo`, a root cron job, or a `docker exec -u root` that touched the directory first leaves it owned by root. Fix the ownership (`chown -R`), and run everything that shares a cache as one user. See [Open a cache](getting-started.qmd#open-a-cache).
+- **Another user created the directory.** On macOS and Linux, cache directories are created owner-only (`0700`), so only the user that created one can open it. A script run with `sudo`, a root cron job, or a `docker exec -u root` that touched the directory first leaves it owned by root. Fix the ownership (`chown -R`), and run everything that shares a cache as one user. See [Open a cache](getting-started.qmd#open-a-cache).
 - **A container with a different UID.** Every container that shares a volume must run as the same user, and that user must never change between image versions. See [Docker and Compose](../recipes/docker.qmd#who-owns-the-directory).
 - **Windows: the files are open.** Windows won't delete a file a process has open, so removing a cache directory while a handle is open fails. `close()` every handle first. See [Windows](getting-started.qmd#windows).
 
@@ -3278,7 +3310,7 @@ An entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it e
 
 ### Done: background maintenance (0.3.5)
 
-A cache looks after itself, with no `expire()` to schedule. One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (`maintenance_interval`). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don't all do the same work, a cache with nothing to do is only read, and the thread steps aside for every request and every fork. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
+A cache looks after itself, with no `expire()` to schedule. One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (`maintenance_interval`). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don't all do the same work, a cache with nothing to do is written only once an hour, to coordinate them (`maintenance_interval=0` for none), and the thread holds the write lock only for short chunks and stops for every `os.fork()`. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
 
 ### Next
 
@@ -3522,6 +3554,8 @@ Every row of this table follows from that sentence, so you never have to guess, 
 | iteration, `iterkeys()`, `reversed(cache)` | nothing | it's empty |
 | `stats()`, `check()` | `(0, 0)`, `[]` | nothing is looked up or stored |
 | `remove_old_formats()` | `[]` | there's no directory to clean up |
+| `checkpoint()` | `True` | there's no write-ahead log to reset |
+| `maintenance_stats()` | all zeros, `last_error` `None` | there's nothing to maintain |
 | `bool(cache)`, `cache.enabled` | `False` | caching is off |
 
 The constructor accepts the same arguments as `Cache` and ignores them, and the directory is optional. Bad arguments still raise as they would on `Cache` (a list as a key or a tag, `expire=True`, `side='middle'` on a queue call), and a memoized function's arguments are still checked as keys, so a call that would raise on a real cache raises here too. Values are the exception. A `NullCache` never encodes them, so `set()` accepts a value a real cache would refuse with `TypeError` (see [Serialization](serialization.qmd#what-isnt-stored)), and so does a memoized function that returns one. A test suite that runs only against a `NullCache` won't catch those.
@@ -3596,7 +3630,7 @@ def load_user(user_id: str, cache: CacheLike) -> dict:
     return user
 ```
 
-It covers everything the two share: the reads and writes with their `tag=` and `retry=` options, `memoize`, `evict`, the maintenance calls, `stats`, `check` and `reset`, iteration, and the `durable` and `eviction_policy` attributes. A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `CacheLike` keep identical public signatures, so they can't drift apart.
+It covers everything the two share: the reads and writes with their `tag=` and `retry=` options, `memoize`, `evict`, the maintenance calls, `stats`, `maintenance_stats`, `check`, `reset` and `remove_old_formats`, iteration, and the `durable` and `eviction_policy` attributes. A test in diskcache-oxide's own suite checks that `Cache`, `NullCache` and `CacheLike` keep identical public signatures, so they can't drift apart.
 
 ## `transact()` and `TransactionalCacheLike`
 
@@ -3622,7 +3656,7 @@ caches['general'].set('greeting', 'hello')
 caches['pages'].get('/about')
 ```
 
-Settings passed to `Caches` apply to every cache, and `register` can override them for one. Each cache lives in a directory named after it under the base directory, unless you pass `directory=`. The base directory holds caches; it isn't one itself, so don't open a `Cache` on it.
+Settings passed to `Caches` apply to every cache, and `register` can override them for one. That includes `maintenance_interval`: `Caches(base_dir, maintenance_interval=600)` gives every cache's [background maintenance](storage-and-wal.qmd#background-maintenance) a 10-minute interval, and `register('pages', maintenance_interval=0)` turns it off for that cache, unless another handle on it in the process asked for an interval. Each cache lives in a directory named after it under the base directory, unless you pass `directory=`. The base directory holds caches; it isn't one itself, so don't open a `Cache` on it.
 
 A registry is for caches: data you can rebuild, where an outage should mean a miss. That's why the examples here pass `durable=True` and a short `timeout`. Sessions, job claims, locks and work queues are state, and they don't belong in a registry: see [State isn't cache](#state-isnt-cache) below.
 
@@ -3733,7 +3767,7 @@ caches.register('rate_limits', shards=16)  # the folder has 8: opens with 8, and
 caches.fanout('rate_limits').shards        # 8
 ```
 
-Everything else on this page (`disable`, `stats`, `clear`, `expire_all`, `close_all`) works the same for both kinds.
+Everything else on this page (`disable`, `stats`, `clear`, `expire_all`, `remove_old_formats`, `close_all`) works the same for both kinds.
 
 ## Switching caches off
 
@@ -3815,7 +3849,7 @@ The [queue calls](../recipes/work-queues.qmd) are on `Cache` only, so a queue's 
 ## Admin and shutdown
 
 ```python
-caches.stats()                      # {name: CacheStats(name, directory, enabled, count, volume, error)}
+caches.stats()                      # {name: CacheStats(name, directory, enabled, count, volume, error, maintenance)}
 caches.clear('pages', timeout=10)   # works on a disabled cache too
 caches.expire_all(timeout=10)       # {name: removed, or None if it failed}
 caches.close_all()                  # at shutdown; `with Caches(...) as caches:` does it too
@@ -3948,7 +3982,13 @@ If you need related keys in one transaction, give them a shared prefix scheme an
 
 A `FanoutCache` isn't a `TransactionalCacheLike`, because its `transact` needs a key. It and `NullCache` are both [`ShardedCacheLike`](#typing).
 
-## Maintenance: one budget, partial failures
+## Background maintenance
+
+[Background maintenance](storage-and-wal.qmd#background-maintenance) treats each shard as a cache of its own. Each shard gets its own turn, spread across the interval with the process's other caches, and the hourly folder sweep, which shards skip at close. `maintenance_interval=` applies to every shard, and so does a `clock=` handle's veto, which works per database file. On a shard with the default two connections, the background WAL checkpoint runs only when neither connection is in use.
+
+`maintenance_stats()` sums `turns`, `removed` and `failures` across the shards. `interval` is the largest any shard has, and `last_error` comes from the first shard, in shard order, that has one. A maintenance thread that couldn't be started counts in `failures` too, as on `Cache`.
+
+## Maintenance calls: one budget, partial failures
 
 `clear()`, `expire()`, `cull()` and `checkpoint()` run over every shard. Their `timeout=` (default: the handle's) bounds **the whole call**, not each shard. The handle's timeout also bounds opening, `len()` and `volume()` as one budget, and `close()` uses at most 1 s of it for checkpoints. A shard reached after the deadline still gets one try with no wait, so idle shards are always done.
 
@@ -4112,7 +4152,7 @@ from diskcache_oxide import Cache, Lock, RLock, BoundedSemaphore, Averager, thro
 locks = Cache('/var/lib/my-app/state/coordination', timeout=3.0, eviction_policy='none')
 ```
 
-Coordination is state, not cache: open it as a plain `Cache` of its own, not durable and not through a registry, with eviction off so a live lock is never evicted for size. Keep it out of your caches' directories: a directory is a cache or a parent of caches, never both, because maintenance treats a cache's two-character subdirectories as its own value folders. [State isn't cache](caches.qmd#state-isnt-cache) explains each choice, and the [recommended setup](../recipes/web-workers.qmd#the-recommended-setup) shows where it fits.
+Coordination is state, not cache: open it as a plain `Cache` of its own, not durable and not through a registry, with eviction off so a live lock is never evicted for size. Keep it out of your caches' directories: a directory is a cache or a parent of caches, never both, because maintenance treats a cache's two-hex-character subdirectories as its own value folders. [State isn't cache](caches.qmd#state-isnt-cache) explains each choice, and the [recommended setup](../recipes/web-workers.qmd#the-recommended-setup) shows where it fits.
 
 Two common jobs don't need a lock at all. When only one worker should run a job and the others should skip it, an `add()` claim is simpler: see [Running a job once across workers](../recipes/run-once.qmd). To hand work items to whichever worker is free, use a queue: see [Work queues](../recipes/work-queues.qmd).
 
@@ -4175,7 +4215,7 @@ A running average whose total and count are updated together in one transaction,
 
 ## Things to know
 
-- **Use a cache of its own for coordination, with `eviction_policy='none'`.** Lock and semaphore keys are cache entries: least-recently-stored culling removes the oldest first, and a lock held a long time is old, so a full cache can evict a held lock. Under `'none'` nothing is ever evicted for size, only expired entries are removed, so give every lock an `expire`. `clear()` releases every lock in the cache, so keep other data out of it: `Cache('/var/cache/my-app/locks', eviction_policy='none')`.
+- **Use a cache of its own for coordination, with `eviction_policy='none'`.** Lock and semaphore keys are cache entries: least-recently-stored culling removes the oldest first, and a lock held a long time is old, so a full cache can evict a held lock. Under `'none'` nothing is ever evicted for size, only expired entries are removed, so give every lock an `expire`. `clear()` releases every lock in the cache, so keep other data out of it: `Cache('/var/lib/my-app/state/coordination', eviction_policy='none')`.
 - **Not on a `NullCache` or a `durable=True` cache.** The recipes refuse them with `TypeError`: with caching off every caller would hold the lock at once, and a durable cache could drop the `delete` that releases one, leaving it held forever.
 - **Not while waiting inside your own transaction.** A recipe that would have to wait inside a `transact()` block on its own cache raises `RuntimeError`: waiting there holds the cache's write lock, so no other process could ever release the lock you're waiting for. Inside a transaction on a different cache, a contended recipe raises `TransactionBusy` at once rather than waiting ([D-030](divergences.qmd)).
 - **On a `FanoutCache`** each recipe locks only its key's shard.
@@ -4215,7 +4255,7 @@ Any number of processes can open the same directory, each with its own `Cache`. 
 - **Maintenance that doesn't destroy work.** Every write gets a new sequence number. `clear()` and `expire()` note the latest number when they start and only touch older rows, so writes from other processes that land while they run are kept.
 - **Large values are always whole.** A process reading a large value while another overwrites it gets the old value or the new one, never a miss. (diskcache's standalone reproduction of that race sees about 40 misses in every 325,000 reads.)
 - **One write lock per database file.** Every writer to a directory queues on its lock, so with many processes writing often a plain `Cache` stops scaling at a couple of processes. A [`FanoutCache`](fanoutcache.qmd) has one lock per shard and keeps scaling (5.7x a plain `Cache` at 8 processes on a 99:1 read/write mix). It doesn't change the thread picture below: threads sharing one handle on free-threaded Python are not lifted by it today.
-- **Opening never writes.** Opening a cache with unchanged settings and reading from it never takes the write lock or touches the database file, so a read-mostly worker costs the writers nothing.
+- **Opening and reading don't write.** Opening a cache with unchanged settings and reading from it never takes the write lock or touches the database file, so a read-mostly worker costs the writers nothing. [Background maintenance](storage-and-wal.qmd#background-maintenance) does write, when it has work and once an hour per cache to coordinate with other processes (D-061); `maintenance_interval=0` keeps a process write-free.
 
 ## Forks
 
@@ -4234,6 +4274,12 @@ The result: whatever other threads were doing at the moment of the fork, the chi
 Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process's last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.
 
 The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds (see below), or an operation it forked from inside, such as from a callback. The child leaves those file descriptors open by design.
+
+### The maintenance thread
+
+[Background maintenance](storage-and-wal.qmd#background-maintenance) runs on one thread per process, a native thread that never takes the GIL. The barrier stops it and joins it before anything else, so a fork waits for the chunk, checkpoint or folder sweep in progress: a chunk takes about 130 µs, a WAL copy has taken up to 1.4 seconds under load, and the hourly folder sweep is bounded at 100 ms. After the fork the thread starts again, in the parent and in the child, if a cache open there still wants maintenance. In the child, `maintenance_stats()` starts from zero (turns, removed, failures and `last_error`), while `interval` keeps its value. Stopping the thread is what keeps Python from warning about forking a multi-threaded process. A fork that bypasses Python's at-fork hooks (a C-level `fork()` in an extension or a server's master process) gets no stop, and a child forked mid-turn could inherit a lock the thread held: pass `maintenance_interval=0` in a process that forks that way (D-061).
+
+The last `close()` on a cache waits for a maintenance turn in progress on it, at least 50 ms and otherwise within its own deadline, so the directory is safe to delete or move when it returns (D-018). A turn inside a long WAL checkpoint can outlast that wait, leaving its one connection open briefly.
 
 ### How long a call waits for a fork
 
@@ -4386,17 +4432,17 @@ One thread per process, of the library's own, looks after every cache open in th
 | Task | How often | What it does |
 |---|---|---|
 | Expiry and trimming | every `maintenance_interval` | Removes expired entries and their value files, then, if the cache is over `size_limit`, evicts the least recently stored, `cull_limit` at a time, until it's under. Never evicts under `eviction_policy='none'` or with `cull_limit=0` (diskcache's "I cull myself"). |
-| The write-ahead log | every `maintenance_interval` | If the log is over half of `wal_size_limit`, copies it into the database without holding the write lock, then truncates it if nothing's left to copy. Skipped on a cache with `max_connections=1`, whose one connection the copy would hold. |
-| Value folders | hourly | Removes temporary files a killed writer left (an hour old) and empty value folders, on a `FanoutCache`'s shards too. |
+| The write-ahead log | every `maintenance_interval` | If the log is over half of `wal_size_limit`, copies it into the database without holding the write lock, then truncates it if nothing's left to copy. Skipped when the copy would take the cache's last free connection (always with `max_connections=1`), while a checkpoint from a request is backing off, and when a writer in this process is waiting. |
+| Value folders | hourly, or every `maintenance_interval` if that's longer | Removes temporary files a killed writer left (an hour old) and empty value folders, on a `FanoutCache`'s shards too. |
 
-`maintenance_interval` is set when a cache is opened, in seconds: `None` for 300, `0` for off, otherwise 1 second to a day. It's per process and isn't stored in the cache; the shortest interval any open handle on the directory asked for wins. A cache's first turn comes one to two intervals after it's first opened in the process, so a short script never runs one.
+`maintenance_interval` is set when a cache is opened, in seconds: `None` for 300, `0` for off, otherwise 1 second to a day. It's per process and isn't stored in the cache. The shortest nonzero interval any handle on the directory asked for wins, and a handle that asks for `0` doesn't count; the interval never lengthens while a handle on the cache is open, and handles that have since closed still count until every handle on it has. A cache's first turn comes one to two intervals after it's first opened in the process, so a short script never runs one.
 
-- **Taking turns.** The caches in a process are spread across the interval: four caches on a 5-minute interval get their turns about 75 seconds apart. The processes sharing a cache take turns through a row in its `settings` table, so eight workers don't all sweep the same cache; the shortest interval among them sets the pace.
-- **Never in a request's way.** It never waits for a lock: if a request holds the write lock, or one is waiting for it, the turn steps aside and comes back a second later. It writes in chunks of about 130 µs, so a request waits at most one chunk.
-- **A cache with nothing to do** is only read, except for one write an hour to coordinate the folder sweep. A cache that must never be written by this process (a read-only replica, a backup) should pass `maintenance_interval=0`.
-- **Forks.** The thread stops before every `os.fork()` and starts again after it, in the parent and in the child, so Python never warns about forking a multi-threaded process. A process that forks without Python's at-fork hooks (a C-level `fork()`) gets no stop; pass `maintenance_interval=0` there.
-- **`clock=`.** The thread only knows the real time, so a cache opened with `clock=` gets no background maintenance in this process while that handle is open, and asking for an interval with it raises `ValueError`.
-- **Reporting.** `maintenance_stats()` returns the interval, turns, entries removed, failures and the last error. A failure is logged once, as a WARNING on the `diskcache_oxide` logger, by the next single-key call on the cache. A turn that keeps finding the write lock held for 3 intervals counts as a failure too.
+- **Taking turns.** The caches in a process are spread across the interval: four caches on a 5-minute interval get their turns about 75 seconds apart. The processes sharing a cache take turns through two rows in its `settings` table, so eight workers don't all sweep the same cache; the shortest interval among them sets the pace.
+- **Never in a request's way.** It never waits for a lock: if a request in this process holds the write lock, or one is waiting for it, the turn steps aside and comes back a second later. It writes in chunks of about 130 µs for 100 small rows, so a request in the same process waits at most one chunk; a writer in another process can wait for a few chunks, never past the turn's 50 ms.
+- **A cache with nothing to do** is only read, except for one write an hour to coordinate the folder sweep. A cache that must never be written by this process (a read-only replica, a backup) should pass `maintenance_interval=0`: maintenance is off for a cache in a process only when every handle opened on it there asked for 0; an earlier handle that asked for an interval keeps it on until every handle on the cache has closed.
+- **Forks and close.** The thread stops before every `os.fork()` and starts again after it, in the parent and in the child, so Python never warns about forking a multi-threaded process. A process that forks without Python's at-fork hooks (a C-level `fork()`) gets no stop; pass `maintenance_interval=0` there. The last `close()` on a cache waits for a turn in progress on it, at least 50 ms and otherwise within its own deadline (D-018).
+- **`clock=`.** The thread only knows the real time, so a cache opened with `clock=` gets no background maintenance in this process until every handle on the directory has closed, and asking for an interval with it raises `ValueError`.
+- **Reporting.** `maintenance_stats()` returns the interval, turns, entries removed, failures and the last error. A failure is logged once per streak of failures, as a WARNING on the `diskcache_oxide` logger, by the next single-key call on the cache. A turn that keeps finding the write lock held for 3 intervals counts as a failure too.
 
 Since maintenance may get there first, an explicit `expire()` or `cull()` can return less than it would have, and `volume()` and the log's size change without a call.
 
@@ -4453,6 +4499,7 @@ Run them yourself with `python -m bench.gate`. Numbers vary by machine; the rati
 - **Fast codecs.** msgpack and tagged JSON are encoded and decoded in Rust, building Python objects directly.
 - **Reads never write.** Least-recently-stored eviction means a `get` never updates anything, so any number of readers proceed in parallel.
 - **A smarter write lock.** Writers in one process queue on an in-process lock per database file, instead of every thread retrying against SQLite's busy handler.
+- **Maintenance off the request path.** [Background maintenance](storage-and-wal.qmd#background-maintenance) never waits for a lock and holds the write lock only for short chunks: a request in the same process waits at most one chunk (about 130 µs for 100 small rows); a writer in another process can wait for a few chunks, never past the turn's 50 ms.
 - **SQLite tuned for it.** The bundled SQLite is built with its global memory statistics turned off, which removes a process-wide mutex from every allocation: 2-10% more threaded throughput.
 
 ## Prefix scans at scale
@@ -4729,12 +4776,12 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-016 | Reading a large value during an overwrite | Occasional spurious miss | Always the old or new value |
 | D-017 | Connections and fds | One connection per thread | A bounded pool |
 | D-018 | `close()` | Closes only the calling thread's connection | Closes every connection |
-| D-019 | Opening an existing cache | Writes to the database | Never writes unless settings change |
+| D-019 | Opening an existing cache, and reading | Opening writes to the database | Neither writes, unless the open changes settings; background maintenance writes when it has work, and hourly (`maintenance_interval=0` for none) |
 | D-020 | Forking inside your own transaction | Child stalls for the timeout | Fails fast with `RuntimeError` |
 | D-021 | `directory` | Optional (temp dir) | Required |
 | D-022 | `disk=`, `eviction_policy=` | Supported | No `disk=`; least-recently-stored or `'none'`, read on every write; LRU and LFU refused |
 | D-023 | SQLite memory | 32 MiB cache + 64 MiB mmap per thread | 1 MiB per pooled connection |
-| D-024 | WAL file size | Can grow past 1 GiB and stay there | Trimmed; `checkpoint()` on demand |
+| D-024 | WAL file size | Can grow past 1 GiB and stay there | Trimmed; checkpointed by maintenance, and by `checkpoint()` on demand |
 | D-025 | A key iterator used by two threads at once | `ValueError` from the generator | `ValueError`, from a native iterator with no `send()` or `close()` |
 | D-026 | `pop` of a value it can't read | Row is deleted, then the decode fails | Decodes first, so the row stays unless no build could read it |
 | D-027 | A call behind a pending fork | Never waits: there's no fork barrier | Waits within its `timeout`, then raises `Timeout` |
@@ -4752,7 +4799,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-039 | `FanoutCache` constructor and features | `FanoutCache(path, 4)`; `cache()`, `deque()` and `index()` sub-collections, `read()` | `shards` is keyword-only; no sub-collections or `read()`; tags, `stats()`, `check()` and the rest as on `Cache` |
 | D-040 | `FanoutCache.transact()` | Locks every shard; `tx` is `None` | `transact(*, key)` locks one shard and refuses other shards' keys |
 | D-041 | Your own types | A `Disk` subclass, or pickle | `register_type()` per type; stored tagged, read by an allowlist; never pickled |
-| D-042 | Large values' folders | Two levels (65,536 folders); a folder goes with its last file | One level (at most 256); empty ones go at the last close and in `clear()` |
+| D-042 | Large values' folders | Two levels (65,536 folders); a folder goes with its last file | One level (at most 256); empty ones go at the last close, in `clear()`, and hourly by maintenance |
 | D-043 | A large write after the cache's folder was deleted | Re-creates the folders and succeeds | `OSError`; nothing is re-created |
 | D-044 | Key equality | `1` and `1.0` are one key; `True` another | `1`, `1.0` and `True` are three keys |
 | D-045 | `memoize(typed=True)` | Adds each argument's class to the key | Adds each argument type's name |
@@ -4781,7 +4828,7 @@ diskcache pickles every value. diskcache-oxide stores `str` and `bytes` raw and 
 
 ### D-015: owner-only directories
 
-A cache directory diskcache-oxide creates, and its value-file subdirectories, are `0700`. Existing directories are never changed. Anyone who can write to a cache directory can poison the cache, and its contents (keys with IP addresses in them, for example) can be private.
+A cache directory diskcache-oxide creates, and its value-file subdirectories, are `0700`. On Windows there are no mode bits: a new directory inherits its parent's access control list. Existing directories are never changed. Anyone who can write to a cache directory can poison the cache, and its contents (keys with IP addresses in them, for example) can be private.
 
 ### D-021: `directory` is required
 
@@ -4841,9 +4888,9 @@ diskcache says a transaction "may not be shared between threads". In diskcache-o
 
 diskcache opens a connection for every thread that uses a cache, so 64 threads hold 131 files open in the cache directory, and `close()` closes only the calling thread's connection. diskcache-oxide uses a pool per database file, at most `max_connections` (default 8), and the last `close()` closes every connection, so the directory is safe to move or delete afterwards.
 
-### D-019: opening never writes
+### D-019: opening doesn't write
 
-Opening an existing diskcache commits a write transaction even when nothing changed. diskcache-oxide's open, and reads after it, never write, so a read-mostly worker or a read-only copy of the directory never takes the write lock.
+Opening an existing diskcache commits a write transaction even when nothing changed. diskcache-oxide's open, and reads after it, never write, so a read-mostly worker doesn't take the write lock just by opening its cache. Background maintenance (D-061) is the one writer you didn't call: it writes when it has work, and once an hour per cache to coordinate the processes, even with none. For a read-only replica or a backup, pass `maintenance_interval=0`. Maintenance is off for a cache in a process only when every handle opened on it there asked for 0; an earlier handle that asked for an interval keeps it on until every handle on the cache has closed.
 
 ### D-023: bounded SQLite memory
 
@@ -4851,7 +4898,7 @@ diskcache's default is a 32 MiB page cache and a 64 MiB memory map per connectio
 
 ### D-024: a WAL that shrinks
 
-With readers in other processes, a burst of writes makes SQLite's write-ahead log grow to fit the burst and stay that size: hundreds of MiB to over 1 GiB beside a database of a few MiB. diskcache-oxide trims the log whenever it resets (`wal_size_limit`), offers `checkpoint()` to empty it on demand, checkpoints a large log at `close()`, and can checkpoint automatically with `wal_checkpoint='auto'`, which tries a few times in a row so that a reader in flight in another process doesn't defeat it. See [Storage and WAL](storage-and-wal.qmd).
+With readers in other processes, a burst of writes makes SQLite's write-ahead log grow to fit the burst and stay that size: hundreds of MiB to over 1 GiB beside a database of a few MiB. diskcache-oxide trims the log whenever it resets (`wal_size_limit`), offers `checkpoint()` to empty it on demand, checkpoints a large log at `close()`, and can checkpoint automatically with `wal_checkpoint='auto'`, which tries a few times in a row so that a reader in flight in another process doesn't defeat it. Background maintenance (D-061) also checkpoints a log grown past half of `wal_size_limit`, in `manual` mode too. Its checkpoint never waits for readers: with busy readers in other processes it copies what it can each interval but doesn't keep the log bounded, so `auto` or an explicit `checkpoint()` is still the answer there. See [Storage and WAL](storage-and-wal.qmd).
 
 ## API differences
 
@@ -4881,7 +4928,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-058:** on Windows, diskcache can't delete a value file while any reader has it open (Python's `open()` doesn't share delete) and ignores the failure, so the file stays with nothing pointing at it (upstream bug 19); one test left 154 files for 6 entries. diskcache-oxide's readers allow the delete, so nothing leaks.
 - **D-059:** when a cache directory holds a cache in another diskcache-oxide format (after an upgrade or a rollback), the cache opens in the subdirectory `diskcache-oxide-format-N` with a warning, and every later open uses it; `directory` reports where the cache really is. `remove_old_formats()` cleans up older formats once the old workers are gone. See [Upgrading across a format change](../recipes/upgrading.qmd).
 - **D-060:** an expired entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it expires, as it already left `get` and `in`. diskcache keeps counting and listing it until a `set()`, `expire()` or `cull()` removes its row. Nothing is written by the check: the row and its space, in `volume()`, stay until a `set()`, `expire()` or `cull()` removes them, or background maintenance does (D-061).
-- **D-061:** one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every `maintenance_interval` (default 5 minutes, 0 for off), with the caches and the processes taking turns. So an explicit `expire()` or `cull()` can return less than diskcache's would, `volume()` changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
+- **D-061:** one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every `maintenance_interval` (default 5 minutes, 0 for off), with the caches and the processes taking turns. It never waits for a lock and holds the write lock only for short chunks, so a request in the same process waits at most one chunk (about 130 µs for 100 small rows); a writer in another process can wait for a few chunks, never past the turn's 50 ms. So an explicit `expire()` or `cull()` can return less than diskcache's would, `volume()` changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)
@@ -4902,6 +4949,325 @@ These are covered together in [FanoutCache: sharded caches](fanoutcache.qmd), an
 [diskcache-community](https://github.com/secondwindoss/diskcache-community) is an actively maintained fork of diskcache, and the conformance suite can run against it too. It has fixed some of the same bugs (D-012, D-018, D-019, and the `0700` directories of D-015) and keeps others (D-008, D-016, D-017). The full comparison is at the end of [tests/DIVERGENCES.md](https://github.com/mikeckennedy/diskcache-oxide/blob/main/tests/DIVERGENCES.md).
 
 ## Recipes
+
+### Sharing a cache across web workers
+
+The recommended production setup: a durable registry for rebuildable data, plain caches for state, one directory layout, and startup and shutdown for FastAPI, Flask, Django, Celery and pre-forking servers.
+
+Deployment is where a cache meets the real world: several worker processes that don't know each other's names, a server that forks and recycles them while they're busy, a cron job that opens the same directory on the side. diskcache-oxide is built for exactly this, so there isn't much to it. This page gives one setup that works, then covers the few choices that matter. The [example app](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp) runs this setup end to end.
+
+## The recommended setup
+
+Most apps keep two kinds of things in a cache directory, and they need opposite settings:
+
+- **Cache:** rendered pages, API responses, anything you can rebuild from somewhere else. If the cache has an outage, the right answer is a miss and a slower request, never an error page. These go in a [`Caches`](../user-guide/caches.qmd) registry with `durable=True`, so a lock that stays busy or a full disk turns into a miss, logged, instead of an exception.
+- **State:** sessions, job claims, locks and work queues. Here a write that silently didn't happen is a bug: a login that doesn't stick, a job that runs twice, a queued job that vanishes. These are plain `Cache`s, opened directly (never through the registry, which hands out a `NullCache` when a cache can't open), not durable, with eviction off, so a failure raises and the app can say so. [State isn't cache](../user-guide/caches.qmd#state-isnt-cache) explains why each of these breaks on a `NullCache` or a durable handle.
+
+Both live under one directory the app owns, with the caches and the state side by side:
+
+```text
+/var/lib/my-app/
+├── cache/               # the registry's base directory
+│   ├── pages/
+│   └── api/
+└── state/
+    ├── sessions/
+    ├── coordination/    # job claims and locks
+    └── jobs/            # the work queue
+```
+
+```python
+from pathlib import Path
+
+from diskcache_oxide import Cache, Caches
+
+ROOT = Path('/var/lib/my-app')
+
+# Rebuildable data: durable, so an outage is a miss, never an error page.
+caches = Caches(ROOT / 'cache', durable=True, timeout=1.0)
+caches.register('pages', size_limit=1 * 2**30)
+caches.register('api', size_limit=256 * 2**20)
+
+# State: plain caches, opened directly, not durable, never evicted for size.
+sessions = Cache(ROOT / 'state' / 'sessions', timeout=3.0, eviction_policy='none')
+coordination = Cache(ROOT / 'state' / 'coordination', timeout=3.0, eviction_policy='none')
+jobs = Cache(ROOT / 'state' / 'jobs', timeout=3.0, eviction_policy='none')
+
+
+def close_everything() -> None:
+    caches.close_all()
+    for state in (sessions, coordination, jobs):
+        state.close()
+```
+
+A few things about that layout:
+
+- **A directory is a cache or a parent of caches, never both.** `cache/` and `state/` hold caches; they aren't caches themselves. Don't open a `Cache` on `/var/lib/my-app` or on `cache/`: maintenance treats two-character subdirectories of a cache as its own value folders, so a cache nested inside another one can lose its files.
+- **Plain caches, no sharding.** One `Cache` per purpose keeps memory low, one connection pool each. Reach for a [`FanoutCache`](../user-guide/fanoutcache.qmd) only for a cache that many processes write to at once.
+- **Timeouts are short and stated.** `timeout=1.0` on the registry keeps a busy lock from holding a request for the default 60 seconds; durable doesn't bound time by itself. State caches get a few seconds, and a `Timeout` from one is an error the app handles: a 503 page in a request, a retry in a worker.
+- **`/var/lib`, not `/var/cache`,** because sessions and queues are state: a system may wipe `/var/cache` (`systemctl clean --what=cache` does), and that's fine for caches and not for logins.
+
+## Pick a directory
+
+- **Persistent and private.** The directory belongs to the user the app runs as. diskcache-oxide creates each cache directory `0700` if it doesn't exist (on Unix; on Windows it inherits its parent's permissions); if you create them yourself, keep them that way. Anyone who can write to a cache directory can change what your app reads from it. With systemd, `StateDirectory=my-app` creates `/var/lib/my-app` owned by the service's user.
+- **On a local disk.** The cache relies on SQLite's write-ahead log and its shared-memory file, which need a local filesystem. diskcache-oxide refuses to open only when SQLite itself declines the write-ahead log (some FUSE mounts do). It can't tell that a directory is on NFS, SMB, EFS or Azure Files, where the log is usually accepted and then corrupts, so never put a cache on a network share or a Kubernetes ReadWriteMany volume.
+- **In Docker,** mount one named volume at `/var/lib/my-app` and give it to every container that should share the caches. [Docker and Compose](docker.qmd) has the Compose file, the Dockerfile, and the ownership details that otherwise end in `PermissionError`.
+
+## Start and stop with the app
+
+Open everything once per process, at startup, and share it across requests and threads. A `Cache` is safe to use from any number of threads. The setup above lives in a module of its own (say `caching.py`) that every entry point imports, together with the [types](custom-types.qmd) you store.
+
+### FastAPI
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from myapp.caching import close_everything
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    close_everything()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+In async code, reads can run on the event loop and writes go through `asyncio.to_thread`: see [asyncio](asyncio.qmd).
+
+### Flask
+
+```python
+import atexit
+
+from flask import Flask
+
+from myapp.caching import close_everything
+
+app = Flask(__name__)
+atexit.register(close_everything)
+```
+
+### Django
+
+diskcache-oxide doesn't ship a Django cache backend yet. One is next on the [roadmap](../user-guide/roadmap.qmd#next); until then, `django.core.cache` keeps whatever it has. Put the setup in a module of its own (`myapp/caching.py`), take `ROOT` from `settings`, and import it where it's needed.
+
+### Celery and other background workers
+
+Celery's prefork pool, RQ and `multiprocessing` with the fork start method are pre-forking servers like gunicorn: import the setup at import time, and each child gets its own connections on first use. Register your types the same way the web workers do, or a worker that reads a web worker's value gets `ForeignValueError` (or, on a durable cache, a miss and a logged warning, so every read of it goes to the source). Closing at shutdown is optional; Celery's `worker_process_shutdown` signal is the place for it.
+
+```python
+from celery.signals import worker_process_shutdown
+
+from myapp.caching import close_everything
+
+
+@worker_process_shutdown.connect
+def close_caches(**kwargs) -> None:
+    close_everything()
+```
+
+### Pre-forking and spawning servers
+
+With gunicorn (including `--preload`) or Celery's prefork pool, it doesn't matter whether you open the cache before or after the fork. diskcache-oxide's fork barrier makes sure no worker starts life holding half a database transaction, and each child opens its own fresh connections on first use. See [Concurrency and forks](../user-guide/concurrency-and-forks.qmd).
+
+`uvicorn --workers` doesn't fork: it starts each worker as a fresh process (the spawn start method, on every platform), so each worker imports your app and opens its caches itself. On Linux, `multiprocessing` defaults to the forkserver start method since Python 3.14, which behaves the same way. Either is fine; there's nothing to configure.
+
+## Keep the request path fast
+
+Reads never wait for writers, so a `get` stays fast however busy the cache is. Writes are different: only one process can commit to a cache file at a time, and a write waits up to the cache's `timeout` for its turn. On the durable registry a write that runs out of time is dropped and counted, which is what you want for a page fragment: the next request writes it. On a plain cache, treat `Timeout` as "skip this time" where that's safe:
+
+```python
+from diskcache_oxide import Timeout
+
+
+def cache_quietly(cache, key: str, value: object, expire: float) -> None:
+    try:
+        cache.set(key, value, expire=expire)
+    except Timeout:
+        log.warning('cache busy; skipped storing %s', key)
+```
+
+Under normal load a write takes about 20 µs and never comes near the timeout. The timeout matters during bursts, such as a big `clear()` from a maintenance script, and even then `clear()` steps aside between chunks to let waiting writes in.
+
+## Maintenance
+
+There's no maintenance job to write. Background maintenance looks after every open cache in every worker: every 5 minutes (`maintenance_interval`) it removes expired entries and their value files, trims a cache left over its `size_limit` (never one opened with `eviction_policy='none'`, like the state caches), checkpoints a write-ahead log grown past its trim size, and once an hour clears stray temporary files and empty value folders. The workers sharing a cache take turns, so eight workers don't do the same work eight times. `maintenance_stats()` on a cache, or the `maintenance` field of `caches.stats()`, shows how it's going.
+
+`expire()`, `cull()`, `clear()` and `checkpoint()`, and the registry's `expire_all()`, are for when you want it done now: after a big import, say, or before a backup. Each takes its own `timeout=`, so a script can wait longer than a request would: `sessions.expire(timeout=10.0)`. `checkpoint()` returns `False` instead of waiting long if workers are busy, so it's safe to call any time.
+
+## At shutdown
+
+`close_all()` and `close()` at shutdown, as above, are optional but tidy. Closing copies a large write-ahead log back into the database and truncates it, waiting at most a second. Call `checkpoint()` first after a burst of writes for a more thorough job. See [Storage and WAL](../user-guide/storage-and-wal.qmd).
+
+## Switching caching off
+
+To run with caching off (local development, or chasing a stale-data bug in production), switch the registry's caches off by name: `caches.disable('pages')`. Lookups then return a `NullCache` that still forwards deletes, so nothing stale is waiting when you switch it back on. Don't switch off state: sessions, claims and queues stop working on a `NullCache`. See [Caches](../user-guide/caches.qmd#switching-caches-off) and [NullCache](../user-guide/null-cache.qmd).
+
+### One typed module for your caches
+
+Wrap a Caches registry in a module with one function per cache, so the app gets autocomplete and type checking instead of string lookups.
+
+An app starts with one cache and a line like `caches['pages']`. A year later there are five caches, the names are strings scattered over forty files, one handler says `caches['page']` and nobody has hit it yet, and the only way to learn which caches exist is to grep for `register`. A registry indexed by name is a dictionary, and a dictionary can't tell your editor what's in it.
+
+The fix is a small module that owns the registry and has one function per cache. Everything else in the app calls those functions. Type `site_caches.` and the editor lists every cache the app has.
+
+## The module
+
+```python
+# site_caches.py
+from typing import Literal, Optional
+
+from diskcache_oxide import Caches, TransactionalCacheLike
+
+CacheName = Literal['pages', 'markdown', 'etags']
+caches: Optional[Caches[CacheName]] = None
+
+
+def setup(base_folder: str) -> None:
+    global caches
+    if caches is not None:
+        return
+
+    registry: Caches[CacheName] = Caches(base_folder, durable=True, timeout=1.0)
+    registry.register('pages', size_limit=1 * 2**30)
+    registry.register('markdown')
+    registry.register('etags')
+    caches = registry
+
+
+def close() -> None:
+    global caches
+    if caches is not None:
+        caches.close_all()
+        caches = None
+
+
+def cache(name: CacheName) -> TransactionalCacheLike:
+    if caches is None:
+        raise RuntimeError('call site_caches.setup() first')
+    return caches[name]
+
+
+def pages_cache() -> TransactionalCacheLike:
+    return cache('pages')
+
+
+def markdown_cache() -> TransactionalCacheLike:
+    return cache('markdown')
+
+
+def etag_cache() -> TransactionalCacheLike:
+    return cache('etags')
+```
+
+`setup()` registers the caches and nothing more: a cache opens on its first lookup, so calling it early costs nothing. A second call does nothing. `close()` closes every cache and forgets the registry, so `setup()` can run again, which is what a test wants.
+
+## Using it
+
+Call `setup()` once when the app starts and `close()` when it stops. In FastAPI that's the lifespan; the [web workers recipe](web-workers.qmd) has the same for Flask, Django and Celery.
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+import site_caches
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    site_caches.setup('/var/lib/my-app/cache')
+    yield
+    site_caches.close()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+Everywhere else, ask for the cache at the point you use it:
+
+```python
+from typing import Optional
+
+import site_caches
+
+def render_page(url: str) -> Response:
+    etag: Optional[str] = site_caches.etag_cache().get(url)
+    page: Optional[str] = site_caches.pages_cache().get(url)
+
+    if page is not None:
+        return Response(body=page, etag=etag)
+
+    html = render_page_contents(url)
+    etag = etag_from_body(html)
+
+    site_caches.etag_cache().set(url, etag)
+    site_caches.pages_cache().set(url, html)
+
+    return Response(body=html, etag=etag)
+```
+
+The two caches here are written and evicted separately, so a page can come back with no etag. Handle `etag is None` on a hit, or store `(etag, html)` as one entry in `pages`: a tuple comes back as a tuple.
+
+## Why functions, not variables
+
+It's tempting to write `pages = caches['pages']` once at the bottom of the module and import that. Don't: the functions do a lookup on every call, and that's the point.
+
+- **A cache that couldn't open comes back.** While it can't open, the lookup returns a [`NullCache`](../user-guide/null-cache.qmd) and tries again 10 seconds later. A variable would hold that `NullCache` until the process restarts.
+- **Switches work.** `site_caches.caches.disable('pages')` changes what later lookups return. Code holding the real cache in a variable never notices.
+- **It's cheap.** A lookup is one dict read with no lock, fine on every request.
+
+The names are checked too. `CacheName` is a `Literal`, so `cache('page')` is a type error, and nothing outside the module spells a name at all. The registry itself stays reachable as `site_caches.caches` for what the functions don't cover, such as `stats()` on an admin page. It's `None` until `setup()` runs.
+
+## `memoize`
+
+`@site_caches.pages_cache().memoize()` runs when the module that holds it is imported, which is before `setup()`, so it raises. Add a decorator to `site_caches` that looks the cache up on each call instead:
+
+```python
+import functools
+
+def memoized(name: CacheName, **options):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return cache(name).memoize(**options)(func)(*args, **kwargs)
+        return wrapper
+    return decorator
+```
+
+```python
+@site_caches.memoized('markdown', expire=3600)
+def to_html(markdown_text: str) -> str:
+    return render_markdown(markdown_text)
+```
+
+It stores under the same keys `memoize` would, and it follows recovery and the switches. [`memoize` on a registered cache](../user-guide/caches.qmd#memoize-on-a-registered-cache) has the details, and the cost: about 2 µs a call.
+
+## In tests
+
+Point `setup()` at pytest's `tmp_path` and every test gets its own empty caches:
+
+```python
+import pytest
+
+import site_caches
+
+@pytest.fixture(autouse=True)
+def fresh_caches(tmp_path):
+    site_caches.setup(str(tmp_path / 'cache'))
+    yield
+    site_caches.close()
+```
+
+For tests where caching shouldn't happen at all, call `site_caches.caches.disable('pages', 'markdown', 'etags')` after `setup()`: every read misses. See [Testing code that uses a cache](testing.qmd).
+
+## Where it stops
+
+- **State doesn't go in the registry.** Sessions, job claims, locks and queues need a plain `Cache` opened directly, because a registry hands out a `NullCache` when a cache can't open, and on one of those `add()` always wins. Give them their own function in the same module if you like, returning a `Cache` you opened yourself: see [State isn't cache](../user-guide/caches.qmd#state-isnt-cache).
+- **A sharded cache needs its own kind of function.** One registered with `shards=` is read with `caches.fanout(name)`, which returns `FanoutCache | NullCache`; `cache(name)` raises `TypeError` for it.
+- **Names that come from configuration** can't be a `Literal`. For those, `caches.get(name)` returns the cache, or `None` when nothing by that name is registered.
+- **Adding a cache is three edits:** the `Literal`, the `register` line and the function. Miss the `register` and the function raises `KeyError` the first time it's called, so call each one in a test.
 
 ### Caching expensive calls
 
@@ -5132,6 +5498,7 @@ The entry holds the response body, its `ETag` and a freshness deadline taken fro
 import json
 import re
 import tempfile
+from typing import Optional
 from urllib.parse import urlsplit
 
 import httpx
@@ -5387,6 +5754,7 @@ A dataclass needs only a name. Its fields are stored and it's rebuilt with `cls(
 
 ```python
 import dataclasses
+from typing import Optional
 
 @dataclasses.dataclass
 class Invoice:
@@ -5473,17 +5841,18 @@ import os
 
 from diskcache_oxide import Cache
 
-cache = Cache('/var/cache/my-app')
+# Claims are state: a small cache of their own, never evicted (see the last section).
+coordination = Cache('/var/lib/my-app/state/coordination', timeout=3.0, eviction_policy='none')
 
 def hourly_cleanup() -> None:
-    if not cache.add('job:hourly-cleanup', os.getpid(), expire=55 * 60):
+    if not coordination.add('job:hourly-cleanup', os.getpid(), expire=55 * 60):
         return  # another worker has it this hour
     remove_stale_sessions()
 ```
 
 The `expire` is the important part. It decides when the job can be claimed again, and it's also what saves you if the worker that claimed the job crashes halfway through: the claim expires and the next run goes ahead. Set it a little shorter than the schedule's interval, so the next run is never blocked by the previous claim.
 
-Storing `os.getpid()` (or a hostname and pid) as the value costs nothing and makes it easy to see who claimed the job: `cache.get('job:hourly-cleanup')`.
+Storing `os.getpid()` (or a hostname and pid) as the value costs nothing and makes it easy to see who claimed the job: `coordination.get('job:hourly-cleanup')`.
 
 ## See it work
 
@@ -5520,12 +5889,12 @@ For work that isn't on a fixed schedule (process the queue, rebuild the search i
 
 ```python
 def rebuild_search_index() -> None:
-    if not cache.add('job:search-index', os.getpid(), expire=10 * 60):
+    if not coordination.add('job:search-index', os.getpid(), expire=10 * 60):
         return
     try:
         do_rebuild()
     finally:
-        cache.delete('job:search-index')
+        coordination.delete('job:search-index')
 ```
 
 Make the lease comfortably longer than the job ever takes. If the job outlives it, a second worker can start a second copy.
@@ -5537,11 +5906,7 @@ Two things can make a claim vanish early, and both argue for keeping claims out 
 - **Switching caching off.** A `NullCache` follows the rule "every entry expires the instant it's written", so its `add()` always returns `True`. With caching off, every worker's claim succeeds and the job runs once per worker. That's harmless for idempotent jobs and wrong for jobs with side effects, like sending email.
 - **Eviction.** When a cache is over its `size_limit`, it evicts the least recently stored entries, and a claim is exactly the kind of small, rarely written entry that goes first. If it's evicted before it expires, a second worker can claim the job.
 
-A separate cache directory just for coordination, which is never swapped for a `NullCache` and never evicts (`eviction_policy='none'`, so only expired claims go), avoids both:
-
-```python
-coordination = Cache('/var/lib/my-app/state/coordination', timeout=3.0, eviction_policy='none')
-```
+The coordination cache the first sample opens, a directory just for claims and locks that never evicts (`eviction_policy='none'`, so only expired claims go), avoids both. Open it directly rather than through a [`Caches`](../user-guide/caches.qmd) registry, which hands out a `NullCache` when a cache can't open, and don't make it durable, or a claim that couldn't be written means nobody runs the job: see [State isn't cache](../user-guide/caches.qmd#state-isnt-cache).
 
 A claim is the right tool when a worker that loses should skip the job. When it should wait its turn instead, use a `Lock` or a `BoundedSemaphore` from [Coordination](../user-guide/coordination.qmd), on the same coordination cache.
 
@@ -5631,7 +5996,7 @@ import threading
 
 from diskcache_oxide import Cache
 
-cache = Cache(tempfile.mkdtemp(), eviction_policy='none')   # counts are data: never evict them for size
+cache = Cache(tempfile.mkdtemp(), timeout=3.0, eviction_policy='none')   # counts are state: never evict them for size
 
 def record_view(episode_id: int) -> None:
     cache.incr(f'views:episode:{episode_id}')
@@ -5649,7 +6014,7 @@ for t in threads:
 print(cache.get('views:episode:512'), 'views, none lost')
 ```
 
-`incr()` starts a missing counter at `default` (0) and adds `delta` (1), so there's no setup step. Processes behave exactly like the threads here. The cache is opened with `eviction_policy='none'`, for the reason under [Things to know](#things-to-know).
+`incr()` starts a missing counter at `default` (0) and adds `delta` (1), so there's no setup step. Processes behave exactly like the threads here. Counts are state, not cache, so the counters' cache is a plain `Cache` opened directly, with eviction off, for the reasons under [Things to know](#things-to-know). In an app it sits beside the other state caches: `Cache('/var/lib/my-app/state/counters', timeout=3.0, eviction_policy='none')`, as in the [recommended setup](web-workers.qmd#the-recommended-setup).
 
 ## Flush the counts to the database
 
@@ -5729,7 +6094,7 @@ On a `FanoutCache` a transaction covers one shard, chosen by `transact(key=...)`
 
 - **Don't let counts be evicted.** A cache at its `size_limit` evicts the least recently stored entries first. Each `incr()` counts as a store, so a busy counter is safe, but a quiet one is the oldest thing in the cache: an episode's views waiting for the next flush, a quota halfway through its period, last month's downloads. An evicted quota comes back as a fresh allowance. Open the counters' cache with `eviction_policy='none'`, as the examples do, and let expiry do the cleaning.
 - **A missing counter reads as `default`.** When a missing counter is a bug rather than a zero, pass `default=None` and `incr()` raises `KeyError` instead.
-- **Counters need a real cache.** A `NullCache` has nothing to count in: its `incr()` returns `default + delta` every time, so every view would be the first. Keep counters in a cache that's never switched off, which [`Caches`](../user-guide/caches.qmd) lets you do per name.
+- **Counters need a real cache.** A `NullCache` has nothing to count in: its `incr()` returns `default + delta` every time, so every view would be the first. A [`Caches`](../user-guide/caches.qmd) registry hands out a `NullCache` whenever a cache can't open, so open the counters' cache yourself, not through the registry: see [State isn't cache](../user-guide/caches.qmd#state-isnt-cache).
 - **`durable=True` drops counts silently.** A failed `incr()` returns `default + delta` so a rate limiter fails open, but for a quota or a view count that's a lost increment with only a log line to show for it. Let these raise, and catch `Timeout` where you call them, or pass `retry=True` where waiting is fine, as the flush does.
 - **Not an id generator.** Two callers can get the same number back under `durable=True`, and a cleared cache restarts at zero. Ids come from the database.
 - **One machine.** Every worker on a host shares the counts; two hosts behind a load balancer each have their own, so flush each host's counts to the database and sum there.
@@ -5799,6 +6164,7 @@ A pulled item is gone as soon as `pull()` returns, so a worker that crashes half
 
 ```python
 import uuid
+from typing import Optional
 
 def enqueue(cache: Cache, episode: int) -> None:
     cache.push({'id': uuid.uuid4().hex, 'episode': episode, 'step': 'transcode'}, prefix='transcode')
@@ -5862,7 +6228,7 @@ while (taken := next_job(jobs)) is not None:
     print(taken)
 ```
 
-While the urgent queue keeps filling, the others wait. To count what's waiting, iterate the queue's keys: `iterkeys(prefix='transcode-')` is an indexed range scan over that queue alone. Items that expired but haven't been removed yet are counted too, as are any other keys that start with `'transcode-'`.
+While the urgent queue keeps filling, the others wait. To count what's waiting, iterate the queue's keys: `iterkeys(prefix='transcode-')` is an indexed range scan over that queue alone. Any other keys that start with `'transcode-'` are counted too.
 
 ## Cancelling and expiring jobs
 
@@ -5914,10 +6280,11 @@ Store the token when you issue it, with the lifetime the link should have. To re
 import secrets
 import tempfile
 import threading
+from typing import Optional
 
 from diskcache_oxide import Cache
 
-tokens = Cache(tempfile.mkdtemp(), eviction_policy='none')   # why: see the last section
+tokens = Cache(tempfile.mkdtemp(), timeout=3.0, eviction_policy='none')   # why: see the last section
 
 def issue_reset_token(user_id: int) -> str:
     token = secrets.token_urlsafe(32)
@@ -6005,9 +6372,9 @@ Tokens and idempotency keys aren't a copy of something you can recompute, so two
 - **Eviction.** A cache at its `size_limit` evicts the least recently stored entries, and an unused token is a tiny, old entry, exactly what goes first. An evicted reset link is a dead link; an evicted idempotency key is a double charge.
 - **Switching caching off.** A `NullCache` never stores, so `pop()` returns `None` and no token can ever be redeemed, and its `add()` always returns `True`, so every retry charges again.
 
-Give them a directory of their own, opened with `eviction_policy='none'` so nothing is evicted for size (tokens still expire) and with no `NullCache` in front of it, as the [job claims](run-once.qmd#give-claims-their-own-small-cache) recipe does. [`Caches`](../user-guide/caches.qmd) can register it under its own name so the rest of the app's caches can still be switched off.
+They're state, so treat them as the [recommended setup](web-workers.qmd#the-recommended-setup) treats sessions and claims: a plain `Cache` in a directory of its own, such as `Cache('/var/lib/my-app/state/tokens', timeout=3.0, eviction_policy='none')`, opened directly rather than through a [`Caches`](../user-guide/caches.qmd) registry, which hands out a `NullCache` when a cache can't open. Eviction is off, so nothing goes for size, and tokens still expire. [State isn't cache](../user-guide/caches.qmd#state-isnt-cache) has the reasoning, and the [job claims](run-once.qmd#give-claims-their-own-small-cache) recipe does the same.
 
-`durable=True` is safe here, if you check return values: a `pop()` whose delete fails returns `None` rather than risk delivering the token twice (the user clicks again), `add()` fails closed, and a `set()` that was dropped returns `False`, so `issue_reset_token` should raise rather than hand out a link that was never stored. See [errors](../user-guide/errors.qmd).
+Don't make it durable either. A durable handle drops a write it can't make instead of raising: a dropped `set()` returns `False`, so a reset link goes out that was never stored, a `pop()` whose delete fails returns `None`, so a valid click is turned away, and a failed `add()` returns `False`, so the first attempt at a charge is turned away as if another were already running. Without `durable`, each of these raises `Timeout` or `OSError`, and the app can show an error or retry. See [errors](../user-guide/errors.qmd).
 
 ### Server-side sessions
 
@@ -6020,6 +6387,7 @@ Every request arrives with a cookie and a question: who is this? A session is th
 ```python
 import secrets
 import tempfile
+from typing import Optional
 
 from diskcache_oxide import Cache
 
@@ -6092,326 +6460,115 @@ A lost session is a forced logout, so sessions get a cache of their own, configu
 - **Nothing to schedule for expired sessions.** They're invisible to `get()` the moment they expire, and background maintenance frees their space within its interval (5 minutes by default), with eviction off too.
 - **One machine.** Every worker on the host shares the sessions. Behind a load balancer across several machines, use sticky sessions or a session store every machine can reach.
 
-### One typed module for your caches
+### Using the cache from asyncio
 
-Wrap a Caches registry in a module with one function per cache, so the app gets autocomplete and type checking instead of string lookups.
+Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends.
 
-An app starts with one cache and a line like `caches['pages']`. A year later there are five caches, the names are strings scattered over forty files, one handler says `caches['page']` and nobody has hit it yet, and the only way to learn which caches exist is to grep for `register`. A registry indexed by name is a dictionary, and a dictionary can't tell your editor what's in it.
+An async framework makes one promise to every request it's serving: nothing blocks the loop. A synchronous cache call looks like a small risk to that promise, and whether it is depends entirely on which call. diskcache-oxide's API is synchronous. An `AsyncCache` is planned as an experiment, to ship only if it earns its place (see the [roadmap](../user-guide/roadmap.qmd)), but the sync cache already works well in an asyncio app, provided you know which calls can block the event loop and for how long. Here are the three rules.
 
-The fix is a small module that owns the registry and has one function per cache. Everything else in the app calls those functions. Type `site_caches.` and the editor lists every cache the app has.
+## Reads: call them inline
 
-## The module
+A cached read costs a few microseconds (the [performance](../user-guide/performance.qmd) page has the measurements), less than the event loop spends scheduling a task. Reads never take the write lock and never wait for writers, so `cache.get()` on the loop is the right call, and `await asyncio.to_thread(cache.get, ...)` would cost more than the read it protects.
+
+The exception is a read of a large value that keeps losing to concurrent overwrites, which can wait up to the cache's `timeout` before raising `Timeout`. That's rare; `durable=True` turns it into a miss.
+
+## Writes: move them off the loop
+
+A write has to take the cache's write lock, and if another process holds it (a `clear()` in a maintenance script, a long transaction, a fork in flight) the write waits up to `timeout`. Under normal load that wait is nothing. In the worst case it's `timeout` seconds during which every request on that loop stops. Two ways to make sure that never happens:
+
+- **Run writes in a worker thread** with `asyncio.to_thread()`. The thread does the waiting; the loop keeps serving. The thread hop costs tens of microseconds, which is fine for a write.
+- **Or keep writes inline with a short `timeout` and `durable=True`.** Then the worst case is a dropped cache write logged once a minute, not a stalled loop.
 
 ```python
-# site_caches.py
-from typing import Literal, Optional
+import asyncio
+import tempfile
 
-from diskcache_oxide import Caches, TransactionalCacheLike
+from diskcache_oxide import Cache
 
-CacheName = Literal['pages', 'markdown', 'etags']
-caches: Optional[Caches[CacheName]] = None
+cache = Cache(tempfile.mkdtemp(), timeout=1.0, durable=True)
 
+async def load_user(user_id: int) -> dict:
+    await asyncio.sleep(0.001)                        # stands in for a database query
+    return {'id': user_id}
 
-def setup(base_folder: str) -> None:
-    global caches
-    if caches is not None:
-        return
+async def handle_request(request_id: int) -> dict:
+    key = f'user:{request_id % 10}'
+    user = cache.get(key)                             # a read, on the event loop
+    if user is None:
+        user = await load_user(request_id % 10)
+        await asyncio.to_thread(cache.set, key, user, expire=300)   # a write, off the loop
+    return user
 
-    registry: Caches[CacheName] = Caches(base_folder, durable=True, timeout=1.0)
-    registry.register('pages', size_limit=1 * 2**30)
-    registry.register('markdown')
-    registry.register('etags')
-    caches = registry
-
-
-def close() -> None:
-    global caches
-    if caches is not None:
-        caches.expire_all(timeout=10)
-        caches.close_all()
-        caches = None
-
-
-def cache(name: CacheName) -> TransactionalCacheLike:
-    if caches is None:
-        raise RuntimeError('call site_caches.setup() first')
-    return caches[name]
-
-
-def pages_cache() -> TransactionalCacheLike:
-    return cache('pages')
-
-
-def markdown_cache() -> TransactionalCacheLike:
-    return cache('markdown')
-
-
-def etag_cache() -> TransactionalCacheLike:
-    return cache('etags')
+results = await asyncio.gather(*(handle_request(i) for i in range(100)))
+print(f'{len(results)} requests served, {len(cache)} users cached')
 ```
 
-`setup()` registers the caches and nothing more: a cache opens on its first lookup, so calling it early costs nothing. A second call does nothing. `close()` removes expired entries, closes every cache and forgets the registry, so `setup()` can run again, which is what a test wants.
+Some of the 100 requests for one user miss together and each stores the same value; that's harmless, and the [stale-while-revalidate](stale-while-revalidate.qmd) recipe shows how to make only one of them do the work when it isn't.
 
-## Using it
+### Fire and forget
 
-Call `setup()` once when the app starts and `close()` when it stops. In FastAPI that's the lifespan; the [web workers recipe](web-workers.qmd) has the same for Flask, Django and Celery.
+When the response shouldn't wait for the write at all, schedule it as a task. Keep a reference to the task until it finishes, or the loop may drop it half done:
+
+```python
+background: set[asyncio.Task] = set()
+
+def cache_later(key: str, value: object, expire: float) -> None:
+    task = asyncio.create_task(asyncio.to_thread(cache.set, key, value, expire=expire))
+    background.add(task)
+    task.add_done_callback(background.discard)
+```
+
+## Transactions: one thread, no `await` inside
+
+A [transaction](../user-guide/transactions.qmd) belongs to the thread that opened it, and it holds the write lock for the length of the block. Never `await` inside one: the loop would run other requests on that thread while the lock is held, and one of them may try to write. Put the whole block in a function and run that function in a thread:
+
+```python
+def record_request(path: str, status: int) -> None:
+    with cache.transact() as tx:
+        tx.incr('requests:total')
+        tx.incr(f'requests:{path}')
+        tx.incr(f'requests:{path}:{status}')
+
+async def middleware(request, call_next):
+    response = await call_next(request)
+    await asyncio.to_thread(record_request, request.url.path, response.status_code)
+    return response
+```
+
+## In a FastAPI app
+
+Set up the registry once, when the module is imported, close it in the lifespan, and look the cache up in any endpoint: a lookup is one dict read, and a cache that couldn't open comes back on its own. This is the [recommended setup](web-workers.qmd#the-recommended-setup)'s registry for rebuildable data. Starlette's `run_in_threadpool` does the same job as `asyncio.to_thread()`; under Trio or AnyIO use `anyio.to_thread.run_sync()`.
 
 ```python
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.concurrency import run_in_threadpool
 
-import site_caches
+from diskcache_oxide import Caches
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    site_caches.setup('/var/lib/my-app/cache')
-    yield
-    site_caches.close()
-
-app = FastAPI(lifespan=lifespan)
-```
-
-Everywhere else, ask for the cache at the point you use it:
-
-```python
-from typing import Optional
-
-import site_caches
-
-def render_page(url: str) -> Response:
-    etag: Optional[str] = site_caches.etag_cache().get(url)
-    page: Optional[str] = site_caches.pages_cache().get(url)
-
-    if page is not None:
-        return Response(body=page, etag=etag)
-
-    html = render_page_contents(url)
-    etag = etag_from_body(html)
-
-    site_caches.etag_cache().set(url, etag)
-    site_caches.pages_cache().set(url, html)
-
-    return Response(body=html, etag=etag)
-```
-
-The two caches here are written and evicted separately, so a page can come back with no etag. Handle `etag is None` on a hit, or store `(etag, html)` as one entry in `pages`: a tuple comes back as a tuple.
-
-## Why functions, not variables
-
-It's tempting to write `pages = caches['pages']` once at the bottom of the module and import that. Don't: the functions do a lookup on every call, and that's the point.
-
-- **A cache that couldn't open comes back.** While it can't open, the lookup returns a [`NullCache`](../user-guide/null-cache.qmd) and tries again 10 seconds later. A variable would hold that `NullCache` until the process restarts.
-- **Switches work.** `site_caches.caches.disable('pages')` changes what later lookups return. Code holding the real cache in a variable never notices.
-- **It's cheap.** A lookup is one dict read with no lock, fine on every request.
-
-The names are checked too. `CacheName` is a `Literal`, so `cache('page')` is a type error, and nothing outside the module spells a name at all. The registry itself stays reachable as `site_caches.caches` for what the functions don't cover, such as `stats()` on an admin page. It's `None` until `setup()` runs.
-
-## `memoize`
-
-`@site_caches.pages_cache().memoize()` runs when the module that holds it is imported, which is before `setup()`, so it raises. Add a decorator to `site_caches` that looks the cache up on each call instead:
-
-```python
-import functools
-
-def memoized(name: CacheName, **options):
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            return cache(name).memoize(**options)(func)(*args, **kwargs)
-        return wrapper
-    return decorator
-```
-
-```python
-@site_caches.memoized('markdown', expire=3600)
-def to_html(markdown_text: str) -> str:
-    return render_markdown(markdown_text)
-```
-
-It stores under the same keys `memoize` would, and it follows recovery and the switches. [`memoize` on a registered cache](../user-guide/caches.qmd#memoize-on-a-registered-cache) has the details, and the cost: about 2 µs a call.
-
-## In tests
-
-Point `setup()` at pytest's `tmp_path` and every test gets its own empty caches:
-
-```python
-import pytest
-
-import site_caches
-
-@pytest.fixture(autouse=True)
-def fresh_caches(tmp_path):
-    site_caches.setup(str(tmp_path / 'cache'))
-    yield
-    site_caches.close()
-```
-
-For tests where caching shouldn't happen at all, call `site_caches.caches.disable('pages', 'markdown', 'etags')` after `setup()`: every read misses. See [Testing code that uses a cache](testing.qmd).
-
-## Where it stops
-
-- **State doesn't go in the registry.** Sessions, job claims, locks and queues need a plain `Cache` opened directly, because a registry hands out a `NullCache` when a cache can't open, and on one of those `add()` always wins. Give them their own function in the same module if you like, returning a `Cache` you opened yourself: see [State isn't cache](../user-guide/caches.qmd#state-isnt-cache).
-- **A sharded cache needs its own kind of function.** One registered with `shards=` is read with `caches.fanout(name)`, which returns `FanoutCache | NullCache`; `cache(name)` raises `TypeError` for it.
-- **Names that come from configuration** can't be a `Literal`. For those, `caches.get(name)` returns the cache, or `None` when nothing by that name is registered.
-- **Adding a cache is three edits:** the `Literal`, the `register` line and the function. Miss the `register` and the function raises `KeyError` the first time it's called, so call each one in a test.
-
-### Sharing a cache across web workers
-
-The recommended production setup: a durable registry for rebuildable data, plain caches for state, one directory layout, and startup and shutdown for FastAPI, Flask, Django, Celery and pre-forking servers.
-
-Deployment is where a cache meets the real world: several worker processes that don't know each other's names, a server that forks and recycles them while they're busy, a cron job that opens the same directory on the side. diskcache-oxide is built for exactly this, so there isn't much to it. This page gives one setup that works, then covers the few choices that matter. The [example app](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp) runs this setup end to end.
-
-## The recommended setup
-
-Most apps keep two kinds of things in a cache directory, and they need opposite settings:
-
-- **Cache:** rendered pages, API responses, anything you can rebuild from somewhere else. If the cache has an outage, the right answer is a miss and a slower request, never an error page. These go in a [`Caches`](../user-guide/caches.qmd) registry with `durable=True`, so a lock that stays busy or a full disk turns into a miss, logged, instead of an exception.
-- **State:** sessions, job claims, locks and work queues. Here a write that silently didn't happen is a bug: a login that doesn't stick, a job that runs twice, a queued job that vanishes. These are plain `Cache`s, opened directly (never through the registry, which hands out a `NullCache` when a cache can't open), not durable, with eviction off, so a failure raises and the app can say so. [State isn't cache](../user-guide/caches.qmd#state-isnt-cache) explains why each of these breaks on a `NullCache` or a durable handle.
-
-Both live under one directory the app owns, with the caches and the state side by side:
-
-```text
-/var/lib/my-app/
-├── cache/               # the registry's base directory
-│   ├── pages/
-│   └── api/
-└── state/
-    ├── sessions/
-    ├── coordination/    # job claims and locks
-    └── jobs/            # the work queue
-```
-
-```python
-from pathlib import Path
-
-from diskcache_oxide import Cache, Caches
-
-ROOT = Path('/var/lib/my-app')
-
-# Rebuildable data: durable, so an outage is a miss, never an error page.
-caches = Caches(ROOT / 'cache', durable=True, timeout=1.0)
-caches.register('pages', size_limit=1 * 2**30)
+caches = Caches('/var/lib/my-app/cache', durable=True, timeout=1.0)
 caches.register('api', size_limit=256 * 2**20)
 
-# State: plain caches, opened directly, not durable, never evicted for size.
-sessions = Cache(ROOT / 'state' / 'sessions', timeout=3.0, eviction_policy='none')
-coordination = Cache(ROOT / 'state' / 'coordination', timeout=3.0, eviction_policy='none')
-jobs = Cache(ROOT / 'state' / 'jobs', timeout=3.0, eviction_policy='none')
-
-
-def close_everything() -> None:
-    caches.close_all()
-    for state in (sessions, coordination, jobs):
-        state.close()
-```
-
-A few things about that layout:
-
-- **A directory is a cache or a parent of caches, never both.** `cache/` and `state/` hold caches; they aren't caches themselves. Don't open a `Cache` on `/var/lib/my-app` or on `cache/`: maintenance treats two-character subdirectories of a cache as its own value folders, so a cache nested inside another one can lose its files.
-- **Plain caches, no sharding.** One `Cache` per purpose keeps memory low, one connection pool each. Reach for a [`FanoutCache`](../user-guide/fanoutcache.qmd) only for a cache that many processes write to at once.
-- **Timeouts are short and stated.** `timeout=1.0` on the registry keeps a busy lock from holding a request for the default 60 seconds; durable doesn't bound time by itself. State caches get a few seconds, and a `Timeout` from one is an error the app handles: a 503 page in a request, a retry in a worker.
-- **`/var/lib`, not `/var/cache`,** because sessions and queues are state: a system may wipe `/var/cache` (`systemctl clean --what=cache` does), and that's fine for caches and not for logins.
-
-## Pick a directory
-
-- **Persistent and private.** The directory belongs to the user the app runs as. diskcache-oxide creates each cache directory `0700` if it doesn't exist; if you create them yourself, keep them that way. Anyone who can write to a cache directory can change what your app reads from it. With systemd, `StateDirectory=my-app` creates `/var/lib/my-app` owned by the service's user.
-- **On a local disk.** The cache relies on SQLite's write-ahead log and its shared-memory file, which need a local filesystem. diskcache-oxide refuses to open only when SQLite itself declines the write-ahead log (some FUSE mounts do). It can't tell that a directory is on NFS, SMB, EFS or Azure Files, where the log is usually accepted and then corrupts, so never put a cache on a network share or a Kubernetes ReadWriteMany volume.
-- **In Docker,** mount one named volume at `/var/lib/my-app` and give it to every container that should share the caches. [Docker and Compose](docker.qmd) has the Compose file, the Dockerfile, and the ownership details that otherwise end in `PermissionError`.
-
-## Start and stop with the app
-
-Open everything once per process, at startup, and share it across requests and threads. A `Cache` is safe to use from any number of threads. The setup above lives in a module of its own (say `caching.py`) that every entry point imports, together with the [types](custom-types.qmd) you store.
-
-### FastAPI
-
-```python
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-
-from myapp.caching import close_everything
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
-    close_everything()
+    caches.close_all()
 
 app = FastAPI(lifespan=lifespan)
+
+@app.get('/episodes/{episode_id}')
+async def episode(episode_id: int) -> dict:
+    key = f'episode:{episode_id}'
+    cache = caches['api']
+    if (cached := cache.get(key)) is not None:
+        return cached
+    data = await fetch_episode(episode_id)
+    await run_in_threadpool(cache.set, key, data, expire=600)
+    return data
 ```
 
-In async code, reads can run on the event loop and writes go through `asyncio.to_thread`: see [asyncio](asyncio.qmd).
-
-### Flask
-
-```python
-import atexit
-
-from flask import Flask
-
-from myapp.caching import close_everything
-
-app = Flask(__name__)
-atexit.register(close_everything)
-```
-
-### Django
-
-diskcache-oxide doesn't ship a Django cache backend yet. One is next on the [roadmap](../user-guide/roadmap.qmd#next); until then, `django.core.cache` keeps whatever it has. Put the setup in a module of its own (`myapp/caching.py`), take `ROOT` from `settings`, and import it where it's needed.
-
-### Celery and other background workers
-
-Celery's prefork pool, RQ and `multiprocessing` with the fork start method are pre-forking servers like gunicorn: import the setup at import time, and each child gets its own connections on first use. Register your types the same way the web workers do, or a worker that reads a web worker's value gets `ForeignValueError` (or, on a durable cache, a miss and a logged warning, so every read of it goes to the source). Closing at shutdown is optional; Celery's `worker_process_shutdown` signal is the place for it.
-
-```python
-from celery.signals import worker_process_shutdown
-
-from myapp.caching import close_everything
-
-
-@worker_process_shutdown.connect
-def close_caches(**kwargs) -> None:
-    close_everything()
-```
-
-### Pre-forking and spawning servers
-
-With gunicorn (including `--preload`) or Celery's prefork pool, it doesn't matter whether you open the cache before or after the fork. diskcache-oxide's fork barrier makes sure no worker starts life holding half a database transaction, and each child opens its own fresh connections on first use. See [Concurrency and forks](../user-guide/concurrency-and-forks.qmd).
-
-`uvicorn --workers` doesn't fork: it starts each worker as a fresh process (the spawn start method, on every platform), so each worker imports your app and opens its caches itself. On Linux, `multiprocessing` defaults to the forkserver start method since Python 3.14, which behaves the same way. Either is fine; there's nothing to configure.
-
-## Keep the request path fast
-
-Reads never wait for writers, so a `get` stays fast however busy the cache is. Writes are different: only one process can commit to a cache file at a time, and a write waits up to the cache's `timeout` for its turn. On the durable registry a write that runs out of time is dropped and counted, which is what you want for a page fragment: the next request writes it. On a plain cache, treat `Timeout` as "skip this time" where that's safe:
-
-```python
-from diskcache_oxide import Timeout
-
-
-def cache_quietly(cache, key: str, value: object, expire: float) -> None:
-    try:
-        cache.set(key, value, expire=expire)
-    except Timeout:
-        log.warning('cache busy; skipped storing %s', key)
-```
-
-Under normal load a write takes about 20 µs and never comes near the timeout. The timeout matters during bursts, such as a big `clear()` from a maintenance script, and even then `clear()` steps aside between chunks to let waiting writes in.
-
-## Maintenance
-
-Run maintenance from one place, such as a scheduled job [one worker claims](run-once.qmd), not from every worker:
-
-- Expired entries need no job: background maintenance removes them in every cache every 5 minutes, with the workers taking turns (`maintenance_interval`). `caches.expire_all()` and `sessions.expire()` are still there for when you want it done now.
-- `checkpoint()` empties a cache's write-ahead log after a write burst. It returns `False` instead of waiting long if workers are busy, so it's safe to call any time.
-
-## At shutdown
-
-`close_all()` and `close()` at shutdown, as above, are optional but tidy. Closing copies a large write-ahead log back into the database and truncates it, waiting at most a second. Call `checkpoint()` first after a burst of writes for a more thorough job. See [Storage and WAL](../user-guide/storage-and-wal.qmd).
-
-## Switching caching off
-
-To run with caching off (local development, or chasing a stale-data bug in production), switch the registry's caches off by name: `caches.disable('pages')`. Lookups then return a `NullCache` that still forwards deletes, so nothing stale is waiting when you switch it back on. Don't switch off state: sessions, claims and queues stop working on a `NullCache`. See [Caches](../user-guide/caches.qmd#switching-caches-off) and [NullCache](../user-guide/null-cache.qmd).
+See [Sharing a cache across web workers](web-workers.qmd) for where the directory goes and what to do at shutdown.
 
 ### Docker and Compose
 
@@ -6531,114 +6688,6 @@ docker compose run --rm --no-deps web python -m app.deploy_cleanup
 
 Everyone signs in again after a format change, since the new release starts with empty sessions; [State that isn't really cache](upgrading.qmd#state-that-isnt-really-cache) has the alternatives. The last line removes the old caches. Run it after `up -d` has replaced every old container, never at worker startup: `remove_old_formats()` doesn't check whether an old worker is still running. The example's `deploy_cleanup.py` calls it on the registry and on each state cache.
 
-### Using the cache from asyncio
-
-Read inline, write off the loop, and keep transactions on one thread: the three rules for FastAPI, Starlette, aiohttp and friends.
-
-An async framework makes one promise to every request it's serving: nothing blocks the loop. A synchronous cache call looks like a small risk to that promise, and whether it is depends entirely on which call. diskcache-oxide's API is synchronous. An `AsyncCache` is planned as an experiment, to ship only if it earns its place (see the [roadmap](../user-guide/roadmap.qmd)), but the sync cache already works well in an asyncio app, provided you know which calls can block the event loop and for how long. Here are the three rules.
-
-## Reads: call them inline
-
-A cached read costs a few microseconds (the [performance](../user-guide/performance.qmd) page has the measurements), less than the event loop spends scheduling a task. Reads never take the write lock and never wait for writers, so `cache.get()` on the loop is the right call, and `await asyncio.to_thread(cache.get, ...)` would cost more than the read it protects.
-
-The exception is a read of a large value that keeps losing to concurrent overwrites, which can wait up to the cache's `timeout` before raising `Timeout`. That's rare; `durable=True` turns it into a miss.
-
-## Writes: move them off the loop
-
-A write has to take the cache's write lock, and if another process holds it (a `clear()` in a maintenance script, a long transaction, a fork in flight) the write waits up to `timeout`. Under normal load that wait is nothing. In the worst case it's `timeout` seconds during which every request on that loop stops. Two ways to make sure that never happens:
-
-- **Run writes in a worker thread** with `asyncio.to_thread()`. The thread does the waiting; the loop keeps serving. The thread hop costs tens of microseconds, which is fine for a write.
-- **Or keep writes inline with a short `timeout` and `durable=True`.** Then the worst case is a dropped cache write logged once a minute, not a stalled loop.
-
-```python
-import asyncio
-import tempfile
-
-from diskcache_oxide import Cache
-
-cache = Cache(tempfile.mkdtemp(), timeout=1.0, durable=True)
-
-async def load_user(user_id: int) -> dict:
-    await asyncio.sleep(0.001)                        # stands in for a database query
-    return {'id': user_id}
-
-async def handle_request(request_id: int) -> dict:
-    key = f'user:{request_id % 10}'
-    user = cache.get(key)                             # a read, on the event loop
-    if user is None:
-        user = await load_user(request_id % 10)
-        await asyncio.to_thread(cache.set, key, user, expire=300)   # a write, off the loop
-    return user
-
-results = await asyncio.gather(*(handle_request(i) for i in range(100)))
-print(f'{len(results)} requests served, {len(cache)} users cached')
-```
-
-Some of the 100 requests for one user miss together and each stores the same value; that's harmless, and the [stale-while-revalidate](stale-while-revalidate.qmd) recipe shows how to make only one of them do the work when it isn't.
-
-### Fire and forget
-
-When the response shouldn't wait for the write at all, schedule it as a task. Keep a reference to the task until it finishes, or the loop may drop it half done:
-
-```python
-background: set[asyncio.Task] = set()
-
-def cache_later(key: str, value: object, expire: float) -> None:
-    task = asyncio.create_task(asyncio.to_thread(cache.set, key, value, expire=expire))
-    background.add(task)
-    task.add_done_callback(background.discard)
-```
-
-## Transactions: one thread, no `await` inside
-
-A [transaction](../user-guide/transactions.qmd) belongs to the thread that opened it, and it holds the write lock for the length of the block. Never `await` inside one: the loop would run other requests on that thread while the lock is held, and one of them may try to write. Put the whole block in a function and run that function in a thread:
-
-```python
-def record_request(path: str, status: int) -> None:
-    with cache.transact() as tx:
-        tx.incr('requests:total')
-        tx.incr(f'requests:{path}')
-        tx.incr(f'requests:{path}:{status}')
-
-async def middleware(request, call_next):
-    response = await call_next(request)
-    await asyncio.to_thread(record_request, request.url.path, response.status_code)
-    return response
-```
-
-## In a FastAPI app
-
-Open the cache once, in the lifespan, and use it from any endpoint. Starlette's `run_in_threadpool` does the same job as `asyncio.to_thread()`; under Trio or AnyIO use `anyio.to_thread.run_sync()`.
-
-```python
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-from starlette.concurrency import run_in_threadpool
-
-from diskcache_oxide import Cache
-
-cache = Cache('/var/cache/my-app', timeout=1.0, durable=True)
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    yield
-    cache.close()
-
-app = FastAPI(lifespan=lifespan)
-
-@app.get('/episodes/{episode_id}')
-async def episode(episode_id: int) -> dict:
-    key = f'episode:{episode_id}'
-    if (cached := cache.get(key)) is not None:
-        return cached
-    data = await fetch_episode(episode_id)
-    await run_in_threadpool(cache.set, key, data, expire=600)
-    return data
-```
-
-See [Sharing a cache across web workers](web-workers.qmd) for where the directory goes and what to do at shutdown.
-
 ### Watching a cache in production
 
 A health check and an admin endpoint for a cache: entries, bytes on disk, hit ratio, the size limit, the write-ahead log, check() for damage, and the log lines worth alerting on.
@@ -6680,6 +6729,7 @@ def cache_health(cache: CacheLike) -> dict:
         'misses': misses,
         'hit_ratio': round(hits / lookups, 2) if lookups else None,
         'wal_mib': round(wal_bytes(cache) / 2**20, 1),
+        'maintenance_failures': cache.maintenance_stats()['failures'],
     }
 
 for n in range(200):
@@ -6709,6 +6759,7 @@ In Kubernetes or behind a load balancer, use it as a *readiness* check, never a 
 - **`volume()`** is the cache's size in bytes: the database pages in use plus the value files. It leaves out the write-ahead log and pages freed by deletes, which SQLite keeps in the file for reuse, so `du` on the directory can show more. `check(fix=True)` (below) gives the freed pages back.
 - **`size_limit` and `eviction_policy`.** Under the default `'least-recently-stored'`, a full cache sits close to its limit, and that's normal: each `set()` that finds it over the limit evicts the oldest entries. Under `'none'` nothing is evicted for size, so `percent_of_limit` can pass 100. On a [sessions](sessions.qmd) or [work queue](work-queues.qmd) cache, that's the number to alert on. Both attributes are the values this process last saw; `cache.reset('size_limit')` and `cache.reset('eviction_policy')` read what's stored now, in case another process changed them.
 - **Hits and misses** count `get` and `cache[key]` in this process. An expired entry, and a value answered as a miss by `on_decode_error`, count as misses. `in`, `pop` and iteration don't count, and a `durable=True` outage answered as a miss counts as nothing. A `FanoutCache` sums its shards, and a `NullCache` always reports `(0, 0)`.
+- **`maintenance_failures`** counts [background maintenance](../user-guide/storage-and-wal.qmd#background-maintenance) turns on this cache that failed in this process since it started, plus one for each stretch of 3 intervals in which turns found work and couldn't get to it because another connection kept the write lock. It should stay at 0. When it climbs, `maintenance_stats()['last_error']` says why, and the `diskcache_oxide` logger has a `WARNING` saying `background maintenance failed on the cache at <dir>: <error>`, logged once per streak of failures by the next single-key call on the cache. A `NullCache` reports 0.
 
 A low hit ratio on a full `'least-recently-stored'` cache can mean `size_limit` is too small for what you're caching: entries are evicted before anyone reads them twice. Raise it with `cache.reset('size_limit', 2 * 2**30)`, which every process picks up at its next write, or in the constructor for the next deploy.
 
@@ -6786,17 +6837,22 @@ class CacheCollector:
         entries = GaugeMetricFamily('app_cache_entries', 'Entries in each cache', labels=['cache'])
         size = GaugeMetricFamily('app_cache_bytes', 'Bytes on disk for each cache', labels=['cache'])
         up = GaugeMetricFamily('app_cache_up', '1 if the cache opened, 0 if not', labels=['cache'])
+        failures = GaugeMetricFamily(
+            'app_cache_maintenance_failures', 'Failed background maintenance turns in this process', labels=['cache']
+        )
         for name, stat in caches.stats().items():
             entries.add_metric([name], stat.count)
             size.add_metric([name], stat.volume)
             up.add_metric([name], 0 if stat.error else 1)
-        yield from (entries, size, up)
+            if stat.maintenance is not None:  # None when the cache couldn't be read
+                failures.add_metric([name], stat.maintenance['failures'])
+        yield from (entries, size, up, failures)
 
 
 REGISTRY.register(CacheCollector())
 ```
 
-Hit and miss counts are per process (`stats()` counts in memory), so under several workers a scrape sees only the worker that answered it. Count them in the cache itself if you need them across workers: [Hits and misses across workers](#hits-and-misses-across-workers) above shows how.
+Hit and miss counts are per process (`stats()` counts in memory), and so is `maintenance_failures`, so under several workers a scrape sees only the worker that answered it. Count them in the cache itself if you need them across workers: [Hits and misses across workers](#hits-and-misses-across-workers) above shows how.
 
 ## The write-ahead log
 
@@ -6871,13 +6927,13 @@ Before 1.0, a release that changes the on-disk format bumps the minor version an
 
 ## What happens at the upgrade
 
-Say a cache lives at `/var/cache/my-app`, made by 0.1.2 (format 2), and you deploy 0.3.5 (format 3). The first time 0.3.5 opens `Cache('/var/cache/my-app')`, it reads the database's format, sees 2, and opens `/var/cache/my-app/diskcache-oxide-format-3` instead, creating it empty. It logs this at `WARNING` on the `diskcache_oxide` logger:
+Say a cache lives at `/var/lib/my-app/cache/pages`, made by 0.1.2 (format 2), and you deploy 0.3.5 (format 3). The first time 0.3.5 opens `Cache('/var/lib/my-app/cache/pages')`, it reads the database's format, sees 2, and opens `/var/lib/my-app/cache/pages/diskcache-oxide-format-3` instead, creating it empty. It logs this at `WARNING` on the `diskcache_oxide` logger:
 
 ```text
-/var/cache/my-app holds a cache made by an older diskcache-oxide (format 2), so this build (format 3) is using /var/cache/my-app/diskcache-oxide-format-3 instead; once no older process uses it, call remove_old_formats() or delete the old files there, keeping diskcache-oxide-format-3
+/var/lib/my-app/cache/pages holds a cache made by an older diskcache-oxide (format 2), so this build (format 3) is using /var/lib/my-app/cache/pages/diskcache-oxide-format-3 instead; once no older process uses it, call remove_old_formats() or delete the old files there, keeping diskcache-oxide-format-3
 ```
 
-0.3.5 never reads the old cache's entries or changes its contents: it reads only its format. (If that read is the last connection to close on the old database, SQLite may checkpoint its write-ahead log into the database file, which changes no data.) Your code doesn't change: it still says `Cache('/var/cache/my-app')`, and the handle's `directory` attribute reports where the cache really is, `/var/cache/my-app/diskcache-oxide-format-3`. To open the same cache again, pass the original directory, not `directory`: the original picks the right subdirectory for whichever release opens it, and a versioned subdirectory opened directly never moves on the next format change.
+0.3.5 never reads the old cache's entries or changes its contents: it reads only its format. (If that read is the last connection to close on the old database, SQLite may checkpoint its write-ahead log into the database file, which changes no data.) Your code doesn't change: it still says `Cache('/var/lib/my-app/cache/pages')`, and the handle's `directory` attribute reports where the cache really is, `/var/lib/my-app/cache/pages/diskcache-oxide-format-3`. To open the same cache again, pass the original directory, not `directory`: the original picks the right subdirectory for whichever release opens it, and a versioned subdirectory opened directly never moves on the next format change.
 
 - **Every later open uses the subdirectory.** Once `diskcache-oxide-format-3` exists, every 0.3.5 worker opens it, whatever the root holds. So all your new workers share one cache, even after the old files are gone.
 - **The warning comes once per process.** Each worker logs it on its first open of that cache, worded as "still holds" once the subdirectory already exists, until the old files are removed. Then it stops.
@@ -6901,12 +6957,28 @@ The old cache stays at the root, taking disk space, until something removes it. 
 ```python
 from diskcache_oxide import Cache
 
-cache = Cache('/var/cache/my-app')
+cache = Cache('/var/lib/my-app/cache/pages')
 removed = cache.remove_old_formats()
 print(removed)  # the database files, manifests and directories it removed
 ```
 
-With a registry, `caches.remove_old_formats()` runs it for every registered cache and returns what each removed (or `None`, logged, for one it couldn't open or clean).
+With a registry, `caches.remove_old_formats()` runs it for every registered cache and returns what each removed (or `None`, logged, for one it couldn't open or clean). State caches, opened directly as in the [recommended setup](web-workers.qmd#the-recommended-setup), aren't registered, so clean each of them too, as the example app's [`deploy_cleanup.py`](https://github.com/mikeckennedy/diskcache-oxide/blob/main/examples/webapp/app/deploy_cleanup.py) does:
+
+```python
+import logging
+
+from myapp.caching import caches, coordination, jobs, sessions
+
+log = logging.getLogger('myapp')
+
+removed: list[str] = []
+for name, paths in caches.remove_old_formats().items():
+    if paths is None:
+        log.error('could not clean cache %s (see the error above)', name)
+    removed += paths or []
+for state in (sessions, coordination, jobs):
+    removed += state.remove_old_formats()
+```
 
 ## It doesn't check whether an old worker is still running
 
@@ -7045,6 +7117,14 @@ def test_sessions_expire(cache, clock):
 ```
 
 If your tests already patch `time.time` (with `unittest.mock`, freezegun or time-machine) and you want the cache to follow along, pass `clock=lambda: time.time()`. The lambda looks up `time.time` on every call, so it sees the patched version.
+
+## Background maintenance in tests
+
+Background maintenance runs on the wall clock, so it never runs for a cache with its own `clock`: leave `maintenance_interval` out, or pass 0, since any other value with `clock=` raises `ValueError`. One `clock=` handle turns maintenance off for its directory in the whole process, other handles on it included, until every handle on that directory has closed.
+
+A cache's first turn comes at least one interval after it opens, so a test shorter than 5 minutes never sees maintenance at the default. A long run, or a suite that sets a short `maintenance_interval`, can see it remove expired entries between two lines of a test, which changes what an `expire()` or `cull()` returns and what `volume()` says. Pass `maintenance_interval=0` to every handle the test opens on those directories: one that asks for an interval keeps maintenance on for all of them.
+
+A hand-written fake that stands in for a cache, typed as [`CacheLike`](../user-guide/null-cache.qmd#cachelike), needs `maintenance_stats()` and `remove_old_formats()` too. `NullCache` already has both.
 
 ## Testing code that runs in several processes
 

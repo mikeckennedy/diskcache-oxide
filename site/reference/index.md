@@ -593,6 +593,9 @@ A registry of named caches under one base directory.
 [CacheStats](CacheStats.md#diskcache_oxide.CacheStats)  
 One cache's numbers, for an admin page. `error` says why it couldn't be read, if it couldn't.
 
+[MaintenanceStats](MaintenanceStats.md#diskcache_oxide.MaintenanceStats)  
+How background maintenance has gone on a cache in this process: `maintenance_stats()`.
+
 
 ## Caches Methods
 

@@ -72,8 +72,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../recipes/sessions.html" rel="next">
-<link href="../recipes/rate-limiting.html" rel="prev">
+<link href="../recipes/rate-limiting.html" rel="next">
+<link href="../recipes/custom-types.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
@@ -507,7 +507,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="1" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -540,114 +540,162 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
  <span class="menu-text">Recipes</span></a>
   </div>
 </li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/asyncio.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Using the cache from asyncio</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/caching-expensive-calls.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Caching expensive calls</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/caching-http-responses.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Caching responses from other services</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/counters.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Counting things</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/custom-types.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storing your own types</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Docker and Compose</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Invalidating groups of keys</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Watching a cache in production</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Rate limiting</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/run-once.html" class="sidebar-item-text sidebar-link active">
- <span class="menu-text">Running a job once across workers</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/sessions.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Server-side sessions</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/single-use-keys.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Single-use keys</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/site-caches.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">One typed module for your caches</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/stale-while-revalidate.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Serving stale values while refreshing</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/testing.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Testing code that uses a cache</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Upgrading across a format change</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" aria-controls="quarto-sidebar-section-1" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-1-label">Setting up your caches</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-1" aria-labelledby="quarto-sidebar-section-1-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../recipes/web-workers.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Sharing a cache across web workers</span></a>
   </div>
 </li>
-        <li class="sidebar-item">
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/site-caches.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">One typed module for your caches</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" aria-controls="quarto-sidebar-section-2" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-2-label">Caching</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-2" aria-labelledby="quarto-sidebar-section-2-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/caching-expensive-calls.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caching expensive calls</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/stale-while-revalidate.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Serving stale values while refreshing</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/caching-http-responses.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caching responses from other services</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Invalidating groups of keys</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/custom-types.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Storing your own types</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" aria-controls="quarto-sidebar-section-3" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-3-label">Coordinating workers</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-3" aria-labelledby="quarto-sidebar-section-3-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/run-once.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">Running a job once across workers</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Rate limiting</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/counters.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Counting things</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../recipes/work-queues.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Work queues</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/single-use-keys.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Single-use keys</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" aria-controls="quarto-sidebar-section-4" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-4-label">State</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-4" aria-labelledby="quarto-sidebar-section-4-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/sessions.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Server-side sessions</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" aria-controls="quarto-sidebar-section-5" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-5-label">Async code</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-5" aria-labelledby="quarto-sidebar-section-5-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/asyncio.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Using the cache from asyncio</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" aria-controls="quarto-sidebar-section-6" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-6-label">Deployment and testing</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-6" aria-labelledby="quarto-sidebar-section-6-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Docker and Compose</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/testing.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Testing code that uses a cache</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
     </ul>
     </div>
 </nav>
@@ -700,19 +748,20 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>)</span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> hourly_cleanup() <span class="op">-&gt;</span> <span class="va">None</span>:</span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="kw">not</span> cache.add(<span class="st">'job:hourly-cleanup'</span>, os.getpid(), expire<span class="op">=</span><span class="dv">55</span> <span class="op">*</span> <span class="dv">60</span>):</span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span>  <span class="co"># another worker has it this hour</span></span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    remove_stale_sessions()</span></code></pre></div>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Claims are state: a small cache of their own, never evicted (see the last section).</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>coordination <span class="op">=</span> Cache(<span class="st">'/var/lib/my-app/state/coordination'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> hourly_cleanup() <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="kw">not</span> coordination.add(<span class="st">'job:hourly-cleanup'</span>, os.getpid(), expire<span class="op">=</span><span class="dv">55</span> <span class="op">*</span> <span class="dv">60</span>):</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span>  <span class="co"># another worker has it this hour</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    remove_stale_sessions()</span></code></pre></div>
 <p>The <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> is the important part. It decides when the job can be claimed again, and it’s also what saves you if the worker that claimed the job crashes halfway through: the claim expires and the next run goes ahead. Set it a little shorter than the schedule’s interval, so the next run is never blocked by the previous claim.</p>
-<p>Storing <code>os.getpid()</code> (or a hostname and pid) as the value costs nothing and makes it easy to see who claimed the job: <code>cache.get('job:hourly-cleanup')</code>.</p>
+<p>Storing <code>os.getpid()</code> (or a hostname and pid) as the value costs nothing and makes it easy to see who claimed the job: <code>coordination.get('job:hourly-cleanup')</code>.</p>
 </section>
 <section id="see-it-work" class="level1">
 <h1>See it work</h1>
 <p>Here eight threads race for the same claim. Processes behave the same way.</p>
-<div id="bdc23d10" class="cell" data-execution_count="1">
+<div id="072b7dc3" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -745,12 +794,12 @@ claim holds: 7</code></pre>
 <h1>Jobs that should run once, then again as soon as they’re done</h1>
 <p>For work that isn’t on a fixed schedule (process the queue, rebuild the search index), use <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> as a lease: a time limit after which a crashed worker’s claim lapses. Delete the key when the work finishes, so the next request can claim it right away.</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> rebuild_search_index() <span class="op">-&gt;</span> <span class="va">None</span>:</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="kw">not</span> cache.add(<span class="st">'job:search-index'</span>, os.getpid(), expire<span class="op">=</span><span class="dv">10</span> <span class="op">*</span> <span class="dv">60</span>):</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="kw">not</span> coordination.add(<span class="st">'job:search-index'</span>, os.getpid(), expire<span class="op">=</span><span class="dv">10</span> <span class="op">*</span> <span class="dv">60</span>):</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span></span>
 <span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">try</span>:</span>
 <span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>        do_rebuild()</span>
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">finally</span>:</span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>        cache.delete(<span class="st">'job:search-index'</span>)</span></code></pre></div>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>        coordination.delete(<span class="st">'job:search-index'</span>)</span></code></pre></div>
 <p>Make the lease comfortably longer than the job ever takes. If the job outlives it, a second worker can start a second copy.</p>
 </section>
 <section id="give-claims-their-own-small-cache" class="level1">
@@ -760,8 +809,7 @@ claim holds: 7</code></pre>
 <li><strong>Switching caching off.</strong> A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> follows the rule “every entry expires the instant it’s written”, so its <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> always returns <code>True</code>. With caching off, every worker’s claim succeeds and the job runs once per worker. That’s harmless for idempotent jobs and wrong for jobs with side effects, like sending email.</li>
 <li><strong>Eviction.</strong> When a cache is over its <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, it evicts the least recently stored entries, and a claim is exactly the kind of small, rarely written entry that goes first. If it’s evicted before it expires, a second worker can claim the job.</li>
 </ul>
-<p>A separate cache directory just for coordination, which is never swapped for a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and never evicts (<code>eviction_policy='none'</code>, so only expired claims go), avoids both:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>coordination <span class="op">=</span> Cache(<span class="st">'/var/lib/my-app/state/coordination'</span>, timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)</span></code></pre></div>
+<p>The coordination cache the first sample opens, a directory just for claims and locks that never evicts (<code>eviction_policy='none'</code>, so only expired claims go), avoids both. Open it directly rather than through a <a href="../user-guide/caches.html"><code>Caches</code></a> registry, which hands out a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> when a cache can’t open, and don’t make it durable, or a claim that couldn’t be written means nobody runs the job: see <a href="../user-guide/caches.html#state-isnt-cache">State isn’t cache</a>.</p>
 <p>A claim is the right tool when a worker that loses should skip the job. When it should wait its turn instead, use a <a href="../reference/Lock.html#diskcache_oxide.Lock" class="gdls-link gdls-code">Lock</a> or a <a href="../reference/BoundedSemaphore.html#diskcache_oxide.BoundedSemaphore" class="gdls-link gdls-code">BoundedSemaphore</a> from <a href="../user-guide/coordination.html">Coordination</a>, on the same coordination cache.</p>
 
 
@@ -1184,13 +1232,13 @@ claim holds: 7</code></pre>
   </script>
 <nav class="page-navigation" aria-label="Page">
   <div class="nav-page nav-page-previous">
-      <a href="../recipes/rate-limiting.html" class="pagination-link" aria-label="Rate limiting">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Rate limiting</span>
+      <a href="../recipes/custom-types.html" class="pagination-link" aria-label="Storing your own types">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Storing your own types</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../recipes/sessions.html" class="pagination-link" aria-label="Server-side sessions">
-        <span class="nav-page-text">Server-side sessions</span> <i class="bi bi-arrow-right-short"></i>
+      <a href="../recipes/rate-limiting.html" class="pagination-link" aria-label="Rate limiting">
+        <span class="nav-page-text">Rate limiting</span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

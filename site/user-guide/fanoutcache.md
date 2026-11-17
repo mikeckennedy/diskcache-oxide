@@ -99,7 +99,14 @@ If you need related keys in one transaction, give them a shared prefix scheme an
 A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) isn't a [TransactionalCacheLike](../reference/TransactionalCacheLike.md#diskcache_oxide.TransactionalCacheLike), because its [transact](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) needs a key. It and [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) are both [`ShardedCacheLike`](#typing).
 
 
-# Maintenance: one budget, partial failures
+# Background maintenance
+
+[Background maintenance](storage-and-wal.md#background-maintenance) treats each shard as a cache of its own. Each shard gets its own turn, spread across the interval with the process's other caches, and the hourly folder sweep, which shards skip at close. `maintenance_interval=` applies to every shard, and so does a `clock=` handle's veto, which works per database file. On a shard with the default two connections, the background WAL checkpoint runs only when neither connection is in use.
+
+[maintenance_stats()](../reference/Cache.maintenance_stats.md#diskcache_oxide.Cache.maintenance_stats) sums `turns`, `removed` and `failures` across the shards. `interval` is the largest any shard has, and `last_error` comes from the first shard, in shard order, that has one. A maintenance thread that couldn't be started counts in `failures` too, as on [Cache](../reference/Cache.md#diskcache_oxide.Cache).
+
+
+# Maintenance calls: one budget, partial failures
 
 [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) and [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) run over every shard. Their `timeout=` (default: the handle's) bounds **the whole call**, not each shard. The handle's timeout also bounds opening, `len()` and [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) as one budget, and [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) uses at most 1 s of it for checkpoints. A shard reached after the deadline still gets one try with no wait, so idle shards are always done.
 

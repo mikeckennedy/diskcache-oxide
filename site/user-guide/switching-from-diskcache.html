@@ -507,7 +507,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="1" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -860,6 +860,16 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>Supported, with differences (D-050)</td>
 </tr>
 <tr class="odd">
+<td><code>len()</code> and iteration</td>
+<td>Count and list expired entries until something removes their rows</td>
+<td>Leave them out the moment they expire (D-060)</td>
+</tr>
+<tr class="even">
+<td>Between calls</td>
+<td>Nothing happens: expired rows, an over-limit cache and stray files wait for a call, so apps schedule <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a></td>
+<td>Background maintenance looks after every open cache, every 5 minutes by default; nothing to schedule (D-061)</td>
+</tr>
+<tr class="odd">
 <td>Locks, semaphores, <a href="../reference/throttle.html#diskcache_oxide.throttle" class="gdls-link gdls-code">throttle</a>, <a href="../reference/barrier.html#diskcache_oxide.barrier" class="gdls-link gdls-code">barrier</a>, <a href="../reference/Averager.html#diskcache_oxide.Averager" class="gdls-link gdls-code">Averager</a>, <a href="../reference/memoize_stampede.html#diskcache_oxide.memoize_stampede" class="gdls-link gdls-code">memoize_stampede</a></td>
 <td>Supported</td>
 <td>Supported, with differences; see <a href="../user-guide/coordination.html">Coordination</a></td>
@@ -887,7 +897,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><code>sqlite_synchronous</code>: gone; always <code>NORMAL</code>, as diskcache’s default</li>
 <li><code>sqlite_mmap_size</code>, <code>sqlite_auto_vacuum</code>: gone; not configurable</li>
 </ul>
-<p>New settings with no diskcache counterpart: <code>serializer</code>, <code>pickle</code>, <code>types</code>, <code>clock</code>, <code>max_connections</code>, <code>wal_size_limit</code>, <code>wal_checkpoint</code>, <code>on_decode_error</code> and <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a>. <a href="../reference/Cache.html"><code>Cache</code></a> lists them.</p>
+<p>New settings with no diskcache counterpart: <code>serializer</code>, <code>pickle</code>, <code>types</code>, <code>clock</code>, <code>max_connections</code>, <code>wal_size_limit</code>, <code>wal_checkpoint</code>, <code>maintenance_interval</code>, <code>on_decode_error</code> and <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a>, and on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, <code>raise_on_mismatch</code>. <a href="../reference/Cache.html"><code>Cache</code></a> and <a href="../reference/FanoutCache.html"><code>FanoutCache</code></a> list them.</p>
 </section>
 </section>
 <section id="values-no-pickle-unless-you-ask" class="level1">
@@ -959,7 +969,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li>A child process forked while another thread was writing can always write. In diskcache it can stall for the full 60-second timeout.</li>
 <li><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> keeps writes that land while it runs, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> removes every expired entry, and a read during an overwrite never misses.</li>
 <li>File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> bounds them for the whole root, not per shard.</li>
-<li>Opening a cache and reading from it never writes to the database.</li>
+<li>Opening a cache and reading from it doesn’t write to the database. Background maintenance does, when it has work and once an hour to coordinate the processes; pass <code>maintenance_interval=0</code> for a cache a process must never write.</li>
 </ul>
 </section>
 <section id="what-diskcache-doesnt-have" class="level1">
@@ -970,6 +980,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><a href="../user-guide/null-cache.html"><code>NullCache</code></a> switches caching off without touching call sites, and <a href="../user-guide/caches.html"><code>Caches</code></a> names an app’s caches, opens each on first use and hands out a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> while one can’t open.</li>
 <li><a href="../user-guide/serialization.html#your-own-types"><code>register_type()</code></a> stores your own classes, dataclasses and library types without pickle.</li>
 <li>A <a href="../user-guide/fanoutcache.html#shard_of-and-transactkey"><code>FanoutCache</code> transaction</a> locks one shard instead of all of them.</li>
+<li><a href="../user-guide/storage-and-wal.html#background-maintenance">Background maintenance</a>: one thread per process removes expired entries and their files, trims a cache left over <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, checkpoints a grown write-ahead log and clears stray temporary files, for every open cache. An <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> you ran from cron keeps working, but has little left to do.</li>
 <li>Free-threaded Python (3.14t and 3.15t) is supported and tested on every change.</li>
 </ul>
 

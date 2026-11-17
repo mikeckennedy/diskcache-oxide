@@ -25,7 +25,7 @@ cache = Cache('cache', timeout=1.0, durable=True)  # a folder named "cache" in t
 
 For a cache that holds copies of data you can rebuild, which is what most caches are, turn on `durable=True` with a short [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout). Then a full disk, an I/O error or a lock that stays busy makes a call a miss, logged, instead of an exception in the middle of a request. Leave it off for state you can't rebuild, such as sessions, job claims, locks and work queues, where a write that silently didn't happen is a bug. [A cache that can't take a request down](#a-cache-that-cant-take-a-request-down) covers what it does and what a dropped call costs.
 
-The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
+The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`; on Windows it inherits its parent's permissions, see [Windows](#windows)). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
 
 So a cron job, an admin script or a container running as a different user can't open a directory your app created: it gets `PermissionError` ("Permission denied"). Run everything that shares a cache as the same user. Loosening the directory's mode yourself doesn't help, since the folders diskcache-oxide creates inside it for large values are owner-only too.
 
@@ -139,14 +139,14 @@ When the cache's on-disk volume goes over [size_limit](../reference/Cache.size_l
 
 ## Background maintenance
 
-A thread of the library's own, one per process, looks after every open cache: every `maintenance_interval` seconds (default 300, 5 minutes) it removes expired entries and their files, trims a cache that's over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) back under it, checkpoints a write-ahead log that has grown, and hourly clears stray temporary files. The caches in a process take turns across the interval, and the processes sharing a cache take turns too. It never waits for a lock and holds the write lock only for short chunks, so requests don't notice it. `cache.maintenance_stats()` says how it's going, and a failure is logged once, as a WARNING on the `diskcache_oxide` logger.
+A thread of the library's own, one per process, looks after every open cache: every `maintenance_interval` seconds (default 300, 5 minutes) it removes expired entries and their files, trims a cache that's over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) back under it, checkpoints a write-ahead log that has grown, and hourly clears stray temporary files. The caches in a process take turns across the interval, and the processes sharing a cache take turns too. It never waits for a lock and holds the write lock only for short chunks, so requests don't notice it. `cache.maintenance_stats()` says how it's going, and a failure is logged once per streak of failures, as a WARNING on the `diskcache_oxide` logger.
 
 ``` python
 cache = Cache('/var/cache/my-app', maintenance_interval=60)    # every minute
 backup = Cache('/srv/replica/my-app', maintenance_interval=0)  # off: never written
 ```
 
-Pass 0 for a cache that must never be written by this process, such as a read-only replica: maintenance writes when it has work, and once an hour to coordinate the processes. A cache opened with `clock=` gets none, since the thread only knows the real time. [Storage and WAL](storage-and-wal.md#background-maintenance) has the whole story.
+Pass 0 for a cache that must never be written by this process, such as a read-only replica: maintenance writes when it has work, and once an hour to coordinate the processes. It's off for a cache in a process only when every handle opened on it there asked for 0: an earlier handle that asked for an interval keeps it on until every handle on the cache has closed. A cache opened with `clock=` gets none, since the thread only knows the real time. [Storage and WAL](storage-and-wal.md#background-maintenance) has the whole story.
 
 Maintenance calls, for when you want it done now, all safe to run while other processes use the cache:
 
@@ -303,3 +303,7 @@ Two tools help here:
 ``` python
 cache = Cache(tmp_path, clock=lambda: time.time())
 ```
+
+A cache with its own clock gets no background maintenance, which would go by the real time and remove entries your clock still calls live. Leave `maintenance_interval` out or pass 0: any other value with `clock=` raises `ValueError`. One `clock=` handle turns maintenance off for that directory in the whole process, other handles included, until every handle on it has closed.
+
+Without `clock=`, maintenance rarely matters in a test: a new cache's first turn comes at least one interval after it opens, so a test shorter than 5 minutes never sees one at the default. For a long run, or a suite that sets a short interval, pass `maintenance_interval=0` to keep what [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) and [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) return, and [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume), steady under your assertions.

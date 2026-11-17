@@ -12,10 +12,11 @@ Store the token when you issue it, with the lifetime the link should have. To re
 import secrets
 import tempfile
 import threading
+from typing import Optional
 
 from diskcache_oxide import Cache
 
-tokens = Cache(tempfile.mkdtemp(), eviction_policy='none')   # why: see the last section
+tokens = Cache(tempfile.mkdtemp(), timeout=3.0, eviction_policy='none')   # why: see the last section
 
 def issue_reset_token(user_id: int) -> str:
     token = secrets.token_urlsafe(32)
@@ -110,6 +111,6 @@ Tokens and idempotency keys aren't a copy of something you can recompute, so two
 - **Eviction.** A cache at its [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) evicts the least recently stored entries, and an unused token is a tiny, old entry, exactly what goes first. An evicted reset link is a dead link; an evicted idempotency key is a double charge.
 - **Switching caching off.** A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) never stores, so [pop()](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) returns `None` and no token can ever be redeemed, and its [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) always returns `True`, so every retry charges again.
 
-Give them a directory of their own, opened with `eviction_policy='none'` so nothing is evicted for size (tokens still expire) and with no [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) in front of it, as the [job claims](run-once.md#give-claims-their-own-small-cache) recipe does. [`Caches`](../user-guide/caches.md) can register it under its own name so the rest of the app's caches can still be switched off.
+They're state, so treat them as the [recommended setup](web-workers.md#the-recommended-setup) treats sessions and claims: a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) in a directory of its own, such as `Cache('/var/lib/my-app/state/tokens', timeout=3.0, eviction_policy='none')`, opened directly rather than through a [`Caches`](../user-guide/caches.md) registry, which hands out a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) when a cache can't open. Eviction is off, so nothing goes for size, and tokens still expire. [State isn't cache](../user-guide/caches.md#state-isnt-cache) has the reasoning, and the [job claims](run-once.md#give-claims-their-own-small-cache) recipe does the same.
 
-`durable=True` is safe here, if you check return values: a [pop()](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) whose delete fails returns `None` rather than risk delivering the token twice (the user clicks again), [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) fails closed, and a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) that was dropped returns `False`, so `issue_reset_token` should raise rather than hand out a link that was never stored. See [errors](../user-guide/errors.md).
+Don't make it durable either. A durable handle drops a write it can't make instead of raising: a dropped [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) returns `False`, so a reset link goes out that was never stored, a [pop()](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) whose delete fails returns `None`, so a valid click is turned away, and a failed [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) returns `False`, so the first attempt at a charge is turned away as if another were already running. Without [durable](../reference/Cache.durable.md#diskcache_oxide.Cache.durable), each of these raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) or `OSError`, and the app can show an error or retry. See [errors](../user-guide/errors.md).

@@ -81,6 +81,7 @@ A pulled item is gone as soon as [pull()](../reference/Cache.pull.md#diskcache_o
 
 ``` python
 import uuid
+from typing import Optional
 
 def enqueue(cache: Cache, episode: int) -> None:
     cache.push({'id': uuid.uuid4().hex, 'episode': episode, 'step': 'transcode'}, prefix='transcode')
@@ -124,7 +125,7 @@ if (job := take(jobs)) is not None:       # another worker picks it up
 
 
     transcoding 513
-    1 requeued: ('transcode-500000000000000', {'id': 'c8f2403bcbda4735afbea48068a675f2', 'episode': 514, 'step': 'transcode'})
+    1 requeued: ('transcode-500000000000000', {'id': 'c1b43df302b742ef818b932609ed221a', 'episode': 514, 'step': 'transcode'})
     transcoding 514
 
 
@@ -158,7 +159,7 @@ while (taken := next_job(jobs)) is not None:
     ('email', {'to': 'sam@example.com', 'template': 'welcome'})
 
 
-While the urgent queue keeps filling, the others wait. To count what's waiting, iterate the queue's keys: `iterkeys(prefix='transcode-')` is an indexed range scan over that queue alone. Items that expired but haven't been removed yet are counted too, as are any other keys that start with `'transcode-'`.
+While the urgent queue keeps filling, the others wait. To count what's waiting, iterate the queue's keys: `iterkeys(prefix='transcode-')` is an indexed range scan over that queue alone. Any other keys that start with `'transcode-'` are counted too.
 
 
 # Cancelling and expiring jobs

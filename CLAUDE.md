@@ -93,7 +93,7 @@ Every heavy job on the Mac runs under `nice -n 20` so the machine stays usable, 
 
 **Benchmarks.** Headline mix is 99 reads : 1 write, with the 1,000 : 1 "Talk Python profile" beside it, at 1, 2, 4 and 8 threads, in a share-nothing loop. Write-heavy runs are extra stress cases, labelled as such. Take no performance conclusions from the OrbStack VM; `scripts/linux-check.sh` and `linux-soak.sh` are for Linux-specific behavior only, and real Linux numbers come from an x86-64 host.
 
-**Docs.** Guide pages tell the story; reference tables, docstrings and the agent skill stay plain. Every behavior claim in the docs must match the code and the tests. After changing a `.qmd`, a docstring or the skill, run `make docs` and commit the regenerated `site/`. `ruff` excludes `site/`.
+**Docs.** Guide pages tell the story; reference tables, docstrings and the agent skill stay plain. Every behavior claim in the docs must match the code and the tests. When a behavior changes, grep `docs-source/`, the skill, the README, `tests/DIVERGENCES.md`, the changelog and the docstrings for the old claim, not just the pages about the new feature (0.3.5 left "never writes" and "schedule `expire()`" on a dozen pages). `make docs` fails on an executed code cell that can't run (ruff's pyflakes rules over each page's `{python}` cells), and `tests/unit/test_reference_coverage.py` fails on an export with no API reference entry. After changing a `.qmd`, a docstring or the skill, run `make docs` and commit the regenerated `site/`. `ruff` excludes `site/`.
 
 **Markdown.** Never hard-wrap prose. One paragraph per physical line; newlines only for real structure (blank lines, list items, headings, code blocks). Keep that when editing existing files.
 

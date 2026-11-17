@@ -507,7 +507,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="1" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -818,6 +818,16 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>there’s no directory to clean up</td>
 </tr>
 <tr class="even">
+<td><a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a></td>
+<td><code>True</code></td>
+<td>there’s no write-ahead log to reset</td>
+</tr>
+<tr class="odd">
+<td><a href="../reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="gdls-link gdls-code">maintenance_stats()</a></td>
+<td>all zeros, <code>last_error</code> <code>None</code></td>
+<td>there’s nothing to maintain</td>
+</tr>
+<tr class="even">
 <td><code>bool(cache)</code>, <code>cache.enabled</code></td>
 <td><code>False</code></td>
 <td>caching is off</td>
@@ -876,7 +886,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    user <span class="op">=</span> db.load_user(user_id)</span>
 <span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="ss">f'user:</span><span class="sc">{</span>user_id<span class="sc">}</span><span class="ss">'</span>, user, expire<span class="op">=</span><span class="dv">300</span>)</span>
 <span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> user</span></code></pre></div>
-<p>It covers everything the two share: the reads and writes with their <code>tag=</code> and <code>retry=</code> options, <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, <a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict</a>, the maintenance calls, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check</a> and <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset</a>, iteration, and the <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a> and <a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="gdls-link gdls-code">eviction_policy</a> attributes. A test in diskcache-oxide’s own suite checks that <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> keep identical public signatures, so they can’t drift apart.</p>
+<p>It covers everything the two share: the reads and writes with their <code>tag=</code> and <code>retry=</code> options, <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, <a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict</a>, the maintenance calls, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats</a>, <a href="../reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="gdls-link gdls-code">maintenance_stats</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check</a>, <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset</a> and <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats</a>, iteration, and the <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a> and <a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="gdls-link gdls-code">eviction_policy</a> attributes. A test in diskcache-oxide’s own suite checks that <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and <a href="../reference/CacheLike.html#diskcache_oxide.CacheLike" class="gdls-link gdls-code">CacheLike</a> keep identical public signatures, so they can’t drift apart.</p>
 </section>
 <section id="transact-and-transactionalcachelike" class="level1">
 <h1><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> and <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a></h1>

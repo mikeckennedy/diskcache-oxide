@@ -5,7 +5,7 @@
 
 # Every lookup misses
 
-- **The registry handed you a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache).** A [`Caches`](caches.md) lookup returns one when the cache can't open, and while it's disabled. Check `caches[name].enabled` (False on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache)) and `caches.stats()[name].error`, and look for the `could not open cache` line at `ERROR` on the `diskcache_oxide` logger.
+- **The registry handed you a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache).** A [`Caches`](caches.md) lookup returns one when the cache can't open, and while it's disabled. Check `caches[name].enabled` (False on a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache)) and `caches.stats()[name].error`, and look on the `diskcache_oxide` logger for the `could not open cache` line at `ERROR`, or `is busy; using a NullCache` at `WARNING` when the open timed out. Both are logged only when no `on_open_error=` is set.
 - **A decorator bound a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) at import.** `@caches['x'].memoize()` looks the cache up once, when the module is imported, and keeps what it got. If the cache couldn't open then, the function runs uncached until a restart. Use the [`memoized(name)` helper](caches.md#memoize-on-a-registered-cache).
 - **The values are there but this process can't read them.** A value of a [registered type](serialization.md#your-own-types) reads as a miss in a process that hasn't registered that type, when the cache has `on_decode_error='miss'` (the default under `durable=True`), with a warning naming the tag. Register your types in a module every entry point imports: the web app, the worker, scripts.
 - **The workers aren't opening the same directory.** A relative path resolves against each process's working directory, which differs between a web server, a worker and a cron job. Use absolute paths.
@@ -27,14 +27,14 @@
 # Writes are slow under load
 
 - **Many processes writing one cache.** A cache has one write lock; reads never wait for it, writes queue for it. If one cache that many processes write (counters, rate limits) shows [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) warnings or slow writes, make it a [`FanoutCache`](fanoutcache.md), which gives each shard its own lock.
-- **A big maintenance call.** [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) or [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) on a large cache takes the write lock in chunks and steps aside between them, but a write can still wait behind one. Run maintenance from one scheduled job, with its own `timeout=`.
+- **A big maintenance call.** [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) or [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) on a large cache takes the write lock in chunks and steps aside between them, but a write can still wait behind one. Background maintenance already does this work in small chunks, so call them only when you want it done now, from one place rather than every worker, with their own `timeout=`.
 - **A transaction held too long.** Everything inside `with cache.transact():` holds the write lock. Keep transactions short and do slow work outside them. See [Transactions](transactions.md).
 - **A slow disk.** A cache on a slow, emulated or network filesystem writes and checkpoints slowly, and on a network filesystem it isn't safe at all: keep it on a local disk.
 
 
 # `PermissionError`
 
-- **Another user created the directory.** Cache directories are created owner-only (`0700`), so only the user that created one can open it. A script run with `sudo`, a root cron job, or a `docker exec -u root` that touched the directory first leaves it owned by root. Fix the ownership (`chown -R`), and run everything that shares a cache as one user. See [Open a cache](getting-started.md#open-a-cache).
+- **Another user created the directory.** On macOS and Linux, cache directories are created owner-only (`0700`), so only the user that created one can open it. A script run with `sudo`, a root cron job, or a `docker exec -u root` that touched the directory first leaves it owned by root. Fix the ownership (`chown -R`), and run everything that shares a cache as one user. See [Open a cache](getting-started.md#open-a-cache).
 - **A container with a different UID.** Every container that shares a volume must run as the same user, and that user must never change between image versions. See [Docker and Compose](../recipes/docker.md#who-owns-the-directory).
 - **Windows: the files are open.** Windows won't delete a file a process has open, so removing a cache directory while a handle is open fails. [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) every handle first. See [Windows](getting-started.md#windows).
 

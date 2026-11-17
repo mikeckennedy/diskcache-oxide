@@ -39,6 +39,7 @@ def cache_health(cache: CacheLike) -> dict:
         'misses': misses,
         'hit_ratio': round(hits / lookups, 2) if lookups else None,
         'wal_mib': round(wal_bytes(cache) / 2**20, 1),
+        'maintenance_failures': cache.maintenance_stats()['failures'],
     }
 
 for n in range(200):
@@ -50,7 +51,7 @@ print(cache_health(cache))
 ```
 
 
-    {'enabled': True, 'entries': 200, 'volume_mib': 3.9, 'percent_of_limit': 6.2, 'eviction_policy': 'least-recently-stored', 'hits': 200, 'misses': 100, 'hit_ratio': 0.67, 'wal_mib': 3.9}
+    {'enabled': True, 'entries': 200, 'volume_mib': 3.9, 'percent_of_limit': 6.2, 'eviction_policy': 'least-recently-stored', 'hits': 200, 'misses': 100, 'hit_ratio': 0.67, 'wal_mib': 3.9, 'maintenance_failures': 0}
 
 
 Return it from an endpoint and you have something to graph or alert on. In Flask:
@@ -73,6 +74,7 @@ In Kubernetes or behind a load balancer, use it as a *readiness* check, never a 
 - **[volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume)** is the cache's size in bytes: the database pages in use plus the value files. It leaves out the write-ahead log and pages freed by deletes, which SQLite keeps in the file for reuse, so `du` on the directory can show more. `check(fix=True)` (below) gives the freed pages back.
 - **[size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) and [eviction_policy](../reference/Cache.eviction_policy.md#diskcache_oxide.Cache.eviction_policy).** Under the default `'least-recently-stored'`, a full cache sits close to its limit, and that's normal: each [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) that finds it over the limit evicts the oldest entries. Under `'none'` nothing is evicted for size, so `percent_of_limit` can pass 100. On a [sessions](sessions.md) or [work queue](work-queues.md) cache, that's the number to alert on. Both attributes are the values this process last saw; `cache.reset('size_limit')` and `cache.reset('eviction_policy')` read what's stored now, in case another process changed them.
 - **Hits and misses** count [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) and `cache[key]` in this process. An expired entry, and a value answered as a miss by `on_decode_error`, count as misses. `in`, [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) and iteration don't count, and a `durable=True` outage answered as a miss counts as nothing. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) sums its shards, and a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) always reports `(0, 0)`.
+- **`maintenance_failures`** counts [background maintenance](../user-guide/storage-and-wal.md#background-maintenance) turns on this cache that failed in this process since it started, plus one for each stretch of 3 intervals in which turns found work and couldn't get to it because another connection kept the write lock. It should stay at 0. When it climbs, `maintenance_stats()['last_error']` says why, and the `diskcache_oxide` logger has a `WARNING` saying `background maintenance failed on the cache at <dir>: <error>`, logged once per streak of failures by the next single-key call on the cache. A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) reports 0.
 
 A low hit ratio on a full `'least-recently-stored'` cache can mean [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) is too small for what you're caching: entries are evicted before anyone reads them twice. Raise it with `cache.reset('size_limit', 2 * 2**30)`, which every process picks up at its next write, or in the constructor for the next deploy.
 
@@ -165,17 +167,22 @@ class CacheCollector:
         entries = GaugeMetricFamily('app_cache_entries', 'Entries in each cache', labels=['cache'])
         size = GaugeMetricFamily('app_cache_bytes', 'Bytes on disk for each cache', labels=['cache'])
         up = GaugeMetricFamily('app_cache_up', '1 if the cache opened, 0 if not', labels=['cache'])
+        failures = GaugeMetricFamily(
+            'app_cache_maintenance_failures', 'Failed background maintenance turns in this process', labels=['cache']
+        )
         for name, stat in caches.stats().items():
             entries.add_metric([name], stat.count)
             size.add_metric([name], stat.volume)
             up.add_metric([name], 0 if stat.error else 1)
-        yield from (entries, size, up)
+            if stat.maintenance is not None:  # None when the cache couldn't be read
+                failures.add_metric([name], stat.maintenance['failures'])
+        yield from (entries, size, up, failures)
 
 
 REGISTRY.register(CacheCollector())
 ```
 
-Hit and miss counts are per process ([stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) counts in memory), so under several workers a scrape sees only the worker that answered it. Count them in the cache itself if you need them across workers: [Hits and misses across workers](#hits-and-misses-across-workers) above shows how.
+Hit and miss counts are per process ([stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) counts in memory), and so is `maintenance_failures`, so under several workers a scrape sees only the worker that answered it. Count them in the cache itself if you need them across workers: [Hits and misses across workers](#hits-and-misses-across-workers) above shows how.
 
 
 # The write-ahead log
@@ -205,7 +212,7 @@ print('repaired:', len(damaged.check(fix=True)), '| after:', damaged.check(), '|
 ```
 
 
-    UserWarning file not found: .../9f/9f2458a43cdbb489a4e3cfcab5b93102.val
+    UserWarning file not found: .../ea/eae1d6c041d96bfa81dd10078eb83eba.val
     repaired: 1 | after: [] | entries: 1
 
 

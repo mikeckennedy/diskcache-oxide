@@ -12,7 +12,7 @@ import threading
 
 from diskcache_oxide import Cache
 
-cache = Cache(tempfile.mkdtemp(), eviction_policy='none')   # counts are data: never evict them for size
+cache = Cache(tempfile.mkdtemp(), timeout=3.0, eviction_policy='none')   # counts are state: never evict them for size
 
 def record_view(episode_id: int) -> None:
     cache.incr(f'views:episode:{episode_id}')
@@ -34,7 +34,7 @@ print(cache.get('views:episode:512'), 'views, none lost')
     2000 views, none lost
 
 
-[incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) starts a missing counter at `default` (0) and adds `delta` (1), so there's no setup step. Processes behave exactly like the threads here. The cache is opened with `eviction_policy='none'`, for the reason under [Things to know](#things-to-know).
+[incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) starts a missing counter at `default` (0) and adds `delta` (1), so there's no setup step. Processes behave exactly like the threads here. Counts are state, not cache, so the counters' cache is a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) opened directly, with eviction off, for the reasons under [Things to know](#things-to-know). In an app it sits beside the other state caches: `Cache('/var/lib/my-app/state/counters', timeout=3.0, eviction_policy='none')`, as in the [recommended setup](web-workers.md#the-recommended-setup).
 
 
 # Flush the counts to the database
@@ -139,7 +139,7 @@ On a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) a tr
 
 - **Don't let counts be evicted.** A cache at its [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) evicts the least recently stored entries first. Each [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) counts as a store, so a busy counter is safe, but a quiet one is the oldest thing in the cache: an episode's views waiting for the next flush, a quota halfway through its period, last month's downloads. An evicted quota comes back as a fresh allowance. Open the counters' cache with `eviction_policy='none'`, as the examples do, and let expiry do the cleaning.
 - **A missing counter reads as `default`.** When a missing counter is a bug rather than a zero, pass `default=None` and [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) raises `KeyError` instead.
-- **Counters need a real cache.** A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) has nothing to count in: its [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) returns `default + delta` every time, so every view would be the first. Keep counters in a cache that's never switched off, which [`Caches`](../user-guide/caches.md) lets you do per name.
+- **Counters need a real cache.** A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) has nothing to count in: its [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) returns `default + delta` every time, so every view would be the first. A [`Caches`](../user-guide/caches.md) registry hands out a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) whenever a cache can't open, so open the counters' cache yourself, not through the registry: see [State isn't cache](../user-guide/caches.md#state-isnt-cache).
 - **`durable=True` drops counts silently.** A failed [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) returns `default + delta` so a rate limiter fails open, but for a quota or a view count that's a lost increment with only a log line to show for it. Let these raise, and catch [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) where you call them, or pass `retry=True` where waiting is fine, as the flush does.
 - **Not an id generator.** Two callers can get the same number back under `durable=True`, and a cleared cache restarts at zero. Ids come from the database.
 - **One machine.** Every worker on a host shares the counts; two hosts behind a load balancer each have their own, so flush each host's counts to the database and sum there.

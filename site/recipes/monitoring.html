@@ -72,8 +72,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../recipes/rate-limiting.html" rel="next">
-<link href="../recipes/invalidating-groups.html" rel="prev">
+<link href="../recipes/upgrading.html" rel="next">
+<link href="../recipes/docker.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
@@ -507,7 +507,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="1" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -540,114 +540,162 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
  <span class="menu-text">Recipes</span></a>
   </div>
 </li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/asyncio.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Using the cache from asyncio</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/caching-expensive-calls.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Caching expensive calls</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/caching-http-responses.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Caching responses from other services</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/counters.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Counting things</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/custom-types.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storing your own types</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Docker and Compose</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Invalidating groups of keys</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link active">
- <span class="menu-text">Watching a cache in production</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Rate limiting</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/run-once.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Running a job once across workers</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/sessions.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Server-side sessions</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/single-use-keys.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Single-use keys</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/site-caches.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">One typed module for your caches</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/stale-while-revalidate.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Serving stale values while refreshing</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/testing.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Testing code that uses a cache</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Upgrading across a format change</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" aria-controls="quarto-sidebar-section-1" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-1-label">Setting up your caches</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-1" aria-labelledby="quarto-sidebar-section-1-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../recipes/web-workers.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Sharing a cache across web workers</span></a>
   </div>
 </li>
-        <li class="sidebar-item">
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/site-caches.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">One typed module for your caches</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" aria-controls="quarto-sidebar-section-2" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-2-label">Caching</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-2" aria-labelledby="quarto-sidebar-section-2-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/caching-expensive-calls.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caching expensive calls</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/stale-while-revalidate.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Serving stale values while refreshing</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/caching-http-responses.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caching responses from other services</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Invalidating groups of keys</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/custom-types.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Storing your own types</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" aria-controls="quarto-sidebar-section-3" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-3-label">Coordinating workers</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-3" aria-labelledby="quarto-sidebar-section-3-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/run-once.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Running a job once across workers</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Rate limiting</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/counters.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Counting things</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../recipes/work-queues.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Work queues</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/single-use-keys.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Single-use keys</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" aria-controls="quarto-sidebar-section-4" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-4-label">State</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-4" aria-labelledby="quarto-sidebar-section-4-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/sessions.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Server-side sessions</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" aria-controls="quarto-sidebar-section-5" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-5-label">Async code</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-5" aria-labelledby="quarto-sidebar-section-5-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/asyncio.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Using the cache from asyncio</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" aria-controls="quarto-sidebar-section-6" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-6-label">Deployment and testing</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-6" aria-labelledby="quarto-sidebar-section-6-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Docker and Compose</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/testing.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Testing code that uses a cache</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
     </ul>
     </div>
 </nav>
@@ -701,7 +749,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-health-check" class="level1">
 <h1>A health check</h1>
 <p>Everything here reads a few numbers and never waits on writers, so it’s fine to call on every health probe:</p>
-<div id="19b47f43" class="cell" data-execution_count="1">
+<div id="afda1cb4" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> os</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -732,16 +780,17 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>        <span class="st">'misses'</span>: misses,</span>
 <span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>        <span class="st">'hit_ratio'</span>: <span class="bu">round</span>(hits <span class="op">/</span> lookups, <span class="dv">2</span>) <span class="cf">if</span> lookups <span class="cf">else</span> <span class="va">None</span>,</span>
 <span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>        <span class="st">'wal_mib'</span>: <span class="bu">round</span>(wal_bytes(cache) <span class="op">/</span> <span class="dv">2</span><span class="op">**</span><span class="dv">20</span>, <span class="dv">1</span>),</span>
-<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>    }</span>
-<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> n <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">200</span>):</span>
-<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="ss">f'page:</span><span class="sc">{</span>n<span class="sc">}</span><span class="ss">'</span>, <span class="st">'x'</span> <span class="op">*</span> <span class="dv">20_000</span>)</span>
-<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> n <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">300</span>):</span>
-<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>    cache.get(<span class="ss">f'page:</span><span class="sc">{</span>n<span class="sc">}</span><span class="ss">'</span>)</span>
-<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache_health(cache))</span></code></pre></div>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>        <span class="st">'maintenance_failures'</span>: cache.maintenance_stats()[<span class="st">'failures'</span>],</span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>    }</span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> n <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">200</span>):</span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="ss">f'page:</span><span class="sc">{</span>n<span class="sc">}</span><span class="ss">'</span>, <span class="st">'x'</span> <span class="op">*</span> <span class="dv">20_000</span>)</span>
+<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> n <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">300</span>):</span>
+<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a>    cache.get(<span class="ss">f'page:</span><span class="sc">{</span>n<span class="sc">}</span><span class="ss">'</span>)</span>
+<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(cache_health(cache))</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>{'enabled': True, 'entries': 200, 'volume_mib': 3.9, 'percent_of_limit': 6.2, 'eviction_policy': 'least-recently-stored', 'hits': 200, 'misses': 100, 'hit_ratio': 0.67, 'wal_mib': 3.9}</code></pre>
+<pre><code>{'enabled': True, 'entries': 200, 'volume_mib': 3.9, 'percent_of_limit': 6.2, 'eviction_policy': 'least-recently-stored', 'hits': 200, 'misses': 100, 'hit_ratio': 0.67, 'wal_mib': 3.9, 'maintenance_failures': 0}</code></pre>
 </div>
 </div>
 <p>Return it from an endpoint and you have something to graph or alert on. In Flask:</p>
@@ -759,6 +808,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong><a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a></strong> is the cache’s size in bytes: the database pages in use plus the value files. It leaves out the write-ahead log and pages freed by deletes, which SQLite keeps in the file for reuse, so <code>du</code> on the directory can show more. <code>check(fix=True)</code> (below) gives the freed pages back.</li>
 <li><strong><a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> and <a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="gdls-link gdls-code">eviction_policy</a>.</strong> Under the default <code>'least-recently-stored'</code>, a full cache sits close to its limit, and that’s normal: each <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> that finds it over the limit evicts the oldest entries. Under <code>'none'</code> nothing is evicted for size, so <code>percent_of_limit</code> can pass 100. On a <a href="../recipes/sessions.html">sessions</a> or <a href="../recipes/work-queues.html">work queue</a> cache, that’s the number to alert on. Both attributes are the values this process last saw; <code>cache.reset('size_limit')</code> and <code>cache.reset('eviction_policy')</code> read what’s stored now, in case another process changed them.</li>
 <li><strong>Hits and misses</strong> count <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> and <code>cache[key]</code> in this process. An expired entry, and a value answered as a miss by <code>on_decode_error</code>, count as misses. <code>in</code>, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> and iteration don’t count, and a <code>durable=True</code> outage answered as a miss counts as nothing. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> sums its shards, and a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> always reports <code>(0, 0)</code>.</li>
+<li><strong><code>maintenance_failures</code></strong> counts <a href="../user-guide/storage-and-wal.html#background-maintenance">background maintenance</a> turns on this cache that failed in this process since it started, plus one for each stretch of 3 intervals in which turns found work and couldn’t get to it because another connection kept the write lock. It should stay at 0. When it climbs, <code>maintenance_stats()['last_error']</code> says why, and the <code>diskcache_oxide</code> logger has a <code>WARNING</code> saying <code>background maintenance failed on the cache at &lt;dir&gt;: &lt;error&gt;</code>, logged once per streak of failures by the next single-key call on the cache. A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> reports 0.</li>
 </ul>
 <p>A low hit ratio on a full <code>'least-recently-stored'</code> cache can mean <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> is too small for what you’re caching: entries are evicted before anyone reads them twice. Raise it with <code>cache.reset('size_limit', 2 * 2**30)</code>, which every process picks up at its next write, or in the constructor for the next deploy.</p>
 </section>
@@ -766,7 +816,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Hits and misses across workers</h1>
 <p>The counts live in each process’s memory and are never written to the database, so reading them costs nothing. That also means a health probe that lands on one gunicorn worker sees that worker’s counts only, since its last restart; a forked child starts from zero. Every handle on one directory in a process shares one set of counts, and they survive closing the last handle.</p>
 <p>For a total across workers, have each worker add its counts to a shared counter now and then, from a timer or after every few hundred requests. Keep those counters in a small cache of their own, so reading the totals doesn’t count as lookups in the cache you’re measuring:</p>
-<div id="bfc833d8" class="cell" data-execution_count="2">
+<div id="4843cb22" class="cell" data-execution_count="2">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>counters <span class="op">=</span> Cache(tempfile.mkdtemp())</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> publish_stats(cache: Cache, counters: Cache) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
@@ -789,7 +839,7 @@ this worker since: (0, 0)</code></pre>
 <section id="an-admin-page-for-every-cache" class="level1">
 <h1>An admin page for every cache</h1>
 <p>A <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry gives you one row per cache with <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>. It opens each registered cache, and never raises: a cache that can’t be opened gets its <code>error</code> set, with the exception’s type and message.</p>
-<div id="467087bc" class="cell" data-execution_count="3">
+<div id="12402ab9" class="cell" data-execution_count="3">
 <div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> dataclasses</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Caches</span>
@@ -832,15 +882,20 @@ this worker since: (0, 0)</code></pre>
 <span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>        entries <span class="op">=</span> GaugeMetricFamily(<span class="st">'app_cache_entries'</span>, <span class="st">'Entries in each cache'</span>, labels<span class="op">=</span>[<span class="st">'cache'</span>])</span>
 <span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>        size <span class="op">=</span> GaugeMetricFamily(<span class="st">'app_cache_bytes'</span>, <span class="st">'Bytes on disk for each cache'</span>, labels<span class="op">=</span>[<span class="st">'cache'</span>])</span>
 <span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>        up <span class="op">=</span> GaugeMetricFamily(<span class="st">'app_cache_up'</span>, <span class="st">'1 if the cache opened, 0 if not'</span>, labels<span class="op">=</span>[<span class="st">'cache'</span>])</span>
-<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> name, stat <span class="kw">in</span> caches.stats().items():</span>
-<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>            entries.add_metric([name], stat.count)</span>
-<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>            size.add_metric([name], stat.volume)</span>
-<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>            up.add_metric([name], <span class="dv">0</span> <span class="cf">if</span> stat.error <span class="cf">else</span> <span class="dv">1</span>)</span>
-<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>        <span class="cf">yield</span> <span class="cf">from</span> (entries, size, up)</span>
-<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a>REGISTRY.register(CacheCollector())</span></code></pre></div>
-<p>Hit and miss counts are per process (<a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> counts in memory), so under several workers a scrape sees only the worker that answered it. Count them in the cache itself if you need them across workers: <a href="#hits-and-misses-across-workers">Hits and misses across workers</a> above shows how.</p>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>        failures <span class="op">=</span> GaugeMetricFamily(</span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>            <span class="st">'app_cache_maintenance_failures'</span>, <span class="st">'Failed background maintenance turns in this process'</span>, labels<span class="op">=</span>[<span class="st">'cache'</span>]</span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> name, stat <span class="kw">in</span> caches.stats().items():</span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>            entries.add_metric([name], stat.count)</span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a>            size.add_metric([name], stat.volume)</span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a>            up.add_metric([name], <span class="dv">0</span> <span class="cf">if</span> stat.error <span class="cf">else</span> <span class="dv">1</span>)</span>
+<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> stat.maintenance <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:  <span class="co"># None when the cache couldn't be read</span></span>
+<span id="cb9-17"><a href="#cb9-17" aria-hidden="true" tabindex="-1"></a>                failures.add_metric([name], stat.maintenance[<span class="st">'failures'</span>])</span>
+<span id="cb9-18"><a href="#cb9-18" aria-hidden="true" tabindex="-1"></a>        <span class="cf">yield</span> <span class="cf">from</span> (entries, size, up, failures)</span>
+<span id="cb9-19"><a href="#cb9-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-20"><a href="#cb9-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-21"><a href="#cb9-21" aria-hidden="true" tabindex="-1"></a>REGISTRY.register(CacheCollector())</span></code></pre></div>
+<p>Hit and miss counts are per process (<a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a> counts in memory), and so is <code>maintenance_failures</code>, so under several workers a scrape sees only the worker that answered it. Count them in the cache itself if you need them across workers: <a href="#hits-and-misses-across-workers">Hits and misses across workers</a> above shows how.</p>
 </section>
 <section id="the-write-ahead-log" class="level1">
 <h1>The write-ahead log</h1>
@@ -850,7 +905,7 @@ this worker since: (0, 0)</code></pre>
 <section id="checking-for-damage" class="level1">
 <h1>Checking for damage</h1>
 <p><a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> compares the database with the value files and returns what it found as a list of <code>warnings.WarningMessage</code>, without issuing any warnings. An empty list means nothing is wrong. Here a value file is deleted behind the cache’s back:</p>
-<div id="c4188500" class="cell" data-execution_count="4">
+<div id="433dc653" class="cell" data-execution_count="4">
 <div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> glob</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>damaged <span class="op">=</span> Cache(tempfile.mkdtemp())</span>
@@ -863,7 +918,7 @@ this worker since: (0, 0)</code></pre>
 <span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(warning.category.<span class="va">__name__</span>, <span class="bu">str</span>(warning.message).replace(damaged.directory, <span class="st">'...'</span>))</span>
 <span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">'repaired:'</span>, <span class="bu">len</span>(damaged.check(fix<span class="op">=</span><span class="va">True</span>)), <span class="st">'| after:'</span>, damaged.check(), <span class="st">'| entries:'</span>, <span class="bu">len</span>(damaged))</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>UserWarning file not found: .../9f/9f2458a43cdbb489a4e3cfcab5b93102.val
+<pre><code>UserWarning file not found: .../ea/eae1d6c041d96bfa81dd10078eb83eba.val
 repaired: 1 | after: [] | entries: 1</code></pre>
 </div>
 </div>
@@ -1322,13 +1377,13 @@ repaired: 1 | after: [] | entries: 1</code></pre>
   </script>
 <nav class="page-navigation" aria-label="Page">
   <div class="nav-page nav-page-previous">
-      <a href="../recipes/invalidating-groups.html" class="pagination-link" aria-label="Invalidating groups of keys">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Invalidating groups of keys</span>
+      <a href="../recipes/docker.html" class="pagination-link" aria-label="Docker and Compose">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Docker and Compose</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../recipes/rate-limiting.html" class="pagination-link" aria-label="Rate limiting">
-        <span class="nav-page-text">Rate limiting</span> <i class="bi bi-arrow-right-short"></i>
+      <a href="../recipes/upgrading.html" class="pagination-link" aria-label="Upgrading across a format change">
+        <span class="nav-page-text">Upgrading across a format change</span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

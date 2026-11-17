@@ -11,13 +11,13 @@ Before 1.0, a release that changes the on-disk format bumps the minor version an
 
 ## What happens at the upgrade
 
-Say a cache lives at `/var/cache/my-app`, made by 0.1.2 (format 2), and you deploy 0.3.5 (format 3). The first time 0.3.5 opens `Cache('/var/cache/my-app')`, it reads the database's format, sees 2, and opens `/var/cache/my-app/diskcache-oxide-format-3` instead, creating it empty. It logs this at `WARNING` on the `diskcache_oxide` logger:
+Say a cache lives at `/var/lib/my-app/cache/pages`, made by 0.1.2 (format 2), and you deploy 0.3.5 (format 3). The first time 0.3.5 opens `Cache('/var/lib/my-app/cache/pages')`, it reads the database's format, sees 2, and opens `/var/lib/my-app/cache/pages/diskcache-oxide-format-3` instead, creating it empty. It logs this at `WARNING` on the `diskcache_oxide` logger:
 
 ```text
-/var/cache/my-app holds a cache made by an older diskcache-oxide (format 2), so this build (format 3) is using /var/cache/my-app/diskcache-oxide-format-3 instead; once no older process uses it, call remove_old_formats() or delete the old files there, keeping diskcache-oxide-format-3
+/var/lib/my-app/cache/pages holds a cache made by an older diskcache-oxide (format 2), so this build (format 3) is using /var/lib/my-app/cache/pages/diskcache-oxide-format-3 instead; once no older process uses it, call remove_old_formats() or delete the old files there, keeping diskcache-oxide-format-3
 ```
 
-0.3.5 never reads the old cache's entries or changes its contents: it reads only its format. (If that read is the last connection to close on the old database, SQLite may checkpoint its write-ahead log into the database file, which changes no data.) Your code doesn't change: it still says `Cache('/var/cache/my-app')`, and the handle's `directory` attribute reports where the cache really is, `/var/cache/my-app/diskcache-oxide-format-3`. To open the same cache again, pass the original directory, not `directory`: the original picks the right subdirectory for whichever release opens it, and a versioned subdirectory opened directly never moves on the next format change.
+0.3.5 never reads the old cache's entries or changes its contents: it reads only its format. (If that read is the last connection to close on the old database, SQLite may checkpoint its write-ahead log into the database file, which changes no data.) Your code doesn't change: it still says `Cache('/var/lib/my-app/cache/pages')`, and the handle's `directory` attribute reports where the cache really is, `/var/lib/my-app/cache/pages/diskcache-oxide-format-3`. To open the same cache again, pass the original directory, not `directory`: the original picks the right subdirectory for whichever release opens it, and a versioned subdirectory opened directly never moves on the next format change.
 
 - **Every later open uses the subdirectory.** Once `diskcache-oxide-format-3` exists, every 0.3.5 worker opens it, whatever the root holds. So all your new workers share one cache, even after the old files are gone.
 - **The warning comes once per process.** Each worker logs it on its first open of that cache, worded as "still holds" once the subdirectory already exists, until the old files are removed. Then it stops.
@@ -41,12 +41,28 @@ The old cache stays at the root, taking disk space, until something removes it. 
 ```python
 from diskcache_oxide import Cache
 
-cache = Cache('/var/cache/my-app')
+cache = Cache('/var/lib/my-app/cache/pages')
 removed = cache.remove_old_formats()
 print(removed)  # the database files, manifests and directories it removed
 ```
 
-With a registry, `caches.remove_old_formats()` runs it for every registered cache and returns what each removed (or `None`, logged, for one it couldn't open or clean).
+With a registry, `caches.remove_old_formats()` runs it for every registered cache and returns what each removed (or `None`, logged, for one it couldn't open or clean). State caches, opened directly as in the [recommended setup](web-workers.qmd#the-recommended-setup), aren't registered, so clean each of them too, as the example app's [`deploy_cleanup.py`](https://github.com/mikeckennedy/diskcache-oxide/blob/main/examples/webapp/app/deploy_cleanup.py) does:
+
+```python
+import logging
+
+from myapp.caching import caches, coordination, jobs, sessions
+
+log = logging.getLogger('myapp')
+
+removed: list[str] = []
+for name, paths in caches.remove_old_formats().items():
+    if paths is None:
+        log.error('could not clean cache %s (see the error above)', name)
+    removed += paths or []
+for state in (sessions, coordination, jobs):
+    removed += state.remove_old_formats()
+```
 
 ::: {.callout-warning}
 ## It doesn't check whether an old worker is still running

@@ -34,7 +34,7 @@ Any number of processes can open the same directory, each with its own `Cache`. 
 - **Maintenance that doesn't destroy work.** Every write gets a new sequence number. `clear()` and `expire()` note the latest number when they start and only touch older rows, so writes from other processes that land while they run are kept.
 - **Large values are always whole.** A process reading a large value while another overwrites it gets the old value or the new one, never a miss. (diskcache's standalone reproduction of that race sees about 40 misses in every 325,000 reads.)
 - **One write lock per database file.** Every writer to a directory queues on its lock, so with many processes writing often a plain `Cache` stops scaling at a couple of processes. A [`FanoutCache`](fanoutcache.qmd) has one lock per shard and keeps scaling (5.7x a plain `Cache` at 8 processes on a 99:1 read/write mix). It doesn't change the thread picture below: threads sharing one handle on free-threaded Python are not lifted by it today.
-- **Opening never writes.** Opening a cache with unchanged settings and reading from it never takes the write lock or touches the database file, so a read-mostly worker costs the writers nothing.
+- **Opening and reading don't write.** Opening a cache with unchanged settings and reading from it never takes the write lock or touches the database file, so a read-mostly worker costs the writers nothing. [Background maintenance](storage-and-wal.qmd#background-maintenance) does write, when it has work and once an hour per cache to coordinate with other processes (D-061); `maintenance_interval=0` keeps a process write-free.
 
 ## Forks
 
@@ -53,6 +53,12 @@ The result: whatever other threads were doing at the moment of the fork, the chi
 Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process's last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.
 
 The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds (see below), or an operation it forked from inside, such as from a callback. The child leaves those file descriptors open by design.
+
+### The maintenance thread
+
+[Background maintenance](storage-and-wal.qmd#background-maintenance) runs on one thread per process, a native thread that never takes the GIL. The barrier stops it and joins it before anything else, so a fork waits for the chunk, checkpoint or folder sweep in progress: a chunk takes about 130 µs, a WAL copy has taken up to 1.4 seconds under load, and the hourly folder sweep is bounded at 100 ms. After the fork the thread starts again, in the parent and in the child, if a cache open there still wants maintenance. In the child, `maintenance_stats()` starts from zero (turns, removed, failures and `last_error`), while `interval` keeps its value. Stopping the thread is what keeps Python from warning about forking a multi-threaded process. A fork that bypasses Python's at-fork hooks (a C-level `fork()` in an extension or a server's master process) gets no stop, and a child forked mid-turn could inherit a lock the thread held: pass `maintenance_interval=0` in a process that forks that way (D-061).
+
+The last `close()` on a cache waits for a maintenance turn in progress on it, at least 50 ms and otherwise within its own deadline, so the directory is safe to delete or move when it returns (D-018). A turn inside a long WAL checkpoint can outlast that wait, leaving its one connection open briefly.
 
 ### How long a call waits for a fork
 

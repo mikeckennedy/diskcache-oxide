@@ -221,6 +221,39 @@ def _recipe_order() -> list[str]:
     return seen
 
 
+def _recipe_groups() -> list[dict[str, Any]]:
+    """The recipes index's ``##`` groups as Great Docs ``sidebar_groups``: each heading with the recipes it links, in
+    order. A heading that links no recipe (the user guide pointers) is left out; Great Docs lists any recipe the index
+    doesn't link after the groups."""
+    index = DOCS_SOURCE / 'recipes' / 'index.qmd'
+    groups: list[dict[str, Any]] = []
+    for line in index.read_text(encoding='utf-8').splitlines() if index.is_file() else []:
+        if line.startswith('## '):
+            groups.append({'section': line[3:].strip(), 'contents': []})
+        elif groups:
+            for name in re.findall(r'\]\(([\w-]+)\.qmd\)', line):
+                if name != 'index' and f'{name}.qmd' not in groups[-1]['contents']:
+                    groups[-1]['contents'].append(f'{name}.qmd')
+    return [g for g in groups if g['contents']]
+
+
+def _group_recipes_sidebar(great_docs: type) -> bool:
+    """Make the Recipes sidebar follow the recipes index: its groups as sidebar headings, in its order, where Great
+    Docs would otherwise list the pages alphabetically. Returns False if the method it wraps is gone."""
+    original = getattr(great_docs, '_add_section_sidebar', None)
+    if not callable(original):
+        print('great-docs no longer has GreatDocs._add_section_sidebar; update _group_recipes_sidebar', file=sys.stderr)
+        return False
+
+    def wrapper(self: Any, title: str, slug: str, *args: Any, **kwargs: Any) -> Any:
+        if slug == 'recipes' and not kwargs.get('sidebar_groups'):
+            kwargs['sidebar_groups'] = _recipe_groups()
+        return original(self, title, slug, *args, **kwargs)
+
+    setattr(great_docs, '_add_section_sidebar', wrapper)
+    return True
+
+
 def _fix_llms_full(dest: Path) -> None:
     """great-docs 0.13.0 pastes the User Guide's Quarto source into ``llms-full.txt`` (fenced-div markers and
     ``{python}`` cells included) and leaves the recipes out. Clean the source, and append the recipes."""
@@ -643,7 +676,90 @@ def _read_sources_from_docs_source(great_docs: type) -> bool:
     return True
 
 
+EXECUTED_CELL = re.compile(r'^```\{python[^}]*\}[ \t]*$')
+# Pyflakes rules only, so a sample that would fail when run (an undefined name, a missing import) fails the build.
+# Unused imports and variables, and redefinitions, are left alone: a teaching sample shows them on purpose.
+CELL_RUFF_ARGS = ('--isolated', '--select', 'F', '--ignore', 'F401,F811,F841', '--target-version', 'py314')
+
+
+def executed_cells(qmd: Path) -> list[str]:
+    """The source of each executed (```{python}) cell in a page, in order. Display-only ```python blocks are
+    fragments that lean on the prose around them, so they aren't returned."""
+    cells: list[str] = []
+    lines = qmd.read_text(encoding='utf-8').splitlines()
+    i = 0
+    while i < len(lines):
+        if EXECUTED_CELL.match(lines[i]):
+            end = i + 1
+            while end < len(lines) and not lines[end].startswith('```'):
+                end += 1
+            cells.append('\n'.join(lines[i + 1 : end]))
+            i = end
+        i += 1
+    return cells
+
+
+def check_code_cells() -> list[str]:
+    """Run ruff's pyflakes rules over every page's executed cells, and return its findings (empty when clean).
+
+    Each page becomes a notebook of its cells, since a page's cells share one kernel: a name defined in one cell is
+    in scope in the next, and a top-level `await` is allowed, as Jupyter runs it.
+    """
+    import subprocess
+    import tempfile
+
+    ruff = Path(sys.executable).with_name('ruff')
+    if not ruff.exists():
+        found = shutil.which('ruff')
+        if found is None:
+            return ['ruff is not installed in this environment, so the code cells could not be checked']
+        ruff = Path(found)
+    with tempfile.TemporaryDirectory() as tmp:
+        notebooks: dict[str, str] = {}
+        for qmd in sorted(DOCS_SOURCE.rglob('*.qmd')):
+            cells = executed_cells(qmd)
+            if not cells:
+                continue
+            rel = qmd.relative_to(DOCS_SOURCE).as_posix()
+            name = rel.removesuffix('.qmd').replace('/', '__') + '.ipynb'
+            notebook = {
+                'cells': [
+                    {'cell_type': 'code', 'metadata': {}, 'outputs': [], 'execution_count': None, 'source': cell}
+                    for cell in cells
+                ],
+                'metadata': {'language_info': {'name': 'python'}},
+                'nbformat': 4,
+                'nbformat_minor': 5,
+            }
+            (Path(tmp) / name).write_text(json.dumps(notebook), encoding='utf-8')
+            notebooks[name] = f'docs-source/{rel}'
+        if not notebooks:
+            return []
+        result = subprocess.run(
+            [str(ruff), 'check', *CELL_RUFF_ARGS, '--output-format', 'concise', '--no-cache', '.'],
+            cwd=tmp,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if result.returncode == 0:
+        return []
+    problems = []
+    for line in result.stdout.splitlines():
+        name, sep, rest = line.partition(':')
+        if sep and name in notebooks:
+            problems.append(f'{notebooks[name]}, {rest.strip()}')
+    return problems or [result.stdout.strip() or result.stderr.strip()]
+
+
 def main() -> int:
+    # A sample that can't run fails before the slow build starts.
+    cell_problems = check_code_cells()
+    if cell_problems:
+        for problem in cell_problems:
+            print(f'code cell check failed: {problem}', file=sys.stderr)
+        return 1
+
     # Ensure GriffeLoader runs in pure static mode for compiled PyO3 classes
     # so that .pyi stubs are parsed without cyclic alias errors between
     # compiled extension re-exports.
@@ -687,6 +803,8 @@ def main() -> int:
     GreatDocs._fetch_github_releases = _releases_from_checkout  # type: ignore[method-assign]
 
     if not _read_sources_from_docs_source(GreatDocs):
+        return 1
+    if not _group_recipes_sidebar(GreatDocs):
         return 1
 
     from great_docs.cli import main as gd_main

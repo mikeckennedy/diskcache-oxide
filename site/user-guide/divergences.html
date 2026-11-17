@@ -471,7 +471,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="1" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -663,7 +663,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#resources" id="toc-resources" class="nav-link" data-scroll-target="#resources">Resources</a>
   <ul class="collapse">
   <li><a href="#d-017-and-d-018-bounded-connections" id="toc-d-017-and-d-018-bounded-connections" class="nav-link" data-scroll-target="#d-017-and-d-018-bounded-connections">D-017 and D-018: bounded connections</a></li>
-  <li><a href="#d-019-opening-never-writes" id="toc-d-019-opening-never-writes" class="nav-link" data-scroll-target="#d-019-opening-never-writes">D-019: opening never writes</a></li>
+  <li><a href="#d-019-opening-doesnt-write" id="toc-d-019-opening-doesnt-write" class="nav-link" data-scroll-target="#d-019-opening-doesnt-write">D-019: opening doesn’t write</a></li>
   <li><a href="#d-023-bounded-sqlite-memory" id="toc-d-023-bounded-sqlite-memory" class="nav-link" data-scroll-target="#d-023-bounded-sqlite-memory">D-023: bounded SQLite memory</a></li>
   <li><a href="#d-024-a-wal-that-shrinks" id="toc-d-024-a-wal-that-shrinks" class="nav-link" data-scroll-target="#d-024-a-wal-that-shrinks">D-024: a WAL that shrinks</a></li>
   </ul></li>
@@ -826,9 +826,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </tr>
 <tr class="odd">
 <td>D-019</td>
-<td>Opening an existing cache</td>
-<td>Writes to the database</td>
-<td>Never writes unless settings change</td>
+<td>Opening an existing cache, and reading</td>
+<td>Opening writes to the database</td>
+<td>Neither writes, unless the open changes settings; background maintenance writes when it has work, and hourly (<code>maintenance_interval=0</code> for none)</td>
 </tr>
 <tr class="even">
 <td>D-020</td>
@@ -858,7 +858,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>D-024</td>
 <td>WAL file size</td>
 <td>Can grow past 1 GiB and stay there</td>
-<td>Trimmed; <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> on demand</td>
+<td>Trimmed; checkpointed by maintenance, and by <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> on demand</td>
 </tr>
 <tr class="odd">
 <td>D-025</td>
@@ -966,7 +966,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>D-042</td>
 <td>Large values’ folders</td>
 <td>Two levels (65,536 folders); a folder goes with its last file</td>
-<td>One level (at most 256); empty ones go at the last close and in <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a></td>
+<td>One level (at most 256); empty ones go at the last close, in <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, and hourly by maintenance</td>
 </tr>
 <tr class="odd">
 <td>D-043</td>
@@ -1093,7 +1093,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="d-015-owner-only-directories" class="level2">
 <h2 class="anchored" data-anchor-id="d-015-owner-only-directories">D-015: owner-only directories</h2>
-<p>A cache directory diskcache-oxide creates, and its value-file subdirectories, are <code>0700</code>. Existing directories are never changed. Anyone who can write to a cache directory can poison the cache, and its contents (keys with IP addresses in them, for example) can be private.</p>
+<p>A cache directory diskcache-oxide creates, and its value-file subdirectories, are <code>0700</code>. On Windows there are no mode bits: a new directory inherits its parent’s access control list. Existing directories are never changed. Anyone who can write to a cache directory can poison the cache, and its contents (keys with IP addresses in them, for example) can be private.</p>
 </section>
 <section id="d-021-directory-is-required" class="level2">
 <h2 class="anchored" data-anchor-id="d-021-directory-is-required">D-021: <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a> is required</h2>
@@ -1156,9 +1156,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h2 class="anchored" data-anchor-id="d-017-and-d-018-bounded-connections">D-017 and D-018: bounded connections</h2>
 <p>diskcache opens a connection for every thread that uses a cache, so 64 threads hold 131 files open in the cache directory, and <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> closes only the calling thread’s connection. diskcache-oxide uses a pool per database file, at most <code>max_connections</code> (default 8), and the last <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> closes every connection, so the directory is safe to move or delete afterwards.</p>
 </section>
-<section id="d-019-opening-never-writes" class="level2">
-<h2 class="anchored" data-anchor-id="d-019-opening-never-writes">D-019: opening never writes</h2>
-<p>Opening an existing diskcache commits a write transaction even when nothing changed. diskcache-oxide’s open, and reads after it, never write, so a read-mostly worker or a read-only copy of the directory never takes the write lock.</p>
+<section id="d-019-opening-doesnt-write" class="level2">
+<h2 class="anchored" data-anchor-id="d-019-opening-doesnt-write">D-019: opening doesn’t write</h2>
+<p>Opening an existing diskcache commits a write transaction even when nothing changed. diskcache-oxide’s open, and reads after it, never write, so a read-mostly worker doesn’t take the write lock just by opening its cache. Background maintenance (D-061) is the one writer you didn’t call: it writes when it has work, and once an hour per cache to coordinate the processes, even with none. For a read-only replica or a backup, pass <code>maintenance_interval=0</code>. Maintenance is off for a cache in a process only when every handle opened on it there asked for 0; an earlier handle that asked for an interval keeps it on until every handle on the cache has closed.</p>
 </section>
 <section id="d-023-bounded-sqlite-memory" class="level2">
 <h2 class="anchored" data-anchor-id="d-023-bounded-sqlite-memory">D-023: bounded SQLite memory</h2>
@@ -1166,7 +1166,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="d-024-a-wal-that-shrinks" class="level2">
 <h2 class="anchored" data-anchor-id="d-024-a-wal-that-shrinks">D-024: a WAL that shrinks</h2>
-<p>With readers in other processes, a burst of writes makes SQLite’s write-ahead log grow to fit the burst and stay that size: hundreds of MiB to over 1 GiB beside a database of a few MiB. diskcache-oxide trims the log whenever it resets (<code>wal_size_limit</code>), offers <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> to empty it on demand, checkpoints a large log at <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a>, and can checkpoint automatically with <code>wal_checkpoint='auto'</code>, which tries a few times in a row so that a reader in flight in another process doesn’t defeat it. See <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>.</p>
+<p>With readers in other processes, a burst of writes makes SQLite’s write-ahead log grow to fit the burst and stay that size: hundreds of MiB to over 1 GiB beside a database of a few MiB. diskcache-oxide trims the log whenever it resets (<code>wal_size_limit</code>), offers <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> to empty it on demand, checkpoints a large log at <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a>, and can checkpoint automatically with <code>wal_checkpoint='auto'</code>, which tries a few times in a row so that a reader in flight in another process doesn’t defeat it. Background maintenance (D-061) also checkpoints a log grown past half of <code>wal_size_limit</code>, in <code>manual</code> mode too. Its checkpoint never waits for readers: with busy readers in other processes it copies what it can each interval but doesn’t keep the log bounded, so <code>auto</code> or an explicit <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> is still the answer there. See <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>.</p>
 </section>
 </section>
 <section id="api-differences" class="level1">
@@ -1198,7 +1198,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>D-058:</strong> on Windows, diskcache can’t delete a value file while any reader has it open (Python’s <code>open()</code> doesn’t share delete) and ignores the failure, so the file stays with nothing pointing at it (upstream bug 19); one test left 154 files for 6 entries. diskcache-oxide’s readers allow the delete, so nothing leaks.</li>
 <li><strong>D-059:</strong> when a cache directory holds a cache in another diskcache-oxide format (after an upgrade or a rollback), the cache opens in the subdirectory <code>diskcache-oxide-format-N</code> with a warning, and every later open uses it; <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a> reports where the cache really is. <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a> cleans up older formats once the old workers are gone. See <a href="../recipes/upgrading.html">Upgrading across a format change</a>.</li>
 <li><strong>D-060:</strong> an expired entry leaves <code>len()</code>, <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>, <code>iter()</code> and <code>reversed()</code> the moment it expires, as it already left <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> and <code>in</code>. diskcache keeps counting and listing it until a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> removes its row. Nothing is written by the check: the row and its space, in <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a>, stay until a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> removes them, or background maintenance does (D-061).</li>
-<li><strong>D-061:</strong> one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every <code>maintenance_interval</code> (default 5 minutes, 0 for off), with the caches and the processes taking turns. So an explicit <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> can return less than diskcache’s would, <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See <a href="../user-guide/storage-and-wal.html#background-maintenance">Background maintenance</a>.</li>
+<li><strong>D-061:</strong> one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every <code>maintenance_interval</code> (default 5 minutes, 0 for off), with the caches and the processes taking turns. It never waits for a lock and holds the write lock only for short chunks, so a request in the same process waits at most one chunk (about 130 µs for 100 small rows); a writer in another process can wait for a few chunks, never past the turn’s 50 ms. So an explicit <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> can return less than diskcache’s would, <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See <a href="../user-guide/storage-and-wal.html#background-maintenance">Background maintenance</a>.</li>
 <li><strong>D-025:</strong> <code>iter(cache)</code> and <a href="../reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a> return a native iterator, not a generator. Two threads calling <code>next()</code> on the same one at once get <code>ValueError</code> at once, as with a shared generator.</li>
 </ul>
 <section id="fanoutcache-d-032-to-d-040" class="level2">

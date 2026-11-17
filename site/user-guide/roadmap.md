@@ -90,7 +90,7 @@ An entry leaves `len()`, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_o
 
 ## Done: background maintenance (0.3.5)
 
-A cache looks after itself, with no [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) to schedule. One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (`maintenance_interval`). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don't all do the same work, a cache with nothing to do is only read, and the thread steps aside for every request and every fork. See [Background maintenance](storage-and-wal.md#background-maintenance).
+A cache looks after itself, with no [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) to schedule. One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (`maintenance_interval`). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don't all do the same work, a cache with nothing to do is written only once an hour, to coordinate them (`maintenance_interval=0` for none), and the thread holds the write lock only for short chunks and stops for every `os.fork()`. See [Background maintenance](storage-and-wal.md#background-maintenance).
 
 
 ## Next

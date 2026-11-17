@@ -3,6 +3,15 @@
 A shared cache does more jobs in a real app than caching. It elects a worker, counts requests, holds sessions and one-time tokens, remembers what was invalidated, and stands in for Redis wherever Redis was only ever there to hold a counter. Each recipe below starts with the moment you'd reach for one, then shows the pattern, then says where it stops working. The examples with output under them run against diskcache-oxide every time these docs are built, and the [example app](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp) puts most of these recipes together in one FastAPI app, tested.
 
 
+# Setting up your caches
+
+Start here. The recipes after these two assume the app opens its caches and reaches them this way.
+
+**[Sharing a cache across web workers](web-workers.md).** The recommended setup: durable caches for data you can rebuild, plain caches for state, where to put the directory, when to open it with gunicorn, uvicorn, FastAPI, Flask, Django and Celery, how to keep a busy cache from slowing requests, and what to do at shutdown.
+
+**[One typed module for your caches](site-caches.md).** Wrap the [Caches](../reference/Caches.md#diskcache_oxide.Caches) registry in a module with a function per cache, so the app gets autocomplete and type checking instead of string lookups scattered through the code.
+
+
 # Caching
 
 **[Caching expensive calls](caching-expensive-calls.md).** The cache-aside pattern, and [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), which turns a function into a cached one keyed on its arguments.
@@ -36,15 +45,14 @@ For locks, semaphores and a throttle that hold across every process, see the [Co
 **[Server-side sessions](sessions.md).** Sessions every worker can read, with a sliding idle timeout from [touch()](../reference/Cache.touch.md#diskcache_oxide.Cache.touch), an absolute lifetime, and log-out-everywhere by key prefix.
 
 
-# Deployment and testing
-
-**[One typed module for your caches](site-caches.md).** Wrap the [Caches](../reference/Caches.md#diskcache_oxide.Caches) registry in a module with a function per cache, so the app gets autocomplete and type checking instead of string lookups scattered through the code.
-
-**[Sharing a cache across web workers](web-workers.md).** Where to put the cache directory, when to open it with gunicorn, uvicorn, FastAPI, Flask, Django and Celery, how to keep a busy cache from slowing requests, and what to do at shutdown.
-
-**[Docker and Compose](docker.md).** One named volume for the caches and state, a fixed non-root user, the ownership rules that otherwise end in `PermissionError`, Kubernetes volumes, disk sizing, and the cleanup step after a format change.
+# Async code
 
 **[Using the cache from asyncio](asyncio.md).** Read inline, write off the loop, and keep transactions on one thread, in FastAPI, Starlette or aiohttp.
+
+
+# Deployment and testing
+
+**[Docker and Compose](docker.md).** One named volume for the caches and state, a fixed non-root user, the ownership rules that otherwise end in `PermissionError`, Kubernetes volumes, disk sizing, and the cleanup step after a format change.
 
 **[Watching a cache in production](monitoring.md).** A health check and an admin endpoint: entries, bytes on disk, hit ratio across workers, the size limit, the write-ahead log, [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check) for damage, and the log lines worth alerting on.
 

@@ -78,6 +78,8 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | `retry=` | Positional; `cache[k]` retries forever | Keyword-only; `cache[k]` raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) |
 | [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats) | Persisted, shared by every process | Per process, in memory (D-049) |
 | [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check) | Supported | Supported, with differences (D-050) |
+| `len()` and iteration | Count and list expired entries until something removes their rows | Leave them out the moment they expire (D-060) |
+| Between calls | Nothing happens: expired rows, an over-limit cache and stray files wait for a call, so apps schedule [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) | Background maintenance looks after every open cache, every 5 minutes by default; nothing to schedule (D-061) |
 | Locks, semaphores, [throttle](../reference/throttle.md#diskcache_oxide.throttle), [barrier](../reference/barrier.md#diskcache_oxide.barrier), [Averager](../reference/Averager.md#diskcache_oxide.Averager), [memoize_stampede](../reference/memoize_stampede.md#diskcache_oxide.memoize_stampede) | Supported | Supported, with differences; see [Coordination](coordination.md) |
 | `Deque`, `Index`, `DjangoCache`, `disk=`, `read=` | Supported | Not available |
 
@@ -99,7 +101,7 @@ diskcache takes its settings as keyword arguments (`Cache(directory, statistics=
 - `sqlite_synchronous`: gone; always `NORMAL`, as diskcache's default
 - `sqlite_mmap_size`, `sqlite_auto_vacuum`: gone; not configurable
 
-New settings with no diskcache counterpart: `serializer`, `pickle`, `types`, `clock`, `max_connections`, `wal_size_limit`, `wal_checkpoint`, `on_decode_error` and [durable](../reference/Cache.durable.md#diskcache_oxide.Cache.durable). [`Cache`](../reference/Cache.md) lists them.
+New settings with no diskcache counterpart: `serializer`, `pickle`, `types`, `clock`, `max_connections`, `wal_size_limit`, `wal_checkpoint`, `maintenance_interval`, `on_decode_error` and [durable](../reference/Cache.durable.md#diskcache_oxide.Cache.durable), and on a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache), `raise_on_mismatch`. [`Cache`](../reference/Cache.md) and [`FanoutCache`](../reference/FanoutCache.md) list them.
 
 
 # Values: no pickle unless you ask
@@ -190,7 +192,7 @@ You don't have to change anything for these:
 - A child process forked while another thread was writing can always write. In diskcache it can stall for the full 60-second timeout.
 - [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) keeps writes that land while it runs, [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) removes every expired entry, and a read during an overwrite never misses.
 - File descriptors and memory are bounded by a connection pool, not by how many threads touched the cache. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) bounds them for the whole root, not per shard.
-- Opening a cache and reading from it never writes to the database.
+- Opening a cache and reading from it doesn't write to the database. Background maintenance does, when it has work and once an hour to coordinate the processes; pass `maintenance_interval=0` for a cache a process must never write.
 
 
 # What diskcache doesn't have
@@ -201,4 +203,5 @@ Once you've switched, a few things are there that diskcache never offered:
 - [`NullCache`](null-cache.md) switches caching off without touching call sites, and [`Caches`](caches.md) names an app's caches, opens each on first use and hands out a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) while one can't open.
 - [`register_type()`](serialization.md#your-own-types) stores your own classes, dataclasses and library types without pickle.
 - A [`FanoutCache` transaction](fanoutcache.md#shard_of-and-transactkey) locks one shard instead of all of them.
+- [Background maintenance](storage-and-wal.md#background-maintenance): one thread per process removes expired entries and their files, trims a cache left over [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), checkpoints a grown write-ahead log and clears stray temporary files, for every open cache. An [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) you ran from cron keeps working, but has little left to do.
 - Free-threaded Python (3.14t and 3.15t) is supported and tested on every change.

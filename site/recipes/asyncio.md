@@ -83,7 +83,7 @@ async def middleware(request, call_next):
 
 # In a FastAPI app
 
-Open the cache once, in the lifespan, and use it from any endpoint. Starlette's `run_in_threadpool` does the same job as `asyncio.to_thread()`; under Trio or AnyIO use `anyio.to_thread.run_sync()`.
+Set up the registry once, when the module is imported, close it in the lifespan, and look the cache up in any endpoint: a lookup is one dict read, and a cache that couldn't open comes back on its own. This is the [recommended setup](web-workers.md#the-recommended-setup)'s registry for rebuildable data. Starlette's `run_in_threadpool` does the same job as `asyncio.to_thread()`; under Trio or AnyIO use `anyio.to_thread.run_sync()`.
 
 ``` python
 from contextlib import asynccontextmanager
@@ -91,20 +91,22 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from starlette.concurrency import run_in_threadpool
 
-from diskcache_oxide import Cache
+from diskcache_oxide import Caches
 
-cache = Cache('/var/cache/my-app', timeout=1.0, durable=True)
+caches = Caches('/var/lib/my-app/cache', durable=True, timeout=1.0)
+caches.register('api', size_limit=256 * 2**20)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
-    cache.close()
+    caches.close_all()
 
 app = FastAPI(lifespan=lifespan)
 
 @app.get('/episodes/{episode_id}')
 async def episode(episode_id: int) -> dict:
     key = f'episode:{episode_id}'
+    cache = caches['api']
     if (cached := cache.get(key)) is not None:
         return cached
     data = await fetch_episode(episode_id)

@@ -12,17 +12,18 @@ import os
 
 from diskcache_oxide import Cache
 
-cache = Cache('/var/cache/my-app')
+# Claims are state: a small cache of their own, never evicted (see the last section).
+coordination = Cache('/var/lib/my-app/state/coordination', timeout=3.0, eviction_policy='none')
 
 def hourly_cleanup() -> None:
-    if not cache.add('job:hourly-cleanup', os.getpid(), expire=55 * 60):
+    if not coordination.add('job:hourly-cleanup', os.getpid(), expire=55 * 60):
         return  # another worker has it this hour
     remove_stale_sessions()
 ```
 
 The [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) is the important part. It decides when the job can be claimed again, and it's also what saves you if the worker that claimed the job crashes halfway through: the claim expires and the next run goes ahead. Set it a little shorter than the schedule's interval, so the next run is never blocked by the previous claim.
 
-Storing `os.getpid()` (or a hostname and pid) as the value costs nothing and makes it easy to see who claimed the job: `cache.get('job:hourly-cleanup')`.
+Storing `os.getpid()` (or a hostname and pid) as the value costs nothing and makes it easy to see who claimed the job: `coordination.get('job:hourly-cleanup')`.
 
 
 # See it work
@@ -66,12 +67,12 @@ For work that isn't on a fixed schedule (process the queue, rebuild the search i
 
 ``` python
 def rebuild_search_index() -> None:
-    if not cache.add('job:search-index', os.getpid(), expire=10 * 60):
+    if not coordination.add('job:search-index', os.getpid(), expire=10 * 60):
         return
     try:
         do_rebuild()
     finally:
-        cache.delete('job:search-index')
+        coordination.delete('job:search-index')
 ```
 
 Make the lease comfortably longer than the job ever takes. If the job outlives it, a second worker can start a second copy.
@@ -84,10 +85,6 @@ Two things can make a claim vanish early, and both argue for keeping claims out 
 - **Switching caching off.** A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) follows the rule "every entry expires the instant it's written", so its [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) always returns `True`. With caching off, every worker's claim succeeds and the job runs once per worker. That's harmless for idempotent jobs and wrong for jobs with side effects, like sending email.
 - **Eviction.** When a cache is over its [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit), it evicts the least recently stored entries, and a claim is exactly the kind of small, rarely written entry that goes first. If it's evicted before it expires, a second worker can claim the job.
 
-A separate cache directory just for coordination, which is never swapped for a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) and never evicts (`eviction_policy='none'`, so only expired claims go), avoids both:
-
-``` python
-coordination = Cache('/var/lib/my-app/state/coordination', timeout=3.0, eviction_policy='none')
-```
+The coordination cache the first sample opens, a directory just for claims and locks that never evicts (`eviction_policy='none'`, so only expired claims go), avoids both. Open it directly rather than through a [`Caches`](../user-guide/caches.md) registry, which hands out a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) when a cache can't open, and don't make it durable, or a claim that couldn't be written means nobody runs the job: see [State isn't cache](../user-guide/caches.md#state-isnt-cache).
 
 A claim is the right tool when a worker that loses should skip the job. When it should wait its turn instead, use a [Lock](../reference/Lock.md#diskcache_oxide.Lock) or a [BoundedSemaphore](../reference/BoundedSemaphore.md#diskcache_oxide.BoundedSemaphore) from [Coordination](../user-guide/coordination.md), on the same coordination cache.

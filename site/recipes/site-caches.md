@@ -32,7 +32,6 @@ def setup(base_folder: str) -> None:
 def close() -> None:
     global caches
     if caches is not None:
-        caches.expire_all(timeout=10)
         caches.close_all()
         caches = None
 
@@ -55,7 +54,7 @@ def etag_cache() -> TransactionalCacheLike:
     return cache('etags')
 ```
 
-`setup()` registers the caches and nothing more: a cache opens on its first lookup, so calling it early costs nothing. A second call does nothing. [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) removes expired entries, closes every cache and forgets the registry, so `setup()` can run again, which is what a test wants.
+`setup()` registers the caches and nothing more: a cache opens on its first lookup, so calling it early costs nothing. A second call does nothing. [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) closes every cache and forgets the registry, so `setup()` can run again, which is what a test wants.
 
 
 # Using it

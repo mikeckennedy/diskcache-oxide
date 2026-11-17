@@ -10,6 +10,7 @@ Every request arrives with a cookie and a question: who is this? A session is th
 ```{python}
 import secrets
 import tempfile
+from typing import Optional
 
 from diskcache_oxide import Cache
 

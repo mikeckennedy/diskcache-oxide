@@ -42,6 +42,7 @@ Run them yourself with `python -m bench.gate`. Numbers vary by machine; the rati
 - **Fast codecs.** msgpack and tagged JSON are encoded and decoded in Rust, building Python objects directly.
 - **Reads never write.** Least-recently-stored eviction means a [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) never updates anything, so any number of readers proceed in parallel.
 - **A smarter write lock.** Writers in one process queue on an in-process lock per database file, instead of every thread retrying against SQLite's busy handler.
+- **Maintenance off the request path.** [Background maintenance](storage-and-wal.md#background-maintenance) never waits for a lock and holds the write lock only for short chunks: a request in the same process waits at most one chunk (about 130 µs for 100 small rows); a writer in another process can wait for a few chunks, never past the turn's 50 ms.
 - **SQLite tuned for it.** The bundled SQLite is built with its global memory statistics turned off, which removes a process-wide mutex from every allocation: 2-10% more threaded throughput.
 
 

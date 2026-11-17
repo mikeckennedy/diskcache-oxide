@@ -72,8 +72,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../recipes/site-caches.html" rel="next">
-<link href="../recipes/sessions.html" rel="prev">
+<link href="../recipes/sessions.html" rel="next">
+<link href="../recipes/work-queues.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
@@ -507,7 +507,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="1" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -540,114 +540,162 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
  <span class="menu-text">Recipes</span></a>
   </div>
 </li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/asyncio.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Using the cache from asyncio</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/caching-expensive-calls.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Caching expensive calls</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/caching-http-responses.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Caching responses from other services</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/counters.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Counting things</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/custom-types.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Storing your own types</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Docker and Compose</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Invalidating groups of keys</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Watching a cache in production</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Rate limiting</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/run-once.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Running a job once across workers</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/sessions.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Server-side sessions</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/single-use-keys.html" class="sidebar-item-text sidebar-link active">
- <span class="menu-text">Single-use keys</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/site-caches.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">One typed module for your caches</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/stale-while-revalidate.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Serving stale values while refreshing</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/testing.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Testing code that uses a cache</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
-  <div class="sidebar-item-container"> 
-  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text">Upgrading across a format change</span></a>
-  </div>
-</li>
-        <li class="sidebar-item">
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" aria-controls="quarto-sidebar-section-1" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-1-label">Setting up your caches</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-1" aria-labelledby="quarto-sidebar-section-1-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../recipes/web-workers.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Sharing a cache across web workers</span></a>
   </div>
 </li>
-        <li class="sidebar-item">
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/site-caches.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">One typed module for your caches</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" aria-controls="quarto-sidebar-section-2" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-2-label">Caching</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-2" aria-labelledby="quarto-sidebar-section-2-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/caching-expensive-calls.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caching expensive calls</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/stale-while-revalidate.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Serving stale values while refreshing</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/caching-http-responses.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caching responses from other services</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/invalidating-groups.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Invalidating groups of keys</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/custom-types.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Storing your own types</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" aria-controls="quarto-sidebar-section-3" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-3-label">Coordinating workers</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-3" aria-labelledby="quarto-sidebar-section-3-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/run-once.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Running a job once across workers</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/rate-limiting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Rate limiting</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/counters.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Counting things</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../recipes/work-queues.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Work queues</span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/single-use-keys.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">Single-use keys</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" aria-controls="quarto-sidebar-section-4" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-4-label">State</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-4" aria-labelledby="quarto-sidebar-section-4-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/sessions.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Server-side sessions</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" aria-controls="quarto-sidebar-section-5" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-5-label">Async code</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-5" aria-labelledby="quarto-sidebar-section-5-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/asyncio.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Using the cache from asyncio</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" aria-controls="quarto-sidebar-section-6" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-6-label">Deployment and testing</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-6" aria-labelledby="quarto-sidebar-section-6-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/docker.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Docker and Compose</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/monitoring.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Watching a cache in production</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/upgrading.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Upgrading across a format change</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../recipes/testing.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Testing code that uses a cache</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
     </ul>
     </div>
 </nav>
@@ -698,41 +746,42 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="one-time-tokens-with-pop" class="level1">
 <h1>One-time tokens with <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a></h1>
 <p>Store the token when you issue it, with the lifetime the link should have. To redeem it, <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> it: the value comes back and the entry is gone in one step, so two requests presenting the same token can’t both succeed, whichever workers they land on.</p>
-<div id="2d0eb26a" class="cell" data-execution_count="1">
+<div id="bf9da6a7" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> secrets</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>tokens <span class="op">=</span> Cache(tempfile.mkdtemp(), eviction_policy<span class="op">=</span><span class="st">'none'</span>)   <span class="co"># why: see the last section</span></span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> issue_reset_token(user_id: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    token <span class="op">=</span> secrets.token_urlsafe(<span class="dv">32</span>)</span>
-<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    tokens.<span class="bu">set</span>(<span class="ss">f'reset:</span><span class="sc">{</span>token<span class="sc">}</span><span class="ss">'</span>, user_id, expire<span class="op">=</span><span class="dv">15</span> <span class="op">*</span> <span class="dv">60</span>)</span>
-<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> token</span>
-<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> redeem_reset_token(token: <span class="bu">str</span>) <span class="op">-&gt;</span> Optional[<span class="bu">int</span>]:</span>
-<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""The user id the token was issued to, or None if it's unknown, expired or already used."""</span></span>
-<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> tokens.pop(<span class="ss">f'reset:</span><span class="sc">{</span>token<span class="sc">}</span><span class="ss">'</span>)</span>
-<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>token <span class="op">=</span> issue_reset_token(<span class="dv">42</span>)</span>
-<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a><span class="co"># Eight requests present the same link at the same moment.</span></span>
-<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>results <span class="op">=</span> []</span>
-<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>start <span class="op">=</span> threading.Barrier(<span class="dv">8</span>)</span>
-<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> click() <span class="op">-&gt;</span> <span class="va">None</span>:</span>
-<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>    start.wait()</span>
-<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>    results.append(redeem_reset_token(token))</span>
-<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a>threads <span class="op">=</span> [threading.Thread(target<span class="op">=</span>click) <span class="cf">for</span> _ <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">8</span>)]</span>
-<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> t <span class="kw">in</span> threads:</span>
-<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>    t.start()</span>
-<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> t <span class="kw">in</span> threads:</span>
-<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>    t.join()</span>
-<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f'</span><span class="sc">{</span>results<span class="sc">.</span>count(<span class="dv">42</span>)<span class="sc">}</span><span class="ss"> redeemed, </span><span class="sc">{</span>results<span class="sc">.</span>count(<span class="va">None</span>)<span class="sc">}</span><span class="ss"> rejected'</span>)</span></code></pre></div>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> typing <span class="im">import</span> Optional</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>tokens <span class="op">=</span> Cache(tempfile.mkdtemp(), timeout<span class="op">=</span><span class="fl">3.0</span>, eviction_policy<span class="op">=</span><span class="st">'none'</span>)   <span class="co"># why: see the last section</span></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> issue_reset_token(user_id: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    token <span class="op">=</span> secrets.token_urlsafe(<span class="dv">32</span>)</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>    tokens.<span class="bu">set</span>(<span class="ss">f'reset:</span><span class="sc">{</span>token<span class="sc">}</span><span class="ss">'</span>, user_id, expire<span class="op">=</span><span class="dv">15</span> <span class="op">*</span> <span class="dv">60</span>)</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> token</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> redeem_reset_token(token: <span class="bu">str</span>) <span class="op">-&gt;</span> Optional[<span class="bu">int</span>]:</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""The user id the token was issued to, or None if it's unknown, expired or already used."""</span></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> tokens.pop(<span class="ss">f'reset:</span><span class="sc">{</span>token<span class="sc">}</span><span class="ss">'</span>)</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>token <span class="op">=</span> issue_reset_token(<span class="dv">42</span>)</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a><span class="co"># Eight requests present the same link at the same moment.</span></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>results <span class="op">=</span> []</span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>start <span class="op">=</span> threading.Barrier(<span class="dv">8</span>)</span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> click() <span class="op">-&gt;</span> <span class="va">None</span>:</span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>    start.wait()</span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>    results.append(redeem_reset_token(token))</span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>threads <span class="op">=</span> [threading.Thread(target<span class="op">=</span>click) <span class="cf">for</span> _ <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">8</span>)]</span>
+<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> t <span class="kw">in</span> threads:</span>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>    t.start()</span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> t <span class="kw">in</span> threads:</span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a>    t.join()</span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f'</span><span class="sc">{</span>results<span class="sc">.</span>count(<span class="dv">42</span>)<span class="sc">}</span><span class="ss"> redeemed, </span><span class="sc">{</span>results<span class="sc">.</span>count(<span class="va">None</span>)<span class="sc">}</span><span class="ss"> rejected'</span>)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>1 redeemed, 7 rejected</code></pre>
 </div>
@@ -787,8 +836,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>Eviction.</strong> A cache at its <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> evicts the least recently stored entries, and an unused token is a tiny, old entry, exactly what goes first. An evicted reset link is a dead link; an evicted idempotency key is a double charge.</li>
 <li><strong>Switching caching off.</strong> A <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> never stores, so <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> returns <code>None</code> and no token can ever be redeemed, and its <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> always returns <code>True</code>, so every retry charges again.</li>
 </ul>
-<p>Give them a directory of their own, opened with <code>eviction_policy='none'</code> so nothing is evicted for size (tokens still expire) and with no <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> in front of it, as the <a href="../recipes/run-once.html#give-claims-their-own-small-cache">job claims</a> recipe does. <a href="../user-guide/caches.html"><code>Caches</code></a> can register it under its own name so the rest of the app’s caches can still be switched off.</p>
-<p><code>durable=True</code> is safe here, if you check return values: a <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> whose delete fails returns <code>None</code> rather than risk delivering the token twice (the user clicks again), <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> fails closed, and a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> that was dropped returns <code>False</code>, so <code>issue_reset_token</code> should raise rather than hand out a link that was never stored. See <a href="../user-guide/errors.html">errors</a>.</p>
+<p>They’re state, so treat them as the <a href="../recipes/web-workers.html#the-recommended-setup">recommended setup</a> treats sessions and claims: a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> in a directory of its own, such as <code>Cache('/var/lib/my-app/state/tokens', timeout=3.0, eviction_policy='none')</code>, opened directly rather than through a <a href="../user-guide/caches.html"><code>Caches</code></a> registry, which hands out a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> when a cache can’t open. Eviction is off, so nothing goes for size, and tokens still expire. <a href="../user-guide/caches.html#state-isnt-cache">State isn’t cache</a> has the reasoning, and the <a href="../recipes/run-once.html#give-claims-their-own-small-cache">job claims</a> recipe does the same.</p>
+<p>Don’t make it durable either. A durable handle drops a write it can’t make instead of raising: a dropped <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> returns <code>False</code>, so a reset link goes out that was never stored, a <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop()</a> whose delete fails returns <code>None</code>, so a valid click is turned away, and a failed <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> returns <code>False</code>, so the first attempt at a charge is turned away as if another were already running. Without <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a>, each of these raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> or <code>OSError</code>, and the app can show an error or retry. See <a href="../user-guide/errors.html">errors</a>.</p>
 
 
 </section>
@@ -1210,13 +1259,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   </script>
 <nav class="page-navigation" aria-label="Page">
   <div class="nav-page nav-page-previous">
-      <a href="../recipes/sessions.html" class="pagination-link" aria-label="Server-side sessions">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Server-side sessions</span>
+      <a href="../recipes/work-queues.html" class="pagination-link" aria-label="Work queues">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Work queues</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../recipes/site-caches.html" class="pagination-link" aria-label="One typed module for your caches">
-        <span class="nav-page-text">One typed module for your caches</span> <i class="bi bi-arrow-right-short"></i>
+      <a href="../recipes/sessions.html" class="pagination-link" aria-label="Server-side sessions">
+        <span class="nav-page-text">Server-side sessions</span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

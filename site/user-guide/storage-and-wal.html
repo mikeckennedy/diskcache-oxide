@@ -507,7 +507,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="1" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -825,23 +825,23 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <tr class="even">
 <td>The write-ahead log</td>
 <td>every <code>maintenance_interval</code></td>
-<td>If the log is over half of <code>wal_size_limit</code>, copies it into the database without holding the write lock, then truncates it if nothing’s left to copy. Skipped on a cache with <code>max_connections=1</code>, whose one connection the copy would hold.</td>
+<td>If the log is over half of <code>wal_size_limit</code>, copies it into the database without holding the write lock, then truncates it if nothing’s left to copy. Skipped when the copy would take the cache’s last free connection (always with <code>max_connections=1</code>), while a checkpoint from a request is backing off, and when a writer in this process is waiting.</td>
 </tr>
 <tr class="odd">
 <td>Value folders</td>
-<td>hourly</td>
+<td>hourly, or every <code>maintenance_interval</code> if that’s longer</td>
 <td>Removes temporary files a killed writer left (an hour old) and empty value folders, on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s shards too.</td>
 </tr>
 </tbody>
 </table>
-<p><code>maintenance_interval</code> is set when a cache is opened, in seconds: <code>None</code> for 300, <code>0</code> for off, otherwise 1 second to a day. It’s per process and isn’t stored in the cache; the shortest interval any open handle on the directory asked for wins. A cache’s first turn comes one to two intervals after it’s first opened in the process, so a short script never runs one.</p>
+<p><code>maintenance_interval</code> is set when a cache is opened, in seconds: <code>None</code> for 300, <code>0</code> for off, otherwise 1 second to a day. It’s per process and isn’t stored in the cache. The shortest nonzero interval any handle on the directory asked for wins, and a handle that asks for <code>0</code> doesn’t count; the interval never lengthens while a handle on the cache is open, and handles that have since closed still count until every handle on it has. A cache’s first turn comes one to two intervals after it’s first opened in the process, so a short script never runs one.</p>
 <ul>
-<li><strong>Taking turns.</strong> The caches in a process are spread across the interval: four caches on a 5-minute interval get their turns about 75 seconds apart. The processes sharing a cache take turns through a row in its <code>settings</code> table, so eight workers don’t all sweep the same cache; the shortest interval among them sets the pace.</li>
-<li><strong>Never in a request’s way.</strong> It never waits for a lock: if a request holds the write lock, or one is waiting for it, the turn steps aside and comes back a second later. It writes in chunks of about 130 µs, so a request waits at most one chunk.</li>
-<li><strong>A cache with nothing to do</strong> is only read, except for one write an hour to coordinate the folder sweep. A cache that must never be written by this process (a read-only replica, a backup) should pass <code>maintenance_interval=0</code>.</li>
-<li><strong>Forks.</strong> The thread stops before every <code>os.fork()</code> and starts again after it, in the parent and in the child, so Python never warns about forking a multi-threaded process. A process that forks without Python’s at-fork hooks (a C-level <code>fork()</code>) gets no stop; pass <code>maintenance_interval=0</code> there.</li>
-<li><strong><code>clock=</code>.</strong> The thread only knows the real time, so a cache opened with <code>clock=</code> gets no background maintenance in this process while that handle is open, and asking for an interval with it raises <code>ValueError</code>.</li>
-<li><strong>Reporting.</strong> <a href="../reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="gdls-link gdls-code">maintenance_stats()</a> returns the interval, turns, entries removed, failures and the last error. A failure is logged once, as a WARNING on the <code>diskcache_oxide</code> logger, by the next single-key call on the cache. A turn that keeps finding the write lock held for 3 intervals counts as a failure too.</li>
+<li><strong>Taking turns.</strong> The caches in a process are spread across the interval: four caches on a 5-minute interval get their turns about 75 seconds apart. The processes sharing a cache take turns through two rows in its <code>settings</code> table, so eight workers don’t all sweep the same cache; the shortest interval among them sets the pace.</li>
+<li><strong>Never in a request’s way.</strong> It never waits for a lock: if a request in this process holds the write lock, or one is waiting for it, the turn steps aside and comes back a second later. It writes in chunks of about 130 µs for 100 small rows, so a request in the same process waits at most one chunk; a writer in another process can wait for a few chunks, never past the turn’s 50 ms.</li>
+<li><strong>A cache with nothing to do</strong> is only read, except for one write an hour to coordinate the folder sweep. A cache that must never be written by this process (a read-only replica, a backup) should pass <code>maintenance_interval=0</code>: maintenance is off for a cache in a process only when every handle opened on it there asked for 0; an earlier handle that asked for an interval keeps it on until every handle on the cache has closed.</li>
+<li><strong>Forks and close.</strong> The thread stops before every <code>os.fork()</code> and starts again after it, in the parent and in the child, so Python never warns about forking a multi-threaded process. A process that forks without Python’s at-fork hooks (a C-level <code>fork()</code>) gets no stop; pass <code>maintenance_interval=0</code> there. The last <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> on a cache waits for a turn in progress on it, at least 50 ms and otherwise within its own deadline (D-018).</li>
+<li><strong><code>clock=</code>.</strong> The thread only knows the real time, so a cache opened with <code>clock=</code> gets no background maintenance in this process until every handle on the directory has closed, and asking for an interval with it raises <code>ValueError</code>.</li>
+<li><strong>Reporting.</strong> <a href="../reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="gdls-link gdls-code">maintenance_stats()</a> returns the interval, turns, entries removed, failures and the last error. A failure is logged once per streak of failures, as a WARNING on the <code>diskcache_oxide</code> logger, by the next single-key call on the cache. A turn that keeps finding the write lock held for 3 intervals counts as a failure too.</li>
 </ul>
 <p>Since maintenance may get there first, an explicit <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> can return less than it would have, and <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> and the log’s size change without a call.</p>
 </section>

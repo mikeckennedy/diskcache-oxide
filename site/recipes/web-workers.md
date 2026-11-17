@@ -57,7 +57,7 @@ A few things about that layout:
 
 # Pick a directory
 
-- **Persistent and private.** The directory belongs to the user the app runs as. diskcache-oxide creates each cache directory `0700` if it doesn't exist; if you create them yourself, keep them that way. Anyone who can write to a cache directory can change what your app reads from it. With systemd, `StateDirectory=my-app` creates `/var/lib/my-app` owned by the service's user.
+- **Persistent and private.** The directory belongs to the user the app runs as. diskcache-oxide creates each cache directory `0700` if it doesn't exist (on Unix; on Windows it inherits its parent's permissions); if you create them yourself, keep them that way. Anyone who can write to a cache directory can change what your app reads from it. With systemd, `StateDirectory=my-app` creates `/var/lib/my-app` owned by the service's user.
 - **On a local disk.** The cache relies on SQLite's write-ahead log and its shared-memory file, which need a local filesystem. diskcache-oxide refuses to open only when SQLite itself declines the write-ahead log (some FUSE mounts do). It can't tell that a directory is on NFS, SMB, EFS or Azure Files, where the log is usually accepted and then corrupts, so never put a cache on a network share or a Kubernetes ReadWriteMany volume.
 - **In Docker,** mount one named volume at `/var/lib/my-app` and give it to every container that should share the caches. [Docker and Compose](docker.md) has the Compose file, the Dockerfile, and the ownership details that otherwise end in `PermissionError`.
 
@@ -150,10 +150,9 @@ Under normal load a write takes about 20 µs and never comes near the timeout. T
 
 # Maintenance
 
-Run maintenance from one place, such as a scheduled job [one worker claims](run-once.md), not from every worker:
+There's no maintenance job to write. Background maintenance looks after every open cache in every worker: every 5 minutes (`maintenance_interval`) it removes expired entries and their value files, trims a cache left over its [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit) (never one opened with `eviction_policy='none'`, like the state caches), checkpoints a write-ahead log grown past its trim size, and once an hour clears stray temporary files and empty value folders. The workers sharing a cache take turns, so eight workers don't do the same work eight times. [maintenance_stats()](../reference/Cache.maintenance_stats.md#diskcache_oxide.Cache.maintenance_stats) on a cache, or the `maintenance` field of `caches.stats()`, shows how it's going.
 
-- Expired entries need no job: background maintenance removes them in every cache every 5 minutes, with the workers taking turns (`maintenance_interval`). `caches.expire_all()` and `sessions.expire()` are still there for when you want it done now.
-- [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) empties a cache's write-ahead log after a write burst. It returns `False` instead of waiting long if workers are busy, so it's safe to call any time.
+[expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire), [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull), [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) and [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint), and the registry's [expire_all()](../reference/Caches.expire_all.md#diskcache_oxide.Caches.expire_all), are for when you want it done now: after a big import, say, or before a backup. Each takes its own `timeout=`, so a script can wait longer than a request would: `sessions.expire(timeout=10.0)`. [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) returns `False` instead of waiting long if workers are busy, so it's safe to call any time.
 
 
 # At shutdown

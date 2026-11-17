@@ -27,12 +27,12 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-016 | Reading a large value during an overwrite | Occasional spurious miss | Always the old or new value |
 | D-017 | Connections and fds | One connection per thread | A bounded pool |
 | D-018 | [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) | Closes only the calling thread's connection | Closes every connection |
-| D-019 | Opening an existing cache | Writes to the database | Never writes unless settings change |
+| D-019 | Opening an existing cache, and reading | Opening writes to the database | Neither writes, unless the open changes settings; background maintenance writes when it has work, and hourly (`maintenance_interval=0` for none) |
 | D-020 | Forking inside your own transaction | Child stalls for the timeout | Fails fast with `RuntimeError` |
 | D-021 | [directory](../reference/Cache.directory.md#diskcache_oxide.Cache.directory) | Optional (temp dir) | Required |
 | D-022 | `disk=`, `eviction_policy=` | Supported | No `disk=`; least-recently-stored or `'none'`, read on every write; LRU and LFU refused |
 | D-023 | SQLite memory | 32 MiB cache + 64 MiB mmap per thread | 1 MiB per pooled connection |
-| D-024 | WAL file size | Can grow past 1 GiB and stay there | Trimmed; [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) on demand |
+| D-024 | WAL file size | Can grow past 1 GiB and stay there | Trimmed; checkpointed by maintenance, and by [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) on demand |
 | D-025 | A key iterator used by two threads at once | `ValueError` from the generator | `ValueError`, from a native iterator with no `send()` or [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) |
 | D-026 | [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop) of a value it can't read | Row is deleted, then the decode fails | Decodes first, so the row stays unless no build could read it |
 | D-027 | A call behind a pending fork | Never waits: there's no fork barrier | Waits within its [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout), then raises [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout) |
@@ -50,7 +50,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-039 | [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) constructor and features | `FanoutCache(path, 4)`; `cache()`, `deque()` and `index()` sub-collections, `read()` | [shards](../reference/FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) is keyword-only; no sub-collections or `read()`; tags, [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats), [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check) and the rest as on [Cache](../reference/Cache.md#diskcache_oxide.Cache) |
 | D-040 | [FanoutCache.transact()](../reference/FanoutCache.transact.md#diskcache_oxide.FanoutCache.transact) | Locks every shard; `tx` is `None` | `transact(*, key)` locks one shard and refuses other shards' keys |
 | D-041 | Your own types | A `Disk` subclass, or pickle | [register_type()](../reference/register_type.md#diskcache_oxide.register_type) per type; stored tagged, read by an allowlist; never pickled |
-| D-042 | Large values' folders | Two levels (65,536 folders); a folder goes with its last file | One level (at most 256); empty ones go at the last close and in [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) |
+| D-042 | Large values' folders | Two levels (65,536 folders); a folder goes with its last file | One level (at most 256); empty ones go at the last close, in [clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear), and hourly by maintenance |
 | D-043 | A large write after the cache's folder was deleted | Re-creates the folders and succeeds | `OSError`; nothing is re-created |
 | D-044 | Key equality | `1` and `1.0` are one key; `True` another | `1`, `1.0` and `True` are three keys |
 | D-045 | `memoize(typed=True)` | Adds each argument's class to the key | Adds each argument type's name |
@@ -82,7 +82,7 @@ diskcache pickles every value. diskcache-oxide stores `str` and `bytes` raw and 
 
 ## D-015: owner-only directories
 
-A cache directory diskcache-oxide creates, and its value-file subdirectories, are `0700`. Existing directories are never changed. Anyone who can write to a cache directory can poison the cache, and its contents (keys with IP addresses in them, for example) can be private.
+A cache directory diskcache-oxide creates, and its value-file subdirectories, are `0700`. On Windows there are no mode bits: a new directory inherits its parent's access control list. Existing directories are never changed. Anyone who can write to a cache directory can poison the cache, and its contents (keys with IP addresses in them, for example) can be private.
 
 
 ## D-021: [directory](../reference/Cache.directory.md#diskcache_oxide.Cache.directory) is required
@@ -159,9 +159,9 @@ diskcache says a transaction "may not be shared between threads". In diskcache-o
 diskcache opens a connection for every thread that uses a cache, so 64 threads hold 131 files open in the cache directory, and [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) closes only the calling thread's connection. diskcache-oxide uses a pool per database file, at most `max_connections` (default 8), and the last [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) closes every connection, so the directory is safe to move or delete afterwards.
 
 
-## D-019: opening never writes
+## D-019: opening doesn't write
 
-Opening an existing diskcache commits a write transaction even when nothing changed. diskcache-oxide's open, and reads after it, never write, so a read-mostly worker or a read-only copy of the directory never takes the write lock.
+Opening an existing diskcache commits a write transaction even when nothing changed. diskcache-oxide's open, and reads after it, never write, so a read-mostly worker doesn't take the write lock just by opening its cache. Background maintenance (D-061) is the one writer you didn't call: it writes when it has work, and once an hour per cache to coordinate the processes, even with none. For a read-only replica or a backup, pass `maintenance_interval=0`. Maintenance is off for a cache in a process only when every handle opened on it there asked for 0; an earlier handle that asked for an interval keeps it on until every handle on the cache has closed.
 
 
 ## D-023: bounded SQLite memory
@@ -171,7 +171,7 @@ diskcache's default is a 32 MiB page cache and a 64 MiB memory map per connectio
 
 ## D-024: a WAL that shrinks
 
-With readers in other processes, a burst of writes makes SQLite's write-ahead log grow to fit the burst and stay that size: hundreds of MiB to over 1 GiB beside a database of a few MiB. diskcache-oxide trims the log whenever it resets (`wal_size_limit`), offers [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) to empty it on demand, checkpoints a large log at [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close), and can checkpoint automatically with `wal_checkpoint='auto'`, which tries a few times in a row so that a reader in flight in another process doesn't defeat it. See [Storage and WAL](storage-and-wal.md).
+With readers in other processes, a burst of writes makes SQLite's write-ahead log grow to fit the burst and stay that size: hundreds of MiB to over 1 GiB beside a database of a few MiB. diskcache-oxide trims the log whenever it resets (`wal_size_limit`), offers [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) to empty it on demand, checkpoints a large log at [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close), and can checkpoint automatically with `wal_checkpoint='auto'`, which tries a few times in a row so that a reader in flight in another process doesn't defeat it. Background maintenance (D-061) also checkpoints a log grown past half of `wal_size_limit`, in `manual` mode too. Its checkpoint never waits for readers: with busy readers in other processes it copies what it can each interval but doesn't keep the log bounded, so `auto` or an explicit [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) is still the answer there. See [Storage and WAL](storage-and-wal.md).
 
 
 # API differences
@@ -202,7 +202,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-058:** on Windows, diskcache can't delete a value file while any reader has it open (Python's `open()` doesn't share delete) and ignores the failure, so the file stays with nothing pointing at it (upstream bug 19); one test left 154 files for 6 entries. diskcache-oxide's readers allow the delete, so nothing leaks.
 - **D-059:** when a cache directory holds a cache in another diskcache-oxide format (after an upgrade or a rollback), the cache opens in the subdirectory `diskcache-oxide-format-N` with a warning, and every later open uses it; [directory](../reference/Cache.directory.md#diskcache_oxide.Cache.directory) reports where the cache really is. [remove_old_formats()](../reference/Cache.remove_old_formats.md#diskcache_oxide.Cache.remove_old_formats) cleans up older formats once the old workers are gone. See [Upgrading across a format change](../recipes/upgrading.md).
 - **D-060:** an expired entry leaves `len()`, [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys), `iter()` and `reversed()` the moment it expires, as it already left [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) and `in`. diskcache keeps counting and listing it until a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set), [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) or [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) removes its row. Nothing is written by the check: the row and its space, in [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume), stay until a [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set), [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) or [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) removes them, or background maintenance does (D-061).
-- **D-061:** one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every `maintenance_interval` (default 5 minutes, 0 for off), with the caches and the processes taking turns. So an explicit [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) or [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) can return less than diskcache's would, [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See [Background maintenance](storage-and-wal.md#background-maintenance).
+- **D-061:** one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every `maintenance_interval` (default 5 minutes, 0 for off), with the caches and the processes taking turns. It never waits for a lock and holds the write lock only for short chunks, so a request in the same process waits at most one chunk (about 130 µs for 100 small rows); a writer in another process can wait for a few chunks, never past the turn's 50 ms. So an explicit [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) or [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull) can return less than diskcache's would, [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See [Background maintenance](storage-and-wal.md#background-maintenance).
 - **D-025:** `iter(cache)` and [iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 

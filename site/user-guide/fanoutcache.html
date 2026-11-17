@@ -507,7 +507,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="0" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="1" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -677,7 +677,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   </ul></li>
   <li><a href="#choosing-shards-and-max_connections" id="toc-choosing-shards-and-max_connections" class="nav-link" data-scroll-target="#choosing-shards-and-max_connections">Choosing <code>shards</code> and <code>max_connections</code></a></li>
   <li><a href="#shard_of-and-transactkey" id="toc-shard_of-and-transactkey" class="nav-link" data-scroll-target="#shard_of-and-transactkey"><code>shard_of</code> and <code>transact(key=)</code></a></li>
-  <li><a href="#maintenance-one-budget-partial-failures" id="toc-maintenance-one-budget-partial-failures" class="nav-link" data-scroll-target="#maintenance-one-budget-partial-failures">Maintenance: one budget, partial failures</a></li>
+  <li><a href="#background-maintenance" id="toc-background-maintenance" class="nav-link" data-scroll-target="#background-maintenance">Background maintenance</a></li>
+  <li><a href="#maintenance-calls-one-budget-partial-failures" id="toc-maintenance-calls-one-budget-partial-failures" class="nav-link" data-scroll-target="#maintenance-calls-one-budget-partial-failures">Maintenance calls: one budget, partial failures</a></li>
   <li><a href="#timeouts-on-single-keys" id="toc-timeouts-on-single-keys" class="nav-link" data-scroll-target="#timeouts-on-single-keys">Timeouts on single keys</a></li>
   <li><a href="#iteration-order" id="toc-iteration-order" class="nav-link" data-scroll-target="#iteration-order">Iteration order</a></li>
   <li><a href="#in-a-caches-registry" id="toc-in-a-caches-registry" class="nav-link" data-scroll-target="#in-a-caches-registry">In a <code>Caches</code> registry</a></li>
@@ -810,8 +811,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p>If you need related keys in one transaction, give them a shared prefix scheme and check with <a href="../reference/FanoutCache.shard_of.html#diskcache_oxide.FanoutCache.shard_of" class="gdls-link gdls-code">shard_of</a> that they land together, or keep them in one value. There is no transaction across shards.</p>
 <p>A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> isn’t a <a href="../reference/TransactionalCacheLike.html#diskcache_oxide.TransactionalCacheLike" class="gdls-link gdls-code">TransactionalCacheLike</a>, because its <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact</a> needs a key. It and <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> are both <a href="#typing"><code>ShardedCacheLike</code></a>.</p>
 </section>
-<section id="maintenance-one-budget-partial-failures" class="level1">
-<h1>Maintenance: one budget, partial failures</h1>
+<section id="background-maintenance" class="level1">
+<h1>Background maintenance</h1>
+<p><a href="../user-guide/storage-and-wal.html#background-maintenance">Background maintenance</a> treats each shard as a cache of its own. Each shard gets its own turn, spread across the interval with the process’s other caches, and the hourly folder sweep, which shards skip at close. <code>maintenance_interval=</code> applies to every shard, and so does a <code>clock=</code> handle’s veto, which works per database file. On a shard with the default two connections, the background WAL checkpoint runs only when neither connection is in use.</p>
+<p><a href="../reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="gdls-link gdls-code">maintenance_stats()</a> sums <code>turns</code>, <code>removed</code> and <code>failures</code> across the shards. <code>interval</code> is the largest any shard has, and <code>last_error</code> comes from the first shard, in shard order, that has one. A maintenance thread that couldn’t be started counts in <code>failures</code> too, as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</p>
+</section>
+<section id="maintenance-calls-one-budget-partial-failures" class="level1">
+<h1>Maintenance calls: one budget, partial failures</h1>
 <p><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>, <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> and <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> run over every shard. Their <code>timeout=</code> (default: the handle’s) bounds <strong>the whole call</strong>, not each shard. The handle’s timeout also bounds opening, <code>len()</code> and <a href="../reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a> as one budget, and <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> uses at most 1 s of it for checkpoints. A shard reached after the deadline still gets one try with no wait, so idle shards are always done.</p>
 <p>A shard that fails doesn’t stop the others. Afterwards the call raises the first failure’s own type, so <code>except Timeout</code> works, with attributes saying how far it got:</p>
 <div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span>:</span>

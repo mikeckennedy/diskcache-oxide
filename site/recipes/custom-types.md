@@ -62,6 +62,7 @@ A dataclass needs only a name. Its fields are stored and it's rebuilt with `cls(
 
 ``` python
 import dataclasses
+from typing import Optional
 
 @dataclasses.dataclass
 class Invoice:

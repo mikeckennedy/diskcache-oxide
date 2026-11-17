@@ -13,6 +13,7 @@ The entry holds the response body, its `ETag` and a freshness deadline taken fro
 import json
 import re
 import tempfile
+from typing import Optional
 from urllib.parse import urlsplit
 
 import httpx
