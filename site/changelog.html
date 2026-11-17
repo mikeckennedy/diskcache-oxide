@@ -442,7 +442,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="./diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="./index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge">v0.3.5</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-16">v0.3.5</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -490,7 +490,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#v0.3.5-unreleased" id="toc-v0.3.5-unreleased" class="nav-link active" data-scroll-target="#v0.3.5-unreleased">v0.3.5 (unreleased)</a></li>
+  <li><a href="#v0.3.5" id="toc-v0.3.5" class="nav-link active" data-scroll-target="#v0.3.5">v0.3.5</a></li>
   <li><a href="#v0.2.3" id="toc-v0.2.3" class="nav-link" data-scroll-target="#v0.2.3">v0.2.3</a></li>
   <li><a href="#v0.1.2" id="toc-v0.1.2" class="nav-link" data-scroll-target="#v0.1.2">v0.1.2</a></li>
   </ul>
@@ -519,9 +519,9 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 
 <p>This changelog is the repository's <a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md">CHANGELOG.md</a>, rendered at build time.</p>
-<section id="v0.3.5-unreleased" class="level1 changelog-version">
-<h1 class="changelog-version">v0.3.5 (unreleased)</h1>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md">GitHub</a></p>
+<section id="v0.3.5" class="level1 changelog-version">
+<h1 class="changelog-version">v0.3.5</h1>
+<p><em>2026-11-16</em> · <a href="https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.3.5">GitHub</a></p>
 <p><strong>Upgrades across a format change no longer fail.</strong> A cache directory that holds a cache in another on-disk format (made by an older release, or by a newer one before a rollback) now opens a new, empty cache in its subdirectory <code>diskcache-oxide-format-N</code>, N being this release’s format (3), instead of raising <a href="reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError" class="gdls-link gdls-code">FormatMismatchError</a>, and logs a warning on the <code>diskcache_oxide</code> logger once per process. Of the other format’s cache, only its format is read, and its contents are never changed (if that read is the last connection to close on it, SQLite may checkpoint its write-ahead log into the database file, which changes no data). Once the subdirectory exists, every later open uses it. A <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> moves as a whole. This release keeps format 3, so caches made by 0.2.3 open where they are, warm; a cache still at format 2 (0.1.2) opens <code>diskcache-oxide-format-3</code> beside it. See “Upgrading across a format change” in the recipes.</p>
 <p><strong>Caches look after themselves.</strong> One small thread per process now does each open cache’s housekeeping in the background, every 5 minutes by default: it removes expired entries and their files, trims a cache left over <a href="reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> (<a href="reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> entries at a time; never under <code>eviction_policy='none'</code> or with <code>cull_limit=0</code>), checkpoints a write-ahead log grown past half of <code>wal_size_limit</code>, and hourly clears temporary files a killed writer left and empty value folders, <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> shards included. There’s no longer an <a href="reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> to schedule. The caches in a process take turns across the interval, and the processes sharing a cache take turns through two new rows in its <code>settings</code> table (no format change: older releases ignore them). It never waits for a lock and holds the write lock only for short chunks, so requests don’t notice it, and it stops for every <code>os.fork()</code> and starts again after, so Python never warns about forking a multi-threaded process. A cache opened with <code>clock=</code> gets none. Pass <code>maintenance_interval=0</code> for a cache this process must never write, such as a read-only replica: even a tidy cache is written once an hour to coordinate the processes (D-061).</p>
 <section id="added" class="level3">

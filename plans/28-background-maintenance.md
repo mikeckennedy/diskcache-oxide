@@ -1,6 +1,6 @@
 # Plan 28: background maintenance
 
-Status: in progress on branch `plan-28-maintenance` (2026-11-13). The plan was reviewed once by the-rust-architect, whose findings are folded in below, and each step is reviewed by the architect on Fable before the next starts. Comes from [vision.md](vision.md#expiry-that-keeps-itself-accurate-michael-2026-10-28), with Michael's decisions (2026-11-13). It ships in 0.3.5 (Michael): 0.3.5 hasn't been released and needs the Full gate's 24-hour soak anyway, so one soak covers both.
+Status: done, merged to `main` and released in 0.3.5 (2026-11-16). The gate: every sanitizer lane, a 24-hour release-shape soak (which found the `iter` double-yield, fixed), a 4-hour A/B with maintenance on and off on 2026-11-15 (both OK; the slow write tail was no worse with maintenance on), and a 30-minute soak of the final code, whose one failed check (`auto-too-few-rounds`, 30 of a fixed minimum of 50) measures run length and which Michael accepted as a pass. Built on branch `plan-28-maintenance` from 2026-11-13. The plan was reviewed once by the-rust-architect, whose findings are folded in below, and each step is reviewed by the architect on Fable before the next starts. Comes from [vision.md](vision.md#expiry-that-keeps-itself-accurate-michael-2026-10-28), with Michael's decisions (2026-11-13). It ships in 0.3.5 (Michael): 0.3.5 hasn't been released and needs the Full gate's 24-hour soak anyway, so one soak covers both.
 
 ## Where this starts
 

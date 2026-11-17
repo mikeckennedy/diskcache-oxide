@@ -4,6 +4,8 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-11-16
+
 **Upgrades across a format change no longer fail.** A cache directory that holds a cache in another on-disk format (made by an older release, or by a newer one before a rollback) now opens a new, empty cache in its subdirectory `diskcache-oxide-format-N`, N being this release's format (3), instead of raising `FormatMismatchError`, and logs a warning on the `diskcache_oxide` logger once per process. Of the other format's cache, only its format is read, and its contents are never changed (if that read is the last connection to close on it, SQLite may checkpoint its write-ahead log into the database file, which changes no data). Once the subdirectory exists, every later open uses it. A `FanoutCache` moves as a whole. This release keeps format 3, so caches made by 0.2.3 open where they are, warm; a cache still at format 2 (0.1.2) opens `diskcache-oxide-format-3` beside it. See "Upgrading across a format change" in the recipes.
 
 **Caches look after themselves.** One small thread per process now does each open cache's housekeeping in the background, every 5 minutes by default: it removes expired entries and their files, trims a cache left over `size_limit` (`cull_limit` entries at a time; never under `eviction_policy='none'` or with `cull_limit=0`), checkpoints a write-ahead log grown past half of `wal_size_limit`, and hourly clears temporary files a killed writer left and empty value folders, `FanoutCache` shards included. There's no longer an `expire()` to schedule. The caches in a process take turns across the interval, and the processes sharing a cache take turns through two new rows in its `settings` table (no format change: older releases ignore them). It never waits for a lock and holds the write lock only for short chunks, so requests don't notice it, and it stops for every `os.fork()` and starts again after, so Python never warns about forking a multi-threaded process. A cache opened with `clock=` gets none. Pass `maintenance_interval=0` for a cache this process must never write, such as a read-only replica: even a tidy cache is written once an hour to coordinate the processes (D-061).
@@ -102,6 +104,7 @@ The first release: diskcache's `Cache` API on a Rust engine and SQLite storage, 
 
 Development before this release, including the `0.1.0.dev` builds (`0.1.0.dev1` was yanked from PyPI), is in the git history. A `0.1.0` and a `0.1.1` were built and verified but never published: new tests found two bugs just before the first upload and a third (a size-limited cache evicting entries it had room for) just before the second, each fixed first, so `0.1.2` is the first release on PyPI. `0.1.1` ran in production at Talk Python in the meantime. The `0.0.1` on PyPI is a name placeholder with no code.
 
-[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.2.3...v0.3.5
 [0.2.3]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.1.2...v0.2.3
 [0.1.2]: https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.1.2

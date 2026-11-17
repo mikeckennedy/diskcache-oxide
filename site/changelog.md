@@ -3,9 +3,9 @@
 This changelog is generated automatically from [GitHub Releases](https://github.com/mikeckennedy/diskcache-oxide/releases).
 
 
-# v0.3.5 (unreleased)
+# v0.3.5
 
-[GitHub](https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md)
+*2026-11-16* · [GitHub](https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.3.5)
 
 **Upgrades across a format change no longer fail.** A cache directory that holds a cache in another on-disk format (made by an older release, or by a newer one before a rollback) now opens a new, empty cache in its subdirectory `diskcache-oxide-format-N`, N being this release's format (3), instead of raising [FormatMismatchError](reference/FormatMismatchError.html#diskcache_oxide.FormatMismatchError), and logs a warning on the `diskcache_oxide` logger once per process. Of the other format's cache, only its format is read, and its contents are never changed (if that read is the last connection to close on it, SQLite may checkpoint its write-ahead log into the database file, which changes no data). Once the subdirectory exists, every later open uses it. A [FanoutCache](reference/FanoutCache.html#diskcache_oxide.FanoutCache) moves as a whole. This release keeps format 3, so caches made by 0.2.3 open where they are, warm; a cache still at format 2 (0.1.2) opens `diskcache-oxide-format-3` beside it. See "Upgrading across a format change" in the recipes.
 
