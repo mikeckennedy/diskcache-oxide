@@ -1,0 +1,464 @@
+groups scaling, pagecache, sizing: 14 variants, 302 threads/procs runs per round, small on 7, 3 round(s)
+  filled oxide-cache: 50,000 keys x 1,024 B in 1.3 s
+  filled oxide-cache: 4,096 keys x 16,384 B in 0.3 s
+  filled oxide-cache: 1,025 keys x 65,472 B in 0.1 s
+round 1/3: oxide-cache done (load 6.3, 0.8 min)
+  filled oxide-cache-c16: 50,000 keys x 1,024 B in 1.4 s
+round 1/3: oxide-cache-c16 done (load 5.6, 1.3 min)
+  filled oxide-fanout8: 50,000 keys x 1,024 B in 1.5 s
+  filled oxide-fanout8: 4,096 keys x 16,384 B in 0.3 s
+  filled oxide-fanout8: 1,025 keys x 65,472 B in 0.2 s
+round 1/3: oxide-fanout8 done (load 5.4, 2.1 min)
+  filled oxide-fanout8-c16: 50,000 keys x 1,024 B in 1.5 s
+round 1/3: oxide-fanout8-c16 done (load 6.5, 2.6 min)
+  filled oxide-fanout8-cs32: 50,000 keys x 1,024 B in 1.6 s
+  filled oxide-fanout8-cs32: 4,096 keys x 16,384 B in 0.3 s
+  filled oxide-fanout8-cs32: 1,025 keys x 65,472 B in 0.2 s
+round 1/3: oxide-fanout8-cs32 done (load 5.5, 3.4 min)
+  filled stock-cache: 50,000 keys x 1,024 B in 1.8 s
+round 1/3: stock-cache done (load 6.7, 4.4 min)
+  filled stock-fanout8: 50,000 keys x 1,024 B in 1.9 s
+round 1/3: stock-fanout8 done (load 5.6, 5.4 min)
+  filled oxide-cache-cs128: 50,000 keys x 1,024 B in 1.3 s
+  filled oxide-cache-cs128: 4,096 keys x 16,384 B in 0.2 s
+  filled oxide-cache-cs128: 1,025 keys x 65,472 B in 0.2 s
+round 1/3: oxide-cache-cs128 done (load 5.0, 5.9 min)
+  filled oxide-cache-cs64: 50,000 keys x 1,024 B in 1.4 s
+  filled oxide-cache-cs64: 4,096 keys x 16,384 B in 0.2 s
+  filled oxide-cache-cs64: 1,025 keys x 65,472 B in 0.2 s
+round 1/3: oxide-cache-cs64 done (load 5.2, 6.5 min)
+  filled oxide-fanout8-cs64: 50,000 keys x 1,024 B in 1.5 s
+  filled oxide-fanout8-cs64: 4,096 keys x 16,384 B in 0.3 s
+  filled oxide-fanout8-cs64: 1,025 keys x 65,472 B in 0.2 s
+round 1/3: oxide-fanout8-cs64 done (load 4.8, 7.1 min)
+  filled oxide-fanout8-cs16: 50,000 keys x 1,024 B in 1.4 s
+  filled oxide-fanout8-cs16: 4,096 keys x 16,384 B in 0.3 s
+  filled oxide-fanout8-cs16: 1,025 keys x 65,472 B in 0.2 s
+round 1/3: oxide-fanout8-cs16 done (load 4.8, 7.6 min)
+  filled oxide-fanout32-cs64: 4,096 keys x 16,384 B in 0.3 s
+  filled oxide-fanout32-cs64: 1,025 keys x 65,472 B in 0.2 s
+round 1/3: oxide-fanout32-cs64 done (load 4.6, 7.9 min)
+  filled oxide-fanout32-cs32: 4,096 keys x 16,384 B in 0.3 s
+  filled oxide-fanout32-cs32: 1,025 keys x 65,472 B in 0.2 s
+round 1/3: oxide-fanout32-cs32 done (load 5.2, 8.1 min)
+  filled oxide-fanout32-cs16: 4,096 keys x 16,384 B in 0.3 s
+  filled oxide-fanout32-cs16: 1,025 keys x 65,472 B in 0.2 s
+round 1/3: oxide-fanout32-cs16 done (load 4.7, 8.4 min)
+round 2/3: oxide-cache-c16 done (load 4.8, 8.9 min)
+round 2/3: oxide-fanout8 done (load 5.1, 9.7 min)
+round 2/3: oxide-fanout8-c16 done (load 5.5, 10.2 min)
+round 2/3: oxide-fanout8-cs32 done (load 6.4, 11.0 min)
+round 2/3: stock-cache done (load 5.3, 11.9 min)
+round 2/3: stock-fanout8 done (load 5.4, 12.9 min)
+round 2/3: oxide-cache-cs128 done (load 5.1, 13.4 min)
+round 2/3: oxide-cache-cs64 done (load 4.8, 13.9 min)
+round 2/3: oxide-fanout8-cs64 done (load 5.2, 14.5 min)
+round 2/3: oxide-fanout8-cs16 done (load 4.5, 14.9 min)
+round 2/3: oxide-fanout32-cs64 done (load 4.4, 15.2 min)
+round 2/3: oxide-fanout32-cs32 done (load 4.3, 15.5 min)
+round 2/3: oxide-fanout32-cs16 done (load 4.4, 15.8 min)
+round 2/3: oxide-cache done (load 4.6, 16.5 min)
+round 3/3: oxide-fanout8 done (load 5.2, 17.3 min)
+round 3/3: oxide-fanout8-c16 done (load 4.6, 17.8 min)
+round 3/3: oxide-fanout8-cs32 done (load 5.8, 18.6 min)
+round 3/3: stock-cache done (load 5.9, 19.5 min)
+round 3/3: stock-fanout8 done (load 5.6, 20.4 min)
+round 3/3: oxide-cache-cs128 done (load 4.6, 20.9 min)
+round 3/3: oxide-cache-cs64 done (load 4.3, 21.5 min)
+round 3/3: oxide-fanout8-cs64 done (load 3.9, 22.0 min)
+round 3/3: oxide-fanout8-cs16 done (load 3.0, 22.4 min)
+round 3/3: oxide-fanout32-cs64 done (load 3.3, 22.7 min)
+round 3/3: oxide-fanout32-cs32 done (load 3.5, 23.0 min)
+round 3/3: oxide-fanout32-cs16 done (load 3.0, 23.3 min)
+round 3/3: oxide-cache done (load 3.6, 24.0 min)
+round 3/3: oxide-cache-c16 done (load 3.7, 24.5 min)
+
+Python 3.14.10, 50,000 keys x 1 KB, medians over 3 round(s)
+
+[scaling: does sharding scale, and what does it cost] Throughput, ops/s (spread = (max - min) / median across rounds)
+case                                  oxide-cache    oxide-cache-c16      oxide-fanout8  oxide-fanout8-c16 oxide-fanout8-cs32        stock-cache      stock-fanout8
+-- 99:1 (headline), 1,024 B values
+procs-uniform-1                          376k  3%           391k  3%           395k  8%           412k  6%           368k  5%           315k  5%           320k  2%
+procs-uniform-4                          507k  3%           517k  3%           953k  6%         1,001k  2%           975k  6%           409k 33%           741k  2%
+procs-uniform-8                          257k 13%           254k  1%         1,056k  3%         1,064k  3%         1,076k  2%           395k 35%           944k  4%
+procs-zipf-1                             495k  6%           481k  7%           514k  1%           558k  2%           464k 11%           350k  5%           341k  5%
+procs-zipf-4                             581k  2%           583k  2%         1,164k  0%         1,230k  2%         1,201k  7%           448k  4%           812k  5%
+procs-zipf-8                             260k  7%           264k  6%         1,212k  2%         1,236k  1%         1,235k  4%           442k 30%           997k  5%
+small-1t                               1,002k  7%           969k  3%           931k  5%           953k  6%           950k  7%           484k  3%           431k  6%
+small-4t-shared                          993k  4%           975k  5%           944k  4%           945k  1%           930k  4%            77k  7%            69k  5%
+small-4t-separate                        992k  4%           982k  4%           951k  3%           958k  5%           950k  3%            70k  5%            67k  6%
+threads-uniform-1                        393k  4%           384k 10%           396k  3%           400k  6%           378k  1%           312k 32%           312k  2%
+threads-uniform-4                        355k  5%           357k  5%           388k  6%           390k  6%           374k  1%            69k 24%            54k 10%
+threads-uniform-8                        360k  9%           354k  9%           393k  7%           385k  7%           367k  3%            18k 67%            17k 13%
+threads-zipf-1                           491k  5%           505k  4%           510k  9%           545k 12%           477k 14%           353k  2%           338k  3%
+threads-zipf-4                           460k  4%           482k  2%           506k 10%           547k 10%           467k  6%            75k 33%            58k 10%
+threads-zipf-8                           456k  6%           474k  2%           502k  8%           539k  3%           466k  9%            17k  8%            17k 10%
+-- 90:10 (stress case, write-heavy), 1,024 B values
+procs-uniform-90to10-8                   128k 13%           132k 13%           383k 15%           404k 14%           413k 15%           117k  2%           230k  2%
+procs-zipf-90to10-8                      132k  5%           136k  9%           439k  1%           505k  5%           464k 17%           146k  6%           248k  4%
+threads-uniform-90to10-8                 150k  7%           149k  6%           170k  4%           180k  5%           167k  4%           114k 19%            18k  1%
+threads-zipf-90to10-8                    216k  7%           217k  6%           241k  4%           259k  1%           234k  8%           134k  3%            22k 25%
+-- 50:50 (stress case, write-heavy), 1,024 B values
+procs-uniform-50to50-8                    35k  4%            36k  1%           103k 12%           111k  3%           111k  9%            36k  7%            58k  2%
+procs-zipf-50to50-8                       37k  9%            36k  8%           121k  4%           131k  3%           120k 22%            47k  5%            64k  6%
+threads-uniform-50to50-8                  43k  9%            43k  6%            52k 12%            53k  4%            52k  5%            33k 15%            38k  6%
+threads-zipf-50to50-8                     63k  7%            61k  4%            74k  3%            79k  1%            75k  6%            45k 13%            43k  2%
+
+[scaling: does sharding scale, and what does it cost] Memory, RSS growth per process in MiB: current after the window / peak (procs: the median process)
+case                                  oxide-cache    oxide-cache-c16      oxide-fanout8  oxide-fanout8-c16 oxide-fanout8-cs32        stock-cache      stock-fanout8
+-- 99:1 (headline), 1,024 B values
+procs-uniform-1                         3.3 / 3.3          3.3 / 3.3        13.7 / 13.7        13.5 / 13.6          4.7 / 4.7        63.0 / 63.0        65.8 / 65.8
+procs-uniform-4                         3.3 / 3.3          3.4 / 3.4          7.7 / 7.7          7.8 / 7.9          4.7 / 4.7         3.2 / 15.6        10.6 / 14.6
+procs-uniform-8                         3.2 / 3.2          3.2 / 3.2          6.3 / 6.3          6.2 / 6.3          4.8 / 4.9          2.7 / 8.2         7.2 / 10.5
+procs-zipf-1                            3.4 / 3.5          3.4 / 3.4        13.7 / 13.7        13.7 / 13.8          4.6 / 4.7        33.4 / 33.4        35.1 / 35.1
+procs-zipf-4                            3.3 / 3.3          3.1 / 3.1          6.4 / 6.4          6.4 / 6.4          4.7 / 4.8          4.6 / 9.3          7.2 / 9.6
+procs-zipf-8                            3.1 / 3.1          3.1 / 3.1          5.7 / 5.7          5.6 / 5.6          4.8 / 4.8          3.3 / 6.7          5.4 / 7.4
+threads-uniform-1                       3.3 / 3.3          3.3 / 3.3        13.6 / 13.6        13.6 / 13.6          4.6 / 4.6      124.1 / 124.1      129.4 / 129.5
+threads-uniform-4                       3.6 / 3.8          3.7 / 3.9        13.9 / 14.0        13.9 / 14.1          4.9 / 5.0        13.1 / 25.6        71.2 / 75.6
+threads-uniform-8                       4.2 / 4.6          4.2 / 4.6        14.3 / 14.7        14.3 / 14.7          5.3 / 5.7        27.1 / 27.5        62.4 / 75.8
+threads-zipf-1                          3.5 / 3.5          3.5 / 3.6        13.7 / 13.7        13.8 / 13.8          4.7 / 4.8        64.0 / 64.0        70.0 / 70.1
+threads-zipf-4                          3.8 / 4.0          3.8 / 4.0        13.9 / 14.1        14.0 / 14.1          5.0 / 5.1         9.3 / 17.2        49.8 / 52.2
+threads-zipf-8                          4.2 / 4.6          4.2 / 4.6        14.4 / 14.8        14.3 / 14.6          5.3 / 5.6        21.1 / 21.2        49.2 / 55.4
+-- 90:10 (stress case, write-heavy), 1,024 B values
+procs-uniform-90to10-8                  3.2 / 3.2          3.1 / 3.1          4.8 / 4.9          5.0 / 5.0          4.7 / 4.7         8.0 / 22.7          4.6 / 8.3
+procs-zipf-90to10-8                     3.0 / 3.1          3.1 / 3.1          4.8 / 4.9          4.9 / 5.0          4.6 / 4.7         6.2 / 14.4          4.4 / 6.4
+threads-uniform-90to10-8                4.1 / 4.5          4.3 / 4.7        14.3 / 14.6        14.3 / 14.6          5.3 / 5.7        82.5 / 82.7        39.1 / 43.0
+threads-zipf-90to10-8                   4.2 / 4.6          4.2 / 4.6        14.5 / 14.8        14.3 / 14.6          5.4 / 5.7        62.3 / 62.5        41.5 / 41.8
+-- 50:50 (stress case, write-heavy), 1,024 B values
+procs-uniform-50to50-8                  3.4 / 3.4          3.5 / 3.6          4.5 / 4.5          4.4 / 4.5          4.5 / 4.6         7.4 / 15.9          4.4 / 6.2
+procs-zipf-50to50-8                     3.3 / 3.3          3.3 / 3.3          4.5 / 4.6          4.6 / 4.7          4.6 / 4.6         6.0 / 11.1          3.7 / 5.5
+threads-uniform-50to50-8                4.1 / 4.5          4.1 / 4.5        14.4 / 14.6        14.2 / 14.6          5.3 / 5.6      103.5 / 103.6        61.3 / 61.4
+threads-zipf-50to50-8                   4.2 / 4.5          4.2 / 4.6        14.2 / 14.6        14.2 / 14.5          5.3 / 5.7        66.2 / 66.3        33.5 / 35.5
+
+[pagecache: profiling variants: does a smaller page cache cost speed, threads and processes]
+kops/s: median, min-max over rounds, cv = stdev/mean; memory: RSS growth MiB, current / peak
+
+procs-uniform-1  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               376       369-379  1.4%     3.3/3.3      2.4     3.7     6.7     17.5    33.2   3,022  
+  oxide-cache-cs128         358       336-376  5.6%     2.7/2.7      2.5     3.6     7.0     20.0    32.8   2,959  
+  oxide-cache-cs64          328       324-349  4.0%     2.4/2.4      2.8     3.8     6.5     20.9    38.0   3,076  
+  oxide-fanout8             395       386-418  4.1%   13.7/13.7      2.2     3.2     7.8     22.2    44.2   1,180  
+  oxide-fanout8-cs64        388       369-440  9.2%     6.0/6.0      2.2     3.5     6.3     24.0    43.0   1,073  UNSTABLE
+  oxide-fanout8-cs32        368       366-385  2.9%     4.7/4.7      2.4     3.6     6.6     24.8    43.1   1,141  
+
+procs-uniform-8  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               257       240-272  6.4%     3.2/3.2     26.7     118     161      113     989   5,993  UNSTABLE
+  oxide-cache-cs128         260       253-266  2.4%     2.9/2.9     26.1     118     164      107   1,007   5,846  
+  oxide-cache-cs64          267       248-268  4.2%     2.5/2.5     25.6     119     162      111     955   5,844  
+  oxide-fanout8           1,056   1,051-1,085  1.7%     6.3/6.3      5.5    28.9    65.4     42.0     280   2,333  
+  oxide-fanout8-cs64      1,078   1,073-1,104  1.5%     5.7/5.7      5.3    27.8    64.8     40.9     337   2,075  
+  oxide-fanout8-cs32      1,076   1,073-1,094  1.1%     4.8/4.9      5.4    27.8    56.3     41.3     263   2,228  
+
+procs-zipf-1  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               495       470-497  3.1%     3.4/3.5      1.8     3.3     5.8     16.5    30.8   1,742  
+  oxide-cache-cs128         459       441-472  3.5%     2.8/2.9      1.8     3.2     5.3     19.4    40.0   1,904  
+  oxide-cache-cs64          423       416-464  6.0%     2.5/2.5      2.0     3.6     6.5     20.2    37.0   1,743  
+  oxide-fanout8             514       512-519  0.7%   13.7/13.7      1.5     2.9     5.6     18.6    40.4     915  
+  oxide-fanout8-cs64        513       482-551  6.7%     5.9/6.0      1.4     3.0     5.4     19.5    39.0     940  
+  oxide-fanout8-cs32        464       453-504  5.7%     4.6/4.7      1.8     3.3     6.0     22.6    39.9     956  
+
+procs-zipf-8  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               260       258-275  3.6%     3.1/3.1     26.9     115     159      104     904   3,218  
+  oxide-cache-cs128         256       251-270  3.7%     3.0/3.0     27.5     118     157     98.2     942   3,256  
+  oxide-cache-cs64          265       263-266  0.6%     2.6/2.6     26.5     121     165      103     879   3,446  
+  oxide-fanout8           1,212   1,191-1,217  1.1%     5.7/5.7      4.7    29.9    68.9     42.9     290   1,281  
+  oxide-fanout8-cs64      1,214   1,208-1,260  2.3%     5.4/5.4      4.5    29.0    67.1     41.5     277   1,088  
+  oxide-fanout8-cs32      1,235   1,206-1,261  2.2%     4.8/4.8      4.5    29.6    71.0     40.0     275   1,271  
+
+threads-uniform-1  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               393       379-397  2.3%     3.3/3.3      2.3     3.5     5.5     16.4    28.8   2,973  
+  oxide-cache-cs128         361       344-376  4.5%     2.7/2.7      2.5     3.5     7.7     20.0    38.8   3,051  
+  oxide-cache-cs64          325       325-375  8.4%     2.3/2.3      2.8     4.0     8.0     21.6    38.5   2,984  UNSTABLE
+  oxide-fanout8             396       395-407  1.7%   13.6/13.6      2.2     3.2     6.5     22.0    39.3   1,066  
+  oxide-fanout8-cs64        386       371-408  4.8%     5.9/6.0      2.2     3.5     7.2     23.6    43.1     994  
+  oxide-fanout8-cs32        378       377-381  0.6%     4.6/4.6      2.4     3.4     7.2     23.7    44.7   1,110  
+
+threads-uniform-8  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               360       330-362  5.1%     4.2/4.6      2.3     3.5     7.5     20.5    55.1  99,822  
+  oxide-cache-cs128         325       314-349  5.5%     3.5/3.9      2.5     3.8     7.2     23.3    60.4 105,825  
+  oxide-cache-cs64          301       301-339  7.0%     3.3/3.6      2.8     4.3     8.0     25.0    84.9  76,379  
+  oxide-fanout8             393       377-403  3.3%   14.3/14.7      2.2     3.2     8.7     20.6    46.0  67,841  
+  oxide-fanout8-cs64        372       367-373  0.9%     6.6/7.0      2.2     3.8     8.3     24.2    61.6  67,621  
+  oxide-fanout8-cs32        367       364-373  1.3%     5.3/5.7      2.4     3.5     6.5     22.6    44.1  78,484  
+
+threads-zipf-1  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               491       478-504  2.6%     3.5/3.5      1.9     3.6     5.5     15.9    30.1   1,690  
+  oxide-cache-cs128         472       434-483  5.6%     2.8/2.9      2.1     3.3     6.3     18.9    29.5   1,756  
+  oxide-cache-cs64          418       407-420  1.7%     2.5/2.6      2.2     4.0     7.7     20.4    37.3   1,728  
+  oxide-fanout8             510       510-556  5.1%   13.7/13.7      1.5     3.1     5.3     18.5    41.2     962  
+  oxide-fanout8-cs64        489       476-552  8.0%     5.9/6.0      1.8     3.7     6.1     21.5    45.2     990  
+  oxide-fanout8-cs32        477       446-511  6.7%     4.7/4.8      1.9     3.5     6.5     20.5    41.5     974  
+
+threads-zipf-8  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               456       454-482  3.3%     4.2/4.6      1.9     3.8     7.4     18.2    42.9  55,436  
+  oxide-cache-cs128         451       423-454  3.8%     3.6/4.0      2.0     3.3     7.9     19.6    42.8  74,295  
+  oxide-cache-cs64          405       398-444  5.9%     3.3/3.7      2.2     3.9     7.0     22.2    49.1  50,922  
+  oxide-fanout8             502       499-541  4.6%   14.4/14.8      1.5     3.1     5.6     18.8    49.0  56,156  
+  oxide-fanout8-cs64        490       467-522  5.6%     6.6/7.0      1.7     3.6     7.4     19.8    50.8  69,998  
+  oxide-fanout8-cs32        466       436-477  4.6%     5.3/5.6      1.9     3.4     6.4     20.5    42.2  67,386  
+
+procs-uniform-90to10-8  (90:10 stress case, write-heavy, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               128       125-142  6.8%     3.2/3.2      6.0    20.2    35.0      210   3,811   6,469  
+  oxide-cache-cs128         128       125-130  1.7%     3.1/3.1      5.5    19.8    37.7      229   3,747   5,788  
+  oxide-cache-cs64          127       122-135  5.1%     2.8/2.8      5.8    19.6    47.0      216   4,284   5,106  
+  oxide-fanout8             383       374-433  8.0%     4.8/4.9      7.2    34.0    59.0     76.4     923   3,727  
+  oxide-fanout8-cs64        400       382-438  7.0%     4.8/4.8      6.7    33.5    62.2     71.4     844   3,592  
+  oxide-fanout8-cs32        413       371-434  7.9%     4.7/4.7      6.5    33.2    61.4     67.8     793   3,643  
+
+procs-zipf-90to10-8  (90:10 stress case, write-heavy, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               132       127-134  2.6%     3.0/3.1      5.0    23.3    47.5      225   3,393   5,114  
+  oxide-cache-cs128         129       123-136  5.1%     3.3/3.3      4.8    22.8    56.0      248   3,356   5,693  
+  oxide-cache-cs64          129       122-133  4.5%     2.9/3.0      4.9    26.3    58.8      239   3,540   6,762  
+  oxide-fanout8             439       437-439  0.3%     4.8/4.9      6.3    32.9    78.8     63.0     933   1,869  
+  oxide-fanout8-cs64        459       453-505  6.1%     4.6/4.7      6.0    32.4    60.8     58.1     902   1,885  
+  oxide-fanout8-cs32        464       429-506  8.3%     4.6/4.7      5.9    33.1    72.7     58.3     934   1,766  
+
+threads-uniform-90to10-8  (90:10 stress case, write-heavy, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               150       144-155  3.7%     4.1/4.5      2.6     4.5    10.3     18.6    61.0  74,766  
+  oxide-cache-cs128         149       144-159  5.2%     3.6/4.0      2.8     4.4    17.4     18.8    53.9  79,774  
+  oxide-cache-cs64          141       138-154  5.9%     3.2/3.6      3.0     5.5    10.1     20.0    59.5 108,180  
+  oxide-fanout8             170       169-177  2.4%   14.3/14.6      2.5     5.0     8.3     19.7    45.1  54,509  
+  oxide-fanout8-cs64        171       168-175  2.0%     6.7/7.0      2.5     4.7     9.5     19.5    54.6  69,052  
+  oxide-fanout8-cs32        167       161-167  2.2%     5.3/5.7      2.7     4.6    11.0     20.3    54.0  84,520  
+
+threads-zipf-90to10-8  (90:10 stress case, write-heavy, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               216       203-219  4.0%     4.2/4.6      2.0     4.3     7.8     17.5    45.7  47,604  
+  oxide-cache-cs128         214       199-217  4.5%     3.5/3.9      2.2     4.0     8.0     18.0    40.2  65,756  
+  oxide-cache-cs64          198       195-212  4.7%     3.3/3.6      2.3     4.4    10.3     18.2    44.2  42,198  
+  oxide-fanout8             241       238-248  2.0%   14.5/14.8      1.8     4.0     8.4     16.1    43.6  56,128  
+  oxide-fanout8-cs64        252       242-263  4.1%     6.6/7.0      1.9     3.8     6.5     15.3    40.9  82,587  
+  oxide-fanout8-cs32        234       223-241  4.0%     5.4/5.7      2.1     3.8    11.2     16.1    43.8  52,766  
+
+[sizing: page-cache sizing cases: stability of small page caches, up to 64 KiB inline values]
+kops/s: median, min-max over rounds, cv = stdev/mean; memory: RSS growth MiB, current / peak
+
+threads-uniform-1  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               393       379-397  2.3%     3.3/3.3      2.3     3.5     5.5     16.4    28.8   2,973  
+  oxide-cache-cs128         361       344-376  4.5%     2.7/2.7      2.5     3.5     7.7     20.0    38.8   3,051  
+  oxide-cache-cs64          325       325-375  8.4%     2.3/2.3      2.8     4.0     8.0     21.6    38.5   2,984  
+  oxide-fanout8             396       395-407  1.7%   13.6/13.6      2.2     3.2     6.5     22.0    39.3   1,066  
+  oxide-fanout8-cs64        386       371-408  4.8%     5.9/6.0      2.2     3.5     7.2     23.6    43.1     994  
+  oxide-fanout8-cs32        378       377-381  0.6%     4.6/4.6      2.4     3.4     7.2     23.7    44.7   1,110  
+  oxide-fanout8-cs16        346       320-380  8.5%     4.3/4.3      2.6     3.6     7.5     25.2    42.4   1,090  
+
+threads-uniform-8  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               360       330-362  5.1%     4.2/4.6      2.3     3.5     7.5     20.5    55.1  99,822  
+  oxide-cache-cs128         325       314-349  5.5%     3.5/3.9      2.5     3.8     7.2     23.3    60.4 105,825  
+  oxide-cache-cs64          301       301-339  7.0%     3.3/3.6      2.8     4.3     8.0     25.0    84.9  76,379  
+  oxide-fanout8             393       377-403  3.3%   14.3/14.7      2.2     3.2     8.7     20.6    46.0  67,841  
+  oxide-fanout8-cs64        372       367-373  0.9%     6.6/7.0      2.2     3.8     8.3     24.2    61.6  67,621  
+  oxide-fanout8-cs32        367       364-373  1.3%     5.3/5.7      2.4     3.5     6.5     22.6    44.1  78,484  
+  oxide-fanout8-cs16        338       317-365  7.0%     5.0/5.4      2.6     3.8     8.7     24.8    50.4 101,320  
+
+threads-zipf-1  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               491       478-504  2.6%     3.5/3.5      1.9     3.6     5.5     15.9    30.1   1,690  
+  oxide-cache-cs128         472       434-483  5.6%     2.8/2.9      2.1     3.3     6.3     18.9    29.5   1,756  
+  oxide-cache-cs64          418       407-420  1.7%     2.5/2.6      2.2     4.0     7.7     20.4    37.3   1,728  
+  oxide-fanout8             510       510-556  5.1%   13.7/13.7      1.5     3.1     5.3     18.5    41.2     962  
+  oxide-fanout8-cs64        489       476-552  8.0%     5.9/6.0      1.8     3.7     6.1     21.5    45.2     990  
+  oxide-fanout8-cs32        477       446-511  6.7%     4.7/4.8      1.9     3.5     6.5     20.5    41.5     974  
+  oxide-fanout8-cs16        448       428-470  4.6%     4.3/4.4      2.1     3.2     6.6     20.4    37.8   1,009  
+
+threads-zipf-8  (99:1 headline, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               456       454-482  3.3%     4.2/4.6      1.9     3.8     7.4     18.2    42.9  55,436  
+  oxide-cache-cs128         451       423-454  3.8%     3.6/4.0      2.0     3.3     7.9     19.6    42.8  74,295  
+  oxide-cache-cs64          405       398-444  5.9%     3.3/3.7      2.2     3.9     7.0     22.2    49.1  50,922  
+  oxide-fanout8             502       499-541  4.6%   14.4/14.8      1.5     3.1     5.6     18.8    49.0  56,156  
+  oxide-fanout8-cs64        490       467-522  5.6%     6.6/7.0      1.7     3.6     7.4     19.8    50.8  69,998  
+  oxide-fanout8-cs32        466       436-477  4.6%     5.3/5.6      1.9     3.4     6.4     20.5    42.2  67,386  
+  oxide-fanout8-cs16        437       404-453  5.7%     5.0/5.4      2.1     3.4     6.9     20.0    48.8  62,919  
+
+threads-uniform-90to10-8  (90:10 stress case, write-heavy, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               150       144-155  3.7%     4.1/4.5      2.6     4.5    10.3     18.6    61.0  74,766  
+  oxide-cache-cs128         149       144-159  5.2%     3.6/4.0      2.8     4.4    17.4     18.8    53.9  79,774  
+  oxide-cache-cs64          141       138-154  5.9%     3.2/3.6      3.0     5.5    10.1     20.0    59.5 108,180  
+  oxide-fanout8             170       169-177  2.4%   14.3/14.6      2.5     5.0     8.3     19.7    45.1  54,509  
+  oxide-fanout8-cs64        171       168-175  2.0%     6.7/7.0      2.5     4.7     9.5     19.5    54.6  69,052  
+  oxide-fanout8-cs32        167       161-167  2.2%     5.3/5.7      2.7     4.6    11.0     20.3    54.0  84,520  
+  oxide-fanout8-cs16        154       148-165  5.3%     4.9/5.2      2.9     4.5     6.5     22.3    53.3  52,377  
+
+threads-zipf-90to10-8  (90:10 stress case, write-heavy, 1,024 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               216       203-219  4.0%     4.2/4.6      2.0     4.3     7.8     17.5    45.7  47,604  
+  oxide-cache-cs128         214       199-217  4.5%     3.5/3.9      2.2     4.0     8.0     18.0    40.2  65,756  
+  oxide-cache-cs64          198       195-212  4.7%     3.3/3.6      2.3     4.4    10.3     18.2    44.2  42,198  
+  oxide-fanout8             241       238-248  2.0%   14.5/14.8      1.8     4.0     8.4     16.1    43.6  56,128  
+  oxide-fanout8-cs64        252       242-263  4.1%     6.6/7.0      1.9     3.8     6.5     15.3    40.9  82,587  
+  oxide-fanout8-cs32        234       223-241  4.0%     5.4/5.7      2.1     3.8    11.2     16.1    43.8  52,766  
+  oxide-fanout8-cs16        214       207-229  5.4%     4.9/5.3      2.4     4.3     6.5     18.6    35.9  52,619  
+
+threads-uniform-v16k-1  (99:1 headline, 16,384 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               187       178-191  3.6%     3.4/3.4      5.1     7.3    22.8     23.0    40.8   3,446  TAIL-SET
+  oxide-cache-cs128         179       171-187  4.3%     2.8/2.8      5.2     7.7    11.4     26.4    51.8   4,077  TAIL-SET
+  oxide-cache-cs64          182       172-199  7.4%     2.4/2.5      5.1     7.9    12.7     26.8    43.8   3,925  TAIL-SET
+  oxide-fanout8             201       188-202  3.9%   13.5/13.5      4.8     6.6     9.5     28.4    45.7   1,006  
+  oxide-fanout8-cs64        188       182-193  2.9%     5.8/5.8      5.0     7.0    11.6     34.5    51.3   1,181  
+  oxide-fanout8-cs32        181       143-192 15.0%     4.6/4.6      5.2     7.8    12.6     34.4    61.8     932  UNSTABLE
+  oxide-fanout8-cs16        184       179-209  8.4%     4.2/4.2      5.1     7.2    13.8     34.2    53.0   1,077  UNSTABLE
+  oxide-fanout32-cs64       189       188-194  1.6%   18.2/18.2      5.0     7.0    10.5     34.2    49.0    82.3  
+  oxide-fanout32-cs32       184       173-186  3.8%   13.0/13.0      5.1     7.8    12.1     35.5    54.0     175  
+  oxide-fanout32-cs16       173       164-204 11.6%   11.6/11.6      5.4     8.3    27.8     35.0    61.3    71.0  UNSTABLE
+
+threads-uniform-v16k-8  (99:1 headline, 16,384 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               177       175-178  0.9%     4.6/4.9      5.2     7.7    15.2     26.8    76.7 112,994  
+  oxide-cache-cs128         177       164-191  7.7%     3.9/4.3      5.1     7.5  34,228     29.0    86.5  94,187  TAIL-GET
+  oxide-cache-cs64          172       168-186  5.5%     3.6/4.0      5.2     7.1    17.8     28.6    80.5 104,021  
+  oxide-fanout8             197       182-198  4.6%   14.5/14.8      4.8     7.5    18.5     28.8    56.2  81,406  
+  oxide-fanout8-cs64        176       171-190  5.4%     6.9/7.2      5.3     7.5    13.3     34.9    82.1  85,578  
+  oxide-fanout8-cs32        179       173-185  3.4%     5.6/6.0      5.2     7.8    12.3     34.3    98.7  77,943  
+  oxide-fanout8-cs16        178       176-195  5.7%     5.2/5.6      5.2     7.5    11.1     32.1    76.4  72,910  
+  oxide-fanout32-cs64       190       180-199  4.9%   19.3/19.6      5.0     7.8    14.9     32.8    54.8  42,626  
+  oxide-fanout32-cs32       177       173-181  2.3%   14.0/14.4      5.3     7.8    13.0     36.2    55.9  79,036  
+  oxide-fanout32-cs16       183       165-199  9.3%   12.7/13.0      5.1     8.5    14.9     33.0    70.2 100,569  
+
+threads-zipf-v16k-1  (99:1 headline, 16,384 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               229       221-240  4.1%     3.4/3.4      4.1     7.1    10.2     19.8    35.4   2,566  
+  oxide-cache-cs128         230       207-235  6.6%     2.7/2.8      4.1     6.7    12.5     22.2    36.8   3,077  UNSTABLE
+  oxide-cache-cs64          211       200-221  4.9%     2.4/2.5      4.6     7.3    10.0     24.9    42.4   2,813  
+  oxide-fanout8             233       223-237  3.2%   13.5/13.6      3.8     6.5    11.2     26.0    45.4   1,229  
+  oxide-fanout8-cs64        223       222-223  0.3%     5.8/5.8      4.1     7.1    11.3     30.1    48.5   1,018  
+  oxide-fanout8-cs32        215       214-218  1.0%     4.5/4.6      4.4     6.8    11.8     29.4    44.6   1,182  
+  oxide-fanout8-cs16        212       202-213  2.9%     4.1/4.2      4.5     6.9     9.0     30.9    50.7   1,151  
+  oxide-fanout32-cs64       226       211-229  4.2%   17.9/17.9      4.0     7.1    15.3     30.8    48.3     100  
+  oxide-fanout32-cs32       212       209-214  1.2%   12.8/12.9      4.2     7.1    10.1     33.1    50.1     123  
+  oxide-fanout32-cs16       218       210-225  3.3%   11.4/11.4      4.2     6.8    10.5     31.3    46.9    81.4  
+
+threads-zipf-v16k-8  (99:1 headline, 16,384 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               220       217-235  4.3%     4.4/4.8      4.0     7.1   6,275     20.7    45.8 109,216  TAIL-GET
+  oxide-cache-cs128         222       206-230  5.4%     3.8/4.1      4.0     6.5  15,032     22.7    61.8  59,273  TAIL-GET
+  oxide-cache-cs64          207       202-218  3.8%     3.5/3.8      4.5     7.3    11.9     25.5    61.7  73,554  
+  oxide-fanout8             224       213-227  3.3%   14.6/14.9      3.9     7.2    26.8     27.5    63.7  82,175  
+  oxide-fanout8-cs64        219       209-231  5.0%     6.8/7.1      3.9     7.0    17.6     29.2    81.3  65,353  
+  oxide-fanout8-cs32        215       213-224  2.8%     5.5/5.9      4.2     6.9    13.9     29.0    74.6  90,169  
+  oxide-fanout8-cs16        212       201-215  3.6%     5.2/5.5      4.3     7.2    23.2     31.8    73.9  66,021  
+  oxide-fanout32-cs64       226       222-227  1.3%   19.2/19.6      3.8     6.8    13.2     31.5    63.1  57,769  
+  oxide-fanout32-cs32       216       212-222  2.4%   14.1/14.4      3.9     7.5    16.8     33.8    67.5  69,044  
+  oxide-fanout32-cs16       219       210-235  5.6%   12.6/12.9      4.0     6.5     9.8     30.1    50.2 103,552  
+
+threads-uniform-90to10-v16k-8  (90:10 stress case, write-heavy, 16,384 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               101        99-102  1.3%     4.4/4.8      5.7     8.3    14.5     24.4    73.5  68,438  
+  oxide-cache-cs128         103        97-110  6.5%     3.7/4.1      5.4     8.6    19.2     24.0    58.6  48,745  
+  oxide-cache-cs64          101        94-107  6.8%     3.4/3.8      5.6     9.0    13.3     24.3    73.9 106,373  
+  oxide-fanout8             120       116-124  3.4%   14.6/14.9      5.2     8.4    18.2     21.8    64.3  98,462  
+  oxide-fanout8-cs64        116       113-120  3.1%     6.9/7.2      5.7     8.6    16.5     23.2    53.4  33,444  
+  oxide-fanout8-cs32        119       113-121  3.4%     5.5/5.9      5.4     8.5  22,649     23.9    48.0  38,755  TAIL-GET
+  oxide-fanout8-cs16        108       108-116  4.0%     5.0/5.4      5.8     8.7  22,558     25.8    63.4  64,590  TAIL-GET
+  oxide-fanout32-cs64       130       112-130  8.5%   19.1/19.5      5.4     9.2  10,077     26.0    53.0  61,355  UNSTABLE TAIL-GET
+  oxide-fanout32-cs32       119       110-120  4.4%   13.9/14.2      5.9     9.9    17.1     27.3    63.9  71,794  
+  oxide-fanout32-cs16       126       107-128  9.6%   12.5/12.9      5.5     8.0    15.2     26.6    74.5  41,999  UNSTABLE
+
+threads-zipf-90to10-v16k-8  (90:10 stress case, write-heavy, 16,384 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache               134       118-138  8.2%     4.4/4.7      4.2     7.2  15,023     19.2    62.2  63,540  TAIL-GET
+  oxide-cache-cs128         123       122-134  5.4%     3.8/4.1      4.5     7.4  14,142     19.9    58.1  50,664  TAIL-GET
+  oxide-cache-cs64          122       114-129  6.3%     3.4/3.7      5.1     9.0  21,683     21.2    64.8  86,395  TAIL-GET
+  oxide-fanout8             153       146-154  2.9%   14.6/14.9      4.0     7.3  14,192     19.4    51.0  45,082  TAIL-GET
+  oxide-fanout8-cs64        150       138-152  5.4%     6.7/7.1      4.2     8.0    11.9     19.6    52.5  89,745  
+  oxide-fanout8-cs32        144       140-151  3.8%     5.5/5.8      4.4     7.0    17.2     20.9    39.2  67,578  
+  oxide-fanout8-cs16        132       132-144  5.4%     5.2/5.5      5.0     9.1    15.9     23.0    47.7  48,753  
+  oxide-fanout32-cs64       146       140-146  2.3%   19.1/19.5      4.3     8.4    11.4     23.8    50.4  51,094  
+  oxide-fanout32-cs32       142       133-149  5.6%   14.0/14.3      4.4     8.8    13.8     24.0    56.0  47,472  
+  oxide-fanout32-cs16       149       136-155  6.5%   12.6/12.9      4.2     7.2     9.0     22.2    49.4  65,731  
+
+threads-uniform-v64k-1  (99:1 headline, 65,472 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache                77         74-82  5.2%     3.5/3.5     12.4    16.8    18.6     37.1    69.2   3,928  TAIL-SET
+  oxide-cache-cs128          77         71-77  4.2%     2.8/2.8     12.5    16.5    25.2     39.8    84.5   4,187  TAIL-SET
+  oxide-cache-cs64           72         69-78  6.0%     2.5/2.6     13.4    17.2    30.4     46.3    81.0   4,156  TAIL-SET
+  oxide-fanout8              76         75-79  3.1%   13.7/13.8     12.5    16.5    18.8     44.4    76.5     157  
+  oxide-fanout8-cs64         73         71-77  4.5%     6.0/6.0     13.3    17.8    36.7     48.2    87.8    97.7  
+  oxide-fanout8-cs32         72         71-75  3.3%     4.7/4.7     13.3    17.7    32.7     52.4     109     164  
+  oxide-fanout8-cs16         71         70-77  5.2%     4.3/4.4     13.4    18.4    21.5     59.5    89.6     117  
+  oxide-fanout32-cs64        72         65-74  6.8%   17.7/17.7     13.2    17.9    20.7     52.6    75.8    94.8  
+  oxide-fanout32-cs32        71         71-73  1.4%   13.0/13.0     13.5    18.9    26.4     54.5    86.4     100  
+  oxide-fanout32-cs16        75         71-79  5.4%   11.5/11.5     12.8    16.7    34.6     54.0    74.0    96.0  
+
+threads-uniform-v64k-8  (99:1 headline, 65,472 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache                75         70-78  5.9%     4.3/4.7     12.7    17.5  11,445     40.3     105  96,462  
+  oxide-cache-cs128          75         70-79  6.1%     3.7/4.1     12.6    17.2  37,557     40.9     109 120,188  
+  oxide-cache-cs64           70         70-76  4.5%     3.4/3.8     13.5    18.0  65,115     48.7     138  82,658  
+  oxide-fanout8              75         63-78 11.0%   14.7/15.1     12.9    16.6    19.7     50.2    95.7  93,941  
+  oxide-fanout8-cs64         73         69-78  6.0%     7.1/7.4     13.3    17.8  52,582     53.2   7,582 101,997  
+  oxide-fanout8-cs32         70         66-70  3.4%     6.0/6.4     13.7    19.5  30,048     53.7   2,681 107,420  
+  oxide-fanout8-cs16         70         66-74  5.2%     5.5/5.9     13.8    19.0  30,628     61.3    98.4 121,572  
+  oxide-fanout32-cs64        73         71-75  3.1%   19.5/19.8     13.0    17.7  36,971     53.1    89.6 141,582  
+  oxide-fanout32-cs32        71         70-74  2.5%   14.3/14.7     13.4    18.8  37,135     53.5     165 121,791  
+  oxide-fanout32-cs16        74         69-80  7.9%   13.0/13.3     13.0    17.5  27,394     53.6     171 142,689  
+
+threads-zipf-v64k-1  (99:1 headline, 65,472 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache                83         79-87  4.3%     3.5/3.6     11.3    16.8    28.3     37.2    59.6   3,024  TAIL-SET
+  oxide-cache-cs128          83         79-87  5.2%     2.9/2.9     11.3    17.4    29.6     35.2    64.6   3,076  TAIL-SET
+  oxide-cache-cs64           79         78-85  4.7%     2.6/2.6     12.2    17.0    21.8     43.8    73.1   3,250  TAIL-SET
+  oxide-fanout8              81         81-85  2.9%   13.2/13.2     11.8    16.0    19.8     43.0    65.7    77.5  
+  oxide-fanout8-cs64         83         79-85  4.0%     6.1/6.1     11.2    17.1    20.0     44.2    65.6    89.6  
+  oxide-fanout8-cs32         82         78-86  4.7%     4.9/4.9     11.4    16.5    21.6     46.5    69.5     114  
+  oxide-fanout8-cs16         78         76-84  5.1%     4.4/4.5     12.2    17.8    36.5     56.7    90.1     158  
+  oxide-fanout32-cs64        78         74-82  5.2%   17.8/17.8     12.0    17.6    23.0     46.8    73.5     108  
+  oxide-fanout32-cs32        78         77-86  6.1%   13.2/13.3     12.0    18.3    31.2     51.2    74.8     103  
+  oxide-fanout32-cs16        81         78-84  4.1%   11.7/11.7     11.3    17.0    23.1     52.6    78.8    95.7  
+
+threads-zipf-v64k-8  (99:1 headline, 65,472 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache                75         74-82  6.1%     4.7/5.0     12.5    17.9  29,983     41.8   4,511  85,452  
+  oxide-cache-cs128          82         76-87  6.5%     3.8/4.2     11.3    16.6  60,074     35.8    77.5  91,400  
+  oxide-cache-cs64           76         76-82  4.6%     3.6/4.0     12.5    17.5  24,123     44.9     101 151,732  
+  oxide-fanout8              83         79-83  2.7%   15.0/15.4     11.2    16.4  30,029     42.1    71.5  77,460  
+  oxide-fanout8-cs64         82         78-87  5.5%     7.2/7.5     11.4    17.2  22,369     43.6    71.3 118,691  
+  oxide-fanout8-cs32         81         78-86  5.1%     5.9/6.3     11.4    17.3    35.5     44.5    83.2  97,630  
+  oxide-fanout8-cs16         77         77-79  1.1%     5.6/6.0     12.2    18.0  45,944     57.4    86.0  93,625  
+  oxide-fanout32-cs64        78         77-79  1.3%   19.6/20.0     11.9    18.1  55,426     49.6    79.6  65,927  
+  oxide-fanout32-cs32        76         75-82  5.0%   14.5/14.8     12.1    19.0  35,314     53.2     101  83,724  
+  oxide-fanout32-cs16        77         72-80  5.6%   13.1/13.5     11.8    18.5  37,567     59.7     287 112,489  
+
+threads-uniform-90to10-v64k-8  (90:10 stress case, write-heavy, 65,472 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache                57         53-58  5.1%     4.3/4.6     13.0    17.7  37,590     35.2    74.5  84,855  
+  oxide-cache-cs128          57         55-58  3.3%     3.6/4.0     13.1    16.9  56,433     35.2  20,373 102,821  
+  oxide-cache-cs64           54         54-58  4.6%     3.3/3.7     13.9    18.0  57,654     37.7     100 105,707  
+  oxide-fanout8              60         58-62  2.9%   14.6/15.0     13.0    17.8  69,113     36.2    76.6  52,989  
+  oxide-fanout8-cs64         58         57-62  4.6%     7.0/7.3     13.7    18.4  37,552     37.3    80.1  97,049  
+  oxide-fanout8-cs32         60         57-60  2.8%     5.9/6.2     13.3    17.8  83,587     35.0    68.0  83,382  
+  oxide-fanout8-cs16         54         54-57  3.9%     5.5/5.9     14.2    19.2  53,271     44.6    98.9  65,206  
+  oxide-fanout32-cs64        57         49-57  9.0%   19.6/20.0     14.3    22.0  37,585     44.7  14,730  85,129  
+  oxide-fanout32-cs32        58         48-63 13.1%   14.3/14.6     14.0    21.3    36.1     43.3     147 124,996  UNSTABLE
+  oxide-fanout32-cs16        58         47-64 15.1%   12.9/13.2     13.6    18.9 126,803     48.3     226  90,149  UNSTABLE
+
+threads-zipf-90to10-v64k-8  (90:10 stress case, write-heavy, 65,472 B values)
+  variant                kops/s       min-max    cv         MiB  get p50     p99   p99.9  set p50     p99   p99.9  flags
+  oxide-cache                61         61-65  3.2%     4.5/4.9     11.8    17.2  57,718     32.2    91.2  81,908  
+  oxide-cache-cs128          65         59-68  7.2%     3.8/4.1     11.8    16.5   7,524     31.5    79.6  90,409  
+  oxide-cache-cs64           61         59-63  3.1%     3.6/4.0     12.5    17.2  52,614     33.8    76.5  70,036  
+  oxide-fanout8              66         64-68  3.3%   15.0/15.4     11.9    18.5    34.0     33.9    65.6  77,605  
+  oxide-fanout8-cs64         63         62-69  6.1%     7.1/7.5     12.4    18.4    24.6     35.7    91.4  99,443  
+  oxide-fanout8-cs32         65         62-68  4.3%     6.1/6.4     12.0    19.1    63.0     34.3   2,084  64,708  
+  oxide-fanout8-cs16         63         60-63  2.8%     5.7/6.1     12.0    17.9  39,892     40.7   1,568 100,334  
+  oxide-fanout32-cs64        66         63-68  4.0%   19.7/20.0     11.8    17.9  15,056     36.8   1,554 110,483  
+  oxide-fanout32-cs32        63         61-68  5.7%   14.4/14.8     12.3    19.5  44,596     39.7     102  77,371  
+  oxide-fanout32-cs16        61         57-63  5.3%   13.0/13.4     12.2    19.0 103,611     46.2    76.6  90,143  TAIL-GET
+
+Wrote /Users/michaelkennedy/dco-bench/src/bench/results/fanout-3.14.10-studio.json (24.5 min)
+exit=0 seconds=1473

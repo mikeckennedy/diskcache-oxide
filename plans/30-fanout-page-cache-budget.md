@@ -15,6 +15,29 @@ Status: proposed (2026-11-16), not started. Reviewed once by the-rust-architect 
 
 Each shard holds about an eighth of the data, so it needs about an eighth of the page cache. Splitting the default keeps most of the `FanoutCache` speedup (web gardens, free-threaded threads, write-heavy mixes) at about a plain `Cache`'s memory, so choosing a `FanoutCache` stops being a memory decision.
 
+## Measured on the studio (2026-11-17): the data says 64 pages, not 32
+
+`bench/fanout.py --group all` on the Mac Studio (M5 Max, 18 cores), the released 0.3.5 PGO wheels in venvs of their own, not under nice, `ulimit -n 10240`, 3 interleaved rounds per variant; results in `bench/results/fanout-3.14.10-studio.json`/`.txt` and `fanout-3.14.10t-studio.json`/`.txt`. A first attempt died in the stock-diskcache variants on the ssh shell's 256-fd limit and was rerun.
+
+`FanoutCache(shards=8)` at the default (256 pages per connection) against 64, 32 and 16 pages, kops/s and RSS growth per process:
+
+| Case | default | 64 pages | 32 pages | 16 pages | plain `Cache` |
+|---|---|---|---|---|---|
+| 3.14t, 8 threads, 99:1, zipf | 884k, 20.7 MiB | 846k (−4%), 16.5 | **685k (−23%)**, 14.1 | 578k (−35%), 13.5 | 524k, 13.7 |
+| 3.14t, 8 threads, 99:1, uniform | 621k, 25.1 | 625k, 16.9 | 570k (−8%), 14.0 | 502k (−19%), 13.3 | 357k, 15.7 |
+| 3.14t, 1 thread, 99:1, zipf | 578k, 15.9 | 515k (−11%), 8.2 | 468k (−19%), 6.8 | 452k, 5.5 | 534k, 4.6 |
+| 3.14, 1 thread, 99:1, zipf | 510k, 13.7 | 489k (−4%), 5.9 | 477k (−6%), 4.7 | | 491k, 3.5 |
+| 3.14t, 8 processes, 99:1, zipf | 1,254k, 7.5 | 1,257k, 7.4 | 1,257k, 6.7 | | 261k, 4.6 |
+| 3.14t, 1 process, 99:1, uniform | 454k, 15.5 | 435k, 7.8 | 415k, 6.5 | | 419k, 5.0 |
+
+- **32 pages per connection costs real speed with hot keys on free-threaded Python** (−23% at 8 threads, below a plain `Cache` at one thread). 8 × 32 pages isn't one 256-page cache: each shard's B-tree root and interior pages, and its four indexes', take a fixed share of a small page cache.
+- **Large values (64 KiB, inline):** throughput barely moves with the page cache, but 32 and 16 pages are flagged UNSTABLE (cv 7-10%) in four of the six 3.14t 8-thread cases, and the median 64 KiB `set` at one thread on 3.14 goes 44 µs (default), 48 (64 pages), 52 (32), 60 (16). 64 pages is stable (cv 0.4-5%) and as fast as the default.
+- **Web gardens** don't care: every variant runs 1.09-1.26M ops/s at 8 processes. There the page cache only sets memory.
+- **A plain `Cache` should keep 256 pages.** 128 and 64 pages cost it 10-18% at one thread (3.14t uniform 419k → 365k/345k; 3.14 zipf 491k → 472k/418k) to save about 1 MiB.
+- **A `FanoutCache` keeps a full-size `set` tail far below a plain `Cache`'s:** at one thread, a 64 KiB `set`'s p99.9 is 3-4.5 ms on a plain `Cache` (flagged TAIL-SET) and 0.08-0.16 ms on every `FanoutCache` variant; a shard's smaller database and WAL checkpoint faster.
+
+**Proposal for Michael (not yet decided):** make the floor, and so the 8-shard default, **64 pages (256 KiB) per connection**: `max(64, 256 / shards)`, so 1 shard 256, 2 shards 128, 4 shards and up 64. Against today's default that halves a one-process `FanoutCache`'s growth (15.5 → 7.8 MiB on 3.14t, 13.7 → 6.0 on 3.14) for 0-5% speed in most cases (the worst, 3.14t one thread with hot keys, −11%), and stays stable with 64 KiB values. A plain `Cache` stays at 256. If Michael agrees, decisions 1, 2 and 6 and the test shard counts change to match (the split and the floor meet at 4 shards, so the tests use 1, 2, 3 and 8 shards).
+
 ## Decisions
 
 1. **The default only.** When `sqlite_cache_size` isn't passed, a `FanoutCache` gives each connection `max(MIN_SHARD_CACHE_PAGES, DEFAULT_CACHE_PAGES / shards)` pages, using the shard count the cache actually opens with (the stored count, which can differ from `shards=` since 0.3.5's mismatch warning). 8 shards get 32 pages (128 KiB); 1 shard keeps 256. A passed `sqlite_cache_size` keeps its meaning, pages per connection, on every shard, so nobody's explicit setting changes.
