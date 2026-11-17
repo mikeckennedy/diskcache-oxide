@@ -16,7 +16,7 @@ from __future__ import annotations
 import functools
 import inspect
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, Optional
 
 from diskcache_oxide._types import Key
 
@@ -70,9 +70,9 @@ def _culprit(args: tuple[Any, ...], kwargs: dict[str, Any], ignore: frozenset[in
 
 def memoize(
     cache: Any,
-    name: str | None = None,
+    name: Optional[str] = None,
     typed: bool = False,
-    expire: float | None = None,
+    expire: Optional[float] = None,
     tag: Key = None,
     ignore: Iterable[int | str] = (),
     retry: bool = True,

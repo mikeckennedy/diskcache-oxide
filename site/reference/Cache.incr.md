@@ -29,7 +29,7 @@ The key.
 `delta: float = …`  
 The amount to add (default 1).
 
-`default: float | None = …`  
+`default: Optional[float] = …`  
 The starting value for a missing or expired key (default 0). Pass None to raise `KeyError` instead.
 
 `retry: bool = ``False`  

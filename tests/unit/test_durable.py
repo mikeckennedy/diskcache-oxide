@@ -16,7 +16,7 @@ import threading
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 from diskcache_oxide import (
@@ -45,7 +45,7 @@ NOT_AS_ROOT = pytest.mark.skipif(hasattr(os, 'geteuid') and os.geteuid() == 0, r
 class Hooked:
     """Unpickling it calls `Hooked.hook`, if one is set."""
 
-    hook: Callable[[], None] | None = None
+    hook: Optional[Callable[[], None]] = None
 
     def __init__(self, payload: str = 'x') -> None:
         self.payload = payload

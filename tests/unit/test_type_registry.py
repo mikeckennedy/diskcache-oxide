@@ -18,7 +18,7 @@ import time
 import weakref
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Optional
 
 import diskcache_oxide
 import pytest
@@ -68,7 +68,7 @@ def point_decode(v: Any) -> Point:
 class Episode:
     id: int
     title: str = 'untitled'
-    published: dt.datetime | None = None
+    published: Optional[dt.datetime] = None
     tags: list[str] = dataclasses.field(default_factory=list)
     slug: str = dataclasses.field(init=False, default='')
 

@@ -77,7 +77,7 @@ import traceback
 import warnings
 import zlib
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Optional, cast
 
 import diskcache_oxide
 from diskcache_oxide import Cache, FanoutCache, Timeout, _core
@@ -241,7 +241,7 @@ def soak_tag(rng: random.Random) -> Any:
     return None if rng.random() < 0.33 else rng.choice(SOAK_TAGS)
 
 
-def make_value(key: Any, rng: random.Random, expire_at: float | None, stored_tag: Any = None) -> Any:
+def make_value(key: Any, rng: random.Random, expire_at: Optional[float], stored_tag: Any = None) -> Any:
     tag = key_tag(key)
     roll = rng.random()
     if roll < 0.90:
@@ -262,7 +262,7 @@ def make_value(key: Any, rng: random.Random, expire_at: float | None, stored_tag
 
 def check_value(
     key: Any, value: Any, now: float, stored_tag: Any = UNCHECKED, stored_expire: Any = UNCHECKED
-) -> str | None:
+) -> Optional[str]:
     """None if `value` is intact and current (and, if `stored_tag` is given, was stored with that
     tag), else what's wrong with it.
 
@@ -755,6 +755,7 @@ class Worker:
                 'c': dict(self.c),
                 'beats': dict(self.beats),
                 'gate': _core._gate_stats(),
+                'maint_bg': self.background_maintenance(),
                 'fork_max_s': self.fork_max_s,
                 'child_max_s': self.child_max_s,
                 **self.extra_stats(),
@@ -763,6 +764,27 @@ class Worker:
 
     def extra_stats(self) -> dict[str, Any]:
         return {}
+
+    def background_maintenance(self) -> dict[str, Any]:
+        """Background maintenance's counts on every cache this worker holds (plan 28), summed: the
+        chaos and ledger caches, and a role's own (the durable, behind and stuck caches on the lanes,
+        where a long-held write lock makes a starved streak likeliest). A `maintenance_stats()` that
+        raises is counted in `errors`, which the orchestrator reports."""
+        total: dict[str, Any] = {'turns': 0, 'removed': 0, 'failures': 0, 'errors': 0, 'last_error': None}
+        seen: set[int] = set()
+        for cache in list(vars(self).values()):
+            if not hasattr(cache, 'maintenance_stats') or id(cache) in seen:
+                continue
+            seen.add(id(cache))
+            try:
+                stats = cache.maintenance_stats()
+            except Exception:
+                total['errors'] += 1
+                continue
+            for key in ('turns', 'removed', 'failures'):
+                total[key] += stats[key]
+            total['last_error'] = total['last_error'] or stats['last_error']
+        return total
 
     def child_work(self) -> None:
         """In a forked child: calls on the handles this role's threads are busy on at the fork, as
@@ -1177,7 +1199,7 @@ class LaneWorker(Worker):
         self.count('durable_calls')
         return result
 
-    def truth_version(self, key: str) -> int | str | None:
+    def truth_version(self, key: str) -> Optional[int | str]:
         try:
             return held_version(key, self.truth.get(key))
         except Timeout:
@@ -1372,6 +1394,10 @@ class AutoWorker(Worker):
             size_limit=2**34,
             wal_size_limit=AUTO_WAL_LIMIT,
             wal_checkpoint='auto',
+            # This group measures the forced checkpoints writes make; background maintenance's own
+            # checkpoints (plan 28) would take that work from them. Store 0 keeps it on, so the soak
+            # still sees the two kinds meet (a background one must never stop a forced one).
+            maintenance_interval=None if store == 0 else 0,
         )
         self.wal_path = run_dir / f'auto-{store}' / 'diskcache-oxide.sqlite-wal'
         self.peak_wal = 0
@@ -1486,7 +1512,7 @@ def open_fanout(run_dir: Path) -> FanoutCache:
     return FanoutCache(run_dir / 'fanout', timeout=30.0, shards=FANOUT_SHARDS, size_limit=FANOUT_SIZE_LIMIT)
 
 
-def db_fds_inside(root: Path) -> list[str] | None:
+def db_fds_inside(root: Path) -> Optional[list[str]]:
     """The paths of this process's fds on a database, WAL or -shm file under `root`, one per fd, or
     None where that can't be read. Value files are left out: a read of a spilled value holds one for
     a moment."""
@@ -1858,7 +1884,7 @@ def wal_stats(cache: Cache) -> dict[str, int]:
     return dict(get()) if get else {}
 
 
-def summarize(samples: list[int]) -> dict[str, float] | None:
+def summarize(samples: list[int]) -> Optional[dict[str, float]]:
     if not samples:
         return None
     ordered = sorted(samples)
@@ -1904,6 +1930,15 @@ def maint(run_dir: Path, op: str) -> int:
 
 def main() -> int:
     from tests.proctitle import set_title
+
+    # A short background maintenance interval for every cache this worker opens without its own, set
+    # by soak --maintenance-interval (plan 28); the soak's tooling, not the library, reads it.
+    # 'off' (soak --no-maintenance) turns it off, the A/B control.
+    raw = os.environ.get('DCO_MAINTENANCE_INTERVAL', '')
+    if raw == 'off':
+        _core._set_default_maintenance_interval(0)
+    elif interval := float(raw or 0):
+        _core._set_default_maintenance_interval(interval)
 
     mode, run_dir = sys.argv[1], Path(sys.argv[2])
     if mode == 'maint':

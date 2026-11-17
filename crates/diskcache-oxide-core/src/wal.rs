@@ -124,7 +124,7 @@ pub struct WalStats {
 /// A store's checkpoint bookkeeping. Times are milliseconds since `created`, on the monotonic clock,
 /// which carries over `fork()` unchanged, so inherited values stay meaningful in a child. Writers
 /// reach it holding the in-process write lock, so they're serialized and plain loads and stores
-/// are enough.
+/// are enough. Background maintenance's checkpoint (plan 28) records nothing here.
 #[derive(Debug)]
 pub(crate) struct WalState {
     created: Instant,

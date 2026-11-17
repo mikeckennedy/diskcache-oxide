@@ -49,6 +49,7 @@ fn a_child_forked_under_another_threads_claim_can_use_the_cache() {
         auto_checkpoint: false,
         role: Role::Plain,
         default_size_limit: DEFAULT_SIZE_LIMIT,
+        maintenance: diskcache_oxide_core::background::Maintenance::OFF,
     })
     .unwrap();
     store.write(Duration::from_secs(5), |_, _| Ok(())).unwrap();

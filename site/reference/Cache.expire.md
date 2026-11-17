@@ -15,13 +15,13 @@ Cache.expire(
 ```
 
 
-Works in chunks and lets other writers in between them.
+Works in chunks and lets other writers in between them. Background maintenance already does this every `maintenance_interval`, so call it only when you want it done now.
 
 
 ## Parameters
 
 
-`timeout: float | None = None`  
+`timeout: Optional[float] = None`  
 Seconds each chunk may wait for the write lock (another thread's or another process's), for this call only (default: the cache's [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout)). It bounds each wait, not the whole call.
 
 `retry: bool = ``False`  
@@ -38,5 +38,5 @@ How many entries were removed.
 ## Examples
 
 ``` python
-removed = cache.expire(timeout=10.0)   # from a scheduled job, with its own timeout
+removed = cache.expire(timeout=10.0)   # when it has to be done now, with its own timeout
 ```

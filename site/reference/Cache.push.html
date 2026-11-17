@@ -1748,6 +1748,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/Caches.get.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caches.get</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/Caches.fanout.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Caches.fanout</span></a>
   </div>
@@ -2084,7 +2090,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L902-L943" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L917-L958" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Cache</span><span class="op">.</span><span class="sig-name">push</span>(</span>
@@ -2110,7 +2116,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p><code>'back'</code> (the default) or <code>'front'</code>.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">expire</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">float | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">expire</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[float]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>Seconds until the item expires, or None for never.</p>
 </dd>
@@ -2129,7 +2135,7 @@ As for <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-
 <h2 class="doc-returns">Returns</h2>
 <div class="doc-definition-items">
 <dl>
-<dt><code> <span class="doc-parameter-annotation">int | None | str | None | int | str | None</span></code></dt>
+<dt><code> <span class="doc-parameter-annotation">Optional[int] | Optional[str] | Optional[int | str]</span></code></dt>
 <dd>
 The item’s key. With <code>durable=True</code>, None if the write failed (nothing was stored).
 </dd>

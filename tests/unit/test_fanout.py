@@ -21,7 +21,7 @@ import traceback
 from collections.abc import Callable, Generator, Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 import xxhash
@@ -337,10 +337,13 @@ print(before, fds())
 FD_THREADS = 64
 
 
+# Under --maintenance-interval a close can land while a turn is mid-checkpoint on a shard, D-018's
+# documented exception (that turn's connection stays open a moment), which "none after close" counts.
+@pytest.mark.races_maintenance
 @unix_only('counts file descriptors; Windows has handles')
 @pytest.mark.parametrize(('shards', 'max_connections'), [(8, None), (4, 16), (16, None), (8, 24)])
 def test_many_threads_stay_within_the_fd_budget_and_close_leaves_none(
-    tmp_path: Path, shards: int, max_connections: int | None
+    tmp_path: Path, shards: int, max_connections: Optional[int]
 ) -> None:
     """D-017's budget, once per shard (D-037): each pooled connection holds its shard's database and
     WAL, and each shard adds its `-shm` and its pin, so the root never holds more than
@@ -985,7 +988,7 @@ def test_a_bad_value_on_each_shard_is_reported_once_per_shard(tmp_path: Path) ->
 RACERS = 16
 
 
-def _open_root(root: str, shards: int | None, barrier: Any, results: Any) -> None:
+def _open_root(root: str, shards: Optional[int], barrier: Any, results: Any) -> None:
     try:
         barrier.wait(30)
         with FanoutCache(root, shards=shards) as cache:

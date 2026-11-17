@@ -23,6 +23,7 @@ fn options(dir: &Path, role: Role) -> OpenOptions {
         auto_checkpoint: false,
         role,
         default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
+        maintenance: crate::background::Maintenance::OFF,
     }
 }
 

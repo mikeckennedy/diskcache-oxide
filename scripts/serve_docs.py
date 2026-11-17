@@ -17,7 +17,7 @@ import http.server
 import io
 import socketserver
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Optional
 
 PREFIX = '/docs/diskcache-oxide'
 PORT = 8097
@@ -31,7 +31,7 @@ class H(http.server.SimpleHTTPRequestHandler):
             path = c[len(PREFIX) :] or '/'
         return super().translate_path(path)
 
-    def send_head(self) -> io.BytesIO | BinaryIO | None:
+    def send_head(self) -> Optional[io.BytesIO | BinaryIO]:
         if self.path in ('/', PREFIX):
             self.send_response(302)
             self.send_header('Location', PREFIX + '/')

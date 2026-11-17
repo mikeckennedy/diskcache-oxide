@@ -144,6 +144,21 @@ def test_cull_evicts_each_shard_under_its_share(make_fanout: Callable[..., Any],
     assert len(cache) <= shards * ((1 << 20) // len(value)), 'every shard is under its 1 MiB'
 
 
+def test_iter_never_yields_a_key_restored_mid_walk_twice(make_fanout: Callable[..., Any], cache_dir: Path) -> None:
+    # The soak's case (8.5 h in): shared keys deleted and stored again while another process walks.
+    cache = make_fanout(cache_dir, shards=4)
+    for key in KEYS:
+        cache.set(key, 1)
+    seen = []
+    for i, key in enumerate(cache):
+        seen.append(key)
+        if i == len(KEYS) // 2:
+            for again in KEYS:  # every key, wherever the walk is in its shard
+                cache.delete(again)
+                cache.set(again, 2)
+    assert len(seen) == len(set(seen)), [k for k in seen if seen.count(k) > 1]
+
+
 def test_iter_yields_every_key_once(make_fanout: Callable[..., Any], cache_dir: Path) -> None:
     # Only as a set: each backend walks its shards in turn, and their hashes put keys in different
     # shards (stock has no iterkeys).

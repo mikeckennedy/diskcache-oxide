@@ -43,7 +43,7 @@ On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call get
 ## Returns
 
 
-`Any | tuple[Any, float | None] | tuple[Any, Key] | tuple[Any, float | None, Key]`  
+`Any | tuple[Any, Optional[float]] | tuple[Any, Key] | tuple[Any, Optional[float], Key]`  
 The removed value, or `default`; with `expire_time` or `tag`, a tuple as [get](Cache.get.md#diskcache_oxide.Cache.get) returns.
 
 With `durable=True`, a [pop](Cache.pop.md#diskcache_oxide.Cache.pop) whose delete fails returns

@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 import pytest
 from diskcache_oxide import Cache
@@ -142,7 +143,7 @@ def run(python: str, script: str, *args: str) -> dict:
     return json.loads(proc.stdout)
 
 
-def fingerprint(directory: Path, *, exclude: str | None = None) -> dict[str, str]:
+def fingerprint(directory: Path, *, exclude: Optional[str] = None) -> dict[str, str]:
     """Every file in the directory, by content, leaving out the top-level entry `exclude` (the
     versioned subdirectory when the root alone is compared)."""
     return {

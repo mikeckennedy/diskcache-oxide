@@ -37,7 +37,7 @@ Why it's built this way:
 
 - **[add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) then [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr).** [add()](../reference/Cache.add.md#diskcache_oxide.Cache.add) creates the counter with an expiry the first time and does nothing after that. [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) keeps a key's existing expiry, so the counter expires on schedule however many times it's incremented. Calling [incr()](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) alone would create a counter that never expires.
 - **The window number is in the key.** A new window means a new key, so no reset is needed, and there's no race where one request resets the counter while another increments it.
-- **The expiry is two windows long,** so a counter can't expire while its window is still current. Expired counters are cleaned up by [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) or eviction like any other entry.
+- **The expiry is two windows long,** so a counter can't expire while its window is still current. Expired counters are removed like any other entry, by background maintenance, with nothing to schedule.
 
 In a real app, use `time.time()` and leave out `clock=`; the fake clock is only here so the example can jump to the next minute.
 

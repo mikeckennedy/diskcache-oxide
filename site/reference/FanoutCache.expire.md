@@ -18,7 +18,7 @@ FanoutCache.expire(
 ## Parameters
 
 
-`timeout: float | None = None`  
+`timeout: Optional[float] = None`  
 Seconds the whole call may spend waiting for write locks (another thread's or another process's) or a pending fork, across every shard, for this call only (default: the cache's [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout)). It bounds waiting, not work: a chunk already running finishes, and once it's spent, each remaining chunk still gets one try with no wait, so shards no one else is writing are all done even at a short timeout.
 
 `retry: bool = ``False`  

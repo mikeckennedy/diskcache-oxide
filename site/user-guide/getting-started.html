@@ -648,6 +648,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/building-from-source.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Building from source</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/divergences.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
@@ -729,7 +735,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> pip install diskcache-oxide</span></code></pre></div>
 <ul>
 <li><strong>Python:</strong> CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).</li>
-<li><strong>Platforms:</strong> macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. <a href="#windows">Windows</a> below says what differs there.</li>
+<li><strong>Platforms:</strong> macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64; anywhere else pip builds from source, which needs the latest stable Rust toolchain (<a href="../user-guide/building-from-source.html">Building from source</a> walks through it). <a href="#windows">Windows</a> below says what differs there.</li>
 <li><strong>Dependencies:</strong> none at runtime. SQLite is bundled and compiled in, so your system’s SQLite version doesn’t matter (<a href="../reference/sqlite_version.html#diskcache_oxide.sqlite_version" class="gdls-link gdls-code">diskcache_oxide.sqlite_version()</a> reports the one in use).</li>
 <li><strong>Upgrades:</strong> a release that keeps the on-disk format opens your caches as they were, warm. One that changes it (the changelog says so first) opens a new cache in a subdirectory named for its format and logs a warning, so nothing fails at deploy; <a href="../recipes/upgrading.html">Upgrading across a format change</a> covers cleaning up afterwards.</li>
 </ul>
@@ -738,7 +744,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h1>Open a cache</h1>
 <div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'cache'</span>)  <span class="co"># a folder named "cache" in the current directory</span></span></code></pre></div>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'cache'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>, durable<span class="op">=</span><span class="va">True</span>)  <span class="co"># a folder named "cache" in the current directory</span></span></code></pre></div>
+<p>For a cache that holds copies of data you can rebuild, which is what most caches are, turn on <code>durable=True</code> with a short <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>. Then a full disk, an I/O error or a lock that stays busy makes a call a miss, logged, instead of an exception in the middle of a request. Leave it off for state you can’t rebuild, such as sessions, job claims, locks and work queues, where a write that silently didn’t happen is a bug. <a href="#a-cache-that-cant-take-a-request-down">A cache that can’t take a request down</a> covers what it does and what a dropped call costs.</p>
 <p>The directory is required. If it doesn’t exist, diskcache-oxide creates it, readable and writable only by your user (<code>0700</code>). That’s deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.</p>
 <p>So a cron job, an admin script or a container running as a different user can’t open a directory your app created: it gets <code>PermissionError</code> (“Permission denied”). Run everything that shares a cache as the same user. Loosening the directory’s mode yourself doesn’t help, since the folders diskcache-oxide creates inside it for large values are owner-only too.</p>
 <p>Every process that should share the cache opens the same path. Inside one process, opening the same directory twice gives two handles on one shared engine, with one connection pool between them.</p>
@@ -841,6 +848,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>    cache.<span class="bu">set</span>(<span class="st">'key'</span>, <span class="st">'value'</span>)</span>
 <span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a><span class="cf">except</span> Timeout:</span>
 <span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>    ...  <span class="co"># the cache was too busy; carry on without it</span></span></code></pre></div>
+<p>With <a href="#a-cache-that-cant-take-a-request-down"><code>durable=True</code></a>, the <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> returns <code>False</code> instead, so a cache of rebuildable data needs no <code>try</code>.</p>
 <p>Maintenance calls work in chunks, so they take the write lock many times. A request-sized timeout can cut an admin <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> off partway through, so <a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> and <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> each take their own <code>timeout=</code> for that call. It bounds each chunk’s wait for the lock, not the whole call:</p>
 <div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app'</span>, timeout<span class="op">=</span><span class="fl">1.0</span>)  <span class="co"># for requests</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>cache.clear(timeout<span class="op">=</span><span class="fl">10.0</span>)                        <span class="co"># for the admin page</span></span></code></pre></div>

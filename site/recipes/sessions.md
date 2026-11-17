@@ -24,7 +24,7 @@ def start_session(user_id: int, roles: list[str]) -> str:
     sessions.set(f'user-sessions:{user_id}:{sid}', True, expire=ABSOLUTE)
     return sid
 
-def load_session(sid: str) -> dict | None:
+def load_session(sid: str) -> Optional[dict]:
     data, expires_at = sessions.get(f'session:{sid}', expire_time=True)
     if data is None or now[0] - data['started'] > ABSOLUTE:
         return None
@@ -91,5 +91,5 @@ A lost session is a forced logout, so sessions get a cache of their own, configu
 - **Nothing evicted for size.** Eviction removes the least recently stored entries, and a long-lived session is exactly that. Open the session cache with `eviction_policy='none'`, so a session goes only when it expires or ends. Sessions are small (a few hundred bytes each), so 1 GiB holds millions; watch [volume()](../reference/Cache.volume.md#diskcache_oxide.Cache.volume) if you store more per session, since under `'none'` the cache can grow past [size_limit](../reference/Cache.size_limit.md#diskcache_oxide.Cache.size_limit).
 - **Never a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), so not in a registry.** A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) stores nothing and its [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) returns `True`, so a login would "succeed" and the next request would be logged out. A [`Caches`](../user-guide/caches.md) registry hands one out whenever a cache can't open or is disabled, so open the session cache with `Cache(...)` directly, as in the [recommended setup](web-workers.md#the-recommended-setup): `Cache('/var/lib/my-app/state/sessions', timeout=3.0, eviction_policy='none')`.
 - **Not `durable=True`.** A dropped write there means a login that silently didn't happen. Let [set()](../reference/Cache.set.md#diskcache_oxide.Cache.set) raise and show the user an error (a 503 page, say).
-- **Run [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) from a scheduled job**, [claimed by one worker](run-once.md), so ended sessions free their space. Expired sessions are already invisible to [get()](../reference/Cache.get.md#diskcache_oxide.Cache.get); this is housekeeping.
+- **Nothing to schedule for expired sessions.** They're invisible to [get()](../reference/Cache.get.md#diskcache_oxide.Cache.get) the moment they expire, and background maintenance frees their space within its interval (5 minutes by default), with eviction off too.
 - **One machine.** Every worker on the host shares the sessions. Behind a load balancer across several machines, use sticky sessions or a session store every machine can reach.

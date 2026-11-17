@@ -43,7 +43,7 @@ On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call get
 ## Returns
 
 
-`Any | tuple[Any, float | None] | tuple[Any, Key] | tuple[Any, float | None, Key]`  
+`Any | tuple[Any, Optional[float]] | tuple[Any, Key] | tuple[Any, Optional[float], Key]`  
 The value, or `default`. With `expire_time=True`, a `(value, expire_time)` tuple, where
 
 `expire_time` is a Unix timestamp, or None for an entry that never expires (or a miss).

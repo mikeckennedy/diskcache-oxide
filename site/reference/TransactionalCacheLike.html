@@ -1748,6 +1748,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/Caches.get.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caches.get</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/Caches.fanout.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Caches.fanout</span></a>
   </div>
@@ -2089,7 +2095,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L269-L361" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L273-L365" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">TransactionalCacheLike</span>()</span></code></pre></div>
@@ -2171,7 +2177,7 @@ A context manager holding a write transaction for the block, yielding the cache.
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L348-L358" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L352-L362" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>peek(</span>
@@ -2193,7 +2199,7 @@ A context manager holding a write transaction for the block, yielding the cache.
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L360-L361" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L364-L365" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>peekitem(last<span class="op">=</span><span class="va">True</span>, <span class="op">*</span>, expire_time<span class="op">=</span><span class="va">False</span>, tag<span class="op">=</span><span class="va">False</span>, retry<span class="op">=</span><span class="va">False</span>)</span></code></pre></div>
@@ -2207,7 +2213,7 @@ A context manager holding a write transaction for the block, yielding the cache.
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L336-L346" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L340-L350" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>pull(</span>
@@ -2229,12 +2235,12 @@ A context manager holding a write transaction for the block, yielding the cache.
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L324-L334" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L328-L338" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
-<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>push(<span class="va">self</span>, value: Any, prefix: <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, side: Literal[<span class="st">'front'</span>, <span class="st">'back'</span>] <span class="op">=</span> <span class="st">'back'</span>, expire: <span class="bu">float</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, tag: Key <span class="op">=</span> <span class="va">None</span>, retry: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> <span class="bu">int</span> <span class="op">|</span> <span class="va">None</span></span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>push(<span class="va">self</span>, value: Any, prefix: <span class="bu">str</span>, side: Literal[<span class="st">'front'</span>, <span class="st">'back'</span>] <span class="op">=</span> <span class="st">'back'</span>, expire: <span class="bu">float</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, tag: Key <span class="op">=</span> <span class="va">None</span>, retry: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span></span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>push(<span class="va">self</span>, value: Any, prefix: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, side: Literal[<span class="st">'front'</span>, <span class="st">'back'</span>] <span class="op">=</span> <span class="st">'back'</span>, expire: <span class="bu">float</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, tag: Key <span class="op">=</span> <span class="va">None</span>, retry: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> <span class="bu">int</span> <span class="op">|</span> <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span></span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>push(<span class="va">self</span>, value: Any, prefix: <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, side: Literal[<span class="st">'front'</span>, <span class="st">'back'</span>] <span class="op">=</span> <span class="st">'back'</span>, expire: Optional[<span class="bu">float</span>] <span class="op">=</span> <span class="va">None</span>, tag: Key <span class="op">=</span> <span class="va">None</span>, retry: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> Optional[<span class="bu">int</span>]</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>push(<span class="va">self</span>, value: Any, prefix: <span class="bu">str</span>, side: Literal[<span class="st">'front'</span>, <span class="st">'back'</span>] <span class="op">=</span> <span class="st">'back'</span>, expire: Optional[<span class="bu">float</span>] <span class="op">=</span> <span class="va">None</span>, tag: Key <span class="op">=</span> <span class="va">None</span>, retry: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> Optional[<span class="bu">str</span>]</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>push(<span class="va">self</span>, value: Any, prefix: Optional[<span class="bu">str</span>] <span class="op">=</span> <span class="va">None</span>, side: Literal[<span class="st">'front'</span>, <span class="st">'back'</span>] <span class="op">=</span> <span class="st">'back'</span>, expire: Optional[<span class="bu">float</span>] <span class="op">=</span> <span class="va">None</span>, tag: Key <span class="op">=</span> <span class="va">None</span>, retry: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> Optional[<span class="bu">int</span> <span class="op">|</span> <span class="bu">str</span>]</span></code></pre></div>
 </div>
 </section>
 <hr style="border: none; border-top: 2px dotted #b0b4ba; margin: 1.5rem 0 1rem 0;">
@@ -2245,7 +2251,7 @@ A context manager holding a write transaction for the block, yielding the cache.
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L288-L289" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/protocol.py#L292-L293" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>transact(retry<span class="op">=</span><span class="va">False</span>)</span></code></pre></div>

@@ -1,0 +1,164 @@
+---
+title: "One typed module for your caches"
+description: "Wrap a Caches registry in a module with one function per cache, so the app gets autocomplete and type checking instead of string lookups."
+---
+
+An app starts with one cache and a line like `caches['pages']`. A year later there are five caches, the names are strings scattered over forty files, one handler says `caches['page']` and nobody has hit it yet, and the only way to learn which caches exist is to grep for `register`. A registry indexed by name is a dictionary, and a dictionary can't tell your editor what's in it.
+
+The fix is a small module that owns the registry and has one function per cache. Everything else in the app calls those functions. Type `site_caches.` and the editor lists every cache the app has.
+
+## The module
+
+```python
+# site_caches.py
+from typing import Literal, Optional
+
+from diskcache_oxide import Caches, TransactionalCacheLike
+
+CacheName = Literal['pages', 'markdown', 'etags']
+caches: Optional[Caches[CacheName]] = None
+
+
+def setup(base_folder: str) -> None:
+    global caches
+    if caches is not None:
+        return
+
+    registry: Caches[CacheName] = Caches(base_folder, durable=True, timeout=1.0)
+    registry.register('pages', size_limit=1 * 2**30)
+    registry.register('markdown')
+    registry.register('etags')
+    caches = registry
+
+
+def close() -> None:
+    global caches
+    if caches is not None:
+        caches.expire_all(timeout=10)
+        caches.close_all()
+        caches = None
+
+
+def cache(name: CacheName) -> TransactionalCacheLike:
+    if caches is None:
+        raise RuntimeError('call site_caches.setup() first')
+    return caches[name]
+
+
+def pages_cache() -> TransactionalCacheLike:
+    return cache('pages')
+
+
+def markdown_cache() -> TransactionalCacheLike:
+    return cache('markdown')
+
+
+def etag_cache() -> TransactionalCacheLike:
+    return cache('etags')
+```
+
+`setup()` registers the caches and nothing more: a cache opens on its first lookup, so calling it early costs nothing. A second call does nothing. `close()` removes expired entries, closes every cache and forgets the registry, so `setup()` can run again, which is what a test wants.
+
+## Using it
+
+Call `setup()` once when the app starts and `close()` when it stops. In FastAPI that's the lifespan; the [web workers recipe](web-workers.qmd) has the same for Flask, Django and Celery.
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+import site_caches
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    site_caches.setup('/var/lib/my-app/cache')
+    yield
+    site_caches.close()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+Everywhere else, ask for the cache at the point you use it:
+
+```python
+from typing import Optional
+
+import site_caches
+
+def render_page(url: str) -> Response:
+    etag: Optional[str] = site_caches.etag_cache().get(url)
+    page: Optional[str] = site_caches.pages_cache().get(url)
+
+    if page is not None:
+        return Response(body=page, etag=etag)
+
+    html = render_page_contents(url)
+    etag = etag_from_body(html)
+
+    site_caches.etag_cache().set(url, etag)
+    site_caches.pages_cache().set(url, html)
+
+    return Response(body=html, etag=etag)
+```
+
+The two caches here are written and evicted separately, so a page can come back with no etag. Handle `etag is None` on a hit, or store `(etag, html)` as one entry in `pages`: a tuple comes back as a tuple.
+
+## Why functions, not variables
+
+It's tempting to write `pages = caches['pages']` once at the bottom of the module and import that. Don't: the functions do a lookup on every call, and that's the point.
+
+- **A cache that couldn't open comes back.** While it can't open, the lookup returns a [`NullCache`](../user-guide/null-cache.qmd) and tries again 10 seconds later. A variable would hold that `NullCache` until the process restarts.
+- **Switches work.** `site_caches.caches.disable('pages')` changes what later lookups return. Code holding the real cache in a variable never notices.
+- **It's cheap.** A lookup is one dict read with no lock, fine on every request.
+
+The names are checked too. `CacheName` is a `Literal`, so `cache('page')` is a type error, and nothing outside the module spells a name at all. The registry itself stays reachable as `site_caches.caches` for what the functions don't cover, such as `stats()` on an admin page. It's `None` until `setup()` runs.
+
+## `memoize`
+
+`@site_caches.pages_cache().memoize()` runs when the module that holds it is imported, which is before `setup()`, so it raises. Add a decorator to `site_caches` that looks the cache up on each call instead:
+
+```python
+import functools
+
+def memoized(name: CacheName, **options):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return cache(name).memoize(**options)(func)(*args, **kwargs)
+        return wrapper
+    return decorator
+```
+
+```python
+@site_caches.memoized('markdown', expire=3600)
+def to_html(markdown_text: str) -> str:
+    return render_markdown(markdown_text)
+```
+
+It stores under the same keys `memoize` would, and it follows recovery and the switches. [`memoize` on a registered cache](../user-guide/caches.qmd#memoize-on-a-registered-cache) has the details, and the cost: about 2 µs a call.
+
+## In tests
+
+Point `setup()` at pytest's `tmp_path` and every test gets its own empty caches:
+
+```python
+import pytest
+
+import site_caches
+
+@pytest.fixture(autouse=True)
+def fresh_caches(tmp_path):
+    site_caches.setup(str(tmp_path / 'cache'))
+    yield
+    site_caches.close()
+```
+
+For tests where caching shouldn't happen at all, call `site_caches.caches.disable('pages', 'markdown', 'etags')` after `setup()`: every read misses. See [Testing code that uses a cache](testing.qmd).
+
+## Where it stops
+
+- **State doesn't go in the registry.** Sessions, job claims, locks and queues need a plain `Cache` opened directly, because a registry hands out a `NullCache` when a cache can't open, and on one of those `add()` always wins. Give them their own function in the same module if you like, returning a `Cache` you opened yourself: see [State isn't cache](../user-guide/caches.qmd#state-isnt-cache).
+- **A sharded cache needs its own kind of function.** One registered with `shards=` is read with `caches.fanout(name)`, which returns `FanoutCache | NullCache`; `cache(name)` raises `TypeError` for it.
+- **Names that come from configuration** can't be a `Literal`. For those, `caches.get(name)` returns the cache, or `None` when nothing by that name is registered.
+- **Adding a cache is three edits:** the `Literal`, the `register` line and the function. Miss the `register` and the function raises `KeyError` the first time it's called, so call each one in a test.

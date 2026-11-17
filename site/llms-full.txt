@@ -8,7 +8,7 @@ This is the API documentation for the diskcache_oxide library.
 Disk-backed cache backed by SQLite, shared safely across threads and processes.
 
 
-Cache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False, maintenance_interval: 'float | None' = None) -> 'Cache'
+Cache(directory: 'str | os.PathLike[str]', timeout: 'Optional[float]' = None, *, size_limit: 'Optional[int]' = None, cull_limit: 'Optional[int]' = None, eviction_policy: "Optional[Literal['least-recently-stored', 'none']]" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'Optional[TypeRegistry]' = None, clock: 'Optional[Callable[[], float]]' = None, max_connections: 'Optional[int]' = None, sqlite_cache_size: 'Optional[int]' = None, wal_size_limit: 'Optional[int]' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Optional[Literal['raise', 'miss'] | Callable[[str, Exception], object]]" = None, durable: 'bool' = False, maintenance_interval: 'Optional[float]' = None) -> 'Cache'
 
 A disk cache backed by SQLite, shared safely across threads and processes.
 
@@ -158,7 +158,7 @@ enabled
 
 Always True for a real cache; False for a `NullCache`.
 
-set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
+set(self, key: 'Key', value: 'Any', expire: 'Optional[float]' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Store `value` under `key`, replacing any existing value.
 
@@ -191,7 +191,7 @@ Examples:
     cache.set('config', {'retries': 3})                   # never expires
     ```
 
-add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
+add(self, key: 'Key', value: 'Any', expire: 'Optional[float]' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Store `value` only if `key` is missing or expired.
 
@@ -241,7 +241,7 @@ Examples:
         cache.delete(key)          # safe while iterating
     ```
 
-touch(self, key: 'Key', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+touch(self, key: 'Key', expire: 'Optional[float]' = None, *, retry: 'bool' = False) -> 'bool'
 
 Change the expiry of an existing entry without rewriting its value.
 
@@ -263,7 +263,7 @@ Examples:
     cache.touch('session:xyz', expire=1800)   # 30 more minutes, if it's still there
     ```
 
-incr(self, key: 'Key', delta: 'float' = Ellipsis, default: 'float | None' = Ellipsis, *, retry: 'bool' = False) -> 'int | float'
+incr(self, key: 'Key', delta: 'float' = Ellipsis, default: 'Optional[float]' = Ellipsis, *, retry: 'bool' = False) -> 'int | float'
 
 Add `delta` to the number stored under `key`, atomically, and return the result.
 
@@ -296,14 +296,14 @@ Examples:
     allowed = cache.incr('rate:203.0.113.7:1731') <= 100  # then count; incr keeps the expiry
     ```
 
-decr(self, key: 'Key', delta: 'float' = Ellipsis, default: 'float | None' = Ellipsis, *, retry: 'bool' = False) -> 'int | float'
+decr(self, key: 'Key', delta: 'float' = Ellipsis, default: 'Optional[float]' = Ellipsis, *, retry: 'bool' = False) -> 'int | float'
 
 Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 
 Returns:
     The new value.
 
-memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
+memoize(self, name: 'Optional[str]' = None, typed: 'bool' = False, expire: 'Optional[float]' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
 
 Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
 
@@ -415,11 +415,12 @@ __reversed__(self) -> 'Iterator[Key]'
 
 Keys in insertion order backwards, newest first (a `FanoutCache`: the last shard first).
 
-expire(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+expire(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove every expired entry, and its value file.
 
-Works in chunks and lets other writers in between them.
+Works in chunks and lets other writers in between them. Background maintenance already
+does this every `maintenance_interval`, so call it only when you want it done now.
 
 Args:
     timeout: Seconds each chunk may wait for the write lock (another thread's or another
@@ -433,10 +434,10 @@ Returns:
 
 Examples:
     ```python
-    removed = cache.expire(timeout=10.0)   # from a scheduled job, with its own timeout
+    removed = cache.expire(timeout=10.0)   # when it has to be done now, with its own timeout
     ```
 
-clear(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+clear(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove every entry that existed when the call started.
 
@@ -461,7 +462,7 @@ Examples:
     cache.clear(timeout=10.0)   # safe while other processes keep writing
     ```
 
-evict(self, tag: 'Key', *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+evict(self, tag: 'Key', *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove every entry tagged `tag` that existed when the call started.
 
@@ -490,7 +491,7 @@ Examples:
     cache.evict('user:42')   # 2
     ```
 
-cull(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+cull(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove expired entries, then evict the least recently stored until under `size_limit`.
 
@@ -508,7 +509,7 @@ volume(self) -> 'int'
 
 The cache's size on disk in bytes: the database plus value files.
 
-checkpoint(self, *, timeout: 'float | None' = None) -> 'bool'
+checkpoint(self, *, timeout: 'Optional[float]' = None) -> 'bool'
 
 Copy the write-ahead log into the database and truncate it to zero.
 
@@ -555,7 +556,7 @@ Examples:
     cache.close(checkpoint=False)                # skip the checkpoint, for a quick exit
     ```
 
-pull(self, prefix: 'str | None' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
+pull(self, prefix: 'Optional[str]' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
 
 Remove and return the item at `side` of a queue, as diskcache's `pull`.
 
@@ -587,7 +588,7 @@ Examples:
         transcode(job)
     ```
 
-peek(self, prefix: 'str | None' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
+peek(self, prefix: 'Optional[str]' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
 
 The item at `side` of a queue, without removing it, as diskcache's `peek`.
 
@@ -670,7 +671,9 @@ Always True, even when empty, so `if cache:` means "caching is on".
 
 __iter__(self) -> 'Iterator[Key]'
 
-Iterate over keys in insertion order. An overwrite keeps its key's place.
+Iterate over keys in insertion order. An overwrite keeps its key's place. The walk covers
+the entries there when it began: one stored meanwhile isn't yielded, and one deleted and
+stored again is yielded once, as in diskcache.
 
 As with `iterkeys()`, expired entries are skipped, and `next()` raises `ValueError` while
 another thread is inside it.
@@ -679,7 +682,7 @@ __enter__(self) -> 'Self'
 
 Return the cache, for `with Cache(...) as cache:`.
 
-__exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | None', tb: 'TracebackType | None', /) -> 'None'
+__exit__(self, exc_type: 'Optional[type[BaseException]]', exc: 'Optional[BaseException]', tb: 'Optional[TracebackType]', /) -> 'None'
 
 Close the cache, as `close()` does.
 
@@ -798,7 +801,7 @@ Examples:
     newest_first = cache.iterkeys(reverse=True)
     ```
 
-push(self, value: 'Any', prefix: 'None' = None, side: "Literal['front', 'back']" = 'back', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'int | None'
+push(self, value: 'Any', prefix: 'None' = None, side: "Literal['front', 'back']" = 'back', expire: 'Optional[float]' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'Optional[int]'
 
 Push `value` onto a queue and return its key, as diskcache's `push`.
 
@@ -837,7 +840,7 @@ Examples:
 A cache sharded over several SQLite databases, so writers in many processes stop queueing on one write lock.
 
 
-FanoutCache(directory: 'str | os.PathLike[str]', timeout: 'float | None' = None, *, shards: 'int | None' = None, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int | None' = None, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False, raise_on_mismatch: 'bool' = False, maintenance_interval: 'float | None' = None) -> 'FanoutCache'
+FanoutCache(directory: 'str | os.PathLike[str]', timeout: 'Optional[float]' = None, *, shards: 'Optional[int]' = None, size_limit: 'Optional[int]' = None, cull_limit: 'Optional[int]' = None, eviction_policy: "Optional[Literal['least-recently-stored', 'none']]" = None, serializer: 'str' = 'msgpack', pickle: 'bool' = False, types: 'Optional[TypeRegistry]' = None, clock: 'Optional[Callable[[], float]]' = None, max_connections: 'Optional[int]' = None, sqlite_cache_size: 'Optional[int]' = None, wal_size_limit: 'Optional[int]' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Optional[Literal['raise', 'miss'] | Callable[[str, Exception], object]]" = None, durable: 'bool' = False, raise_on_mismatch: 'bool' = False, maintenance_interval: 'Optional[float]' = None) -> 'FanoutCache'
 
 A disk cache split over several SQLite databases (shards), so reads and writes on different keys
 don't queue on one file's locks.
@@ -1007,11 +1010,11 @@ Examples:
         tx.set('totals:2026-11', n + 1)
     ```
 
-set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
+set(self, key: 'Key', value: 'Any', expire: 'Optional[float]' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 As `Cache.set`, on the key's shard.
 
-add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
+add(self, key: 'Key', value: 'Any', expire: 'Optional[float]' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 As `Cache.add`, on the key's shard: atomic across threads and processes.
 
@@ -1019,15 +1022,15 @@ delete(self, key: 'Key', *, retry: 'bool' = False) -> 'bool'
 
 As `Cache.delete`, on the key's shard.
 
-touch(self, key: 'Key', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+touch(self, key: 'Key', expire: 'Optional[float]' = None, *, retry: 'bool' = False) -> 'bool'
 
 As `Cache.touch`, on the key's shard.
 
-incr(self, key: 'Key', delta: 'float' = Ellipsis, default: 'float | None' = Ellipsis, *, retry: 'bool' = False) -> 'int | float'
+incr(self, key: 'Key', delta: 'float' = Ellipsis, default: 'Optional[float]' = Ellipsis, *, retry: 'bool' = False) -> 'int | float'
 
 As `Cache.incr`, on the key's shard: atomic across threads and processes.
 
-decr(self, key: 'Key', delta: 'float' = Ellipsis, default: 'float | None' = Ellipsis, *, retry: 'bool' = False) -> 'int | float'
+decr(self, key: 'Key', delta: 'float' = Ellipsis, default: 'Optional[float]' = Ellipsis, *, retry: 'bool' = False) -> 'int | float'
 
 As `Cache.decr`, on the key's shard.
 
@@ -1037,7 +1040,7 @@ The total disk use in bytes of every shard (databases plus value files).
 
 Raises on any shard's failure, under `durable=True` too.
 
-expire(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+expire(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove every expired entry from every shard, and its value file, as `Cache.expire` does.
 
@@ -1066,7 +1069,7 @@ Examples:
         exc.failed_shards, exc.removed   # which shards were skipped, and how many entries went anyway
     ```
 
-clear(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+clear(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove every entry that existed when the call started, from every shard.
 
@@ -1084,7 +1087,7 @@ Returns:
 Raises:
     Timeout: As for `expire`, with `removed` and `failed_shards`.
 
-evict(self, tag: 'Key', *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+evict(self, tag: 'Key', *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove every entry tagged `tag` that existed when the call started, from every shard, as
 `Cache.evict`.
@@ -1102,7 +1105,7 @@ Raises:
     TypeError: `tag` isn't a key type.
     Timeout: As for `expire`, with `removed` and `failed_shards`.
 
-cull(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+cull(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove expired entries, then evict the least recently stored from each shard until it's
 under its share of `size_limit`.
@@ -1118,7 +1121,7 @@ Returns:
 Raises:
     Timeout: As for `expire`, with `removed` and `failed_shards`.
 
-checkpoint(self, *, timeout: 'float | None' = None) -> 'bool'
+checkpoint(self, *, timeout: 'Optional[float]' = None) -> 'bool'
 
 Checkpoint every shard's write-ahead log and truncate it to zero, as `Cache.checkpoint` does.
 
@@ -1134,7 +1137,7 @@ Raises:
     OSError: A real error, such as a full disk, on some shard, raised after every shard was
         tried. It carries `failed_shards` (see the class docs).
 
-memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
+memoize(self, name: 'Optional[str]' = None, typed: 'bool' = False, expire: 'Optional[float]' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
 
 Return a decorator that caches the function's results in this cache, as diskcache's `memoize`.
 
@@ -1231,7 +1234,8 @@ __iter__(self) -> 'Iterator[Key]'
 
 Iterate over every key once: shard 0's in insertion order, then shard 1's, and so on.
 
-That isn't the order keys were stored in across the cache. Otherwise as `iterkeys()`.
+That isn't the order keys were stored in across the cache. Each shard's walk covers the entries
+there when the walk reached it, as `Cache.__iter__` does. Otherwise as `iterkeys()`.
 
 close(self, *, checkpoint: 'bool' = True) -> 'None'
 
@@ -1274,7 +1278,7 @@ __enter__(self) -> 'Self'
 
 Return the cache, for `with FanoutCache(...) as cache:`.
 
-__exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | None', tb: 'TracebackType | None', /) -> 'None'
+__exit__(self, exc_type: 'Optional[type[BaseException]]', exc: 'Optional[BaseException]', tb: 'Optional[TracebackType]', /) -> 'None'
 
 Close the cache, as `close()` does.
 
@@ -1330,7 +1334,7 @@ Raises:
 Switched-off cache behaving as if every entry expires instantly.
 
 
-NullCache(directory: 'str | os.PathLike[str] | None' = None, timeout: 'float | None' = None, *, size_limit: 'int | None' = None, cull_limit: 'int | None' = None, eviction_policy: "Literal['least-recently-stored', 'none'] | None" = None, serializer: "Literal['msgpack', 'json']" = 'msgpack', pickle: 'bool' = False, types: 'TypeRegistry | None' = None, clock: 'Callable[[], float] | None' = None, max_connections: 'int' = 8, sqlite_cache_size: 'int | None' = None, wal_size_limit: 'int | None' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Literal['raise', 'miss'] | Callable[[str, Exception], object] | None" = None, durable: 'bool' = False, maintenance_interval: 'float | None' = None, invalidate: 'CacheLike | None' = None) -> 'None'
+NullCache(directory: 'Optional[str | os.PathLike[str]]' = None, timeout: 'Optional[float]' = None, *, size_limit: 'Optional[int]' = None, cull_limit: 'Optional[int]' = None, eviction_policy: "Optional[Literal['least-recently-stored', 'none']]" = None, serializer: "Literal['msgpack', 'json']" = 'msgpack', pickle: 'bool' = False, types: 'Optional[TypeRegistry]' = None, clock: 'Optional[Callable[[], float]]' = None, max_connections: 'int' = 8, sqlite_cache_size: 'Optional[int]' = None, wal_size_limit: 'Optional[int]' = None, wal_checkpoint: "Literal['manual', 'auto']" = 'manual', on_decode_error: "Optional[Literal['raise', 'miss'] | Callable[[str, Exception], object]]" = None, durable: 'bool' = False, maintenance_interval: 'Optional[float]' = None, invalidate: 'Optional[CacheLike]' = None) -> 'None'
 
 A switched-off cache, so app code needs no `if cache is None` checks.
 
@@ -1511,11 +1515,11 @@ volume(self) -> 'int'
 
 Always 0: a `NullCache` uses no disk.
 
-checkpoint(self, *, timeout: 'float | None' = None) -> 'bool'
+checkpoint(self, *, timeout: 'Optional[float]' = None) -> 'bool'
 
 Always True: there is no write-ahead log to reset.
 
-set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
+set(self, key: 'Key', value: 'Any', expire: 'Optional[float]' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Return True without storing anything: the write succeeds, then expires instantly.
 
@@ -1523,25 +1527,25 @@ __setitem__(self, key: 'Key', value: 'Any', /) -> 'None'
 
 Store nothing, as `set()` does.
 
-add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
+add(self, key: 'Key', value: 'Any', expire: 'Optional[float]' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Return True without storing anything: the key is always absent, so the add succeeds.
 
 With caching off, every caller's `add()` succeeds, so don't rely on it for job claims or locks.
 A `Cache(durable=True)` does the opposite when a write fails: its `add()` returns False.
 
-touch(self, key: 'Key', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+touch(self, key: 'Key', expire: 'Optional[float]' = None, *, retry: 'bool' = False) -> 'bool'
 
 Always False: the key never exists.
 
-incr(self, key: 'Key', delta: 'float' = 1, default: 'float | None' = 0, *, retry: 'bool' = False) -> 'int | float'
+incr(self, key: 'Key', delta: 'float' = 1, default: 'Optional[float]' = 0, *, retry: 'bool' = False) -> 'int | float'
 
 Return `default + delta`, since every count starts again from `default`.
 
 Raises:
     KeyError: `default` is None.
 
-decr(self, key: 'Key', delta: 'float' = 1, default: 'float | None' = 0, *, retry: 'bool' = False) -> 'int | float'
+decr(self, key: 'Key', delta: 'float' = 1, default: 'Optional[float]' = 0, *, retry: 'bool' = False) -> 'int | float'
 
 Return `default - delta`. See `incr()`.
 
@@ -1558,17 +1562,17 @@ pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, tag
 Return `default`, shaped as `get()` returns it. With `invalidate=`, also delete the key from
 that cache.
 
-push(self, value: 'Any', prefix: 'str | None' = None, side: "Literal['front', 'back']" = 'back', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'int | str'
+push(self, value: 'Any', prefix: 'Optional[str]' = None, side: "Literal['front', 'back']" = 'back', expire: 'Optional[float]' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'int | str'
 
 Store nothing and return the key an empty queue's first item gets: the item expires the instant
 it's written. Never forwarded to `invalidate=`.
 
-pull(self, prefix: 'str | None' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
+pull(self, prefix: 'Optional[str]' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
 
 Return `default` (widened as `Cache.pull` widens it): the queue is always empty. Never forwarded
 to `invalidate=`, which a switched-off cache must not consume.
 
-peek(self, prefix: 'str | None' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
+peek(self, prefix: 'Optional[str]' = None, default: 'Any' = (None, None), side: "Literal['front', 'back']" = 'front', *, expire_time: 'bool' = False, tag: 'bool' = False, retry: 'bool' = False) -> 'Any'
 
 Return `default`, as `pull` does.
 
@@ -1576,25 +1580,25 @@ peekitem(self, last: 'bool' = True, *, expire_time: 'bool' = False, tag: 'bool' 
 
 Raise `KeyError`: the cache is always empty.
 
-clear(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+clear(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count.
 
-evict(self, tag: 'Key', *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+evict(self, tag: 'Key', *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 0, or with `invalidate=`, evict `tag` from that cache (passing `timeout` on) and return its
 count.
 
-memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
+memoize(self, name: 'Optional[str]' = None, typed: 'bool' = False, expire: 'Optional[float]' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
 
 As `Cache.memoize`, but every call runs the function, as every entry has already expired. The
 arguments are still checked as keys, so a call that would fail on a real cache fails here.
 
-iterkeys(self, *, prefix: 'str | None' = None, reverse: 'bool' = False) -> 'Iterator[Key]'
+iterkeys(self, *, prefix: 'Optional[str]' = None, reverse: 'bool' = False) -> 'Iterator[Key]'
 
 Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works.
 
-transact(self, retry: 'bool' = False, *, key: 'Key | None' = None) -> 'AbstractContextManager[Self]'
+transact(self, retry: 'bool' = False, *, key: 'Optional[Key]' = None) -> 'AbstractContextManager[Self]'
 
 A no-op context manager that yields this `NullCache`.
 
@@ -1609,11 +1613,11 @@ Args:
 Raises:
     TypeError: `retry` isn't a `bool`, or `key` isn't a key type.
 
-expire(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+expire(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Always 0.
 
-cull(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+cull(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Always 0.
 
@@ -1625,7 +1629,7 @@ __enter__(self) -> 'Self'
 
 Return the cache, for `with NullCache() as cache:`.
 
-__exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | None', tb: 'TracebackType | None', /) -> 'None'
+__exit__(self, exc_type: 'Optional[type[BaseException]]', exc: 'Optional[BaseException]', tb: 'Optional[TracebackType]', /) -> 'None'
 
 Do nothing, as `close()` does.
 
@@ -1663,11 +1667,11 @@ get(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, tag
 
 Return the value for `key`, or `default` if it's missing or expired.
 
-set(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
+set(self, key: 'Key', value: 'Any', expire: 'Optional[float]' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Store `value` under `key`, with an optional expiry in seconds.
 
-add(self, key: 'Key', value: 'Any', expire: 'float | None' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
+add(self, key: 'Key', value: 'Any', expire: 'Optional[float]' = None, *, tag: 'Key' = None, retry: 'bool' = False) -> 'bool'
 
 Store `value` only if `key` is missing or expired. True if it was stored.
 
@@ -1679,15 +1683,15 @@ pop(self, key: 'Key', default: 'Any' = None, *, expire_time: 'bool' = False, tag
 
 Remove `key` and return its value, or `default`.
 
-touch(self, key: 'Key', expire: 'float | None' = None, *, retry: 'bool' = False) -> 'bool'
+touch(self, key: 'Key', expire: 'Optional[float]' = None, *, retry: 'bool' = False) -> 'bool'
 
 Change an existing entry's expiry. True if the entry existed.
 
-incr(self, key: 'Key', delta: 'float' = 1, default: 'float | None' = 0, *, retry: 'bool' = False) -> 'int | float'
+incr(self, key: 'Key', delta: 'float' = 1, default: 'Optional[float]' = 0, *, retry: 'bool' = False) -> 'int | float'
 
 Add `delta` to the number under `key`, atomically, and return the result.
 
-decr(self, key: 'Key', delta: 'float' = 1, default: 'float | None' = 0, *, retry: 'bool' = False) -> 'int | float'
+decr(self, key: 'Key', delta: 'float' = 1, default: 'Optional[float]' = 0, *, retry: 'bool' = False) -> 'int | float'
 
 Subtract `delta` from the number under `key`, atomically, and return the result.
 
@@ -1719,27 +1723,27 @@ __reversed__(self) -> 'Iterator[Key]'
 
 Keys in insertion order backwards, newest first.
 
-memoize(self, name: 'str | None' = None, typed: 'bool' = False, expire: 'float | None' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
+memoize(self, name: 'Optional[str]' = None, typed: 'bool' = False, expire: 'Optional[float]' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
 
 A decorator caching a function's results in this cache (diskcache's `memoize`).
 
-iterkeys(self, *, prefix: 'str | None' = None, reverse: 'bool' = False) -> 'Iterator[Key]'
+iterkeys(self, *, prefix: 'Optional[str]' = None, reverse: 'bool' = False) -> 'Iterator[Key]'
 
 Iterate over keys in sorted order, optionally only those starting with `prefix`.
 
-expire(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+expire(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove every expired entry. Returns how many were removed.
 
-clear(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+clear(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove every entry that existed when the call started. Returns how many.
 
-evict(self, tag: 'Key', *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+evict(self, tag: 'Key', *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove every entry tagged `tag` that existed when the call started. Returns how many.
 
-cull(self, *, timeout: 'float | None' = None, retry: 'bool' = False) -> 'int'
+cull(self, *, timeout: 'Optional[float]' = None, retry: 'bool' = False) -> 'int'
 
 Remove expired entries, then evict until under `size_limit`. Returns how many.
 
@@ -1747,7 +1751,7 @@ volume(self) -> 'int'
 
 The size on disk in bytes.
 
-checkpoint(self, *, timeout: 'float | None' = None) -> 'bool'
+checkpoint(self, *, timeout: 'Optional[float]' = None) -> 'bool'
 
 Empty the write-ahead log. True if it was reset, False if other processes kept it busy.
 
@@ -1787,7 +1791,7 @@ __enter__(self) -> 'Self'
 
 Return the cache, for use in a `with` block.
 
-__exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | None', tb: 'TracebackType | None', /) -> 'None'
+__exit__(self, exc_type: 'Optional[type[BaseException]]', exc: 'Optional[BaseException]', tb: 'Optional[TracebackType]', /) -> 'None'
 
 Close the cache.
 
@@ -1797,7 +1801,7 @@ Close the cache.
 A registry of named caches under one base directory.
 
 
-Caches(base_dir: 'str | os.PathLike[str]', *, on_open_error: 'Callable[[str, Exception], object] | None' = None, retry_open_after: 'float' = 10.0, _monotonic: 'Callable[[], float]' = <built-in function monotonic>, **defaults: 'Any') -> 'None'
+Caches(base_dir: 'str | os.PathLike[str]', *, on_open_error: 'Optional[Callable[[str, Exception], object]]' = None, retry_open_after: 'float' = 10.0, _monotonic: 'Callable[[], float]' = <built-in function monotonic>, **defaults: 'Any') -> 'None'
 
 A registry of named caches under one base directory.
 
@@ -1830,7 +1834,7 @@ Examples:
     caches.stats()['pages'].count
     ```
 
-CacheStats(name: 'str', directory: 'str', enabled: 'bool', count: 'int', volume: 'int', error: 'str | None' = None, maintenance: 'MaintenanceStats | None' = None) -> None
+CacheStats(name: 'str', directory: 'str', enabled: 'bool', count: 'int', volume: 'int', error: 'Optional[str]' = None, maintenance: 'Optional[MaintenanceStats]' = None) -> None
 
 One cache's numbers, for an admin page. `error` says why it couldn't be read, if it couldn't.
 
@@ -1844,7 +1848,7 @@ __repr__(self) -> 'str'
 
 Shows the base directory and the registered names.
 
-register(self, name: 'N', *, directory: 'str | os.PathLike[str] | None' = None, **settings: 'Any') -> 'None'
+register(self, name: 'N', *, directory: 'Optional[str | os.PathLike[str]]' = None, **settings: 'Any') -> 'None'
 
 Register a cache. Nothing opens until its first lookup.
 
@@ -1908,6 +1912,28 @@ Raises:
         are invalid.
     ValueError: Its settings are invalid.
 
+get(self, name: 'str', default: 'object' = None) -> 'object'
+
+The named plain cache as `caches[name]` returns it, or `default` if no cache by that name
+is registered. One call instead of `name in caches` and then `caches[name]`.
+
+`default` is for a name that was never registered, nothing else: a registered cache that
+can't open or is disabled still comes back as a `NullCache`, as from `caches[name]`. `name`
+is typed `str` even on a `Caches[Literal[...]]`, since asking about a name that may not be
+there is the point.
+
+Raises:
+    TypeError: The cache was registered with `shards=` (use `fanout(name)`), or its settings
+        are invalid.
+    ValueError: Its settings are invalid.
+
+Examples:
+    ```python
+    if (pages := caches.get('pages')) is None:
+        raise RuntimeError('the pages cache was not registered')
+    pages.set('/about', html)
+    ```
+
 fanout(self, name: 'N') -> 'FanoutCache | NullCache'
 
 The named sharded cache (one registered with `shards=`), looked up as `caches[name]` is.
@@ -1958,7 +1984,7 @@ Examples:
         print(name, stat.count, stat.volume, stat.error or 'ok')
     ```
 
-clear(self, name: 'N', *, timeout: 'float | None' = None) -> 'int'
+clear(self, name: 'N', *, timeout: 'Optional[float]' = None) -> 'int'
 
 Clear the real cache, even while it's disabled. Returns how many entries were removed.
 
@@ -1967,12 +1993,12 @@ Raises:
     OSError, RuntimeError: It can't be opened (an admin action shouldn't report 0 for that),
         or `Timeout` from the clear itself.
 
-expire_all(self, *, timeout: 'float | None' = None) -> 'dict[N, int | None]'
+expire_all(self, *, timeout: 'Optional[float]' = None) -> 'dict[N, Optional[int]]'
 
 Remove expired entries from every cache. Returns how many each removed, or None for a
 cache that couldn't be opened or expired (logged; the rest still run).
 
-remove_old_formats(self) -> 'dict[N, list[str] | None]'
+remove_old_formats(self) -> 'dict[N, Optional[list[str]]]'
 
 Run `remove_old_formats()` on every registered cache, opening each one, even while it's
 disabled. Returns what each removed, or None for a cache that couldn't be opened or cleaned
@@ -1992,7 +2018,7 @@ __enter__(self) -> 'Self'
 
 Return the registry, for `with Caches(...) as caches:`.
 
-__exit__(self, exc_type: 'type[BaseException] | None', exc: 'BaseException | None', tb: 'TracebackType | None', /) -> 'None'
+__exit__(self, exc_type: 'Optional[type[BaseException]]', exc: 'Optional[BaseException]', tb: 'Optional[TracebackType]', /) -> 'None'
 
 Close every opened cache, as `close_all()` does.
 
@@ -2170,7 +2196,7 @@ UNKNOWN
 Locks, semaphores, throttles and other recipes that hold across every process on the machine.
 
 
-Lock(cache: 'Any', key: 'Key', expire: 'float | None' = None, tag: 'Key' = None) -> 'None'
+Lock(cache: 'Any', key: 'Key', expire: 'Optional[float]' = None, tag: 'Key' = None) -> 'None'
 
 A lock shared by every thread and process on the cache: `acquire()`, `release()`, `locked()`,
 or `with lock:`. Not reentrant (see `RLock`); any holder of the key can release it.
@@ -2178,35 +2204,35 @@ or `with lock:`. Not reentrant (see `RLock`); any holder of the key can release 
 `acquire()` polls every millisecond until it gets the lock. Give it an `expire` so a holder that
 dies without releasing doesn't keep it forever.
 
-RLock(cache: 'Any', key: 'Key', expire: 'float | None' = None, tag: 'Key' = None) -> 'None'
+RLock(cache: 'Any', key: 'Key', expire: 'Optional[float]' = None, tag: 'Key' = None) -> 'None'
 
 A reentrant lock shared by every thread and process on the cache: the thread holding it may
 take it again, and must release it as many times. Another thread or process waits.
 
-BoundedSemaphore(cache: 'Any', key: 'Key', value: 'int' = 1, expire: 'float | None' = None, tag: 'Key' = None) -> 'None'
+BoundedSemaphore(cache: 'Any', key: 'Key', value: 'int' = 1, expire: 'Optional[float]' = None, tag: 'Key' = None) -> 'None'
 
 A semaphore shared by every thread and process on the cache: at most `value` holders at once.
 Releasing more than were acquired raises `AssertionError`.
 
-throttle(cache: 'Any', count: 'int', seconds: 'float', name: 'str | None' = None, expire: 'float | None' = None, tag: 'Key' = None, time_func: 'Callable[[], float]' = <built-in function time>, sleep_func: 'Callable[[float], object]' = <built-in function sleep>) -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'
+throttle(cache: 'Any', count: 'int', seconds: 'float', name: 'Optional[str]' = None, expire: 'Optional[float]' = None, tag: 'Key' = None, time_func: 'Callable[[], float]' = <built-in function time>, sleep_func: 'Callable[[float], object]' = <built-in function sleep>) -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'
 
 A decorator allowing at most `count` calls every `seconds`, across every thread and process on
 the cache: a token bucket stored under `name` (the function's qualified name by default). A call
 with no token waits (`sleep_func`) until one is due.
 
-barrier(cache: 'Any', lock_factory: 'Callable[..., Any]', name: 'str | None' = None, expire: 'float | None' = None, tag: 'Key' = None) -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'
+barrier(cache: 'Any', lock_factory: 'Callable[..., Any]', name: 'Optional[str]' = None, expire: 'Optional[float]' = None, tag: 'Key' = None) -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'
 
 A decorator running the function under a lock made by `lock_factory(cache, key, expire=...)`
 (`Lock`, `RLock`, `BoundedSemaphore`, or one of your own): one caller at a time, everywhere.
 
-Averager(cache: 'Any', key: 'Key', expire: 'float | None' = None, tag: 'Key' = None) -> 'None'
+Averager(cache: 'Any', key: 'Key', expire: 'Optional[float]' = None, tag: 'Key' = None) -> 'None'
 
 A running average stored under `key`: `add(value)`, `get()`, `pop()`.
 
 The total and count are updated together in one transaction, so every thread and process adding
 to it agrees. `None` while nothing has been added.
 
-memoize_stampede(cache: 'Any', expire: 'float', name: 'str | None' = None, typed: 'bool' = False, tag: 'Key' = None, beta: 'float' = 1, ignore: 'Any' = ()) -> 'Callable[[Callable[..., Any]], Any]'
+memoize_stampede(cache: 'Any', expire: 'float', name: 'Optional[str]' = None, typed: 'bool' = False, tag: 'Key' = None, beta: 'float' = 1, ignore: 'Any' = ()) -> 'Callable[[Callable[..., Any]], Any]'
 
 `memoize` with cache stampede protection, as diskcache's: a result close to expiry is
 recomputed early, in a background thread, by one caller (Vattani et al., VLDB 2015), while every
@@ -2274,7 +2300,7 @@ import time
 
 from diskcache_oxide import Cache
 
-cache = Cache(tempfile.mkdtemp())
+cache = Cache(tempfile.mkdtemp(), durable=True)       # if the cache fails, a call is a miss, not an exception
 
 def popular_episodes() -> list[str]:
     episodes = cache.get('episodes:popular')          # a hit returns the copy
@@ -2406,7 +2432,7 @@ uv pip install diskcache-oxide
 ```
 
 - **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t).
-- **Platforms:** macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64; anywhere else pip builds from source, which needs the latest stable Rust toolchain. [Windows](#windows) below says what differs there.
+- **Platforms:** macOS, Linux and Windows. Wheels cover macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64; anywhere else pip builds from source, which needs the latest stable Rust toolchain ([Building from source](building-from-source.qmd) walks through it). [Windows](#windows) below says what differs there.
 - **Dependencies:** none at runtime. SQLite is bundled and compiled in, so your system's SQLite version doesn't matter (`diskcache_oxide.sqlite_version()` reports the one in use).
 - **Upgrades:** a release that keeps the on-disk format opens your caches as they were, warm. One that changes it (the changelog says so first) opens a new cache in a subdirectory named for its format and logs a warning, so nothing fails at deploy; [Upgrading across a format change](../recipes/upgrading.qmd) covers cleaning up afterwards.
 
@@ -2415,8 +2441,10 @@ uv pip install diskcache-oxide
 ```python
 from diskcache_oxide import Cache
 
-cache = Cache('cache')  # a folder named "cache" in the current directory
+cache = Cache('cache', timeout=1.0, durable=True)  # a folder named "cache" in the current directory
 ```
+
+For a cache that holds copies of data you can rebuild, which is what most caches are, turn on `durable=True` with a short `timeout`. Then a full disk, an I/O error or a lock that stays busy makes a call a miss, logged, instead of an exception in the middle of a request. Leave it off for state you can't rebuild, such as sessions, job claims, locks and work queues, where a write that silently didn't happen is a bug. [A cache that can't take a request down](#a-cache-that-cant-take-a-request-down) covers what it does and what a dropped call costs.
 
 The directory is required. If it doesn't exist, diskcache-oxide creates it, readable and writable only by your user (`0700`). That's deliberate: anyone who can write to a cache directory gets to decide what your app reads next, so the directory starts out as private as your home directory.
 
@@ -2555,6 +2583,8 @@ try:
 except Timeout:
     ...  # the cache was too busy; carry on without it
 ```
+
+With [`durable=True`](#a-cache-that-cant-take-a-request-down), the `set` returns `False` instead, so a cache of rebuildable data needs no `try`.
 
 Maintenance calls work in chunks, so they take the write lock many times. A request-sized timeout can cut an admin `clear()` off partway through, so `clear()`, `expire()` and `cull()` each take their own `timeout=` for that call. It bounds each chunk's wait for the lock, not the whole call:
 
@@ -3135,8 +3165,8 @@ If you've read this far and the traceback still doesn't fit, it may be one. Open
 
 ## The disk keeps growing
 
-- **The write-ahead log.** Each cache has a `-wal` file beside its database, trimmed back to `wal_size_limit / 2` when it resets. After a burst of writes it can be much larger than the database until `checkpoint()` runs. See [Storage and WAL](storage-and-wal.qmd).
-- **Eviction is off.** A cache with `eviction_policy='none'` (the recommended setting for sessions, claims and queues) holds what you put in until it expires, past `size_limit` if need be. Give those entries an `expire`, and run `expire()` from a scheduled job so expired ones free their space.
+- **The write-ahead log.** Each cache has a `-wal` file beside its database, trimmed back to `wal_size_limit / 2` when it resets. After a burst of writes it can be much larger than the database until something checkpoints it: background maintenance does, within its interval, when readers in other processes let it, and `checkpoint()` does it now. See [Storage and WAL](storage-and-wal.qmd).
+- **Eviction is off.** A cache with `eviction_policy='none'` (the recommended setting for sessions, claims and queues) holds what you put in until it expires, past `size_limit` if need be. Give those entries an `expire`: background maintenance frees the space of expired ones, with eviction off too. Entries with no `expire` stay until you delete them.
 - **Expired entries that nobody removed.** Expired entries are invisible to reads at once, and background maintenance frees their space within its interval (5 minutes by default). If it doesn't, check `cache.maintenance_stats()`: an `interval` of 0 means it's off for this cache in this process (`maintenance_interval=0`, or a cache opened with `clock=`), and `failures` with a `last_error` says why it couldn't. Another connection holding the write lock for minutes, in a long `transact()`, shows up there too.
 - **An old format's cache.** After a format change the old cache stays on disk beside the new one until you run `remove_old_formats()`.
 - **Every cache adds up.** A volume holds the sum of the `size_limit`s, about one write-ahead log per cache, and the unbounded state caches. A [`FanoutCache`](fanoutcache.qmd) has a log per shard. [Docker and Compose](../recipes/docker.qmd#how-much-disk) has the arithmetic.
@@ -3377,7 +3407,7 @@ A dataclass needs only a name. Its `init=True` fields are read straight off the 
 class Episode:
     id: int
     title: str
-    published: datetime.datetime | None = None
+    published: Optional[datetime.datetime] = None
 
 diskcache_oxide.register_type(Episode, name='tp.Episode')
 cache.set('episode:491', Episode(491, 'Rust and Python'))
@@ -3611,6 +3641,58 @@ CacheName = Literal['general', 'pages']
 caches: Caches[CacheName] = Caches('/var/lib/my-app/cache')
 caches['genral']  # ty: invalid argument
 ```
+
+`caches[name]` raises `KeyError` for a name nobody registered. When the name may not be there (it comes from config, or a module can't be sure setup registered it), `caches.get(name)` checks and looks up in one call, returning `None`, or a default you pass, instead:
+
+```python
+if (pages := caches.get('pages')) is None:
+    raise RuntimeError('the pages cache was not registered')
+pages.set('/about', html)
+```
+
+The default is only for a name that was never registered. A registered cache that can't open or is switched off still comes back as a `NullCache`, as it does from `caches[name]`, and a name registered with `shards=` is still a `TypeError`: read those with `fanout(name)`.
+
+## One module for your caches
+
+`caches['pages']` is still a string. A nicer shape for an app is one module that owns the registry and has a function per cache, so the rest of the code never indexes anything. Type `site_caches.` and the editor lists the caches the app has:
+
+```python
+# site_caches.py
+from typing import Literal, Optional
+
+from diskcache_oxide import Caches, TransactionalCacheLike
+
+CacheName = Literal['pages', 'etags']
+caches: Optional[Caches[CacheName]] = None
+
+
+def setup(base_folder: str) -> None:
+    global caches
+    registry: Caches[CacheName] = Caches(base_folder, durable=True, timeout=1.0)
+    registry.register('pages')
+    registry.register('etags')
+    caches = registry
+
+
+def cache(name: CacheName) -> TransactionalCacheLike:
+    if caches is None:
+        raise RuntimeError('call site_caches.setup() first')
+    return caches[name]
+
+
+def pages_cache() -> TransactionalCacheLike:
+    return cache('pages')
+
+
+def etag_cache() -> TransactionalCacheLike:
+    return cache('etags')
+```
+
+```python
+html = site_caches.pages_cache().get(url)
+```
+
+The functions look the cache up on every call rather than keeping it in a variable, which is what lets a cache that failed to open come back, and `disable()` take effect. The recipe [One typed module for your caches](../recipes/site-caches.qmd) has the whole module, with shutdown, `memoize`, tests and where the pattern stops.
 
 ## When a cache can't open
 
@@ -4206,7 +4288,7 @@ The database file carries a format version (`PRAGMA user_version`), and a build 
 
 Writing a large value never holds the database lock while the bytes go to disk: the value goes to a temporary file first, then inside a short transaction the file is renamed into place and the row updated. The old file is removed after the commit, and file names are never reused.
 
-Large values live one folder deep, in up to 256 folders named by the first two characters of the file's name (D-042). Deleting a value removes only its file. When the process closes its last handle on the cache, it sweeps those folders: a temp file that no writer has touched for an hour, left by a process killed mid-write, is removed, and a folder left empty goes too, skipping any touched in the last 30 seconds so a busy folder isn't removed and re-created, all within 100 ms; a close that runs out of time leaves the rest to a later one. `clear()` runs the same sweep and removes the folders it emptied at once. So a cache never has more than 256 value folders, and a closed one has none sitting empty for long. A `FanoutCache`'s shards don't sweep yet: each keeps at most 256.
+Large values live one folder deep, in up to 256 folders named by the first two characters of the file's name (D-042). Deleting a value removes only its file. When the process closes its last handle on the cache, it sweeps those folders: a temp file that no writer has touched for an hour, left by a process killed mid-write, is removed, and a folder left empty goes too, skipping any touched in the last 30 seconds so a busy folder isn't removed and re-created, all within 100 ms; a close that runs out of time leaves the rest to a later one. `clear()` runs the same sweep and removes the folders it emptied at once. [Background maintenance](#background-maintenance) runs the same sweep hourly, so a process that never closes its caches still has it done. So a cache never has more than 256 value folders, and none sits empty for long. A `FanoutCache`'s shards skip the sweep at close and get the hourly one; each keeps at most 256 folders.
 
 A reader racing an overwrite always gets a whole value, old or new. If a value's file really is gone (deleted by hand, or cut short by a crash, since value files aren't fsynced), `get` returns the default and the orphaned row is cleaned up, so `in` and `len` don't keep reporting an entry that can't be read.
 
@@ -4230,7 +4312,7 @@ Some entries mustn't disappear just because the cache got full: a lock, a job cl
 locks = Cache('/var/lib/my-app/state/coordination', eviction_policy='none')
 ```
 
-Under `'none'`, no write and no `cull()` evicts for size. Expired entries are still removed: each write sweeps up to `cull_limit` of them, `expire()` and `cull()` remove the rest, and `cull()` returns how many it removed. The cache can grow past `size_limit`, so give the entries an `expire` and keep them apart from your general-purpose cache, which should go on evicting.
+Under `'none'`, no write and no `cull()` evicts for size. Expired entries are still removed: each write sweeps up to `cull_limit` of them, and background maintenance removes the rest, as an explicit `expire()` or `cull()` does (`cull()` returns how many it removed). The cache can grow past `size_limit`, so give the entries an `expire` and keep them apart from your general-purpose cache, which should go on evicting.
 
 The policy and both limits are stored in the cache, so every process shares them. Each write reads the policy afresh, so a change made from one process applies to every other at its next write, and a handle opened with `eviction_policy=None` (the default) keeps whatever is stored. `reset()` reads or changes one of them without reopening:
 
@@ -4400,6 +4482,225 @@ Profiling a cached `get` shows that about 60% of its time is one system call: SQ
 Past that, the [network server](roadmap.qmd) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. Measured reads drop from 1.18 µs to 0.69 µs.
 
 
+### Building from source
+
+Most people never build diskcache-oxide. PyPI has wheels for macOS on Apple Silicon, Linux (glibc) on x86_64 and aarch64, and Windows on x86_64, for CPython 3.14, 3.14t, 3.15 and 3.15t, and pip picks the right one. This page is for everyone else:
+
+- **No wheel for your platform.** An Intel Mac, Alpine or another musl-based Linux, Linux on an architecture other than x86_64 or aarch64, Windows on ARM. pip falls back to the source distribution on PyPI and compiles it, and it needs a Rust toolchain and a C compiler to do that.
+- **You'd rather not run prebuilt binaries.** Some teams build every native package themselves.
+- **You want to read, change or test the code.** That means a git checkout and an editable install.
+
+The engine is Rust, and it bundles its own copy of SQLite, written in C. So a build needs three things beyond Python: Rust, a C compiler, and (for a checkout) git. Python's side of the build is [maturin](https://www.maturin.rs/), which pip installs into a throwaway build environment by itself.
+
+## 1. Install the tools
+
+Rust comes from [rustup](https://rustup.rs/), the official installer, on every platform. diskcache-oxide tracks the latest stable Rust (the minimum is in `rust-version` in `Cargo.toml`, 1.99 today), and a Rust packaged by your OS is usually older than that, so use rustup even where your package manager offers Rust.
+
+
+## macOS
+
+Apple's command line tools give you the C compiler (clang) and git:
+
+```bash
+xcode-select --install
+```
+
+Then Rust:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Accept the default installation, then open a new terminal (or run `source "$HOME/.cargo/env"`) so `cargo` and `rustc` are on your `PATH`. If you use Homebrew, `brew install rustup` followed by `rustup-init` does the same thing.
+
+## Linux
+
+Install a C compiler, git and curl with your distribution's package manager:
+
+```bash
+# Debian, Ubuntu
+sudo apt install build-essential git curl
+
+# Fedora, RHEL
+sudo dnf install gcc git curl
+
+# Alpine
+apk add build-base git curl
+```
+
+Then Rust:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Accept the default installation, then open a new shell (or run `. "$HOME/.cargo/env"`) so `cargo` and `rustc` are on your `PATH`.
+
+In a Docker image, the non-interactive form is `curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal`, followed by `. "$HOME/.cargo/env"` in the same `RUN` step. The compilers make an image a lot bigger, so build in one stage and copy the virtual environment into a slim final stage; [Docker](../recipes/docker.qmd) has the layout.
+
+## Windows
+
+Rust on Windows uses Microsoft's C++ build tools (MSVC) as its linker and C compiler. Install rustup with winget, in PowerShell:
+
+```powershell
+winget install --id Rustlang.Rustup
+```
+
+or download `rustup-init.exe` from [rustup.rs](https://rustup.rs/) and run it. If the C++ build tools aren't installed, the installer offers to install them through the Visual Studio installer; accept it, or install them yourself with the **Desktop development with C++** workload of [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/). Building from a checkout also needs git:
+
+```powershell
+winget install --id Git.Git
+```
+
+Open a new terminal afterwards so `cargo`, `rustc` and `git` are on your `PATH`.
+
+
+Check the toolchain is there and recent enough:
+
+```bash
+rustc --version
+```
+
+If it reports a version below the minimum, `rustup update` brings it up to the latest stable.
+
+## 2. Install from PyPI, building it yourself
+
+On a platform with no wheel, a plain install already builds from source:
+
+```bash
+uv pip install diskcache-oxide
+```
+
+On a platform that has a wheel, ask for the source distribution explicitly. `--no-binary diskcache-oxide` applies to this one package, so your other dependencies still install from wheels:
+
+
+## macOS
+
+```bash
+uv venv --python 3.14
+uv pip install --no-binary diskcache-oxide diskcache-oxide
+```
+
+## Linux
+
+```bash
+uv venv --python 3.14
+uv pip install --no-binary diskcache-oxide diskcache-oxide
+```
+
+## Windows
+
+```powershell
+uv venv --python 3.14
+uv pip install --no-binary diskcache-oxide diskcache-oxide
+```
+
+
+With pip instead of uv, it's `pip install --no-binary diskcache-oxide diskcache-oxide` in an activated virtual environment. For the free-threaded build, create the environment with `--python 3.14t`. Each Python needs its own build: a build for 3.14 won't load on 3.14t or 3.15.
+
+The build compiles in release mode. It took about 30 seconds on a recent 18-core Mac and about a minute in an Alpine container with 6 CPUs; a machine with fewer cores takes longer. Nothing is printed while Rust compiles, so a quiet stretch is normal. Add `-v` to watch it. uv and pip cache the built wheel, so a second environment on the same Python reuses it instead of compiling again.
+
+## 3. Or work from a git checkout
+
+To change the code or run the tests, clone the repository and install it in editable mode:
+
+
+## macOS
+
+```bash
+git clone https://github.com/mikeckennedy/diskcache-oxide.git
+cd diskcache-oxide
+uv venv --python 3.14 venv
+uv pip install --python venv/bin/python --group dev -e .
+```
+
+## Linux
+
+```bash
+git clone https://github.com/mikeckennedy/diskcache-oxide.git
+cd diskcache-oxide
+uv venv --python 3.14 venv
+uv pip install --python venv/bin/python --group dev -e .
+```
+
+## Windows
+
+```powershell
+git clone https://github.com/mikeckennedy/diskcache-oxide.git
+cd diskcache-oxide
+uv venv --python 3.14 venv
+uv pip install --python venv\Scripts\python.exe --group dev -e .
+```
+
+
+The checkout pins its exact Rust version in `rust-toolchain.toml`, and rustup installs that version the first time you build inside the directory. If yours doesn't, `rustup toolchain install` (run in the checkout, with no arguments) installs the one the file names.
+
+`--group dev` adds the test tools (pytest, ruff, ty, and diskcache 5.6.3 itself, which the conformance tests compare against). After you change any Rust code, run the same `uv pip install -e .` again: the project tells uv to rebuild whenever a `.rs` or `Cargo.toml` file changes. Python changes need no rebuild.
+
+Then run the tests:
+
+
+## macOS
+
+```bash
+venv/bin/pytest                                     # oxide's own tests, plus conformance against diskcache
+venv/bin/pytest --backend=oxide tests/conformance   # the conformance tests against your build
+```
+
+Some tests open thousands of files at once. If they fail with "Too many open files", raise the limit first with `ulimit -n 10240`.
+
+## Linux
+
+```bash
+venv/bin/pytest                                     # oxide's own tests, plus conformance against diskcache
+venv/bin/pytest --backend=oxide tests/conformance   # the conformance tests against your build
+```
+
+Some tests open thousands of files at once. If they fail with "Too many open files", raise the limit first with `ulimit -n 10240`.
+
+## Windows
+
+```powershell
+venv\Scripts\pytest                                     # oxide's own tests, plus conformance against diskcache
+venv\Scripts\pytest --backend=oxide tests/conformance   # the conformance tests against your build
+```
+
+Tests for `fork()` are skipped on Windows, which has no fork.
+
+
+Plain `pytest` runs the conformance tests against diskcache, the library diskcache-oxide matches; `--backend=oxide` runs the same tests against your build. Both should pass.
+
+## 4. Check the build
+
+Whichever way you built it, this confirms the engine loads and shows the bundled SQLite:
+
+```bash
+python -c "import diskcache_oxide as d; print(d.__version__, d.sqlite_version())"
+```
+
+The wheels compile SQLite with a few flags of our own, set in `.cargo/config.toml`, which both the source distribution and the checkout carry, and a source build picks them up when it runs from the unpacked directory, as pip and uv do. To confirm they reached your build:
+
+```bash
+python -c "import diskcache_oxide as d; print([o for o in d.sqlite_compile_options() if 'MEMSTATUS' in o or 'STAT4' in o])"
+```
+
+It should print `['DEFAULT_MEMSTATUS=0']` and nothing about STAT4. If `ENABLE_STAT4` appears, the flags were lost, usually because something set `LIBSQLITE3_FLAGS` in the environment, which overrides them. The build still works, but writes and reads run noticeably slower; [Storage and WAL](storage-and-wal.qmd) and the comments in `.cargo/config.toml` explain what each flag does.
+
+## How a source build differs from a wheel
+
+The code and the on-disk format are the same, so a cache written by a source build and one written by a wheel are interchangeable. One thing differs: the published wheels are built with profile-guided optimization (PGO), which compiles the engine, runs a training workload, and compiles it again laid out for the paths that workload took. A source build skips that, so its hot paths are somewhat slower; on one Windows machine a cached read measured about 10% faster on the PGO wheel. If speed matters and your platform has wheels, use them.
+
+## When the build fails
+
+- **`cannot be built because it requires rustc 1.99 or newer`**: your Rust is older than the minimum. Run `rustup update`.
+- **`cargo` or `rustc` not found**: the shell started before rustup finished. Open a new one, or run `source "$HOME/.cargo/env"` (Windows: open a new terminal).
+- **``linker `cc` not found``, or `failed to run custom build command for libsqlite3-sys` with `Failed to find tool`**: there's no C compiler. Install the tools in [step 1](#install-the-tools) for your platform.
+- **`link.exe` not found** (Windows): the MSVC build tools are missing. Install the **Desktop development with C++** workload, then open a new terminal.
+- **The build is killed partway, with no error from Rust**: the machine, or the container, ran out of memory. Give the container more memory, or build with fewer parallel jobs by setting `CARGO_BUILD_JOBS=2`.
+
+If a build fails for a reason not listed here, please [open an issue](https://github.com/mikeckennedy/diskcache-oxide/issues) with the platform, the Python version (`python -VV`), `rustc --version`, and the output of the install with `-v`.
+
+
 ### Divergences from python-diskcache
 
 diskcache-oxide's test suite is a conformance suite: the same black-box tests run against real diskcache 5.6.3 and against diskcache-oxide. Where they behave differently, it's on purpose, and it's written down here. Running one suite against two implementations turned out to be a bug detector pointed in both directions: most of the differences below are diskcache bugs the suite found, each with a reproduction in the repository's `upstream/` folder.
@@ -4564,7 +4865,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-022:** there's no `disk=` and there won't be: a Python `Disk` class would put Python code on every read and write; `serializer=` and `register_type()` cover what it was for. `eviction_policy=` is `'least-recently-stored'` (the default) or `'none'`, stored in the cache and read inside every write, so a change made by one process applies to every other at its next write. Least-recently-used and least-frequently-used raise `ValueError`, because they make every `get` a write (see the [roadmap](roadmap.qmd)). Tags are always indexed, so there's no `tag_index` setting.
 - **D-041:** a type the codec doesn't know is registered per type with `register_type(cls, name=..., encode=..., decode=...)` (a dataclass needs only a name), process-wide or per cache with `types=`. It's stored as a tagged value and read back only where the name is registered, so nothing is imported by name; a registered type is never pickled; a `decode` error about the row is a `CorruptValueError` with yours as `__cause__`. See [Your own types](serialization.qmd#your-own-types).
 - **D-028:** `Cache(..., durable=True)` has no counterpart in diskcache. It answers an outage on a single-key call as a miss or `False`, and it can drop writes. Beginning a transaction, and anything inside one, still raises. See [A cache that can't take a request down](getting-started.qmd#a-cache-that-cant-take-a-request-down).
-- **D-042:** a large value's file sits one folder deep, in at most 256 folders. A delete removes only the file; the last close in a process removes folders left empty and untouched for 30 seconds, and `clear()` removes the ones it emptied. A `FanoutCache`'s shards don't sweep yet. Before this, empty folders were never removed and a long-lived cache could hold 65,536 of them, about 257 MiB on ext4. See [Storage and WAL](storage-and-wal.qmd).
+- **D-042:** a large value's file sits one folder deep, in at most 256 folders. A delete removes only the file; the last close in a process removes folders left empty and untouched for 30 seconds, `clear()` removes the ones it emptied, and background maintenance (D-061) runs the same sweep hourly, on a `FanoutCache`'s shards too (their close skips it). Before this, empty folders were never removed and a long-lived cache could hold 65,536 of them, about 257 MiB on ext4. See [Storage and WAL](storage-and-wal.qmd).
 - **D-043:** if a cache's folder is deleted while a process has it open, that process's next large write raises `OSError` instead of re-creating the folder. Delete a cache's folder only with every process stopped.
 - **D-044:** keys are compared by exact type: `1`, `1.0` and `True` are three keys, as are `0` and `False`, while `0.0` and `-0.0` are one. diskcache compares through SQLite, so `1` and `1.0` are one key there.
 - **D-045:** `memoize(typed=True)` adds each argument type's name (`'builtins.int'`) to the key, where diskcache adds the class itself, which can't be a key without pickle.
@@ -4579,7 +4880,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-054 to D-057:** the queue calls. A queue's items are only keys of its exact shape, so floats, ordinary keys that share the prefix and nested queues never mix in (upstream bugs 17 and 18); `peek()` and `peekitem()` write only what `get` would and never hang on a missing value file (bug 16); `pull()` decodes before it deletes, on every path, so an item this process can't read stays queued; and `push()` raises `OverflowError` rather than leave its range or overwrite a key. See [Work queues](../recipes/work-queues.qmd).
 - **D-058:** on Windows, diskcache can't delete a value file while any reader has it open (Python's `open()` doesn't share delete) and ignores the failure, so the file stays with nothing pointing at it (upstream bug 19); one test left 154 files for 6 entries. diskcache-oxide's readers allow the delete, so nothing leaks.
 - **D-059:** when a cache directory holds a cache in another diskcache-oxide format (after an upgrade or a rollback), the cache opens in the subdirectory `diskcache-oxide-format-N` with a warning, and every later open uses it; `directory` reports where the cache really is. `remove_old_formats()` cleans up older formats once the old workers are gone. See [Upgrading across a format change](../recipes/upgrading.qmd).
-- **D-060:** an expired entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it expires, as it already left `get` and `in`. diskcache keeps counting and listing it until a `set()`, `expire()` or `cull()` removes its row. Nothing is written by the check: the row and its space, in `volume()`, stay until that removal, as in diskcache.
+- **D-060:** an expired entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it expires, as it already left `get` and `in`. diskcache keeps counting and listing it until a `set()`, `expire()` or `cull()` removes its row. Nothing is written by the check: the row and its space, in `volume()`, stay until a `set()`, `expire()` or `cull()` removes them, or background maintenance does (D-061).
 - **D-061:** one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every `maintenance_interval` (default 5 minutes, 0 for off), with the caches and the processes taking turns. So an explicit `expire()` or `cull()` can return less than diskcache's would, `volume()` changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
@@ -4616,7 +4917,7 @@ import time
 
 from diskcache_oxide import Cache
 
-cache = Cache(tempfile.mkdtemp())
+cache = Cache(tempfile.mkdtemp(), timeout=1.0, durable=True)  # an outage is a miss, not an error
 
 def load_popular_episodes() -> list[dict]:
     time.sleep(0.2)  # stands in for a slow database query
@@ -4740,7 +5041,7 @@ from typing import Any
 from diskcache_oxide import Cache
 
 now = [1_000_000.0]                                   # a fake clock; in a real app use time.time()
-cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0], durable=True)
 refresher = ThreadPoolExecutor(max_workers=2)         # one per process, for background refreshes
 loads: list[float] = []
 
@@ -4838,9 +5139,9 @@ import httpx
 from diskcache_oxide import Cache
 
 now = [1_000_000.0]                                   # a fake clock; in a real app use time.time()
-cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0])
+cache = Cache(tempfile.mkdtemp(), clock=lambda: now[0], durable=True)
 
-def max_age(response: httpx.Response) -> float | None:
+def max_age(response: httpx.Response) -> Optional[float]:
     m = re.search(r'max-age=(\d+)', response.headers.get('cache-control', ''))
     return float(m.group(1)) if m else None
 
@@ -4876,7 +5177,7 @@ def fetch_json(client: httpx.Client, url: str, *, default_ttl: float = 300, keep
 Here it runs against a mock upstream that counts its requests:
 
 ```python
-seen: list[str | None] = []
+seen: list[Optional[str]] = []
 
 def upstream(request: httpx.Request) -> httpx.Response:
     seen.append(request.headers.get('If-None-Match'))
@@ -5092,7 +5393,7 @@ class Invoice:
     id: uuid.UUID
     plan: Plan
     issued: datetime.date
-    paid_within: datetime.timedelta | None = None
+    paid_within: Optional[datetime.timedelta] = None
 
 diskcache_oxide.register_type(Invoice, name='app.Invoice')
 
@@ -5278,7 +5579,7 @@ Why it's built this way:
 
 - **`add()` then `incr()`.** `add()` creates the counter with an expiry the first time and does nothing after that. `incr()` keeps a key's existing expiry, so the counter expires on schedule however many times it's incremented. Calling `incr()` alone would create a counter that never expires.
 - **The window number is in the key.** A new window means a new key, so no reset is needed, and there's no race where one request resets the counter while another increments it.
-- **The expiry is two windows long,** so a counter can't expire while its window is still current. Expired counters are cleaned up by `expire()` or eviction like any other entry.
+- **The expiry is two windows long,** so a counter can't expire while its window is still current. Expired counters are removed like any other entry, by background maintenance, with nothing to schedule.
 
 In a real app, use `time.time()` and leave out `clock=`; the fake clock is only here so the example can jump to the next minute.
 
@@ -5502,7 +5803,7 @@ import uuid
 def enqueue(cache: Cache, episode: int) -> None:
     cache.push({'id': uuid.uuid4().hex, 'episode': episode, 'step': 'transcode'}, prefix='transcode')
 
-def take(cache: Cache) -> dict | None:
+def take(cache: Cache) -> Optional[dict]:
     """The next job, recorded as running in the same transaction; None if the queue is empty."""
     with cache.transact():
         key, job = cache.pull(prefix='transcode')
@@ -5550,7 +5851,7 @@ jobs.push({'to': 'sam@example.com', 'template': 'welcome'}, prefix='email')
 jobs.push({'episode': 515, 'step': 'transcode'}, prefix='transcode')
 jobs.push({'episode': 516, 'step': 'transcode'}, prefix='urgent')
 
-def next_job(cache: Cache, queues: tuple[str, ...] = ('urgent', 'transcode', 'email')) -> tuple[str, dict] | None:
+def next_job(cache: Cache, queues: tuple[str, ...] = ('urgent', 'transcode', 'email')) -> Optional[tuple[str, dict]]:
     for queue in queues:
         key, job = cache.pull(prefix=queue)
         if key is not None:
@@ -5592,7 +5893,7 @@ A separate directory is a good idea in any app: the queue gets its own eviction 
 
 - **Open the queue's cache with `eviction_policy='none'`.** Least-recently-stored eviction removes the oldest entries first, and the oldest entry in a queue is the next one to be pulled: a full cache would silently drop the front of the queue. Under `'none'` nothing is evicted for size; only items you gave an `expire` ever vanish.
 - **Use a prefix no other key starts with.** Only keys of exactly the queue's shape (`'{prefix}-'` and 15 digits) belong to it, so an ordinary key like `'transcode-settings'` or `'transcode-512'`, or an item of another queue named `'transcode-hd'`, is never pulled or numbered as one of its items (D-054). Keys whose next character after the dash is a digit, like `'transcode-512'`, do sort inside the queue's range, though, and every queue call has to step past them.
-- **Expired items are passed over.** An item pushed with `expire=` is never pulled or peeked after it expires. It stays on disk, and keeps its number, until `expire()` or the cleanup that later writes do removes it.
+- **Expired items are passed over.** An item pushed with `expire=` is never pulled or peeked after it expires. It stays on disk, and keeps its number, until background maintenance, `expire()` or the cleanup that later writes do removes it.
 - **Keys are reused.** After the front item is pulled, a push to the front takes its number again, so don't use an item's key as a lasting id.
 - **Inside a transaction,** `push()` and `pull()` join it, and a rollback puts a pulled item back, after your code has already seen it.
 - **Keep the queue out of `NullCache`'s reach.** A `NullCache` has the queue calls, but its queue is always empty and its pushes store nothing, so a setting that switches caching off would drop every job. Don't register the queue's cache where it can be switched off.
@@ -5623,7 +5924,7 @@ def issue_reset_token(user_id: int) -> str:
     tokens.set(f'reset:{token}', user_id, expire=15 * 60)
     return token
 
-def redeem_reset_token(token: str) -> int | None:
+def redeem_reset_token(token: str) -> Optional[int]:
     """The user id the token was issued to, or None if it's unknown, expired or already used."""
     return tokens.pop(f'reset:{token}')
 
@@ -5734,7 +6035,7 @@ def start_session(user_id: int, roles: list[str]) -> str:
     sessions.set(f'user-sessions:{user_id}:{sid}', True, expire=ABSOLUTE)
     return sid
 
-def load_session(sid: str) -> dict | None:
+def load_session(sid: str) -> Optional[dict]:
     data, expires_at = sessions.get(f'session:{sid}', expire_time=True)
     if data is None or now[0] - data['started'] > ABSOLUTE:
         return None
@@ -5788,8 +6089,172 @@ A lost session is a forced logout, so sessions get a cache of their own, configu
 - **Nothing evicted for size.** Eviction removes the least recently stored entries, and a long-lived session is exactly that. Open the session cache with `eviction_policy='none'`, so a session goes only when it expires or ends. Sessions are small (a few hundred bytes each), so 1 GiB holds millions; watch `volume()` if you store more per session, since under `'none'` the cache can grow past `size_limit`.
 - **Never a `NullCache`, so not in a registry.** A `NullCache` stores nothing and its `set()` returns `True`, so a login would "succeed" and the next request would be logged out. A [`Caches`](../user-guide/caches.qmd) registry hands one out whenever a cache can't open or is disabled, so open the session cache with `Cache(...)` directly, as in the [recommended setup](web-workers.qmd#the-recommended-setup): `Cache('/var/lib/my-app/state/sessions', timeout=3.0, eviction_policy='none')`.
 - **Not `durable=True`.** A dropped write there means a login that silently didn't happen. Let `set()` raise and show the user an error (a 503 page, say).
-- **Run `expire()` from a scheduled job**, [claimed by one worker](run-once.qmd), so ended sessions free their space. Expired sessions are already invisible to `get()`; this is housekeeping.
+- **Nothing to schedule for expired sessions.** They're invisible to `get()` the moment they expire, and background maintenance frees their space within its interval (5 minutes by default), with eviction off too.
 - **One machine.** Every worker on the host shares the sessions. Behind a load balancer across several machines, use sticky sessions or a session store every machine can reach.
+
+### One typed module for your caches
+
+Wrap a Caches registry in a module with one function per cache, so the app gets autocomplete and type checking instead of string lookups.
+
+An app starts with one cache and a line like `caches['pages']`. A year later there are five caches, the names are strings scattered over forty files, one handler says `caches['page']` and nobody has hit it yet, and the only way to learn which caches exist is to grep for `register`. A registry indexed by name is a dictionary, and a dictionary can't tell your editor what's in it.
+
+The fix is a small module that owns the registry and has one function per cache. Everything else in the app calls those functions. Type `site_caches.` and the editor lists every cache the app has.
+
+## The module
+
+```python
+# site_caches.py
+from typing import Literal, Optional
+
+from diskcache_oxide import Caches, TransactionalCacheLike
+
+CacheName = Literal['pages', 'markdown', 'etags']
+caches: Optional[Caches[CacheName]] = None
+
+
+def setup(base_folder: str) -> None:
+    global caches
+    if caches is not None:
+        return
+
+    registry: Caches[CacheName] = Caches(base_folder, durable=True, timeout=1.0)
+    registry.register('pages', size_limit=1 * 2**30)
+    registry.register('markdown')
+    registry.register('etags')
+    caches = registry
+
+
+def close() -> None:
+    global caches
+    if caches is not None:
+        caches.expire_all(timeout=10)
+        caches.close_all()
+        caches = None
+
+
+def cache(name: CacheName) -> TransactionalCacheLike:
+    if caches is None:
+        raise RuntimeError('call site_caches.setup() first')
+    return caches[name]
+
+
+def pages_cache() -> TransactionalCacheLike:
+    return cache('pages')
+
+
+def markdown_cache() -> TransactionalCacheLike:
+    return cache('markdown')
+
+
+def etag_cache() -> TransactionalCacheLike:
+    return cache('etags')
+```
+
+`setup()` registers the caches and nothing more: a cache opens on its first lookup, so calling it early costs nothing. A second call does nothing. `close()` removes expired entries, closes every cache and forgets the registry, so `setup()` can run again, which is what a test wants.
+
+## Using it
+
+Call `setup()` once when the app starts and `close()` when it stops. In FastAPI that's the lifespan; the [web workers recipe](web-workers.qmd) has the same for Flask, Django and Celery.
+
+```python
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+import site_caches
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    site_caches.setup('/var/lib/my-app/cache')
+    yield
+    site_caches.close()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+Everywhere else, ask for the cache at the point you use it:
+
+```python
+from typing import Optional
+
+import site_caches
+
+def render_page(url: str) -> Response:
+    etag: Optional[str] = site_caches.etag_cache().get(url)
+    page: Optional[str] = site_caches.pages_cache().get(url)
+
+    if page is not None:
+        return Response(body=page, etag=etag)
+
+    html = render_page_contents(url)
+    etag = etag_from_body(html)
+
+    site_caches.etag_cache().set(url, etag)
+    site_caches.pages_cache().set(url, html)
+
+    return Response(body=html, etag=etag)
+```
+
+The two caches here are written and evicted separately, so a page can come back with no etag. Handle `etag is None` on a hit, or store `(etag, html)` as one entry in `pages`: a tuple comes back as a tuple.
+
+## Why functions, not variables
+
+It's tempting to write `pages = caches['pages']` once at the bottom of the module and import that. Don't: the functions do a lookup on every call, and that's the point.
+
+- **A cache that couldn't open comes back.** While it can't open, the lookup returns a [`NullCache`](../user-guide/null-cache.qmd) and tries again 10 seconds later. A variable would hold that `NullCache` until the process restarts.
+- **Switches work.** `site_caches.caches.disable('pages')` changes what later lookups return. Code holding the real cache in a variable never notices.
+- **It's cheap.** A lookup is one dict read with no lock, fine on every request.
+
+The names are checked too. `CacheName` is a `Literal`, so `cache('page')` is a type error, and nothing outside the module spells a name at all. The registry itself stays reachable as `site_caches.caches` for what the functions don't cover, such as `stats()` on an admin page. It's `None` until `setup()` runs.
+
+## `memoize`
+
+`@site_caches.pages_cache().memoize()` runs when the module that holds it is imported, which is before `setup()`, so it raises. Add a decorator to `site_caches` that looks the cache up on each call instead:
+
+```python
+import functools
+
+def memoized(name: CacheName, **options):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return cache(name).memoize(**options)(func)(*args, **kwargs)
+        return wrapper
+    return decorator
+```
+
+```python
+@site_caches.memoized('markdown', expire=3600)
+def to_html(markdown_text: str) -> str:
+    return render_markdown(markdown_text)
+```
+
+It stores under the same keys `memoize` would, and it follows recovery and the switches. [`memoize` on a registered cache](../user-guide/caches.qmd#memoize-on-a-registered-cache) has the details, and the cost: about 2 µs a call.
+
+## In tests
+
+Point `setup()` at pytest's `tmp_path` and every test gets its own empty caches:
+
+```python
+import pytest
+
+import site_caches
+
+@pytest.fixture(autouse=True)
+def fresh_caches(tmp_path):
+    site_caches.setup(str(tmp_path / 'cache'))
+    yield
+    site_caches.close()
+```
+
+For tests where caching shouldn't happen at all, call `site_caches.caches.disable('pages', 'markdown', 'etags')` after `setup()`: every read misses. See [Testing code that uses a cache](testing.qmd).
+
+## Where it stops
+
+- **State doesn't go in the registry.** Sessions, job claims, locks and queues need a plain `Cache` opened directly, because a registry hands out a `NullCache` when a cache can't open, and on one of those `add()` always wins. Give them their own function in the same module if you like, returning a `Cache` you opened yourself: see [State isn't cache](../user-guide/caches.qmd#state-isnt-cache).
+- **A sharded cache needs its own kind of function.** One registered with `shards=` is read with `caches.fanout(name)`, which returns `FanoutCache | NullCache`; `cache(name)` raises `TypeError` for it.
+- **Names that come from configuration** can't be a `Literal`. For those, `caches.get(name)` returns the cache, or `None` when nothing by that name is registered.
+- **Adding a cache is three edits:** the `Literal`, the `register` line and the function. Miss the `register` and the function raises `KeyError` the first time it's called, so call each one in a test.
 
 ### Sharing a cache across web workers
 
@@ -6010,7 +6475,7 @@ ENV EXAMPLE_ROOT=/var/lib/my-app
 CMD ["gunicorn", "-c", "gunicorn.conf.py"]
 ```
 
-Use a Debian- or Ubuntu-based image such as `python:3.14-slim`. diskcache-oxide publishes wheels for glibc Linux, not for musl, so on Alpine pip would build it from source, which needs a Rust toolchain in the image.
+Use a Debian- or Ubuntu-based image such as `python:3.14-slim`. diskcache-oxide publishes wheels for glibc Linux, not for musl, so on Alpine pip would build it from source, which needs a Rust toolchain and a C compiler in the image; [Building from source](../user-guide/building-from-source.qmd) lists them.
 
 ## Who owns the directory
 
@@ -6091,7 +6556,7 @@ import tempfile
 
 from diskcache_oxide import Cache
 
-cache = Cache(tempfile.mkdtemp(), timeout=1.0)
+cache = Cache(tempfile.mkdtemp(), timeout=1.0, durable=True)
 
 async def load_user(user_id: int) -> dict:
     await asyncio.sleep(0.001)                        # stands in for a database query
@@ -6153,7 +6618,7 @@ from starlette.concurrency import run_in_threadpool
 
 from diskcache_oxide import Cache
 
-cache = Cache('/var/cache/my-app', timeout=1.0)
+cache = Cache('/var/cache/my-app', timeout=1.0, durable=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -6335,9 +6800,9 @@ Hit and miss counts are per process (`stats()` counts in memory), so under sever
 
 ## The write-ahead log
 
-`wal_mib` in the health check is the size of `diskcache-oxide.sqlite-wal` beside the database. At normal load `wal_size_limit` keeps it at a few MiB. A burst of writes with readers in other processes can leave it much larger, and in the default `wal_checkpoint='manual'` mode it stays that size until something checkpoints it.
+`wal_mib` in the health check is the size of `diskcache-oxide.sqlite-wal` beside the database. At normal load `wal_size_limit` keeps it at a few MiB. A burst of writes with readers in other processes can leave it much larger, and in the default `wal_checkpoint='manual'` mode it stays that size until something checkpoints it. Background maintenance does, once the log is over half of `wal_size_limit`, on its next turn (every 5 minutes by default) if readers in other processes let it.
 
-If it keeps growing, call `checkpoint()` from a maintenance job. It returns True when the log was copied into the database and truncated, and False, without raising, when other processes kept it busy; try again later. If that isn't enough, open the cache with `wal_checkpoint='auto'`. [Storage and WAL](../user-guide/storage-and-wal.qmd#the-write-ahead-log) has the details. A `FanoutCache` has one log per shard, in the shard folders (`000/`, `001/`, ...), so add those up for the total.
+If it keeps growing anyway, call `checkpoint()` from a maintenance job. It returns True when the log was copied into the database and truncated, and False, without raising, when other processes kept it busy; try again later. If that isn't enough, open the cache with `wal_checkpoint='auto'`. [Storage and WAL](../user-guide/storage-and-wal.qmd#the-write-ahead-log) has the details. A `FanoutCache` has one log per shard, in the shard folders (`000/`, `001/`, ...), so add those up for the total.
 
 ## Checking for damage
 

@@ -578,6 +578,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/site-caches.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">One typed module for your caches</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/stale-while-revalidate.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Serving stale values while refreshing</span></a>
   </div>
@@ -670,6 +676,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="deployment-and-testing" class="level1">
 <h1>Deployment and testing</h1>
+<p><strong><a href="../recipes/site-caches.html">One typed module for your caches</a>.</strong> Wrap the <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry in a module with a function per cache, so the app gets autocomplete and type checking instead of string lookups scattered through the code.</p>
 <p><strong><a href="../recipes/web-workers.html">Sharing a cache across web workers</a>.</strong> Where to put the cache directory, when to open it with gunicorn, uvicorn, FastAPI, Flask, Django and Celery, how to keep a busy cache from slowing requests, and what to do at shutdown.</p>
 <p><strong><a href="../recipes/docker.html">Docker and Compose</a>.</strong> One named volume for the caches and state, a fixed non-root user, the ownership rules that otherwise end in <code>PermissionError</code>, Kubernetes volumes, disk sizing, and the cleanup step after a format change.</p>
 <p><strong><a href="../recipes/asyncio.html">Using the cache from asyncio</a>.</strong> Read inline, write off the loop, and keep transactions on one thread, in FastAPI, Starlette or aiohttp.</p>

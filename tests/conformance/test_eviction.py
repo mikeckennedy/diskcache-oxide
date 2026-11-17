@@ -15,7 +15,7 @@ The clock is advanced before every `set` so store times are distinct and evictio
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -41,7 +41,7 @@ def _value_size(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(module, 'ROOM', SLOTS * request.param)
 
 
-def value(i: int, size: int | None = None) -> bytes:
+def value(i: int, size: Optional[int] = None) -> bytes:
     return bytes([i % 256]) * (VALUE_SIZE if size is None else size)
 
 

@@ -27,6 +27,7 @@ import sys
 import tempfile
 import threading
 import time
+from typing import Optional
 
 
 def load1() -> float:
@@ -72,7 +73,7 @@ def build(tmp: str):
     }
 
 
-def run(caches: list, threads: int, stop_at: float | None = None) -> float:
+def run(caches: list, threads: int, stop_at: Optional[float] = None) -> float:
     lists = [random.Random(t).choices(KEYS, k=N) for t in range(threads)]
     bar = threading.Barrier(threads + 1)
     done = [0] * threads

@@ -25,7 +25,7 @@ Reads and decodes the item first, then deletes exactly that stored version, as [
 ## Parameters
 
 
-`prefix: str | None = None`  
+`prefix: Optional[str] = None`  
 The queue's name, or None for the int queue.
 
 `default: Any = (None, None)`  

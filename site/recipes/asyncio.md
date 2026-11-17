@@ -24,7 +24,7 @@ import tempfile
 
 from diskcache_oxide import Cache
 
-cache = Cache(tempfile.mkdtemp(), timeout=1.0)
+cache = Cache(tempfile.mkdtemp(), timeout=1.0, durable=True)
 
 async def load_user(user_id: int) -> dict:
     await asyncio.sleep(0.001)                        # stands in for a database query
@@ -93,7 +93,7 @@ from starlette.concurrency import run_in_threadpool
 
 from diskcache_oxide import Cache
 
-cache = Cache('/var/cache/my-app', timeout=1.0)
+cache = Cache('/var/cache/my-app', timeout=1.0, durable=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

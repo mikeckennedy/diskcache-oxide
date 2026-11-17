@@ -8,7 +8,7 @@ from __future__ import annotations
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from diskcache_oxide import CacheLike
 
@@ -27,7 +27,7 @@ class Read:
         return f'{self.seconds * 1_000_000:.1f} µs'
 
 
-_reads: ContextVar[list[Read] | None] = ContextVar('reads', default=None)
+_reads: ContextVar[Optional[list[Read]]] = ContextVar('reads', default=None)
 
 
 def start() -> list[Read]:

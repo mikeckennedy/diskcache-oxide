@@ -30,7 +30,7 @@ The key.
 `value: Any`  
 The value, as for [set()](Cache.set.md#diskcache_oxide.Cache.set).
 
-`expire: float | None = None`  
+`expire: Optional[float] = None`  
 Seconds until the entry expires, or None for never.
 
 `tag: Key = None`  

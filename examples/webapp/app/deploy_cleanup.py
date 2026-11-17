@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import logging.config
+from typing import Optional
 
 from app.caching import open_caches
 from app.logging_config import LOGGING
@@ -23,7 +24,7 @@ from app.settings import Settings
 log = logging.getLogger('app')
 
 
-def main(settings: Settings | None = None) -> list[str]:
+def main(settings: Optional[Settings] = None) -> list[str]:
     settings = settings or Settings.from_env()
     caches = open_caches(settings.root)
     removed: list[str] = []

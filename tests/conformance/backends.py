@@ -11,7 +11,7 @@ import importlib
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -88,7 +88,7 @@ class Backend:
     name: str
     timeout_error: type[BaseException]
     # Raised by a pickle=False handle reading a pickled row (D-001). diskcache has no such error.
-    unsafe_value_error: type[BaseException] | None = None
+    unsafe_value_error: Optional[type[BaseException]] = None
     db_filename: str
     # Values of at least this many bytes are stored in their own file instead of the database row.
     spill_threshold: int
@@ -107,9 +107,9 @@ class Backend:
         directory: Path,
         *,
         timeout: float = 60.0,
-        size_limit: int | None = None,
-        cull_limit: int | None = None,
-        clock: Callable[[], float] | None = None,
+        size_limit: Optional[int] = None,
+        cull_limit: Optional[int] = None,
+        clock: Optional[Callable[[], float]] = None,
         **opts: Any,
     ) -> Any:
         raise NotImplementedError
@@ -120,8 +120,8 @@ class Backend:
         *,
         shards: int = 8,
         timeout: float = 60.0,
-        size_limit: int | None = None,
-        clock: Callable[[], float] | None = None,
+        size_limit: Optional[int] = None,
+        clock: Optional[Callable[[], float]] = None,
         **opts: Any,
     ) -> Any:
         """A FanoutCache with `shards` shards. `size_limit` is the whole cache's, which both backends split."""
@@ -170,7 +170,7 @@ class Backend:
         """
         raise NotImplementedError
 
-    def sqlite_info(self) -> dict[str, Any] | None:
+    def sqlite_info(self) -> Optional[dict[str, Any]]:
         """Which SQLite the backend runs on, or None if it can't say.
 
         Keys: `runtime_version` (the library actually loaded), `bundled` (True when the backend
@@ -207,9 +207,9 @@ class DiskcacheBackend(Backend):
         directory: Path,
         *,
         timeout: float = 60.0,
-        size_limit: int | None = None,
-        cull_limit: int | None = None,
-        clock: Callable[[], float] | None = None,
+        size_limit: Optional[int] = None,
+        cull_limit: Optional[int] = None,
+        clock: Optional[Callable[[], float]] = None,
         **opts: Any,
     ) -> Any:
         # The clock is handled by the fake_clock fixture monkeypatching time.time for this backend.
@@ -227,8 +227,8 @@ class DiskcacheBackend(Backend):
         *,
         shards: int = 8,
         timeout: float = 60.0,
-        size_limit: int | None = None,
-        clock: Callable[[], float] | None = None,
+        size_limit: Optional[int] = None,
+        clock: Optional[Callable[[], float]] = None,
         **opts: Any,
     ) -> Any:
         # The clock is the fake_clock fixture's monkeypatched time.time, as for make_cache.
@@ -252,7 +252,7 @@ class DiskcacheBackend(Backend):
         # Stock's FanoutCache.transact() locks every shard in order and requires retry=True.
         return cache.transact(retry=True)
 
-    def sqlite_info(self) -> dict[str, Any] | None:
+    def sqlite_info(self) -> Optional[dict[str, Any]]:
         # diskcache runs on the stdlib sqlite3 module, i.e. whatever SQLite this Python links.
         import sqlite3
 
@@ -287,9 +287,9 @@ class OxideBackend(Backend):
         directory: Path,
         *,
         timeout: float = 60.0,
-        size_limit: int | None = None,
-        cull_limit: int | None = None,
-        clock: Callable[[], float] | None = None,
+        size_limit: Optional[int] = None,
+        cull_limit: Optional[int] = None,
+        clock: Optional[Callable[[], float]] = None,
         **opts: Any,
     ) -> Any:
         kwargs: dict[str, Any] = dict(opts)
@@ -311,8 +311,8 @@ class OxideBackend(Backend):
         *,
         shards: int = 8,
         timeout: float = 60.0,
-        size_limit: int | None = None,
-        clock: Callable[[], float] | None = None,
+        size_limit: Optional[int] = None,
+        clock: Optional[Callable[[], float]] = None,
         **opts: Any,
     ) -> Any:
         if not self.supports('fanout'):
@@ -337,7 +337,7 @@ class OxideBackend(Backend):
     def fanout_transact(self, cache: Any, key: str) -> AbstractContextManager[Any]:
         return cache.transact(key=key)
 
-    def sqlite_info(self) -> dict[str, Any] | None:
+    def sqlite_info(self) -> Optional[dict[str, Any]]:
         mod = self._module
         return {
             'runtime_version': mod.sqlite_version(),
@@ -374,7 +374,7 @@ KNOWN_COMMUNITY_DIFFERENCES: dict[str, str] = {
 }
 
 
-def community_difference(nodeid: str) -> str | None:
+def community_difference(nodeid: str) -> Optional[str]:
     """The D-number KNOWN_COMMUNITY_DIFFERENCES lists for this node id, if any."""
     if nodeid in KNOWN_COMMUNITY_DIFFERENCES:
         return KNOWN_COMMUNITY_DIFFERENCES[nodeid]

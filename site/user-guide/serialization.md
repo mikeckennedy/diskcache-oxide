@@ -93,7 +93,7 @@ A dataclass needs only a name. Its `init=True` fields are read straight off the 
 class Episode:
     id: int
     title: str
-    published: datetime.datetime | None = None
+    published: Optional[datetime.datetime] = None
 
 diskcache_oxide.register_type(Episode, name='tp.Episode')
 cache.set('episode:491', Episode(491, 'Rust and Python'))

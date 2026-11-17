@@ -30,7 +30,7 @@ use rusqlite::types::ValueRef;
 use crate::gate;
 use crate::key::{Key, OwnedKey};
 use crate::rows::{Removed, RowWriter};
-use crate::schema::{EvictionPolicy, KEY_TYPE_STR, KEY_TYPE_TYPED};
+use crate::schema::{KEY_TYPE_STR, KEY_TYPE_TYPED};
 use crate::store::{Changed, LockPriority, Store};
 use crate::{Error, Result};
 
@@ -74,7 +74,12 @@ pub enum Cursor {
     #[default]
     Start,
     Key(OwnedKey),
-    Id(i64),
+    /// An insertion-order walk: past row `after`, and, going forward, at most row `bound`, the newest
+    /// row when the walk began.
+    Id {
+        after: i64,
+        bound: i64,
+    },
 }
 
 /// The smallest string greater than every string that starts with `prefix`, or `None` when there's
@@ -266,13 +271,7 @@ impl Store {
             let (over, batch) = self
                 .write_files(timeout, LockPriority::Normal, |writer, conn| {
                     // The policy too, in this transaction: under 'none' only the expired go (H2).
-                    let (size_limit, size, policy): (i64, i64, i64) = conn
-                        .prepare_cached("SELECT size_limit, size, eviction_policy FROM state WHERE only = 1")
-                        .and_then(|mut stmt| stmt.query_row([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))))
-                        .map_err(|e| Error::from_sqlite(e, timeout))?;
-                    if policy != EvictionPolicy::LeastRecentlyStored.code()
-                        || crate::ops::volume_in(conn, size, timeout)? < size_limit
-                    {
+                    if !crate::ops::Fill::read(conn, timeout)?.over(conn, timeout)? {
                         return Ok(Changed::removing((false, 0), []));
                     }
                     // Its size isn't needed: the next pass reads `state` again.
@@ -440,11 +439,11 @@ fn key_page_sql(reverse: bool, after_cursor: bool, has_upper: bool) -> &'static 
 }
 
 /// One page in insertion order, binding `?1` the cursor's id, `?2` and `?3` the key types, `?4` the
-/// page size and `?5` the time.
-const INSERTED_SQL: &str = "SELECT id, key_type, key FROM cache WHERE id > ?1 AND +key_type IN (?2, ?3) \
-     AND (expire_time IS NULL OR expire_time > ?5) ORDER BY id LIMIT ?4";
-const INSERTED_REVERSE_SQL: &str = "SELECT id, key_type, key FROM cache WHERE id < ?1 AND +key_type IN (?2, ?3) \
-     AND (expire_time IS NULL OR expire_time > ?5) ORDER BY id DESC LIMIT ?4";
+/// page size, `?5` the time and `?6` the newest row the walk may reach.
+const INSERTED_SQL: &str = "SELECT id, key_type, key FROM cache WHERE id > ?1 AND id <= ?6 \
+     AND +key_type IN (?2, ?3) AND (expire_time IS NULL OR expire_time > ?5) ORDER BY id LIMIT ?4";
+const INSERTED_REVERSE_SQL: &str = "SELECT id, key_type, key FROM cache WHERE id < ?1 AND id <= ?6 \
+     AND +key_type IN (?2, ?3) AND (expire_time IS NULL OR expire_time > ?5) ORDER BY id DESC LIMIT ?4";
 
 fn page(
     conn: &Connection,
@@ -461,11 +460,20 @@ fn page(
     let keys = match order {
         Order::Inserted | Order::InsertedReverse => {
             let reverse = order == Order::InsertedReverse;
-            let after = match cursor {
-                Cursor::Id(id) => *id,
+            // A forward walk stops at the newest row when it began, as diskcache's does: a key deleted
+            // and stored again while it runs gets a newer row, which would otherwise be walked a second
+            // time (the soak found one in 8.5 hours of churn). A backward walk never meets a newer row.
+            let (after, bound) = match cursor {
+                Cursor::Id { after, bound } => (*after, *bound),
                 // Backwards from the newest row.
-                _ if reverse => i64::MAX,
-                _ => 0,
+                _ if reverse => (i64::MAX, i64::MAX),
+                _ => {
+                    let newest: i64 = conn
+                        .prepare_cached("SELECT COALESCE(MAX(id), 0) FROM cache")
+                        .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
+                        .map_err(sqlite)?;
+                    (0, newest)
+                }
             };
             // Every key type this build knows; a later build's key types stay invisible, as typed keys
             // are to 0.1.2. The `+` keeps the planner on the rowid: without statistics it otherwise
@@ -474,14 +482,14 @@ fn page(
             let rows: Vec<(i64, OwnedKey)> = conn
                 .prepare_cached(sql)
                 .and_then(|mut stmt| {
-                    stmt.query_map((after, KEY_TYPE_STR, KEY_TYPE_TYPED, size, now), |r| {
+                    stmt.query_map((after, KEY_TYPE_STR, KEY_TYPE_TYPED, size, now, bound), |r| {
                         Ok((r.get(0)?, stored_key(r.get(1)?, r.get_ref(2)?)))
                     })?
                     .map(|row| row.map(|(id, key)| key.map(|k| (id, k))))
                     .collect::<rusqlite::Result<Result<Vec<_>>>>()
                 })
                 .map_err(sqlite)??;
-            let next = rows.last().map_or_else(|| cursor.clone(), |(id, _)| Cursor::Id(*id));
+            let next = rows.last().map_or_else(|| cursor.clone(), |(id, _)| Cursor::Id { after: *id, bound });
             return Ok((rows.into_iter().map(|(_, key)| key).collect(), next));
         }
         Order::Key { reverse } => {
@@ -606,6 +614,7 @@ mod tests {
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
             default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
+            maintenance: crate::background::Maintenance::OFF,
         })
         .unwrap()
     }
@@ -720,11 +729,11 @@ mod tests {
         let tmp = TempDir::new("maint-inserted-plan");
         let s = store(tmp.path());
         s.read(T, |conn| {
-            for (sql, search) in [(INSERTED_SQL, "rowid>?"), (INSERTED_REVERSE_SQL, "rowid<?")] {
+            for (sql, search) in [(INSERTED_SQL, "rowid>? AND rowid<?"), (INSERTED_REVERSE_SQL, "rowid<?")] {
                 let details: Vec<String> = conn
                     .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
                     .and_then(|mut stmt| {
-                        stmt.query_map((0, KEY_TYPE_STR, KEY_TYPE_TYPED, PAGE, NOW), |r| r.get(3))?.collect()
+                        stmt.query_map((0, KEY_TYPE_STR, KEY_TYPE_TYPED, PAGE, NOW, i64::MAX), |r| r.get(3))?.collect()
                     })
                     .unwrap();
                 assert_eq!(details, [format!("SEARCH cache USING INTEGER PRIMARY KEY ({search})")], "{sql}");
@@ -1320,6 +1329,7 @@ mod tests {
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
             default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
+            maintenance: crate::background::Maintenance::OFF,
         })
         .unwrap();
         let blob = vec![1u8; 30_000];

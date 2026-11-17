@@ -180,9 +180,9 @@ Hit and miss counts are per process ([stats()](../reference/Cache.stats.md#diskc
 
 # The write-ahead log
 
-`wal_mib` in the health check is the size of `diskcache-oxide.sqlite-wal` beside the database. At normal load `wal_size_limit` keeps it at a few MiB. A burst of writes with readers in other processes can leave it much larger, and in the default `wal_checkpoint='manual'` mode it stays that size until something checkpoints it.
+`wal_mib` in the health check is the size of `diskcache-oxide.sqlite-wal` beside the database. At normal load `wal_size_limit` keeps it at a few MiB. A burst of writes with readers in other processes can leave it much larger, and in the default `wal_checkpoint='manual'` mode it stays that size until something checkpoints it. Background maintenance does, once the log is over half of `wal_size_limit`, on its next turn (every 5 minutes by default) if readers in other processes let it.
 
-If it keeps growing, call [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) from a maintenance job. It returns True when the log was copied into the database and truncated, and False, without raising, when other processes kept it busy; try again later. If that isn't enough, open the cache with `wal_checkpoint='auto'`. [Storage and WAL](../user-guide/storage-and-wal.md#the-write-ahead-log) has the details. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) has one log per shard, in the shard folders (`000/`, `001/`, …), so add those up for the total.
+If it keeps growing anyway, call [checkpoint()](../reference/Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) from a maintenance job. It returns True when the log was copied into the database and truncated, and False, without raising, when other processes kept it busy; try again later. If that isn't enough, open the cache with `wal_checkpoint='auto'`. [Storage and WAL](../user-guide/storage-and-wal.md#the-write-ahead-log) has the details. A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) has one log per shard, in the shard folders (`000/`, `001/`, …), so add those up for the total.
 
 
 # Checking for damage
@@ -205,7 +205,7 @@ print('repaired:', len(damaged.check(fix=True)), '| after:', damaged.check(), '|
 ```
 
 
-    UserWarning file not found: .../be/be8cb21af8d69b1a87ca1e0e12288c87.val
+    UserWarning file not found: .../8f/8f5ab8cc8e6a96e5db459c0b59c2c4b5.val
     repaired: 1 | after: [] | entries: 1
 
 

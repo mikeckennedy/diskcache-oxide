@@ -16,7 +16,7 @@ import html
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 # Growth past these, sustained over the run, is flagged as a suspected leak.
 RSS_LEAK_MIB_PER_H = 2.0
@@ -49,7 +49,7 @@ def read_csv(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def number(value: str | None) -> Any:
+def number(value: Optional[str]) -> Any:
     if value in (None, ''):
         return None
     try:
@@ -61,7 +61,7 @@ def number(value: str | None) -> Any:
             return value
 
 
-def fit(points: list[tuple[float, float]]) -> float | None:
+def fit(points: list[tuple[float, float]]) -> Optional[float]:
     """Least-squares slope of y over x, or None with too few points."""
     if len(points) < 5:
         return None

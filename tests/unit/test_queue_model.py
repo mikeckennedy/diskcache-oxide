@@ -14,7 +14,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 import hypothesis.strategies as st
 from diskcache_oxide import Cache
@@ -22,7 +22,7 @@ from hypothesis import settings
 from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
 
 START = 500_000_000_000_000
-PREFIXES: list[str | None] = [None, 'q', 'q-1', '']
+PREFIXES: list[Optional[str]] = [None, 'q', 'q-1', '']
 QUEUES = st.sampled_from(PREFIXES)
 SIDES = st.sampled_from(['front', 'back'])
 VALUES = st.integers(-5, 5) | st.text(max_size=5) | st.builds(lambda n: b'x' * n, st.sampled_from([0, 70_000]))
@@ -31,7 +31,7 @@ EXPIRES = st.none() | st.sampled_from([0.5, 1.0, 5.0])
 INTRUDERS = st.sampled_from([5.5e14, True, 'q-9', 'q-1abc', 'q-1-9', '-12', 'q-0000000000000001'])
 
 
-def number(prefix: str | None, key: Any) -> int:
+def number(prefix: Optional[str], key: Any) -> int:
     return key if prefix is None else int(key.rsplit('-', 1)[1])
 
 
@@ -42,18 +42,18 @@ class QueueModel(RuleBasedStateMachine):
         self.now = 1_000_000.0
         self.cache = Cache(self.root / 'c', clock=lambda: self.now, eviction_policy='none')
         # Per queue: number -> (key, value, expire_time), every item that may still be stored.
-        self.queues: dict[str | None, dict[int, tuple[Any, Any, float | None]]] = {p: {} for p in PREFIXES}
+        self.queues: dict[Optional[str], dict[int, tuple[Any, Any, Optional[float]]]] = {p: {} for p in PREFIXES}
 
     def teardown(self) -> None:
         self.cache.close()
         shutil.rmtree(self.root, ignore_errors=True)
 
-    def live(self, prefix: str | None) -> list[tuple[int, Any, Any]]:
+    def live(self, prefix: Optional[str]) -> list[tuple[int, Any, Any]]:
         items = self.queues[prefix]
         return sorted((n, k, v) for n, (k, v, t) in items.items() if t is None or t > self.now)
 
     @rule(prefix=QUEUES, side=SIDES, value=VALUES, expire=EXPIRES)
-    def push(self, prefix: str | None, side: Literal['front', 'back'], value: Any, expire: float | None) -> None:
+    def push(self, prefix: Optional[str], side: Literal['front', 'back'], value: Any, expire: Optional[float]) -> None:
         items = self.queues[prefix]
         live = [n for n, *_ in self.live(prefix)]
         key = self.cache.push(value, prefix=prefix, side=side, expire=expire)
@@ -73,7 +73,7 @@ class QueueModel(RuleBasedStateMachine):
         items[n] = (key, value, None if expire is None else self.now + expire)
 
     @rule(prefix=QUEUES, side=SIDES)
-    def pull(self, prefix: str | None, side: Literal['front', 'back']) -> None:
+    def pull(self, prefix: Optional[str], side: Literal['front', 'back']) -> None:
         live = self.live(prefix)
         got = self.cache.pull(prefix=prefix, side=side)
         if not live:

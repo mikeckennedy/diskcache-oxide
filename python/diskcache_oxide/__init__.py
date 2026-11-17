@@ -41,7 +41,7 @@ under. `NullCache`, the protocols and `Caches` are pure Python.
 """
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Optional
 
 from diskcache_oxide._constants import ENOVAL, UNKNOWN
 from diskcache_oxide._core import (
@@ -63,7 +63,7 @@ from diskcache_oxide._core import (
     sqlite_compile_options,
     sqlite_version,
 )
-from diskcache_oxide._types import Key, Memoized, Memoizer
+from diskcache_oxide._types import Key, MaintenanceStats, Memoized, Memoizer
 from diskcache_oxide._warnings import EmptyDirWarning, UnknownFileWarning
 from diskcache_oxide.caches import Caches, CacheStats
 from diskcache_oxide.null import NullCache
@@ -75,8 +75,8 @@ def register_type[T](
     cls: type[T],
     *,
     name: str,
-    encode: Callable[[T], object] | None = None,
-    decode: Callable[[Any], T] | None = None,
+    encode: Optional[Callable[[T], object]] = None,
+    decode: Optional[Callable[[Any], T]] = None,
 ) -> None:
     """Register `cls` in the process-wide `registry`, so every cache can store it without pickle.
 
@@ -126,6 +126,7 @@ __all__ = [
     'LayoutMismatchError',
     'Lock',
     'Memoized',
+    'MaintenanceStats',
     'Memoizer',
     'NullCache',
     'RLock',

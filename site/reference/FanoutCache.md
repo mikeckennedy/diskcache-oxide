@@ -47,19 +47,19 @@ Each key lives in exactly one shard, chosen by a hash that is part of the on-dis
 `directory: str | os.PathLike[str]`  
 The root directory. It holds the manifest (`diskcache-oxide-fanout`) and one directory per shard, `000` to `NNN`. It must not be a plain [Cache](Cache.md#diskcache_oxide.Cache)'s directory. If its manifest or any shard is in another on-disk format, the whole cache opens in the root's `diskcache-oxide-format-N` subdirectory instead, as for [Cache](Cache.md#diskcache_oxide.Cache), never one shard alone.
 
-`timeout: float | None = None`  
+`timeout: Optional[float] = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache) (default 60). Opening, `len()`, [volume()](Cache.volume.md#diskcache_oxide.Cache.volume), [clear()](Cache.clear.md#diskcache_oxide.Cache.clear), [expire()](Cache.expire.md#diskcache_oxide.Cache.expire), [cull()](Cache.cull.md#diskcache_oxide.Cache.cull), [checkpoint()](Cache.checkpoint.md#diskcache_oxide.Cache.checkpoint) and [close()](Cache.close.md#diskcache_oxide.Cache.close) share one [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout) across every shard, not one each.
 
-`shards: int | None = None`  
+`shards: Optional[int] = None`  
 How many shards, 1 to 256. `None` (the default) uses the count the root records, or 8 for a new root. A count that differs from the recorded one opens with the recorded count and logs a `WARNING` on the `diskcache_oxide` logger, once per process; changing the count needs a new directory. Each shard takes about 4 file descriptors to open, and 2 more per connection it opens in use, so 256 shards need over 1,024: more than Linux's default `ulimit -n`. Too few raises `OSError` (`EMFILE`) with the numbers.
 
-`size_limit: int | None = None`  
+`size_limit: Optional[int] = None`  
 The disk budget in bytes for the whole cache, split evenly (floored) across the shards, each of which culls on its own. Each shard needs at least 1 MiB, so the total must be at least [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) MiB. With none given, a new root gets 1 GiB in all.
 
-`cull_limit: int | None = None`  
+`cull_limit: Optional[int] = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache), per shard.
 
-`eviction_policy: Literal[``"least-recently-stored", `<span class="st">`"none"``] | None`</span>` = None`  
+`eviction_policy: Optional[Literal[``"least-recently-stored", `<span class="st">`"none"``]]`</span>` = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache), on every shard.
 
 `serializer: str = ``"msgpack"`  
@@ -68,25 +68,25 @@ As for [Cache](Cache.md#diskcache_oxide.Cache).
 `pickle: bool = ``False`  
 As for [Cache](Cache.md#diskcache_oxide.Cache).
 
-`types: TypeRegistry | None = None`  
+`types: Optional[TypeRegistry] = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache).
 
-`clock: Callable[[], float] | None = None`  
+`clock: Optional[Callable[[], float]] = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache).
 
-`max_connections: int | None = None`  
+`max_connections: Optional[int] = None`  
 The most SQLite connections this process opens for the whole cache, split across the shards (the first `max_connections % shards` get one more). At least [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards). The default is two per shard, and never fewer than 8 in all.
 
-`sqlite_cache_size: int | None = None`  
+`sqlite_cache_size: Optional[int] = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache), per connection.
 
-`wal_size_limit: int | None = None`  
+`wal_size_limit: Optional[int] = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache), per shard (each shard has its own write-ahead log).
 
 `wal_checkpoint: Literal[``"manual", `<span class="st">`"auto"``]`</span>` = ``"manual"`  
 As for [Cache](Cache.md#diskcache_oxide.Cache).
 
-`on_decode_error: Literal[``"raise", `<span class="st">`"miss"``] | Callable[[str, Exception], object] | None`</span>` = None`  
+`on_decode_error: Optional[Literal[``"raise", `<span class="st">`"miss"``] | Callable[[str, Exception], object]]`</span>` = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache).
 
 `durable: bool = ``False`  
@@ -95,7 +95,7 @@ As for [Cache](Cache.md#diskcache_oxide.Cache): single-key calls on a shard that
 `raise_on_mismatch: bool = ``False`  
 Raise [LayoutMismatchError](LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) (a `ValueError`) when [shards](FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards) differs from the root's recorded count, instead of using the recorded count with a warning (default False). It covers the count only: a root in another on-disk format still opens in its `diskcache-oxide-format-N` subdirectory.
 
-`maintenance_interval: float | None = None`  
+`maintenance_interval: Optional[float] = None`  
 As for [Cache](Cache.md#diskcache_oxide.Cache); each shard takes its own turn across the interval.
 
 

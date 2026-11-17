@@ -1748,6 +1748,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/Caches.get.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caches.get</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/Caches.fanout.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Caches.fanout</span></a>
   </div>
@@ -2082,7 +2088,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/null.py#L676-L694" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/null.py#L680-L698" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">NullCache</span><span class="op">.</span><span class="sig-name">transact</span>(
@@ -2102,7 +2108,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Accepted for <a href="Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">Cache.transact()</a>’s signature; it must be a <code>bool</code>.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">key</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Key | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">key</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[Key]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 Accepted so a switched-off sharded cache’s <code>transact(key=...)</code> works too; it must be a key or None.
 </dd>

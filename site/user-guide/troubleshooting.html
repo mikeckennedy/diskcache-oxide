@@ -648,6 +648,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/building-from-source.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Building from source</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/divergences.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Divergences from python-diskcache</span></a>
   </div>
@@ -716,8 +722,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="the-disk-keeps-growing" class="level1">
 <h1>The disk keeps growing</h1>
 <ul>
-<li><strong>The write-ahead log.</strong> Each cache has a <code>-wal</code> file beside its database, trimmed back to <code>wal_size_limit / 2</code> when it resets. After a burst of writes it can be much larger than the database until <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> runs. See <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>.</li>
-<li><strong>Eviction is off.</strong> A cache with <code>eviction_policy='none'</code> (the recommended setting for sessions, claims and queues) holds what you put in until it expires, past <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> if need be. Give those entries an <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>, and run <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> from a scheduled job so expired ones free their space.</li>
+<li><strong>The write-ahead log.</strong> Each cache has a <code>-wal</code> file beside its database, trimmed back to <code>wal_size_limit / 2</code> when it resets. After a burst of writes it can be much larger than the database until something checkpoints it: background maintenance does, within its interval, when readers in other processes let it, and <a href="../reference/Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> does it now. See <a href="../user-guide/storage-and-wal.html">Storage and WAL</a>.</li>
+<li><strong>Eviction is off.</strong> A cache with <code>eviction_policy='none'</code> (the recommended setting for sessions, claims and queues) holds what you put in until it expires, past <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a> if need be. Give those entries an <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a>: background maintenance frees the space of expired ones, with eviction off too. Entries with no <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire</a> stay until you delete them.</li>
 <li><strong>Expired entries that nobody removed.</strong> Expired entries are invisible to reads at once, and background maintenance frees their space within its interval (5 minutes by default). If it doesn’t, check <code>cache.maintenance_stats()</code>: an <code>interval</code> of 0 means it’s off for this cache in this process (<code>maintenance_interval=0</code>, or a cache opened with <code>clock=</code>), and <code>failures</code> with a <code>last_error</code> says why it couldn’t. Another connection holding the write lock for minutes, in a long <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a>, shows up there too.</li>
 <li><strong>An old format’s cache.</strong> After a format change the old cache stays on disk beside the new one until you run <a href="../reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a>.</li>
 <li><strong>Every cache adds up.</strong> A volume holds the sum of the <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>s, about one write-ahead log per cache, and the unbounded state caches. A <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> has a log per shard. <a href="../recipes/docker.html#how-much-disk">Docker and Compose</a> has the arithmetic.</li>

@@ -60,7 +60,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Cache.__contains__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__contains__.html): `key in cache`: True if the key holds a live (unexpired) value. False if the check failed under
 - [Cache.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__len__.html): The number of live entries. An entry stops counting the moment it expires, whether or not
 - [Cache.__bool__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__bool__.html): Always True, even when empty, so `if cache:` means "caching is on"
-- [Cache.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__iter__.html): Iterate over keys in insertion order. An overwrite keeps its key's place
+- [Cache.__iter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__iter__.html): Iterate over keys in insertion order. An overwrite keeps its key's place. The walk covers
 - [Cache.__enter__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__enter__.html): Return the cache, for `with Cache(...) as cache:`
 - [Cache.__exit__](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__exit__.html): Close the cache, as `close()` does
 - [Cache.get](https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.get.html): Return the value stored for `key`, or `default` if it's missing or expired
@@ -236,6 +236,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Caches.__len__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__len__.html): How many caches are registered
 - [Caches.directory](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.directory.html): The directory the named cache is registered at. After a format change the cache itself
 - [Caches.__getitem__](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.__getitem__.html): The named plain cache: opened on first use, then the same object every time
+- [Caches.get](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.get.html): The named plain cache as `caches[name]` returns it, or `default` if no cache by that name
 - [Caches.fanout](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.fanout.html): The named sharded cache (one registered with `shards=`), looked up as `caches[name]` is
 - [Caches.disable](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.disable.html): Later lookups of these caches return `NullCache(invalidate=real)`
 - [Caches.enable](https://mkennedy.codes/docs/diskcache-oxide/reference/Caches.enable.html): Later lookups of these caches return the real cache again
@@ -322,6 +323,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [Running a job once across workers](https://mkennedy.codes/docs/diskcache-oxide/recipes/run-once.html): Use add() to make sure only one worker process runs a scheduled job
 - [Server-side sessions](https://mkennedy.codes/docs/diskcache-oxide/recipes/sessions.html): Sessions every worker can read, with a sliding idle timeout from touch(), an absolute lifetime, and log-out-everywhere by key prefix
 - [Single-use keys](https://mkennedy.codes/docs/diskcache-oxide/recipes/single-use-keys.html): One-time codes, reset links and idempotency keys: pop() hands a value to exactly one caller, and add() accepts a key exactly once
+- [One typed module for your caches](https://mkennedy.codes/docs/diskcache-oxide/recipes/site-caches.html): Wrap a Caches registry in a module with one function per cache, so the app gets autocomplete and type checking instead of string lookups
 - [Serving stale values while refreshing](https://mkennedy.codes/docs/diskcache-oxide/recipes/stale-while-revalidate.html): Give an entry a freshness deadline shorter than its expiry, so readers never wait for a recompute and only one worker does it
 - [Testing code that uses a cache](https://mkennedy.codes/docs/diskcache-oxide/recipes/testing.html): pytest fixtures for a real cache, a NullCache, and a fake clock for testing expiry
 - [Upgrading across a format change](https://mkennedy.codes/docs/diskcache-oxide/recipes/upgrading.html): What happens when a release changes the on-disk format: the new release opens a cache of its own in a versioned subdirectory, old and new workers run side by side, and remove_old_formats() cleans up once the old workers are gone

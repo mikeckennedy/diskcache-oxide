@@ -114,9 +114,9 @@ Push `value` onto a queue and return its key (None on a durable outage).
 Usage
 
 ``` python
-push(self, value: Any, prefix: None = None, side: Literal['front', 'back'] = 'back', expire: float | None = None, tag: Key = None, retry: bool = False) -> int | None
-push(self, value: Any, prefix: str, side: Literal['front', 'back'] = 'back', expire: float | None = None, tag: Key = None, retry: bool = False) -> str | None
-push(self, value: Any, prefix: str | None = None, side: Literal['front', 'back'] = 'back', expire: float | None = None, tag: Key = None, retry: bool = False) -> int | str | None
+push(self, value: Any, prefix: None = None, side: Literal['front', 'back'] = 'back', expire: Optional[float] = None, tag: Key = None, retry: bool = False) -> Optional[int]
+push(self, value: Any, prefix: str, side: Literal['front', 'back'] = 'back', expire: Optional[float] = None, tag: Key = None, retry: bool = False) -> Optional[str]
+push(self, value: Any, prefix: Optional[str] = None, side: Literal['front', 'back'] = 'back', expire: Optional[float] = None, tag: Key = None, retry: bool = False) -> Optional[int | str]
 ```
 
 

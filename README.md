@@ -16,6 +16,8 @@ import os
 from diskcache_oxide import Cache
 
 cache = Cache('/tmp/my-app-cache', durable=True)  # every worker opens the same directory
+# Claims get their own plain cache: durable can drop a write, and a claim must not be dropped silently.
+claims = Cache('/tmp/my-app-claims', eviction_policy='none')
 
 popular = cache.get('episodes:popular')
 if popular is None:
@@ -23,7 +25,7 @@ if popular is None:
     cache.set('episodes:popular', popular, expire=300)
 
 # Only one worker runs the hourly job: add() is atomic across processes.
-if cache.add('job:refresh-feeds', os.getpid(), expire=3600):
+if claims.add('job:refresh-feeds', os.getpid(), expire=3600):
     print('this worker refreshes the feeds')
 
 
@@ -33,6 +35,7 @@ def episode(number: int) -> dict:
 
 
 cache.close()  # at shutdown
+claims.close()
 ```
 
 ## An app with several caches
@@ -74,7 +77,7 @@ Most of diskcache's API is here: `Cache` and `FanoutCache`, keys of every native
 ## Install
 
 ```bash
-pip install diskcache-oxide
+uv pip install diskcache-oxide
 ```
 
 - **Python:** CPython 3.14 or 3.15, including the free-threaded builds (3.14t and 3.15t). Older Pythons aren't supported.
@@ -93,9 +96,10 @@ pip install diskcache-oxide
 - **[Correct under pressure.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/divergences.html)** `clear()` keeps writes that land while it runs, a read during an overwrite never misses, and a queue never hands one worker another queue's items. Running one test suite against both libraries turned up 19 diskcache bugs, each with a standalone repro in the repository's [upstream/](https://github.com/mikeckennedy/diskcache-oxide/tree/main/upstream) folder. diskcache-oxide has none of them but one, which it keeps on purpose for compatibility.
 - **[More than get and set.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/coordination.html)** `memoize` caches a function's results. Tags group entries so `evict(tag)` removes them in one call. `push` and `pull` make a [work queue](https://mkennedy.codes/docs/diskcache-oxide/recipes/work-queues.html) that hands each item to exactly one worker. Locks, semaphores and rate limits hold across every process on the machine.
 - **[Bounded memory and predictable disk use.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/storage-and-wal.html)** Each cache directory uses at most `max_connections` SQLite connections, each with a page cache of `sqlite_cache_size` pages (1 MiB by default). The write-ahead log trims itself back to `wal_size_limit / 2` (32 MiB by default) whenever it resets, and `checkpoint()` truncates it on demand. For a cache that must never drop a live entry, `eviction_policy='none'` turns eviction off.
-- **[Sharding for many writers.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html)** A plain cache has one write lock per file, like a shop with one checkout lane. `FanoutCache` spreads keys over several databases, so eight worker processes that write often keep their rate instead of queueing.
+- **[Sharding for many writers.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html)** A plain cache has one write lock per file, like a shop with one checkout lane. `FanoutCache` spreads keys over several databases, so eight worker processes that write often keep their rate instead of queueing: 1.5 million operations a second at 8 processes, 5.7× a plain `Cache` and 1.2× diskcache's `FanoutCache`, behind the same API and in one directory.
 - **[Transactions.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/transactions.html)** `with cache.transact() as tx:` lands several writes together, or none of them.
-- **[A real off switch, and a registry.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html)** `NullCache` turns caching off without changing call sites, and [`Caches`](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html) names an app's caches, opens each on first use, and hands out a `NullCache` while one can't open.
+- **[One place for all your caches.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html)** `Caches` is a registry for every cache in an app. Register each one once at startup, and code at any depth gets the cache it needs by name, `caches['pages']`, without passing cache objects down through constructors or a dependency-injection framework.
+- **[A real off switch.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html)** `NullCache` turns caching off without changing call sites.
 - **[A cache that can't take a request down.](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html#a-cache-that-cant-take-a-request-down)** `durable=True` answers an outage as a miss and logs it, so a full disk at 3 a.m. costs speed, not requests.
 - Type hints are included (`py.typed`), with `CacheLike` for code that accepts any cache, and an [errors page](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html) says what each exception means and what to do about it.
 
@@ -139,7 +143,7 @@ The docs publish an [agent skill](https://mkennedy.codes/docs/diskcache-oxide/sk
 - [User guide](https://mkennedy.codes/docs/diskcache-oxide/user-guide/getting-started.html): a [primer for anyone new to caching](https://mkennedy.codes/docs/diskcache-oxide/user-guide/new-to-caching.html), getting started, serialization, `FanoutCache`, transactions, coordination (locks, semaphores, throttles), concurrency and forks, and storage and the WAL.
 - [Named caches (`Caches`)](https://mkennedy.codes/docs/diskcache-oxide/user-guide/caches.html) and [`NullCache`](https://mkennedy.codes/docs/diskcache-oxide/user-guide/null-cache.html): several caches in one app, and turning caching off.
 - [Upgrading across a format change](https://mkennedy.codes/docs/diskcache-oxide/recipes/upgrading.html) and [Monitoring](https://mkennedy.codes/docs/diskcache-oxide/recipes/monitoring.html).
-- [Recipes](https://mkennedy.codes/docs/diskcache-oxide/recipes/): caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidating groups (by prefix or by tag), your own types, run-once jobs, rate limiting, counters, work queues, single-use keys, sessions, web workers, Docker and Compose, asyncio, monitoring and testing.
+- [Recipes](https://mkennedy.codes/docs/diskcache-oxide/recipes/): caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidating groups (by prefix or by tag), your own types, run-once jobs, rate limiting, counters, work queues, single-use keys, sessions, one typed module for your caches, web workers, Docker and Compose, asyncio, monitoring and testing.
 - [Example app](examples/webapp): a FastAPI app built the way the docs recommend, with Docker Compose and tests.
 - [API reference](https://mkennedy.codes/docs/diskcache-oxide/reference/): every class, method and exception.
 - [Errors and what to do about them](https://mkennedy.codes/docs/diskcache-oxide/user-guide/errors.html) and [Troubleshooting](https://mkennedy.codes/docs/diskcache-oxide/user-guide/troubleshooting.html).

@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 from diskcache_oxide import Cache
@@ -27,7 +27,7 @@ class Recorder:
         self.calls.append(('clear',))
         return 7
 
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[str]:
+    def iterkeys(self, *, prefix: Optional[str] = None, reverse: bool = False) -> Iterator[str]:
         self.calls.append(('iterkeys', prefix, reverse))
         return iter(['a', 'b'])
 

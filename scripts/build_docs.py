@@ -42,7 +42,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     import griffe
@@ -113,13 +113,13 @@ def _local_releases(repo_url: str, max_releases: int = 50) -> list[dict[str, Any
     text = CHANGELOG.read_text(encoding='utf-8') if CHANGELOG.is_file() else ''
     text = _LINK_DEFINITION.sub('', text)
     headings = list(_CHANGELOG_HEADING.finditer(text))
-    sections: dict[str, tuple[str | None, str]] = {}
+    sections: dict[str, tuple[Optional[str], str]] = {}
     for i, m in enumerate(headings):
         end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
         sections[m.group('version')] = (m.group('date'), text[m.end() : end].strip())
     base = repo_url.rstrip('/')
 
-    def record(ver: str, date: str | None, body: str, *, unreleased: bool = False) -> dict[str, Any]:
+    def record(ver: str, date: Optional[str], body: str, *, unreleased: bool = False) -> dict[str, Any]:
         return {
             'tag_name': f'v{ver}',
             'name': f'v{ver} (unreleased)' if unreleased else f'v{ver}',

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# The shuttle model checker for the fork gate and the write lock (plans/06, step 7).
+# The shuttle model checker for the fork gate, the write lock (plans/06, step 7) and background
+# maintenance against the last close (plan 28).
 #
 # Usage: scripts/model-check.sh [iterations]     (default 100000 schedules per scheduler)
 #
 # Builds core with `--cfg shuttle`, which swaps the gate's and genlock's atomics, thread-locals,
 # sleeps and clock for shuttle's (src/sync.rs), then runs the models (src/gate/model.rs,
-# src/genlock/model.rs) under a random scheduler and PCT at depths 2 and 3. A failure prints the
+# src/genlock/model.rs, src/background/model.rs) under a random scheduler and PCT at depths 2 and 3. A failure prints the
 # schedule; DCO_MODEL_REPLAY=<schedule> with a test-name filter replays it. Its own target dir, so
 # the cfg never invalidates the normal build. DCO_MODEL_SECONDS caps each model's time if set.
 set -euo pipefail

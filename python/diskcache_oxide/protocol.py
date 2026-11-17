@@ -13,9 +13,9 @@ import warnings
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager
 from types import TracebackType
-from typing import Any, Literal, Protocol, Self, overload, runtime_checkable
+from typing import Any, Literal, Optional, Protocol, Self, overload, runtime_checkable
 
-from diskcache_oxide._types import Key, Memoizer
+from diskcache_oxide._types import Key, MaintenanceStats, Memoizer
 
 
 @runtime_checkable
@@ -42,7 +42,7 @@ class CacheLike(Protocol):
     """
 
     @property
-    def directory(self) -> str | None:
+    def directory(self) -> Optional[str]:
         """The cache directory (None for a `NullCache` created without one)."""
 
     @property
@@ -84,7 +84,7 @@ class CacheLike(Protocol):
         expire_time: Literal[True],
         tag: Literal[False] = False,
         retry: bool = False,
-    ) -> tuple[Any, float | None]: ...
+    ) -> tuple[Any, Optional[float]]: ...
     @overload
     def get(
         self,
@@ -98,16 +98,20 @@ class CacheLike(Protocol):
     @overload
     def get(
         self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
-    ) -> tuple[Any, float | None, Key]: ...
+    ) -> tuple[Any, Optional[float], Key]: ...
     def get(
         self, key: Key, default: Any = None, *, expire_time: bool = False, tag: bool = False, retry: bool = False
     ) -> Any:
         """Return the value for `key`, or `default` if it's missing or expired."""
 
-    def set(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
+    def set(
+        self, key: Key, value: Any, expire: Optional[float] = None, *, tag: Key = None, retry: bool = False
+    ) -> bool:
         """Store `value` under `key`, with an optional expiry in seconds."""
 
-    def add(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
+    def add(
+        self, key: Key, value: Any, expire: Optional[float] = None, *, tag: Key = None, retry: bool = False
+    ) -> bool:
         """Store `value` only if `key` is missing or expired. True if it was stored."""
 
     def delete(self, key: Key, *, retry: bool = False) -> bool:
@@ -132,7 +136,7 @@ class CacheLike(Protocol):
         expire_time: Literal[True],
         tag: Literal[False] = False,
         retry: bool = False,
-    ) -> tuple[Any, float | None]: ...
+    ) -> tuple[Any, Optional[float]]: ...
     @overload
     def pop(
         self,
@@ -146,19 +150,19 @@ class CacheLike(Protocol):
     @overload
     def pop(
         self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
-    ) -> tuple[Any, float | None, Key]: ...
+    ) -> tuple[Any, Optional[float], Key]: ...
     def pop(
         self, key: Key, default: Any = None, *, expire_time: bool = False, tag: bool = False, retry: bool = False
     ) -> Any:
         """Remove `key` and return its value, or `default`."""
 
-    def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
+    def touch(self, key: Key, expire: Optional[float] = None, *, retry: bool = False) -> bool:
         """Change an existing entry's expiry. True if the entry existed."""
 
-    def incr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
+    def incr(self, key: Key, delta: float = 1, default: Optional[float] = 0, *, retry: bool = False) -> int | float:
         """Add `delta` to the number under `key`, atomically, and return the result."""
 
-    def decr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
+    def decr(self, key: Key, delta: float = 1, default: Optional[float] = 0, *, retry: bool = False) -> int | float:
         """Subtract `delta` from the number under `key`, atomically, and return the result."""
 
     @property
@@ -170,6 +174,9 @@ class CacheLike(Protocol):
 
     def remove_old_formats(self) -> list[str]:
         """Remove caches an older format left in this cache's directory; `[]` on a `NullCache`."""
+
+    def maintenance_stats(self) -> MaintenanceStats:
+        """How background maintenance has gone on this cache in this process; all zero on a `NullCache`."""
 
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """`(hits, misses)` of `get` in this process; `(0, 0)` on a `NullCache`."""
@@ -193,9 +200,9 @@ class CacheLike(Protocol):
 
     def memoize(
         self,
-        name: str | None = None,
+        name: Optional[str] = None,
         typed: bool = False,
-        expire: float | None = None,
+        expire: Optional[float] = None,
         tag: Key = None,
         ignore: Iterable[int | str] = (),
     ) -> Memoizer:
@@ -205,25 +212,25 @@ class CacheLike(Protocol):
     def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]: ...
     @overload
     def iterkeys(self, *, prefix: None = None, reverse: bool = False) -> Iterator[Key]: ...
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[Key]:
+    def iterkeys(self, *, prefix: Optional[str] = None, reverse: bool = False) -> Iterator[Key]:
         """Iterate over keys in sorted order, optionally only those starting with `prefix`."""
 
-    def expire(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def expire(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove every expired entry. Returns how many were removed."""
 
-    def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def clear(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove every entry that existed when the call started. Returns how many."""
 
-    def evict(self, tag: Key, *, timeout: float | None = None, retry: bool = False) -> int:
+    def evict(self, tag: Key, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove every entry tagged `tag` that existed when the call started. Returns how many."""
 
-    def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def cull(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove expired entries, then evict until under `size_limit`. Returns how many."""
 
     def volume(self) -> int:
         """The size on disk in bytes."""
 
-    def checkpoint(self, *, timeout: float | None = None) -> bool:
+    def checkpoint(self, *, timeout: Optional[float] = None) -> bool:
         """Empty the write-ahead log. True if it was reset, False if other processes kept it busy."""
 
     def close(self, *, checkpoint: bool = True) -> None:
@@ -255,9 +262,9 @@ class CacheLike(Protocol):
 
     def __exit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
         /,
     ) -> None:
         """Close the cache."""
@@ -291,48 +298,48 @@ class TransactionalCacheLike(CacheLike, Protocol):
         value: Any,
         prefix: None = None,
         side: Literal['front', 'back'] = 'back',
-        expire: float | None = None,
+        expire: Optional[float] = None,
         *,
         tag: Key = None,
         retry: bool = False,
-    ) -> int | None: ...
+    ) -> Optional[int]: ...
     @overload
     def push(
         self,
         value: Any,
         prefix: str,
         side: Literal['front', 'back'] = 'back',
-        expire: float | None = None,
+        expire: Optional[float] = None,
         *,
         tag: Key = None,
         retry: bool = False,
-    ) -> str | None: ...
+    ) -> Optional[str]: ...
     @overload
     def push(
         self,
         value: Any,
-        prefix: str | None = None,
+        prefix: Optional[str] = None,
         side: Literal['front', 'back'] = 'back',
-        expire: float | None = None,
+        expire: Optional[float] = None,
         *,
         tag: Key = None,
         retry: bool = False,
-    ) -> int | str | None: ...
+    ) -> Optional[int | str]: ...
     def push(
         self,
         value: Any,
-        prefix: str | None = None,
+        prefix: Optional[str] = None,
         side: Literal['front', 'back'] = 'back',
-        expire: float | None = None,
+        expire: Optional[float] = None,
         *,
         tag: Key = None,
         retry: bool = False,
-    ) -> int | str | None:
+    ) -> Optional[int | str]:
         """Push `value` onto a queue and return its key (None on a durable outage)."""
 
     def pull(
         self,
-        prefix: str | None = None,
+        prefix: Optional[str] = None,
         default: Any = (None, None),
         side: Literal['front', 'back'] = 'front',
         *,
@@ -344,7 +351,7 @@ class TransactionalCacheLike(CacheLike, Protocol):
 
     def peek(
         self,
-        prefix: str | None = None,
+        prefix: Optional[str] = None,
         default: Any = (None, None),
         side: Literal['front', 'back'] = 'front',
         *,
@@ -383,5 +390,5 @@ class ShardedCacheLike(CacheLike, Protocol):
 
 
 # The constructor arguments both classes accept (NullCache accepts and ignores them).
-DirectoryArg = str | os.PathLike[str] | None
-ClockArg = Callable[[], float] | None
+DirectoryArg = Optional[str | os.PathLike[str]]
+ClockArg = Optional[Callable[[], float]]

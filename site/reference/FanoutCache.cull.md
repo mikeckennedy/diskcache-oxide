@@ -21,7 +21,7 @@ under its share of [size_limit](Cache.size_limit.md#diskcache_oxide.Cache.size_l
 ## Parameters
 
 
-`timeout: float | None = None`  
+`timeout: Optional[float] = None`  
 As for [expire](Cache.expire.md#diskcache_oxide.Cache.expire): one budget for the whole call.
 
 `retry: bool = ``False`  

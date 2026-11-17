@@ -157,6 +157,34 @@ def test_unknown_names_raise_key_error(base: Path) -> None:
             call()
 
 
+def test_get_returns_the_cache_or_the_default(base: Path) -> None:
+    caches = Caches(base)
+    caches.register('pages')
+    caches.register('sharded', shards=2)
+    assert caches.get('pages') is caches['pages']
+    assert caches.get('nope') is None
+    fallback = NullCache()
+    assert caches.get('nope', fallback) is fallback
+    assert caches.get('pages', fallback) is caches['pages']
+    # A sharded name is a wrong lookup, not a missing one, as with caches[name].
+    with pytest.raises(TypeError, match='fanout'):
+        caches.get('sharded')
+    # Disabled is still registered: the stand-in comes back, not the default.
+    caches.disable('pages')
+    assert isinstance(caches.get('pages'), NullCache)
+    caches.close_all()
+
+
+def test_get_returns_a_null_cache_not_the_default_when_the_open_fails(base: Path) -> None:
+    base.mkdir(parents=True, exist_ok=True)
+    (base / 'broken').write_text('a file where the directory should be')
+    errors: list[str] = []
+    caches = Caches(base, on_open_error=lambda name, exc: errors.append(name))
+    caches.register('broken')
+    assert isinstance(caches.get('broken', 'default'), NullCache)
+    assert errors == ['broken']
+
+
 def test_racing_lookups_get_one_object(base: Path) -> None:
     caches = Caches(base)
     caches.register('a')
@@ -433,6 +461,7 @@ def test_a_disabled_caches_transact_is_a_no_op(base: Path) -> None:
 # -- admin ----------------------------------------------------------------------------------------
 
 
+@pytest.mark.races_maintenance
 def test_stats_covers_every_cache_and_never_raises(base: Path) -> None:
     caches = Caches(base)
     caches.register('good')
@@ -446,7 +475,9 @@ def test_stats_covers_every_cache_and_never_raises(base: Path) -> None:
 
     stats = caches.stats()
     assert list(stats) == ['good', 'broken', 'unopened', 'off']
-    assert stats['good'] == CacheStats('good', str(base / 'good'), True, 1, stats['good'].volume)
+    good = stats['good']
+    assert good == CacheStats('good', str(base / 'good'), True, 1, good.volume, maintenance=good.maintenance)
+    assert good.maintenance is not None and good.maintenance['interval'] == 300.0
     assert stats['good'].volume > 0
     assert stats['broken'].error is not None and stats['broken'].count == 0
     assert stats['unopened'].error is None and stats['unopened'].count == 0
@@ -473,7 +504,8 @@ def test_clear_and_expire_all_take_a_timeout(base: Path) -> None:
     from tests.conformance.proc_workers import SqlitePeer, stored_rows
 
     caches = Caches(base, timeout=60)
-    caches.register('a')
+    # Background maintenance off: the test counts the expired rows expire_all() will find.
+    caches.register('a', maintenance_interval=0)
     for i in range(5):
         caches['a'].set(f'k{i}', 'v', expire=0.001)
     time.sleep(0.01)

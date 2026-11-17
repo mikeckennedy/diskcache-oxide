@@ -452,7 +452,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
   <link rel="alternate" type="text/markdown" href="Cache.__iter__.md">
   <link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__iter__.html">
-  <meta name="description" content="Iterate over keys in insertion order. An overwrite keeps its key’s place.">
+  <meta name="description" content="Iterate over keys in insertion order. An overwrite keeps its key’s place. The walk covers">
   <script type="application/ld+json">
 [
   {
@@ -483,13 +483,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </script>
   <meta property="og:type" content="website">
   <meta property="og:title" content="Cache.__iter__() – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="Iterate over keys in insertion order. An overwrite keeps its key’s place.">
+  <meta property="og:description" content="Iterate over keys in insertion order. An overwrite keeps its key’s place. The walk covers">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/reference/Cache.__iter__.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Cache.__iter__() – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="Iterate over keys in insertion order. An overwrite keeps its key’s place.">
+  <meta name="twitter:description" content="Iterate over keys in insertion order. An overwrite keeps its key’s place. The walk covers">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -1748,6 +1748,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/Caches.get.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caches.get</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/Caches.fanout.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Caches.fanout</span></a>
   </div>
@@ -2071,16 +2077,17 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 
 <div class="doc-subject">
-<p>Iterate over keys in insertion order. An overwrite keeps its key’s place.</p>
+<p>Iterate over keys in insertion order. An overwrite keeps its key’s place. The walk covers</p>
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1084-L1089" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1099-L1106" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">Cache</span><span class="op">.</span><span class="fu">__iter__</span>()</span></code></pre></div>
 </div>
 <div class="doc-text">
+<p>the entries there when it began: one stored meanwhile isn’t yielded, and one deleted and stored again is yielded once, as in diskcache.</p>
 <p>As with <a href="Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>, expired entries are skipped, and <code>next()</code> raises <code>ValueError</code> while another thread is inside it.</p>
 </div>
 

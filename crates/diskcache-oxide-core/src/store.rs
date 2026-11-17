@@ -139,6 +139,8 @@ pub struct OpenOptions {
     /// [`crate::schema::DEFAULT_SIZE_LIMIT`] for a plain cache, a shard's share of it for a
     /// `FanoutCache` (plan 13, section 4). An existing database keeps what it stores.
     pub default_size_limit: i64,
+    /// What this handle asks of background maintenance (plan 28).
+    pub maintenance: crate::background::Maintenance,
 }
 
 /// One database file's shared state. See the module docs.
@@ -178,6 +180,8 @@ pub struct Store {
     /// Handles closed behind a stuck fork, still counted in `handles`, for the drain to release (see
     /// [`Store::release_handle`]).
     deferred_releases: AtomicUsize,
+    /// Background maintenance's state on this store (plan 28): the turns in flight and the claims.
+    upkeep: crate::background::Upkeep,
     /// Value files an unlink couldn't remove, even after retrying a Windows sharing violation (plan 25,
     /// R-M7): each is left with no row, outside the totals, until `check(fix=True)`.
     left_files: AtomicU64,
@@ -198,6 +202,114 @@ pub struct Store {
     /// What the database's stamp says it is, checked by `open::prepare` when the store was created.
     /// A handle that joins a live store skips `prepare`, so [`Store::join`] compares against this.
     role: Role,
+}
+
+/// A background maintenance turn in progress on a store (see [`Store::begin_background_turn`]).
+/// Its reads and writes never wait (plan 28, decision 9) and refuse on a retired store. Dropping it
+/// ends the turn: field order drops the store reference last, and every lease the turn took has
+/// already gone back by then.
+#[derive(Debug)]
+pub(crate) struct BackgroundTurn<'a> {
+    store: &'a Store,
+    _turn: crate::genlock::SlotPermit<'a>,
+}
+
+impl BackgroundTurn<'_> {
+    /// Runs `read` on a pooled connection only if that needs no waiting at all: a free slot, no fork
+    /// pending, a live store, and no busy wait inside SQLite. None means it didn't run, or ran into
+    /// a lock; any other failure (a lease that can't open, a read error) comes back as an error, so
+    /// the turn can count it (decision 16).
+    pub(crate) fn read<T>(&self, read: impl FnOnce(&Connection) -> Result<T>) -> Option<Result<T>> {
+        let store = self.store;
+        debug_assert_eq!(GATE.own_depth(), 0, "a background turn holds no gate level");
+        if GATE.own_depth() > 0 {
+            return None;
+        }
+        let _permit = store.slots.try_acquire(store.max_connections.load(Ordering::Acquire))?;
+        let gate = GATE.try_enter_shared()?;
+        if store.is_retired() {
+            return None;
+        }
+        let lease = match store.lease(&gate, Duration::ZERO) {
+            Ok(lease) => lease,
+            Err(Error::Timeout { .. }) => return None,
+            Err(error) => return Some(Err(error)),
+        };
+        match read(lease.conn()) {
+            Err(Error::Timeout { .. }) => None,
+            done => Some(done),
+        }
+    }
+
+    /// Runs `write` in one write transaction only if that needs no waiting at all: this process's
+    /// write lock free, a free slot, no fork pending, a live store, and SQLite's lock free too. The
+    /// value files `write` returns in its [`Changed`] are unlinked after the commit, with every lock
+    /// let go, as [`Store::write_files`] does. None means it didn't run, or ran into a lock (a busy
+    /// `COMMIT` included); a store poisoned by a fork (D-020) can't be written and is skipped too.
+    /// Other failures come back as errors. No WAL check follows, unlike `write_unpinned`: the turn's
+    /// own checkpoint task runs after its deletes, and SQLite's auto-checkpoint still runs on commit.
+    pub(crate) fn write_files<T>(
+        &self,
+        write: impl FnOnce(&RowWriter<'_>, &Connection) -> Result<Changed<T>>,
+    ) -> Option<Result<T>> {
+        let store = self.store;
+        debug_assert_eq!(GATE.own_depth(), 0, "a background turn holds no gate level");
+        let changed = {
+            if crate::poison::check_writable(store.file_id).is_err() || GATE.own_depth() > 0 {
+                return None;
+            }
+            let _token = store.write_lock.try_lock()?;
+            let _permit = store.slots.try_acquire(store.max_connections.load(Ordering::Acquire))?;
+            let gate = GATE.try_enter_shared()?;
+            if store.is_retired() {
+                return None;
+            }
+            let lease = match store.lease(&gate, Duration::ZERO) {
+                Ok(lease) => lease,
+                Err(Error::Timeout { .. }) => return None,
+                Err(error) => return Some(Err(error)),
+            };
+            // No AttachedWindow is open, so the busy handler gives up at once.
+            let tx = match WriteTx::begin(lease.conn(), Duration::ZERO) {
+                Ok(tx) => tx,
+                Err(Error::Timeout { .. }) => return None,
+                Err(error) => return Some(Err(error)),
+            };
+            let written = write(&RowWriter::new(lease.conn(), Duration::ZERO), lease.conn());
+            match written.and_then(|changed| tx.commit().map(|()| changed)) {
+                Err(Error::Timeout { .. }) => return None,
+                done => done,
+            }
+        };
+        Some(changed.map(|changed| {
+            debug_assert!(changed.created.is_none(), "a background write only deletes");
+            store.unlink(changed.removed);
+            changed.value
+        }))
+    }
+}
+
+/// What [`Store::release_under`] decided. A release that retired the store must wait for the
+/// background turns on it to end, after letting go of its gate level, or say why it doesn't: so no
+/// caller can drop the obligation by accident.
+#[derive(Debug)]
+#[must_use = "a retiring release waits for background turns, or says why it doesn't"]
+pub(crate) struct Retirement<'a>(Option<&'a Store>);
+
+impl Retirement<'_> {
+    /// Waits, with no gate level held, until `deadline` (but at least [`TURN_DRAIN_FLOOR`]) for
+    /// background turns on a store this release retired. Returns whether it retired the store.
+    pub(crate) fn wait_for_turns(self, deadline: Instant) -> bool {
+        self.0.inspect(|store| store.wait_for_background_turns(deadline)).is_some()
+    }
+
+    /// No wait: for a caller that holds a gate level or has no budget left. Every connection a turn
+    /// leases after this is discarded when it's given back, since the store is retired, so the most
+    /// that's open after the close is one turn's connection for one chunk. Returns whether it
+    /// retired the store.
+    pub(crate) fn without_waiting(self) -> bool {
+        self.0.is_some()
+    }
 }
 
 /// The connection of a held write transaction, already inside `BEGIN IMMEDIATE`.
@@ -315,6 +427,17 @@ const UNLINK_DETACH_AT: usize = 8;
 /// sharing the checkpoint's budget could leave the release nothing. An ordinary fork ends well inside
 /// it, so `close()` waits it out and D-018 holds when it returns.
 const RELEASE_BUDGET: Duration = Duration::from_secs(1);
+
+/// The least a retiring release waits for a background turn on the store, however late its gate
+/// entry was: about one turn's budget, so a turn mid-chunk can end. The wait otherwise shares the
+/// release's own deadline. A turn refuses every chunk once the store retires, so a chunk in progress
+/// is all it waits for, except a turn inside a WAL checkpoint (a PASSIVE copy took up to 1.4 s in the
+/// soak) or closing the process's last connection on a large WAL, which can outlast it: the close
+/// then returns with that one connection still open, briefly.
+const TURN_DRAIN_FLOOR: Duration = Duration::from_millis(50);
+
+/// How often that wait checks the count: like the gate's waits, a sleep-poll, with nothing to wake.
+const TURN_DRAIN_POLL: Duration = Duration::from_micros(200);
 
 /// Enters the gate until `deadline`. The timeout's number is filled in by whoever knows the budget
 /// (`lockwait::retry`, `write_unpinned`'s mapping, `Store::open`, `Cache.pop`).
@@ -477,7 +600,7 @@ impl Store {
         let left = || deadline.saturating_duration_since(Instant::now());
 
         // Fast path: another handle in this process already has the store.
-        if let Some(store) = Self::lookup(&db_path, deadline)? {
+        if let Some(store) = Self::lookup(&db_path, deadline, options.maintenance)? {
             store.join(options, left())?;
             return Ok(store);
         }
@@ -513,7 +636,7 @@ impl Store {
             open_race::after_prepare(&options.directory);
             if let Some(id) = conn_file {
                 let stores = registry(&gate);
-                if let Some(store) = Self::claim_live(&stores, id, directory_check(&canonical)) {
+                if let Some(store) = Self::claim_live(&stores, id, directory_check(&canonical), options.maintenance) {
                     drop(stores);
                     // The claim is the closure's last fallible step, so `retry` never runs it twice.
                     store.adopt(&gate, conn, generation, options.max_connections);
@@ -539,7 +662,7 @@ impl Store {
         // A live store for this file, or a retired one that a closed handle still holds: join it
         // (reviving a retired one), so a file never has two stores, and two write locks, at once.
         if let Some(existing) = Self::find(&stores, file_id, &canonical) {
-            let (revived, unused) = existing.claim(&stores, Some(pin));
+            let (revived, unused) = existing.claim(&stores, Some(pin), options.maintenance);
             if revived {
                 existing.cache_limits(limits);
             }
@@ -582,6 +705,7 @@ impl Store {
             wal_path: db_path.with_extension("sqlite-wal"),
             handles: AtomicIsize::new(1),
             deferred_releases: AtomicUsize::new(0),
+            upkeep: Self::new_upkeep(&gate, &stores, options.maintenance),
             left_files: AtomicU64::new(0),
             size_limit: AtomicI64::new(limits.size_limit),
             cull_limit: AtomicI64::new(limits.cull_limit),
@@ -591,8 +715,7 @@ impl Store {
             // `prepare` just checked the stamp against it.
             role: options.role,
         });
-        stores.retain(|weak| weak.strong_count() > 0);
-        stores.push(Arc::downgrade(&store));
+        store.register(&gate, &mut stores);
         drop(stores);
         // Seed the pool with the connection the open sequence used.
         store.adopt(&gate, conn, generation, options.max_connections);
@@ -611,7 +734,7 @@ impl Store {
 
     /// A live store for `db_path`, with one more handle registered on it. A retired one is left to
     /// the slow path, which has the pinned file to revive it with. Times out with no handle claimed.
-    fn lookup(db_path: &Path, deadline: Instant) -> Result<Option<Arc<Self>>> {
+    fn lookup(db_path: &Path, deadline: Instant, asked: crate::background::Maintenance) -> Result<Option<Arc<Self>>> {
         let Ok(id) = file_id(db_path) else { return Ok(None) };
         // Windows matches on the directory too (see `directory_check`).
         #[cfg(windows)]
@@ -624,7 +747,7 @@ impl Store {
         let directory = None;
         let gate = enter_until(deadline)?;
         let stores = registry(&gate);
-        Ok(Self::claim_live(&stores, id, directory))
+        Ok(Self::claim_live(&stores, id, directory, asked))
     }
 
     /// Whether this store is for the database `id`, in the directory `canonical` when one is given
@@ -635,9 +758,14 @@ impl Store {
 
     /// The live store for the file `id` (in `canonical`, if given), with one more handle registered
     /// on it, or None. A live store already has its pin, so the claim takes none and hands none back.
-    fn claim_live(stores: &MutexGuard<'_, Vec<Weak<Self>>>, id: FileId, canonical: Option<&Path>) -> Option<Arc<Self>> {
+    fn claim_live(
+        stores: &MutexGuard<'_, Vec<Weak<Self>>>,
+        id: FileId,
+        canonical: Option<&Path>,
+        asked: crate::background::Maintenance,
+    ) -> Option<Arc<Self>> {
         let store = stores.iter().filter_map(Weak::upgrade).find(|s| s.is_for(id, canonical) && !s.is_retired())?;
-        let (_, unused) = store.claim(stores, None);
+        let (_, unused) = store.claim(stores, None, asked);
         debug_assert!(unused.is_none(), "a live store handed back a pin it was never given");
         Some(store)
     }
@@ -708,6 +836,7 @@ impl Store {
         stores: &MutexGuard<'_, Vec<Weak<Self>>>,
         delta: isize,
         pin: Option<FilePin>,
+        asked: Option<crate::background::Maintenance>,
     ) -> (bool, Option<FilePin>) {
         let after = self.handles.fetch_add(delta, Ordering::AcqRel) + delta;
         let mut slot = self.pin.lock().unwrap_or_else(PoisonError::into_inner);
@@ -718,6 +847,10 @@ impl Store {
             return (false, slot.take().or(pin));
         }
         if !self.is_retired() {
+            drop(slot);
+            if let Some(asked) = asked {
+                self.ask_maintenance(stores, asked, false);
+            }
             return (false, pin);
         }
         let other_live = stores
@@ -732,13 +865,54 @@ impl Store {
         };
         *slot = Some(pin);
         self.retired.store(false, Ordering::Release);
+        drop(slot);
+        if let Some(asked) = asked {
+            self.ask_maintenance(stores, asked, true);
+        }
         (true, None)
+    }
+
+    /// Merges a handle's maintenance request into the store's, under the registry and in the same
+    /// step that counts the handle (plan 28, decisions 3 and 15): the shortest interval wins, a
+    /// handle with its own clock vetoes, and a revive starts over from this handle's ask. Gathers the
+    /// other stores' spread only when this store is being placed, and wakes the thread only when its
+    /// next turn came earlier, so reopening an open cache stays cheap.
+    fn ask_maintenance(
+        &self,
+        stores: &MutexGuard<'_, Vec<Weak<Self>>>,
+        asked: crate::background::Maintenance,
+        revived: bool,
+    ) {
+        if asked == crate::background::Maintenance::OFF && !revived {
+            return;
+        }
+        let others = if self.upkeep.needs_placement(stores, asked) {
+            // One store's mutex at a time, and never this store's meanwhile. A temporary `Arc` here
+            // can't be a store's last unless that store is retired with its pool cleared and its pin
+            // taken, so dropping it frees memory only.
+            stores
+                .iter()
+                .filter_map(Weak::upgrade)
+                .filter(|other| !std::ptr::eq(Arc::as_ptr(other), self))
+                .filter_map(|other| other.upkeep.spread(stores))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if self.upkeep.ask(stores, crate::background::worker::mono_ms(), asked, revived, others) {
+            crate::background::worker::ensure_running(stores);
+        }
     }
 
     /// Registers one more handle; see [`Store::count_handle`], whose result it returns.
     #[must_use = "the pin it returns must be closed after the registry is released"]
-    fn claim(&self, stores: &MutexGuard<'_, Vec<Weak<Self>>>, pin: Option<FilePin>) -> (bool, Option<FilePin>) {
-        self.count_handle(stores, 1, pin)
+    fn claim(
+        &self,
+        stores: &MutexGuard<'_, Vec<Weak<Self>>>,
+        pin: Option<FilePin>,
+        asked: crate::background::Maintenance,
+    ) -> (bool, Option<FilePin>) {
+        self.count_handle(stores, 1, pin, Some(asked))
     }
 
     /// Applies a joining handle's settings (its handle is already registered by [`Store::claim`]):
@@ -824,9 +998,9 @@ impl Store {
     /// now if the gate lets it in, else behind the pending fork.
     fn release_now_or_defer(self: &Arc<Self>) {
         match GATE.try_enter_shared() {
-            // No sweep: a failed open has used its budget.
+            // No sweep, and no wait for background turns: a failed open has used its budget.
             Some(gate) => {
-                let _ = self.release_under(&gate);
+                let _ = self.release_under(&gate).without_waiting();
             }
             None => self.defer_release(),
         }
@@ -837,7 +1011,12 @@ impl Store {
     /// timeout leaves the handle closed and nothing counted. A retired store is revived if its
     /// database file is still the one it was opened on; otherwise it stays retired and keeps working
     /// by path, and a new open of the directory gets a new store.
-    pub fn add_handle_until(&self, deadline: Instant, claim: impl FnOnce() -> bool) -> Result<()> {
+    pub fn add_handle_until(
+        &self,
+        deadline: Instant,
+        asked: crate::background::Maintenance,
+        claim: impl FnOnce() -> bool,
+    ) -> Result<()> {
         let gate = enter_until(deadline)?;
         if !claim() {
             return Ok(());
@@ -852,7 +1031,7 @@ impl Store {
         {
             let stores = registry(&gate);
             if !self.is_retired() {
-                let (_, unused) = self.claim(&stores, None);
+                let (_, unused) = self.claim(&stores, None, asked);
                 drop(stores);
                 debug_assert!(unused.is_none(), "a live store handed back a pin it was never given");
                 return Ok(());
@@ -864,7 +1043,7 @@ impl Store {
         let db_path = open::db_path(&self.directory);
         let pin = open_pin(&gate, &db_path).ok().filter(|(_, id)| *id == self.file_id).map(|(pin, _)| pin);
         let stores = registry(&gate);
-        let (_, unused) = self.claim(&stores, pin);
+        let (_, unused) = self.claim(&stores, pin, asked);
         drop(stores);
         drop(unused);
         Ok(())
@@ -875,18 +1054,21 @@ impl Store {
     /// again to a handle on the same directory and file. The store itself stays usable: a later
     /// operation reopens connections.
     ///
-    /// Never fails, and returns within about a second whatever a fork does. A fork that outlasts
-    /// it leaves the release for the drain at its end.
+    /// Never fails, and returns within about a second whatever a fork does, plus the empty-folder
+    /// sweep's budget. A fork that outlasts it leaves the release for the drain at its end. The
+    /// release that retires the store waits for background maintenance turns on it within the same
+    /// second (at least 50 ms, so a turn mid-chunk can end).
     pub fn release_handle(self: &Arc<Self>) {
         self.release_handle_within(RELEASE_BUDGET);
     }
 
     fn release_handle_within(self: &Arc<Self>, budget: Duration) {
-        match GATE.enter_shared_until(lockwait::deadline_after(Instant::now(), budget)) {
+        let deadline = lockwait::deadline_after(Instant::now(), budget);
+        match GATE.enter_shared_until(deadline) {
             Some(gate) => {
-                let retired = self.release_under(&gate);
+                let retirement = self.release_under(&gate);
                 drop(gate);
-                if retired {
+                if retirement.wait_for_turns(deadline) {
                     self.sweep_value_dirs(spill::SWEEP_MIN_AGE);
                 }
             }
@@ -897,8 +1079,8 @@ impl Store {
     /// Removes this store's empty value directories (plan 17), after the release that retired it or
     /// after `clear()`: at most [`spill::SWEEP_BUDGET`], with the interpreter released. Skipped while
     /// this thread holds a gate level, a held transaction's included: a walk then would keep a
-    /// pending fork waiting. Skipped for a `FanoutCache`'s shards until plan 17's part 2 sweeps them
-    /// together under one deadline. Never fails.
+    /// pending fork waiting. Skipped for a `FanoutCache`'s shards, whose closes would otherwise take one
+    /// budget each: background maintenance sweeps them instead, a shard per turn (plan 28). Never fails.
     pub(crate) fn sweep_value_dirs(&self, min_age: Duration) {
         if self.role != Role::Plain || GATE.own_depth() > 0 {
             return;
@@ -909,20 +1091,20 @@ impl Store {
     }
 
     /// The release itself, on a level the caller holds. Returns whether it retired the store (this
-    /// was the last handle): decided under the registry, so of two threads closing the last two
-    /// handles at once exactly one sees it.
-    fn release_under(&self, gate: &SharedGuard<'_>) -> bool {
+    /// was the last handle), as a [`Retirement`] the caller must act on: decided under the registry,
+    /// so of two threads closing the last two handles at once exactly one sees it.
+    fn release_under(&self, gate: &SharedGuard<'_>) -> Retirement<'_> {
         // Decided under the registry, like `claim`: an open that finds this store either registers
         // its handle first (and this isn't the last), or finds it retired.
         let stores = registry(gate);
-        let (_, unpinned) = self.count_handle(&stores, -1, None);
+        let (_, unpinned) = self.count_handle(&stores, -1, None, None);
         let retired = self.is_retired();
         drop(stores);
         drop(unpinned);
         if retired {
             self.pool.clear(gate);
         }
-        retired
+        Retirement(retired.then_some(self))
     }
 
     /// Leaves one handle's release for the drain at the end of the pending fork. Until then the
@@ -970,6 +1152,8 @@ impl Store {
     /// Returns a leased connection: to the pool, or closed if the store is retired (a lease or a
     /// held transaction that outlived the last handle), so nothing stays open after the last
     /// close (D-018).
+    ///
+    /// `background::model` rebuilds this protocol for shuttle: keep the two in step.
     fn give_back(&self, gate: &SharedGuard<'_>, pooled: PooledConn) {
         if self.is_retired() {
             self.pool.discard(gate, pooled);
@@ -983,8 +1167,115 @@ impl Store {
         }
     }
 
-    fn is_retired(&self) -> bool {
+    /// A new store's maintenance state, under the registry: its schedule placed among the other
+    /// stores' (plan 28, decision 7).
+    fn new_upkeep(
+        gate: &SharedGuard<'_>,
+        stores: &MutexGuard<'_, Vec<Weak<Self>>>,
+        asked: crate::background::Maintenance,
+    ) -> crate::background::Upkeep {
+        use crate::background::schedule::Schedule;
+        let others: Vec<_> = if asked.interval_ms == 0 {
+            Vec::new()
+        } else {
+            stores
+                .iter()
+                .filter_map(Weak::upgrade)
+                .filter_map(|other| other.upkeep.tending(gate).schedule.spread())
+                .collect()
+        };
+        let mut schedule = Schedule::new(crate::background::worker::mono_ms(), asked.interval_ms, others);
+        if asked.own_clock {
+            schedule.veto();
+        }
+        crate::background::Upkeep::new(schedule)
+    }
+
+    /// Adds a new store to the registry, pruning dead entries, and wakes background maintenance if
+    /// the store wants it.
+    fn register(self: &Arc<Self>, gate: &SharedGuard<'_>, stores: &mut MutexGuard<'_, Vec<Weak<Self>>>) {
+        stores.retain(|weak| weak.strong_count() > 0);
+        stores.push(Arc::downgrade(self));
+        if self.upkeep.tending(gate).schedule.is_on() {
+            crate::background::worker::ensure_running(stores);
+        }
+    }
+
+    /// How background maintenance has gone on this store in this process (plan 28, decision 16). The
+    /// counters are always there; the last error is left out behind a pending fork.
+    #[must_use]
+    pub fn maintenance_health(&self) -> crate::background::Health {
+        let mut health = self.upkeep.health();
+        // A closed cache gets no turns, whatever its schedule says.
+        if self.is_retired() {
+            health.interval_ms = 0;
+        }
+        health
+    }
+
+    /// The failure a maintenance turn raised since the last call, if any, for the caller to log once:
+    /// one relaxed load when there's none, so the request path can ask every time (decision 16).
+    #[must_use]
+    pub fn take_maintenance_warning(&self) -> Option<String> {
+        if !self.upkeep.take_warning() {
+            return None;
+        }
+        let Some(gate) = GATE.try_enter_shared() else {
+            // Behind a fork: ask again on a later call.
+            self.upkeep.raise_warning();
+            return None;
+        };
+        self.upkeep.tending(&gate).last_error.clone()
+    }
+
+    /// Every store in the registry, collected under it and returned after it's released, so no
+    /// `Arc` is ever dropped under the registry mutex (the caller drops them under its level).
+    pub(crate) fn all_in_registry(gate: &SharedGuard<'_>) -> Vec<Arc<Self>> {
+        registry(gate).iter().filter_map(Weak::upgrade).collect()
+    }
+
+    /// Runs `f` under the registry.
+    pub(crate) fn with_registry<T>(gate: &SharedGuard<'_>, f: impl FnOnce(&MutexGuard<'_, Vec<Weak<Self>>>) -> T) -> T {
+        f(&registry(gate))
+    }
+
+    pub(crate) fn is_retired(&self) -> bool {
         self.retired.load(Ordering::Acquire)
+    }
+
+    /// Starts a background maintenance turn on this store, if it's live and no fork is pending: the
+    /// release that retires it then waits for the turn to end, so nothing the turn opened is still
+    /// open when the last `close()` returns (D-018). The turn holds no gate level while it runs;
+    /// each read and write enters on its own and refuses once the store has retired. None means no
+    /// turn: retired, or behind a fork. Called with no gate level held.
+    pub(crate) fn begin_background_turn(&self) -> Option<BackgroundTurn<'_>> {
+        debug_assert_eq!(GATE.own_depth(), 0, "a background turn begins with no gate level held");
+        let gate = GATE.try_enter_shared()?;
+        let stores = registry(&gate);
+        if self.is_retired() {
+            return None;
+        }
+        let turn = self.upkeep.turns_in_flight.try_acquire(u64::MAX)?;
+        drop(stores);
+        Some(BackgroundTurn { store: self, _turn: turn })
+    }
+
+    /// After the release that retired this store, with no gate level held: waits, with the
+    /// interpreter released, until `deadline` (at least [`TURN_DRAIN_FLOOR`] from now) for background
+    /// turns already running on it to end. A turn's leases go back to a retired pool, which closes
+    /// them, so once the count is zero nothing of theirs is open. Stops early if the store is revived
+    /// meanwhile, since the turns are then a live store's. Skipped at gate depth > 0 (a close inside
+    /// this thread's own transaction), which the gate's rules don't allow to sleep.
+    fn wait_for_background_turns(&self, deadline: Instant) {
+        if self.upkeep.turns_in_flight.in_use() == 0 || GATE.own_depth() > 0 {
+            return;
+        }
+        let deadline = deadline.max(lockwait::deadline_after(Instant::now(), TURN_DRAIN_FLOOR));
+        gate::run_blocking(&|| {
+            while self.upkeep.turns_in_flight.in_use() != 0 && self.is_retired() && Instant::now() < deadline {
+                std::thread::sleep(TURN_DRAIN_POLL);
+            }
+        });
     }
 
     #[must_use]
@@ -1346,6 +1637,90 @@ impl Store {
         if self.checkpoint_due_on_close() {
             let _ = self.checkpoint(budget);
         }
+    }
+
+    /// Whether a fork poisoned this database for good in this process (D-020): no write can succeed.
+    pub(crate) fn is_poisoned(&self) -> bool {
+        crate::poison::check_writable(self.file_id).is_err()
+    }
+
+    /// What background maintenance keeps between turns.
+    pub(crate) fn upkeep(&self) -> &crate::background::Upkeep {
+        &self.upkeep
+    }
+
+    /// Background maintenance's checkpoint (plan 28, decision 10), on a turn. None if there's nothing
+    /// to do or nothing it should try: the WAL is within its trim size, a recent attempt is backing
+    /// off, the store has retired or is poisoned by a fork (D-020), or a request writer is waiting.
+    ///
+    /// Unlike [`Store::checkpoint_once`], the copy never runs under this process's write lock, which
+    /// request writers must never queue behind. PASSIVE does the copying, with no write lock held: in
+    /// WAL mode it blocks no writer. It copies only up to the oldest snapshot a reader in another
+    /// process still uses, and often less (see [`crate::wal`]). Only when it has copied everything
+    /// does one short TRUNCATE try follow, under the write lock if it's free and nobody waits for it,
+    /// to reset the file; otherwise the copying is left to the next turn rather than done by a
+    /// TRUNCATE holding the lock. A WAL fully copied restarts on the next write and is cut back to its
+    /// trim size anyway, so the TRUNCATE is a bonus.
+    ///
+    /// PASSIVE holds a connection slot, and a shared gate level, for its whole copy (up to 1.4 s in
+    /// the soak), so it never takes a store's last free slot: a store capped at one connection
+    /// (`max_connections=1`, or a small `FanoutCache` shard) never checkpoints in the background, and
+    /// a fork may wait for a copy in progress, as for any checkpoint. It records nothing in the WAL's
+    /// counters and backoff, which describe the request path's checkpoints: a background attempt that
+    /// doesn't succeed must not make the last `close()` skip its own, which waits for readers as this
+    /// one doesn't. `maintenance_stats()` reports the background's work.
+    pub(crate) fn background_checkpoint(&self, turn: &BackgroundTurn<'_>) -> Option<crate::wal::Outcome> {
+        use crate::wal::Outcome;
+        if self.is_retired() || self.wal.in_backoff() || crate::poison::check_writable(self.file_id).is_err() {
+            return None;
+        }
+        let trim = crate::wal::journal_size_limit(self.wal_size_limit.load(Ordering::Relaxed));
+        if self.wal_bytes() <= trim {
+            return None;
+        }
+        let refused = || if GATE.stats().pending { Outcome::ForkPending } else { Outcome::Busy };
+        let cap = self.max_connections.load(Ordering::Acquire);
+        if cap < 2 || self.slots.in_use() + 1 >= cap {
+            return Some(Outcome::NoSlot);
+        }
+        let passive = turn.read(|conn| {
+            conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            })
+            .map_err(|e| Error::from_sqlite(e, Duration::ZERO))
+        });
+        let outcome = match passive {
+            None => refused(),
+            Some(Err(error)) => Outcome::Failed(error),
+            // Frames left that a reader's snapshot still pins: the copy waits for a later turn.
+            Some(Ok((_, log, copied))) if log != copied => Outcome::Busy,
+            Some(Ok(_)) if self.write_waiters() > 0 || self.is_retired() => return None,
+            Some(Ok(_)) => match self.write_lock.try_lock() {
+                None => Outcome::Busy,
+                Some(_token) => {
+                    let truncate = turn.read(|conn| {
+                        // `open` caps the window at ATTACHED_WINDOW: enough for our readers, whose
+                        // transactions take microseconds. Nothing is left to copy.
+                        let _window = lockwait::AttachedWindow::open(Instant::now() + Duration::from_secs(1));
+                        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0))
+                            .map_err(|e| Error::from_sqlite(e, Duration::ZERO))
+                    });
+                    match truncate {
+                        Some(Ok(0)) => Outcome::Done,
+                        Some(Ok(_)) => Outcome::Busy,
+                        Some(Err(error)) => Outcome::Failed(error),
+                        None => refused(),
+                    }
+                }
+            },
+        };
+        Some(outcome)
+    }
+
+    /// Whether the request path's forced checkpoints are backing off (tests only).
+    #[cfg(test)]
+    pub(crate) fn wal_in_backoff_for_tests(&self) -> bool {
+        self.wal.in_backoff()
     }
 
     /// Whether [`Store::checkpoint_on_close`] would checkpoint: one `stat` at most.
@@ -2255,8 +2630,11 @@ pub fn drain_deferred_releases() {
         deferred.retain(|store| store.deferred_releases.load(Ordering::SeqCst) > 0);
         for store in &deferred {
             // No sweep here: the drain holds the gate. The next release that retires the store sweeps.
+            // No wait for background turns either: the drain mustn't sleep under its level, and the
+            // close it finishes has already returned. A turn's connection is discarded when it's
+            // given back, since the store is retired (plan 28, decision 13).
             for _ in 0..store.deferred_releases.swap(0, Ordering::SeqCst) {
-                let _ = store.release_under(gate);
+                let _ = store.release_under(gate).without_waiting();
             }
         }
     });
@@ -2293,6 +2671,7 @@ mod tests {
             auto_checkpoint: false,
             role: crate::open::Role::Plain,
             default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
+            maintenance: crate::background::Maintenance::OFF,
         }
     }
 
@@ -2312,7 +2691,183 @@ mod tests {
             .unwrap();
     }
 
-    /// R-L10: a directory whose `-wal` path passes Windows's 260-character `MAX_PATH`. A test binary
+    // -- plan 28 step 2: the no-wait primitives and background turns -------------------------------
+
+    /// Value files in `dir` named from `seed`, and rows `key0..` pointing at them, as spilled `set`s
+    /// leave them.
+    fn put_files(store: &Store, dir: &Path, seed: u8, count: usize) -> Vec<PathBuf> {
+        (0..count)
+            .map(|i| {
+                let hex = format!("{seed:02x}{i:030x}");
+                let name = format!("{}/{hex}.val", &hex[..2]);
+                let path = spill::value_path(dir, &name).unwrap();
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, b"spilled").unwrap();
+                store
+                    .write(T, |w, _| {
+                        w.upsert(&NewRow {
+                            key: format!("key{i}").as_str().into(),
+                            mode: 2,
+                            value: Stored::File(&name),
+                            size: 7,
+                            store_time: 1.0,
+                            expire_time: None,
+                            tag: None,
+                        })
+                    })
+                    .unwrap();
+                path
+            })
+            .collect()
+    }
+
+    fn count_rows(conn: &Connection) -> Result<i64> {
+        conn.query_row("SELECT COUNT(*) FROM cache", [], |r| r.get(0)).map_err(|e| Error::from_sqlite(e, T))
+    }
+
+    fn delete_all(w: &RowWriter<'_>, conn: &Connection) -> Result<Changed<usize>> {
+        let keys: Vec<String> = conn
+            .prepare("SELECT key FROM cache")
+            .and_then(|mut stmt| stmt.query_map([], |r| r.get(0))?.collect())
+            .map_err(|e| Error::from_sqlite(e, T))?;
+        let mut removed = Vec::new();
+        for key in &keys {
+            removed.extend(w.delete_key(key.as_str())?);
+        }
+        Ok(Changed::removing(keys.len(), removed))
+    }
+
+    // These take the global fork lock: the fork tests in this binary claim a fork on the real gate,
+    // and a background turn's calls rightly refuse while one is pending.
+
+    #[test]
+    fn a_background_write_unlinks_the_files_it_deletes_without_the_blocker() {
+        let _forks = crate::testutil::one_global_fork_at_a_time();
+        let tmp = TempDir::new("store-turn-files");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        // Past UNLINK_DETACH_AT, so the unlink goes through `run_blocking`: on the maintenance
+        // thread, marked native, it must never reach the installed blocker (decision 2).
+        let paths = put_files(&store, tmp.path(), 0xab, UNLINK_DETACH_AT + 2);
+        let _ = gate::set_blocker(|work| work());
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                gate::mark_native_thread();
+                let turn = store.begin_background_turn().unwrap();
+                assert_eq!(turn.write_files(delete_all).unwrap().unwrap(), paths.len());
+                assert_eq!(turn.read(count_rows).unwrap().unwrap(), 0);
+                assert_eq!(gate::blocker_calls(), 0, "the native thread went through the blocker");
+            });
+        });
+        assert!(paths.iter().all(|p| !p.exists()), "every value file went with its row");
+        store.release_handle();
+    }
+
+    #[test]
+    fn a_background_write_that_fails_rolls_back_and_unlinks_nothing() {
+        let _forks = crate::testutil::one_global_fork_at_a_time();
+        let tmp = TempDir::new("store-turn-error");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let paths = put_files(&store, tmp.path(), 0xcd, 2);
+        let turn = store.begin_background_turn().unwrap();
+        let failed = turn.write_files(|w, conn| {
+            delete_all(w, conn)?;
+            Err::<Changed<()>, _>(Error::InvalidSetting("a failing chunk".into()))
+        });
+        assert!(matches!(failed, Some(Err(Error::InvalidSetting(_)))), "a real failure is reported: {failed:?}");
+        assert_eq!(turn.read(count_rows).unwrap().unwrap(), 2, "rolled back");
+        assert!(paths.iter().all(|p| p.exists()), "nothing unlinked");
+        // A busy chunk is a skip, not a failure.
+        assert!(turn.write_files(|_, _| Err::<Changed<()>, _>(Error::Timeout { seconds: 0.0 })).is_none());
+        drop(turn);
+        store.release_handle();
+    }
+
+    #[test]
+    fn a_background_turn_refuses_rather_than_waits() {
+        let _forks = crate::testutil::one_global_fork_at_a_time();
+        let tmp = TempDir::new("store-turn-refuse");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        put(&store, "k", b"v");
+        let turn = store.begin_background_turn().unwrap();
+        let noop = |_: &RowWriter<'_>, _: &Connection| Ok(Changed::unchanged(()));
+        let started = Instant::now();
+        // This process's write lock is taken: the write refuses at once.
+        let token = store.write_lock.try_lock().unwrap();
+        assert!(turn.write_files(noop).is_none());
+        drop(token);
+        // Another process holds SQLite's write lock: refused at once, no busy wait.
+        let other = open::connect(tmp.path(), T).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(turn.write_files(noop).is_none());
+        // Reads still go: WAL readers don't wait for a writer.
+        assert_eq!(turn.read(count_rows).unwrap().unwrap(), 1);
+        other.execute_batch("ROLLBACK").unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1), "nothing waited");
+        // Every slot taken: the read refuses too.
+        let permits: Vec<_> =
+            (0..DEFAULT_MAX_CONNECTIONS).map(|_| store.slots.try_acquire(DEFAULT_MAX_CONNECTIONS).unwrap()).collect();
+        assert!(turn.read(count_rows).is_none());
+        drop(permits);
+        drop((turn, other));
+        store.release_handle();
+    }
+
+    #[test]
+    fn a_background_turn_is_refused_on_a_retired_store() {
+        let _forks = crate::testutil::one_global_fork_at_a_time();
+        let tmp = TempDir::new("store-turn-retired");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        assert!(store.begin_background_turn().is_some());
+        store.release_handle();
+        assert!(store.is_retired());
+        assert!(store.begin_background_turn().is_none());
+    }
+
+    /// The central race (decision 13): a turn is running when the last handle closes. The close waits
+    /// for the turn; the turn's calls refuse once the store has retired, so it opens nothing new; and
+    /// when the close returns, nothing is open.
+    #[test]
+    fn the_last_close_waits_for_a_turn_and_leaves_nothing_open() {
+        let _forks = crate::testutil::one_global_fork_at_a_time();
+        let tmp = TempDir::new("store-turn-drain");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        put(&store, "k", b"v");
+        let turn = store.begin_background_turn().unwrap();
+        assert_eq!(turn.read(count_rows).unwrap().unwrap(), 1);
+        let ended = AtomicBool::new(false);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                while !store.is_retired() {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                // The store retired under the turn: its calls refuse now.
+                assert!(turn.read(count_rows).is_none());
+                assert!(turn.write_files(|_, _| Ok(Changed::unchanged(()))).is_none());
+                std::thread::sleep(Duration::from_millis(30));
+                ended.store(true, Ordering::SeqCst);
+                drop(turn);
+            });
+            store.release_handle();
+            assert!(ended.load(Ordering::SeqCst), "the close returned before the turn ended");
+        });
+        let gate = GATE.try_enter_shared().unwrap();
+        assert_eq!((store.pool.idle(&gate), store.pool.checked_out(&gate)), (0, 0), "a connection outlived the close");
+    }
+
+    #[test]
+    fn a_close_never_waits_past_its_budget_for_a_turn() {
+        let _forks = crate::testutil::one_global_fork_at_a_time();
+        let tmp = TempDir::new("store-turn-budget");
+        let store = Store::open(&options(tmp.path())).unwrap();
+        let turn = store.begin_background_turn().unwrap();
+        let started = Instant::now();
+        store.release_handle_within(Duration::from_millis(100));
+        let took = started.elapsed();
+        assert!(took >= Duration::from_millis(90) && took < Duration::from_millis(600), "{took:?}");
+        drop(turn);
+    }
+
+    /// R-L10: a directory whose `-wal` path passes Windows's 260-character `MAX_PATH`.    /// R-L10: a directory whose `-wal` path passes Windows's 260-character `MAX_PATH`. A test binary
     /// has no long-path-aware manifest, so this is the default Windows machine's case
     /// (`LongPathsEnabled` off), where only a `\\?\` path reaches past it. 2,000 is past the default
     /// `win32` VFS's own 1,040-byte limit, which `win32-longpath` lifts.
@@ -2337,7 +2892,7 @@ mod tests {
     }
 
     fn add_handle(store: &Store) {
-        store.add_handle_until(Instant::now() + T, || true).unwrap();
+        store.add_handle_until(Instant::now() + T, crate::background::Maintenance::OFF, || true).unwrap();
     }
 
     fn count(store: &Store) -> i64 {
@@ -2712,18 +3267,18 @@ mod tests {
         // Live: the store keeps its own pin and hands the new one back.
         let (pin, _) = open_pin(&gate, &db_path).unwrap();
         let stores = registry(&gate);
-        let (revived, unused) = store.claim(&stores, Some(pin));
+        let (revived, unused) = store.claim(&stores, Some(pin), crate::background::Maintenance::OFF);
         drop(stores);
         assert!(!revived && unused.is_some());
         // A release that lands first (the count dips to 0) retires the store and hands back its pin.
         let stores = registry(&gate);
-        let (_, own) = store.count_handle(&stores, -2, None);
+        let (_, own) = store.count_handle(&stores, -2, None, None);
         drop(stores);
         assert!(store.is_retired() && own.is_some());
         // Retired, a claim with a pin keeps it: nothing comes back.
         let (pin, _) = open_pin(&gate, &db_path).unwrap();
         let stores = registry(&gate);
-        let (revived, unused) = store.claim(&stores, Some(pin));
+        let (revived, unused) = store.claim(&stores, Some(pin), crate::background::Maintenance::OFF);
         drop(stores);
         assert!(revived && unused.is_none());
         drop(gate);
@@ -2744,7 +3299,7 @@ mod tests {
         let gate = GATE.enter_shared_blocking();
         let (pin, _) = open_pin(&gate, &open::db_path(&d1)).unwrap();
         let stores = registry(&gate);
-        let (revived, unused) = first.claim(&stores, Some(pin));
+        let (revived, unused) = first.claim(&stores, Some(pin), crate::background::Maintenance::OFF);
         drop(stores);
         assert!(!revived && unused.is_some());
         assert!(first.is_retired());

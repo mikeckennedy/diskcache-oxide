@@ -39,11 +39,11 @@ import warnings
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, nullcontext
 from types import TracebackType
-from typing import Any, Literal, Self, overload
+from typing import Any, Literal, Optional, Self, overload
 
 from diskcache_oxide._constants import ENOVAL
 from diskcache_oxide._core import TypeRegistry
-from diskcache_oxide._types import Key, Memoizer
+from diskcache_oxide._types import Key, MaintenanceStats, Memoizer
 from diskcache_oxide.protocol import CacheLike
 
 DEFAULT_SIZE_LIMIT = 2**30
@@ -202,25 +202,32 @@ class NullCache:
 
     def __init__(
         self,
-        directory: str | os.PathLike[str] | None = None,
-        timeout: float | None = None,
+        directory: Optional[str | os.PathLike[str]] = None,
+        timeout: Optional[float] = None,
         *,
-        size_limit: int | None = None,
-        cull_limit: int | None = None,
-        eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
+        size_limit: Optional[int] = None,
+        cull_limit: Optional[int] = None,
+        eviction_policy: Optional[Literal['least-recently-stored', 'none']] = None,
         serializer: Literal['msgpack', 'json'] = 'msgpack',
         pickle: bool = False,
-        types: TypeRegistry | None = None,
-        clock: Callable[[], float] | None = None,
+        types: Optional[TypeRegistry] = None,
+        clock: Optional[Callable[[], float]] = None,
         max_connections: int = 8,
-        sqlite_cache_size: int | None = None,
-        wal_size_limit: int | None = None,
+        sqlite_cache_size: Optional[int] = None,
+        wal_size_limit: Optional[int] = None,
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
-        on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
+        on_decode_error: Optional[Literal['raise', 'miss'] | Callable[[str, Exception], object]] = None,
         durable: bool = False,
-        invalidate: CacheLike | None = None,
+        maintenance_interval: Optional[float] = None,
+        invalidate: Optional[CacheLike] = None,
     ) -> None:
         _check_timeout(timeout)
+        if maintenance_interval is not None and (
+            isinstance(maintenance_interval, bool) or not isinstance(maintenance_interval, (int, float))
+        ):
+            raise TypeError(
+                f'maintenance_interval must be a number of seconds or None, not {type(maintenance_interval).__name__}'
+            )
         _check_decode_policy(on_decode_error)
         _check_durable(durable)
         self._directory = None if directory is None else os.fspath(directory)
@@ -240,7 +247,7 @@ class NullCache:
     # -- attributes ---------------------------------------------------------------------------
 
     @property
-    def directory(self) -> str | None:
+    def directory(self) -> Optional[str]:
         """The directory passed to the constructor, or None. Nothing is created there."""
         return self._directory
 
@@ -282,6 +289,10 @@ class NullCache:
     def remove_old_formats(self) -> list[str]:
         """Always `[]`: a `NullCache` has no directory to clean up."""
         return []
+
+    def maintenance_stats(self) -> MaintenanceStats:
+        """All zero: a `NullCache` has nothing to maintain."""
+        return {'interval': 0.0, 'turns': 0, 'removed': 0, 'failures': 0, 'last_error': None}
 
     def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
         """Always `(0, 0)`: nothing is looked up."""
@@ -347,7 +358,7 @@ class NullCache:
         expire_time: Literal[True],
         tag: Literal[False] = False,
         retry: bool = False,
-    ) -> tuple[Any, float | None]: ...
+    ) -> tuple[Any, Optional[float]]: ...
     @overload
     def get(
         self,
@@ -361,7 +372,7 @@ class NullCache:
     @overload
     def get(
         self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
-    ) -> tuple[Any, float | None, Key]: ...
+    ) -> tuple[Any, Optional[float], Key]: ...
     def get(
         self, key: Key, default: Any = None, *, expire_time: bool = False, tag: bool = False, retry: bool = False
     ) -> Any:
@@ -400,14 +411,16 @@ class NullCache:
         """Always 0: a `NullCache` uses no disk."""
         return 0
 
-    def checkpoint(self, *, timeout: float | None = None) -> bool:
+    def checkpoint(self, *, timeout: Optional[float] = None) -> bool:
         """Always True: there is no write-ahead log to reset."""
         _check_timeout(timeout)
         return True
 
     # -- writes: succeed, then expire instantly ---------------------------------------------------
 
-    def set(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
+    def set(
+        self, key: Key, value: Any, expire: Optional[float] = None, *, tag: Key = None, retry: bool = False
+    ) -> bool:
         """Return True without storing anything: the write succeeds, then expires instantly."""
         _check_retry(retry)
         _check_key(key)
@@ -419,7 +432,9 @@ class NullCache:
         """Store nothing, as `set()` does."""
         self.set(key, value)
 
-    def add(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
+    def add(
+        self, key: Key, value: Any, expire: Optional[float] = None, *, tag: Key = None, retry: bool = False
+    ) -> bool:
         """Return True without storing anything: the key is always absent, so the add succeeds.
 
         With caching off, every caller's `add()` succeeds, so don't rely on it for job claims or locks.
@@ -431,14 +446,14 @@ class NullCache:
         _check_tag(tag)
         return True
 
-    def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
+    def touch(self, key: Key, expire: Optional[float] = None, *, retry: bool = False) -> bool:
         """Always False: the key never exists."""
         _check_retry(retry)
         _check_key(key)
         _check_seconds('expire', expire)
         return False
 
-    def incr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
+    def incr(self, key: Key, delta: float = 1, default: Optional[float] = 0, *, retry: bool = False) -> int | float:
         """Return `default + delta`, since every count starts again from `default`.
 
         Raises:
@@ -450,7 +465,7 @@ class NullCache:
             raise KeyError(key)
         return default + delta
 
-    def decr(self, key: Key, delta: float = 1, default: float | None = 0, *, retry: bool = False) -> int | float:
+    def decr(self, key: Key, delta: float = 1, default: Optional[float] = 0, *, retry: bool = False) -> int | float:
         """Return `default - delta`. See `incr()`."""
         _check_retry(retry)
         return self.incr(key, -delta, default, retry=retry)
@@ -489,7 +504,7 @@ class NullCache:
         expire_time: Literal[True],
         tag: Literal[False] = False,
         retry: bool = False,
-    ) -> tuple[Any, float | None]: ...
+    ) -> tuple[Any, Optional[float]]: ...
     @overload
     def pop(
         self,
@@ -503,7 +518,7 @@ class NullCache:
     @overload
     def pop(
         self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
-    ) -> tuple[Any, float | None, Key]: ...
+    ) -> tuple[Any, Optional[float], Key]: ...
     def pop(
         self, key: Key, default: Any = None, *, expire_time: bool = False, tag: bool = False, retry: bool = False
     ) -> Any:
@@ -523,7 +538,7 @@ class NullCache:
         value: Any,
         prefix: None = None,
         side: Literal['front', 'back'] = 'back',
-        expire: float | None = None,
+        expire: Optional[float] = None,
         *,
         tag: Key = None,
         retry: bool = False,
@@ -534,7 +549,7 @@ class NullCache:
         value: Any,
         prefix: str,
         side: Literal['front', 'back'] = 'back',
-        expire: float | None = None,
+        expire: Optional[float] = None,
         *,
         tag: Key = None,
         retry: bool = False,
@@ -543,9 +558,9 @@ class NullCache:
     def push(
         self,
         value: Any,
-        prefix: str | None = None,
+        prefix: Optional[str] = None,
         side: Literal['front', 'back'] = 'back',
-        expire: float | None = None,
+        expire: Optional[float] = None,
         *,
         tag: Key = None,
         retry: bool = False,
@@ -553,9 +568,9 @@ class NullCache:
     def push(
         self,
         value: Any,
-        prefix: str | None = None,
+        prefix: Optional[str] = None,
         side: Literal['front', 'back'] = 'back',
-        expire: float | None = None,
+        expire: Optional[float] = None,
         *,
         tag: Key = None,
         retry: bool = False,
@@ -571,7 +586,7 @@ class NullCache:
 
     def pull(
         self,
-        prefix: str | None = None,
+        prefix: Optional[str] = None,
         default: Any = (None, None),
         side: Literal['front', 'back'] = 'front',
         *,
@@ -588,7 +603,7 @@ class NullCache:
 
     def peek(
         self,
-        prefix: str | None = None,
+        prefix: Optional[str] = None,
         default: Any = (None, None),
         side: Literal['front', 'back'] = 'front',
         *,
@@ -607,7 +622,7 @@ class NullCache:
         _check_retry(retry)
         raise KeyError('dictionary is empty')
 
-    def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def clear(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """0, or with `invalidate=`, clear that cache (passing `timeout` on) and return its count."""
         _check_retry(retry)
         _check_timeout(timeout)
@@ -621,7 +636,7 @@ class NullCache:
             options['retry'] = True
         return self._invalidate.clear(**options)
 
-    def evict(self, tag: Key, *, timeout: float | None = None, retry: bool = False) -> int:
+    def evict(self, tag: Key, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """0, or with `invalidate=`, evict `tag` from that cache (passing `timeout` on) and return its
         count."""
         _check_retry(retry)
@@ -638,9 +653,9 @@ class NullCache:
 
     def memoize(
         self,
-        name: str | None = None,
+        name: Optional[str] = None,
         typed: bool = False,
-        expire: float | None = None,
+        expire: Optional[float] = None,
         tag: Key = None,
         ignore: Iterable[int | str] = (),
     ) -> Memoizer:
@@ -654,7 +669,7 @@ class NullCache:
     def iterkeys(self, *, prefix: str, reverse: bool = False) -> Iterator[str]: ...
     @overload
     def iterkeys(self, *, prefix: None = None, reverse: bool = False) -> Iterator[Key]: ...
-    def iterkeys(self, *, prefix: str | None = None, reverse: bool = False) -> Iterator[Key]:
+    def iterkeys(self, *, prefix: Optional[str] = None, reverse: bool = False) -> Iterator[Key]:
         """Yield nothing, or with `invalidate=`, that cache's keys, so list-then-delete still works."""
         if self._invalidate is not None:
             return self._invalidate.iterkeys(prefix=prefix, reverse=reverse)
@@ -662,7 +677,7 @@ class NullCache:
 
     # -- transactions: nothing to hold ------------------------------------------------------------
 
-    def transact(self, retry: bool = False, *, key: Key | None = None) -> AbstractContextManager[Self]:
+    def transact(self, retry: bool = False, *, key: Optional[Key] = None) -> AbstractContextManager[Self]:
         """A no-op context manager that yields this `NullCache`.
 
         It never opens a transaction on an `invalidate=` cache: removals forwarded inside the block
@@ -684,13 +699,13 @@ class NullCache:
 
     # -- maintenance and lifecycle -------------------------------------------------------------
 
-    def expire(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def expire(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Always 0."""
         _check_retry(retry)
         _check_timeout(timeout)
         return 0
 
-    def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def cull(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Always 0."""
         _check_retry(retry)
         _check_timeout(timeout)
@@ -706,9 +721,9 @@ class NullCache:
 
     def __exit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
         /,
     ) -> None:
         """Do nothing, as `close()` does."""

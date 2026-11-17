@@ -58,9 +58,10 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Self, cast
+from typing import Any, Optional, Self, cast, overload
 
 from diskcache_oxide._core import Cache, FanoutCache, Timeout, _open_fanout_keeping_stored
+from diskcache_oxide._types import MaintenanceStats
 from diskcache_oxide.null import NullCache
 from diskcache_oxide.protocol import CacheLike, TransactionalCacheLike
 
@@ -116,7 +117,9 @@ class CacheStats:
     enabled: bool
     count: int
     volume: int
-    error: str | None = None
+    error: Optional[str] = None
+    #: The cache's `maintenance_stats()`, or None if it couldn't be read.
+    maintenance: Optional[MaintenanceStats] = None
 
 
 def _check_settings(settings: dict[str, Any], allowed: frozenset[str] = _CACHE_SETTINGS) -> None:
@@ -176,7 +179,7 @@ class Caches[N: str = str]:
         self,
         base_dir: str | os.PathLike[str],
         *,
-        on_open_error: Callable[[str, Exception], object] | None = None,
+        on_open_error: Optional[Callable[[str, Exception], object]] = None,
         retry_open_after: float = 10.0,
         _monotonic: Callable[[], float] = time.monotonic,
         **defaults: Any,
@@ -215,7 +218,7 @@ class Caches[N: str = str]:
         self,
         name: N,
         *,
-        directory: str | os.PathLike[str] | None = None,
+        directory: Optional[str | os.PathLike[str]] = None,
         **settings: Any,
     ) -> None:
         """Register a cache. Nothing opens until its first lookup.
@@ -311,6 +314,35 @@ class Caches[N: str = str]:
             return cast(TransactionalCacheLike, self._resolved[name])
         except KeyError:
             return cast(TransactionalCacheLike, self._resolve(name))
+
+    @overload
+    def get(self, name: str) -> Optional[TransactionalCacheLike]: ...
+    @overload
+    def get[D](self, name: str, default: D) -> TransactionalCacheLike | D: ...
+    def get(self, name: str, default: object = None) -> object:
+        """The named plain cache as `caches[name]` returns it, or `default` if no cache by that name
+        is registered. One call instead of `name in caches` and then `caches[name]`.
+
+        `default` is for a name that was never registered, nothing else: a registered cache that
+        can't open or is disabled still comes back as a `NullCache`, as from `caches[name]`. `name`
+        is typed `str` even on a `Caches[Literal[...]]`, since asking about a name that may not be
+        there is the point.
+
+        Raises:
+            TypeError: The cache was registered with `shards=` (use `fanout(name)`), or its settings
+                are invalid.
+            ValueError: Its settings are invalid.
+
+        Examples:
+            ```python
+            if (pages := caches.get('pages')) is None:
+                raise RuntimeError('the pages cache was not registered')
+            pages.set('/about', html)
+            ```
+        """
+        if name not in self._specs:
+            return default
+        return self[cast(N, name)]
 
     def fanout(self, name: N) -> FanoutCache | NullCache:
         """The named sharded cache (one registered with `shards=`), looked up as `caches[name]` is.
@@ -497,12 +529,14 @@ class Caches[N: str = str]:
             enabled = name not in self._disabled
             try:
                 cache = self._open(name)
-                result[name] = CacheStats(name, path, enabled, len(cache), cache.volume())
+                result[name] = CacheStats(
+                    name, path, enabled, len(cache), cache.volume(), maintenance=cache.maintenance_stats()
+                )
             except Exception as exc:
                 result[name] = CacheStats(name, path, enabled, 0, 0, f'{type(exc).__name__}: {exc}')
         return result
 
-    def clear(self, name: N, *, timeout: float | None = None) -> int:
+    def clear(self, name: N, *, timeout: Optional[float] = None) -> int:
         """Clear the real cache, even while it's disabled. Returns how many entries were removed.
 
         Raises:
@@ -512,10 +546,10 @@ class Caches[N: str = str]:
         """
         return self._open(name).clear(timeout=timeout)
 
-    def expire_all(self, *, timeout: float | None = None) -> dict[N, int | None]:
+    def expire_all(self, *, timeout: Optional[float] = None) -> dict[N, Optional[int]]:
         """Remove expired entries from every cache. Returns how many each removed, or None for a
         cache that couldn't be opened or expired (logged; the rest still run)."""
-        result: dict[N, int | None] = {}
+        result: dict[N, Optional[int]] = {}
         for name in list(self._specs):
             try:
                 result[name] = self._open(name).expire(timeout=timeout)
@@ -524,7 +558,7 @@ class Caches[N: str = str]:
                 result[name] = None
         return result
 
-    def remove_old_formats(self) -> dict[N, list[str] | None]:
+    def remove_old_formats(self) -> dict[N, Optional[list[str]]]:
         """Run `remove_old_formats()` on every registered cache, opening each one, even while it's
         disabled. Returns what each removed, or None for a cache that couldn't be opened or cleaned
         (logged; the rest still run).
@@ -532,7 +566,7 @@ class Caches[N: str = str]:
         It doesn't check whether an older diskcache-oxide still uses those files: call it once no
         older worker is left. See `Cache.remove_old_formats()`.
         """
-        result: dict[N, list[str] | None] = {}
+        result: dict[N, Optional[list[str]]] = {}
         for name in list(self._specs):
             try:
                 result[name] = self._open(name).remove_old_formats()
@@ -563,9 +597,9 @@ class Caches[N: str = str]:
 
     def __exit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
         /,
     ) -> None:
         """Close every opened cache, as `close_all()` does."""

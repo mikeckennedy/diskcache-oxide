@@ -21,6 +21,14 @@ walTryBeginRead walIndexRecover shm
 # 721de5a: 82 reports in 40 runs; HEAD: 86.
 unixOpen unixOpen randomnessPid
 
+# The same global from the other side: unixRandomness, seeding the PRNG on a connection's first need
+# for randomness, stores randomnessPid (sqlite3.c 47774, `randomnessPid = osGetpid(0)`) while another
+# thread's unixOpen compares it (47260). SQLite's comment there: "There is a race condition here ...
+# multiple resets are harmless"; both store the same pid. Seen in lane D's Linux run (Ubuntu 26.04
+# aarch64, clang-23, Python 3.14t, 2026-11-14, fdf471e, plan 28): 6 reports, the read in a request's
+# Store::lease, once background maintenance opens connections on its own thread beside the request path.
+unixOpen unixRandomness randomnessPid
+
 # Not SQLite's: Rust std's errno. `std::sys::io::error::unix::errno` (a read after a failed syscall,
 # `mkdir` in open::ensure_directory) against `set_errno` (std's `ReadDir::next` zeroes errno before
 # `readdir`) on another thread, at one address: on macOS a thread's errno lives in its TSD block at

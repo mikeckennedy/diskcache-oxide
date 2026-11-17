@@ -234,6 +234,7 @@ FAN_OUT: dict[str, tuple[str, Callable[[FanoutCache], Any]]] = {
 }
 
 
+@pytest.mark.races_maintenance
 @pytest.mark.parametrize('held', [0, 3])
 @pytest.mark.parametrize('op', sorted(FAN_OUT))
 def test_every_call_over_every_shard_raises_inside_the_block(cache: FanoutCache, op: str, held: int) -> None:

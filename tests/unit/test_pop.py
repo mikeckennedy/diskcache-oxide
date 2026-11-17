@@ -12,7 +12,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 from diskcache_oxide import Cache, CorruptValueError, ForeignValueError, Timeout
@@ -30,7 +30,7 @@ POLICIES = pytest.mark.parametrize('policy', ['raise', 'miss'])
 class Hooked:
     """Unpickling it calls `Hooked.hook`, if one is set."""
 
-    hook: Callable[[], object] | None = None
+    hook: Optional[Callable[[], object]] = None
 
     def __init__(self, payload: str = 'x') -> None:
         self.payload = payload

@@ -13,7 +13,7 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional
 
 from diskcache_oxide import CacheLike, Lock, Timeout, __version__
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -42,7 +42,7 @@ def human_size(n: float) -> str:
     return f'{n:.1f} GiB'
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Optional[Settings] = None) -> FastAPI:
     settings = settings or Settings.from_env()
     caches: AppCaches = open_caches(settings.root)
     store = Store(settings.root / 'db', settings.load_delay)
@@ -66,7 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _load_all() -> list[Episode]:
         return store.all()
 
-    def _load_episode(number: int) -> Episode | None:
+    def _load_episode(number: int) -> Optional[Episode]:
         return store.get(number)
 
     load_all = memoized(registry, 'data', expire=FRAGMENT_TTL)(_load_all)
@@ -93,7 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         caches.sessions.set(f'session:{sid}', session, expire=IDLE)
         return sid
 
-    def current_user(request: Request) -> dict | None:
+    def current_user(request: Request) -> Optional[dict]:
         sid = request.cookies.get('sid')
         if not sid:
             return None

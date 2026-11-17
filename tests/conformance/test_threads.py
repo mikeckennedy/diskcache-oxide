@@ -17,7 +17,7 @@ import time
 import zlib
 from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -213,7 +213,7 @@ FD_STABLE_SAMPLES = 3
 FD_DEADLINE = 5.0
 
 
-def _fd_path(fd: int) -> str | None:
+def _fd_path(fd: int) -> Optional[str]:
     try:
         if sys.platform == 'darwin':
             import fcntl

@@ -85,7 +85,7 @@ import uuid
 def enqueue(cache: Cache, episode: int) -> None:
     cache.push({'id': uuid.uuid4().hex, 'episode': episode, 'step': 'transcode'}, prefix='transcode')
 
-def take(cache: Cache) -> dict | None:
+def take(cache: Cache) -> Optional[dict]:
     """The next job, recorded as running in the same transaction; None if the queue is empty."""
     with cache.transact():
         key, job = cache.pull(prefix='transcode')
@@ -124,7 +124,7 @@ if (job := take(jobs)) is not None:       # another worker picks it up
 
 
     transcoding 513
-    1 requeued: ('transcode-500000000000000', {'id': 'bab9c28aecb34357871469a217322b1a', 'episode': 514, 'step': 'transcode'})
+    1 requeued: ('transcode-500000000000000', {'id': 'c2f7536048ac4523a871dbc51b0e45f0', 'episode': 514, 'step': 'transcode'})
     transcoding 514
 
 
@@ -141,7 +141,7 @@ jobs.push({'to': 'sam@example.com', 'template': 'welcome'}, prefix='email')
 jobs.push({'episode': 515, 'step': 'transcode'}, prefix='transcode')
 jobs.push({'episode': 516, 'step': 'transcode'}, prefix='urgent')
 
-def next_job(cache: Cache, queues: tuple[str, ...] = ('urgent', 'transcode', 'email')) -> tuple[str, dict] | None:
+def next_job(cache: Cache, queues: tuple[str, ...] = ('urgent', 'transcode', 'email')) -> Optional[tuple[str, dict]]:
     for queue in queues:
         key, job = cache.pull(prefix=queue)
         if key is not None:
@@ -197,7 +197,7 @@ A separate directory is a good idea in any app: the queue gets its own eviction 
 
 - **Open the queue's cache with `eviction_policy='none'`.** Least-recently-stored eviction removes the oldest entries first, and the oldest entry in a queue is the next one to be pulled: a full cache would silently drop the front of the queue. Under `'none'` nothing is evicted for size; only items you gave an [expire](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) ever vanish.
 - **Use a prefix no other key starts with.** Only keys of exactly the queue's shape (`'{prefix}-'` and 15 digits) belong to it, so an ordinary key like `'transcode-settings'` or `'transcode-512'`, or an item of another queue named `'transcode-hd'`, is never pulled or numbered as one of its items (D-054). Keys whose next character after the dash is a digit, like `'transcode-512'`, do sort inside the queue's range, though, and every queue call has to step past them.
-- **Expired items are passed over.** An item pushed with `expire=` is never pulled or peeked after it expires. It stays on disk, and keeps its number, until [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) or the cleanup that later writes do removes it.
+- **Expired items are passed over.** An item pushed with `expire=` is never pulled or peeked after it expires. It stays on disk, and keeps its number, until background maintenance, [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) or the cleanup that later writes do removes it.
 - **Keys are reused.** After the front item is pulled, a push to the front takes its number again, so don't use an item's key as a lasting id.
 - **Inside a transaction,** [push()](../reference/Cache.push.md#diskcache_oxide.Cache.push) and [pull()](../reference/Cache.pull.md#diskcache_oxide.Cache.pull) join it, and a rollback puts a pulled item back, after your code has already seen it.
 - **Keep the queue out of [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache)'s reach.** A [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) has the queue calls, but its queue is always empty and its pushes store nothing, so a setting that switches caching off would drop every job. Don't register the queue's cache where it can be switched off.

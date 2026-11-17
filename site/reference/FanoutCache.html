@@ -1748,6 +1748,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../reference/Caches.get.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caches.get</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../reference/Caches.fanout.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Caches.fanout</span></a>
   </div>
@@ -2083,7 +2089,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1101-L1642" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1118-L1664" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.CLASS">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-name">FanoutCache</span>(</span>
@@ -2125,23 +2131,23 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>The root directory. It holds the manifest (<code>diskcache-oxide-fanout</code>) and one directory per shard, <code>000</code> to <code>NNN</code>. It must not be a plain <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>’s directory. If its manifest or any shard is in another on-disk format, the whole cache opens in the root’s <code>diskcache-oxide-format-N</code> subdirectory instead, as for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, never one shard alone.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">timeout</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">float | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">timeout</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[float]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (default 60). Opening, <code>len()</code>, <a href="Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a>, <a href="Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a>, <a href="Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a>, <a href="Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a>, <a href="Cache.checkpoint.html#diskcache_oxide.Cache.checkpoint" class="gdls-link gdls-code">checkpoint()</a> and <a href="Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> share one <a href="Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> across every shard, not one each.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">shards</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">shards</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[int]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>How many shards, 1 to 256. <code>None</code> (the default) uses the count the root records, or 8 for a new root. A count that differs from the recorded one opens with the recorded count and logs a <code>WARNING</code> on the <code>diskcache_oxide</code> logger, once per process; changing the count needs a new directory. Each shard takes about 4 file descriptors to open, and 2 more per connection it opens in use, so 256 shards need over 1,024: more than Linux’s default <code>ulimit -n</code>. Too few raises <code>OSError</code> (<code>EMFILE</code>) with the numbers.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">size_limit</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">size_limit</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[int]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>The disk budget in bytes for the whole cache, split evenly (floored) across the shards, each of which culls on its own. Each shard needs at least 1 MiB, so the total must be at least <a href="FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> MiB. With none given, a new root gets 1 GiB in all.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">cull_limit</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">cull_limit</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[int]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, per shard.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">eviction_policy</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Literal[<span class="st">"least-recently-stored"</span>, <span class="st">"none"</span>] | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">eviction_policy</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[Literal[<span class="st">"least-recently-stored"</span>, <span class="st">"none"</span>]]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, on every shard.</p>
 </dd>
@@ -2153,23 +2159,23 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">types</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">TypeRegistry | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">types</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[TypeRegistry]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">clock</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Callable[[], float] | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">clock</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[Callable[[], float]]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">max_connections</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">max_connections</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[int]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>The most SQLite connections this process opens for the whole cache, split across the shards (the first <code>max_connections % shards</code> get one more). At least <a href="FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a>. The default is two per shard, and never fewer than 8 in all.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">sqlite_cache_size</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">sqlite_cache_size</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[int]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, per connection.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">wal_size_limit</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">int | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">wal_size_limit</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[int]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, per shard (each shard has its own write-ahead log).</p>
 </dd>
@@ -2177,7 +2183,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">on_decode_error</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Literal[<span class="st">"raise"</span>, <span class="st">"miss"</span>] | Callable[[str, Exception], object] | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">on_decode_error</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[Literal[<span class="st">"raise"</span>, <span class="st">"miss"</span>] | Callable[[str, Exception], object]]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 <p>As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</p>
 </dd>
@@ -2189,7 +2195,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dd>
 <p>Raise <a href="LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> (a <code>ValueError</code>) when <a href="FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> differs from the root’s recorded count, instead of using the recorded count with a warning (default False). It covers the count only: a root in another on-disk format still opens in its <code>diskcache-oxide-format-N</code> subdirectory.</p>
 </dd>
-<dt><code><span class="doc-parameter-name">maintenance_interval</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">float | None</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
+<dt><code><span class="doc-parameter-name">maintenance_interval</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">Optional[float]</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default">None</span></code></dt>
 <dd>
 As for <a href="Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>; each shard takes its own turn across the interval.
 </dd>

@@ -15,6 +15,7 @@ import socket
 import tempfile
 import time
 from pathlib import Path
+from typing import Optional
 
 from diskcache_oxide import Lock, Timeout
 
@@ -46,7 +47,7 @@ def run_job(job: dict, caches: AppCaches, store: Store, settings: Settings) -> N
             write_sitemap(store, settings.root / 'public' / 'sitemap.xml')
 
 
-def main(settings: Settings | None = None, *, stop_after_idle: float | None = None) -> None:
+def main(settings: Optional[Settings] = None, *, stop_after_idle: Optional[float] = None) -> None:
     settings = settings or Settings.from_env()
     caches = open_caches(settings.root)
     store = Store(settings.root / 'db', settings.load_delay)

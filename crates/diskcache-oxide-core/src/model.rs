@@ -1,4 +1,5 @@
-//! The shuttle harness shared by `gate::model` and `genlock::model`. Run with scripts/model-check.sh.
+//! The shuttle harness shared by `gate::model`, `genlock::model` and `background::model`. Run with
+//! scripts/model-check.sh.
 
 use std::time::Duration;
 

@@ -27,7 +27,7 @@ Caches(
 `base_dir: str | os.PathLike[str]`  
 Where the caches live: each one in `base_dir/<name>` unless [register](Caches.register.md#diskcache_oxide.Caches.register) says otherwise. Created when the first cache opens.
 
-`on_open_error: Callable[[str, Exception], object] | None = None`  
+`on_open_error: Optional[Callable[[str, Exception], object]] = None`  
 Called as `on_open_error(name, exc)` when a cache can't open (default: log at ERROR on the `diskcache_oxide` logger, or at WARNING with no traceback for a [Timeout](Timeout.md#diskcache_oxide.Timeout)). Whatever it raises is logged.
 
 `retry_open_after: float = ``10.0`  

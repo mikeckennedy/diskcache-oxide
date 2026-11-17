@@ -34,6 +34,59 @@ caches: Caches[CacheName] = Caches('/var/lib/my-app/cache')
 caches['genral']  # ty: invalid argument
 ```
 
+`caches[name]` raises `KeyError` for a name nobody registered. When the name may not be there (it comes from config, or a module can't be sure setup registered it), `caches.get(name)` checks and looks up in one call, returning `None`, or a default you pass, instead:
+
+``` python
+if (pages := caches.get('pages')) is None:
+    raise RuntimeError('the pages cache was not registered')
+pages.set('/about', html)
+```
+
+The default is only for a name that was never registered. A registered cache that can't open or is switched off still comes back as a [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache), as it does from `caches[name]`, and a name registered with `shards=` is still a `TypeError`: read those with `fanout(name)`.
+
+
+# One module for your caches
+
+`caches['pages']` is still a string. A nicer shape for an app is one module that owns the registry and has a function per cache, so the rest of the code never indexes anything. Type `site_caches.` and the editor lists the caches the app has:
+
+``` python
+# site_caches.py
+from typing import Literal, Optional
+
+from diskcache_oxide import Caches, TransactionalCacheLike
+
+CacheName = Literal['pages', 'etags']
+caches: Optional[Caches[CacheName]] = None
+
+
+def setup(base_folder: str) -> None:
+    global caches
+    registry: Caches[CacheName] = Caches(base_folder, durable=True, timeout=1.0)
+    registry.register('pages')
+    registry.register('etags')
+    caches = registry
+
+
+def cache(name: CacheName) -> TransactionalCacheLike:
+    if caches is None:
+        raise RuntimeError('call site_caches.setup() first')
+    return caches[name]
+
+
+def pages_cache() -> TransactionalCacheLike:
+    return cache('pages')
+
+
+def etag_cache() -> TransactionalCacheLike:
+    return cache('etags')
+```
+
+``` python
+html = site_caches.pages_cache().get(url)
+```
+
+The functions look the cache up on every call rather than keeping it in a variable, which is what lets a cache that failed to open come back, and [disable()](../reference/Caches.disable.md#diskcache_oxide.Caches.disable) take effect. The recipe [One typed module for your caches](../recipes/site-caches.md) has the whole module, with shutdown, [memoize](../reference/Cache.memoize.md#diskcache_oxide.Cache.memoize), tests and where the pattern stops.
+
 
 # When a cache can't open
 

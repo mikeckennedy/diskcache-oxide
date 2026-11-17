@@ -267,7 +267,8 @@ def test_a_committed_held_transaction_unlinks_the_spilled_values_it_replaced(tmp
 def test_held_maintenance_unlinks_value_files_only_once_it_commits(tmp_path: Path, op: str, commit: bool) -> None:
     # cull_limit=0: no inline cull on set. For cull, 20 spilled values (1.4 MB) are over the 1 MiB
     # size_limit; for expire, one value has expired.
-    cache = Cache(tmp_path / 'c', size_limit=1 << 20, cull_limit=0)
+    # Background maintenance off: it would remove the expired row before the held expire() does.
+    cache = Cache(tmp_path / 'c', size_limit=1 << 20, cull_limit=0, maintenance_interval=0)
     try:
         if op == 'expire':
             cache.set('k', b'x' * _BIG, expire=0.05)
@@ -319,6 +320,7 @@ def held_write_lock(tmp_path: Path):
     cache.close()
 
 
+@pytest.mark.races_maintenance
 @pytest.mark.parametrize('method', ['clear', 'expire', 'cull'])
 def test_maintenance_takes_its_own_timeout(held_write_lock, method: str) -> None:
     cache, peer = held_write_lock

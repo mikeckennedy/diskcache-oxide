@@ -73,7 +73,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
 <link href="../recipes/testing.html" rel="next">
-<link href="../recipes/single-use-keys.html" rel="prev">
+<link href="../recipes/site-caches.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
@@ -614,6 +614,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../recipes/site-caches.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">One typed module for your caches</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../recipes/stale-while-revalidate.html" class="sidebar-item-text sidebar-link active">
  <span class="menu-text">Serving stale values while refreshing</span></a>
   </div>
@@ -689,7 +695,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="stale-while-revalidate" class="level1">
 <h1>Stale-while-revalidate</h1>
 <p>Store the value with its own freshness deadline inside, and give the entry a longer hard expiry. A reader that finds the entry fresh returns it. One that finds it stale returns it anyway, and the first of them to win a claim starts a refresh in the background. Readers never wait, and the herd is one worker.</p>
-<div id="fd59ea54" class="cell" data-execution_count="1">
+<div id="f7b5f9e6" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> threading</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
@@ -699,7 +705,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
 <span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>now <span class="op">=</span> [<span class="fl">1_000_000.0</span>]                                   <span class="co"># a fake clock; in a real app use time.time()</span></span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tempfile.mkdtemp(), clock<span class="op">=</span><span class="kw">lambda</span>: now[<span class="dv">0</span>])</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(tempfile.mkdtemp(), clock<span class="op">=</span><span class="kw">lambda</span>: now[<span class="dv">0</span>], durable<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>refresher <span class="op">=</span> ThreadPoolExecutor(max_workers<span class="op">=</span><span class="dv">2</span>)         <span class="co"># one per process, for background refreshes</span></span>
 <span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>loads: <span class="bu">list</span>[<span class="bu">float</span>] <span class="op">=</span> []</span>
 <span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a></span>
@@ -1195,8 +1201,8 @@ the next reader gets the fresh page from t=1000061</code></pre>
   </script>
 <nav class="page-navigation" aria-label="Page">
   <div class="nav-page nav-page-previous">
-      <a href="../recipes/single-use-keys.html" class="pagination-link" aria-label="Single-use keys">
-        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">Single-use keys</span>
+      <a href="../recipes/site-caches.html" class="pagination-link" aria-label="One typed module for your caches">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">One typed module for your caches</span>
       </a>          
   </div>
   <div class="nav-page nav-page-next">

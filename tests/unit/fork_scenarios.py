@@ -18,6 +18,7 @@ import traceback
 import warnings
 from collections.abc import Callable
 from pathlib import Path
+from typing import Optional
 
 from diskcache_oxide import Cache, FanoutCache, Timeout, register_type, unregister_type
 
@@ -47,7 +48,7 @@ def fork(body: Callable[[], None]) -> int:
     return pid
 
 
-def wait(pid: int, deadline: float = CHILD_DEADLINE) -> int | None:
+def wait(pid: int, deadline: float = CHILD_DEADLINE) -> Optional[int]:
     assert sys.platform != 'win32'
     end = time.monotonic() + deadline
     while time.monotonic() < end:
@@ -309,7 +310,7 @@ def two_forkers(directory: Path) -> list[str]:
     cache.set('before', 'parent')
     stop = threading.Event()
     barrier = threading.Barrier(2)
-    codes: list[int | None] = []
+    codes: list[Optional[int]] = []
     errors: list[BaseException] = []
 
     def hammer() -> None:
@@ -419,7 +420,7 @@ def shared_iterator_while_a_fork_waits(directory: Path) -> list[str]:
             held.set()
             release.wait(TIMEOUT)
 
-    codes: list[int | None] = []
+    codes: list[Optional[int]] = []
     threading.Thread(target=holder, daemon=True).start()
     held.wait(TIMEOUT)
     forker = threading.Thread(target=lambda: codes.append(wait(fork(lambda: None))), daemon=True)
@@ -494,7 +495,7 @@ def transact_fork_from_the_owner(directory: Path) -> list[str]:
 class ForkOnDecode:
     """A registered type whose decoder runs `ForkOnDecode.hook` (inside the read that decodes it)."""
 
-    hook: Callable[[], None] | None = None
+    hook: Optional[Callable[[], None]] = None
 
     def __init__(self, n: int) -> None:
         self.n = n
@@ -524,7 +525,7 @@ def transact_inherited_mid_operation(directory: Path) -> list[str]:
     txn = cache.transact()
     inside = threading.Event()
     claimed = threading.Event()
-    b_codes: list[int | None] = []
+    b_codes: list[Optional[int]] = []
     errors: list[BaseException] = []
 
     def b_forks() -> None:
@@ -808,9 +809,10 @@ def fanout_close_after_fork(directory: Path) -> list[str]:
     every shard: each write must reach its database, as `parent-closes-after-fork` checks for one
     store. The child inherits exactly one pin per shard and no connection (the forking thread held
     none), and its close leaves just those pins, forgotten by design (D-017), never a connection it
-    opened itself.
+    opened itself. Background maintenance is off for it: the child's own thread may open a connection
+    of its own at once, which this count can't tell from an inherited one.
     """
-    cache = FanoutCache(directory, timeout=TIMEOUT)
+    cache = FanoutCache(directory, timeout=TIMEOUT, maintenance_interval=0)
     shards = cache.shards
     keys = one_key_per_shard(cache, 'k')
     for key in keys.values():
@@ -1092,6 +1094,9 @@ SCENARIOS = {
 def main() -> int:
     name, directory = sys.argv[1], Path(sys.argv[2])
     set_title(f'fork-{name}')
+    from tests.maintenance import apply_from_env
+
+    apply_from_env()
     # Forking with threads running is the point of these scenarios.
     warnings.filterwarnings('ignore', r'This process .* is multi-threaded', DeprecationWarning)
     failures = SCENARIOS[name](directory)
