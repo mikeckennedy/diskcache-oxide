@@ -592,7 +592,7 @@ section.level2:first-of-type > h2:first-child,
 </div></div><p><strong>Python cache. Rust engine. SQLite storage.</strong></p>
 <p>Every Python web app arrives at the same crossroads. A query that was fine at launch is now the slowest thing on the page, so you cache its result in a dict, and for one afternoon you’re a hero. Then the app goes under gunicorn with four workers, and there are four dicts, each warming up alone and each forgetting everything the moment its worker is recycled. So you reach for Redis, and now there’s a server to deploy, secure, monitor and pay for, whose entire job is to remember the answer to one query.</p>
 <p><a href="https://github.com/grantjenks/python-diskcache">python-diskcache</a> showed there was a third road: a cache that is just a directory. Every thread and every process on the machine opens the same path and sees the same entries, and the entries are still there tomorrow, because a directory doesn’t restart. No daemon, no network hop, no second system to keep alive. It’s the kind of idea that sounds too simple to be fast, and for years that was the catch. diskcache itself has had no commits since 2023, and its issues and pull requests go unanswered.</p>
-<p>diskcache-oxide removes the catch. It keeps the diskcache API you already know and rebuilds everything beneath it for where Python is going: many cores, many worker processes, free-threaded CPython, and async frameworks that can’t afford a slow call on the event loop. The engine is Rust. The storage is SQLite. The Python layer is as thin as it can be. One thread gets nearly 700,000 cache operations a second out of a <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, and eight threads sharing it still get that rate while python-diskcache’s falls below 20,000. Nothing on your disk is a pickle unless you asked for one (increasing compatibility and security), and memory and disk use stay where you set them.</p>
+<p>diskcache-oxide removes the catch. It keeps the diskcache API you already know and rebuilds everything beneath it for where Python is going: many cores, many worker processes, free-threaded CPython, and async frameworks that can’t afford a slow call on the event loop. The engine is Rust. The storage is SQLite. The Python layer is as thin as it can be. One thread gets over 700,000 cache operations a second out of a <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, and eight threads sharing it still get that rate while python-diskcache’s falls below 20,000. Nothing on your disk is a pickle unless you asked for one (increasing compatibility and security), and memory and disk use stay where you set them.</p>
 <p><strong>Source on GitHub: <a href="https://github.com/mikeckennedy/diskcache-oxide" class="uri">https://github.com/mikeckennedy/diskcache-oxide</a></strong> · <a href="https://github.com/mikeckennedy/diskcache-oxide/issues">Issues</a></p>
 <p>Here is the whole idea on one screen. Four workers, and every one of them opens the same directories. The cache makes the slow query cheap, and <a href="reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> elects exactly one worker to run the hourly job, because a write that’s atomic across processes is a lock if you squint:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> os</span>
@@ -618,7 +618,7 @@ section.level2:first-of-type > h2:first-child,
 <span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>cache.close()  <span class="co"># at shutdown</span></span>
 <span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>claims.close()</span></code></pre></div>
 <p>And here is what it does under load. Every thread shares one cache, the x axis adds threads, and the two libraries go in opposite directions:</p>
-<div class="dco-chart" data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Max, Python 3.14 with the GIL, four interleaved rounds, the 0.3.5 code (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers.">
+<div class="dco-chart" data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Max, Python 3.14 with the GIL, four interleaved rounds, the released 0.3.5 PGO wheel, 2026-11-16 (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers.">
 <table class="caption-top table">
 <thead>
 <tr class="header">
@@ -630,13 +630,13 @@ section.level2:first-of-type > h2:first-child,
 <tbody>
 <tr class="odd">
 <td>99 reads to 1 write</td>
-<td>687k / 682k / 675k / 670k</td>
-<td>419k / 240k / 79k / 19k</td>
+<td>718k / 715k / 711k / 709k</td>
+<td>433k / 241k / 76k / 19k</td>
 </tr>
 <tr class="even">
 <td>1,000 reads to 1 write</td>
-<td>770k / 762k / 758k / 758k</td>
-<td>466k / 219k / 70k / 19k</td>
+<td>820k / 812k / 810k / 805k</td>
+<td>475k / 219k / 70k / 20k</td>
 </tr>
 </tbody>
 </table>
@@ -680,7 +680,7 @@ section.level2:first-of-type > h2:first-child,
 <section id="why-diskcache-oxide" class="level2">
 <h2 class="anchored" data-anchor-id="why-diskcache-oxide">Why diskcache-oxide</h2>
 <ul>
-<li><strong><a href="./user-guide/performance.html">Fast where web apps spend their time.</a></strong> At a 99:1 read/write mix, one thread gets about 690,000 operations a second from a <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, 1.6× diskcache’s rate and cheap enough to call straight from the event loop. Add threads and the gap opens: at 8 threads on a GIL build, diskcache’s per-thread connections pile into each other and its throughput falls to 19,000 a second, while oxide’s stays near 670,000, 35× ahead (the chart above).</li>
+<li><strong><a href="./user-guide/performance.html">Fast where web apps spend their time.</a></strong> At a 99:1 read/write mix, one thread gets about 720,000 operations a second from a <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, 1.7× diskcache’s rate and cheap enough to call straight from the event loop. Add threads and the gap opens: at 8 threads on a GIL build, diskcache’s per-thread connections pile into each other and its throughput falls to 19,000 a second, while oxide’s stays near 710,000, 38× ahead (the chart above).</li>
 <li><strong><a href="./user-guide/fanoutcache.html">Scales out across worker processes.</a></strong> A plain <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> has one write lock, so a server with a worker per core ends up queueing on it. <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> spreads keys over several SQLite databases so writes to different keys stop waiting on each other. With 8 processes it runs 1.5 million operations a second, 5.7× a plain <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and 1.2× diskcache’s <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, behind the same API and in one directory.</li>
 <li><strong><a href="./user-guide/concurrency-and-forks.html">Built for free-threaded Python.</a></strong> The extension is compiled with <code>gil_used = false</code> and never leans on the GIL for correctness, which matters on a build where there’s no GIL to lean on. Every change is tested on 3.14, 3.14t, 3.15 and 3.15t.</li>
 <li><strong><a href="./user-guide/concurrency-and-forks.html">Safe across <code>fork()</code>.</a></strong> gunicorn, Celery’s prefork pool and <code>multiprocessing</code> create workers by copying the parent, and the copy includes whatever SQLite lock a thread was holding at that instant. A process-wide fork barrier makes sure no child is ever born holding half a transaction.</li>

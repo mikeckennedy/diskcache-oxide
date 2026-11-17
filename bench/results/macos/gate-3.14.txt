@@ -1,4 +1,4 @@
-# Apple M5 Max, 18 cores, macOS 27.2.1, AC power, nothing else heavy running. diskcache-oxide 60d871b (0.3.5: plan 26 and the Windows work), 2026-11-13.
+# Apple M5 Max (Mac Studio), 18 cores, macOS 27.2.1, AC power, nothing else heavy running, not under nice. diskcache-oxide 0.3.5 (v0.3.5, 8ed9298), the released PGO wheel installed in a venv of its own with diskcache 5.6.3, 2026-11-16.
 round 1/4: diskcache done
 round 1/4: oxide done
 round 2/4: diskcache done
@@ -11,31 +11,31 @@ round 4/4: oxide done
 Python 3.14.10 (GIL), 4 interleaved rounds, tolerance 1.05x
 
 workload                     variant          p50 us / ops  vs diskcache  verdict
-get_hit_small                diskcache               1.825
-get_hit_small                oxide                   0.895         0.49x  pass (target <= 0.55x)
-get_miss                     diskcache               1.408
-get_miss                     oxide                   0.762         0.54x  pass
-get_hit_small_dict           diskcache               2.539
-get_hit_small_dict           oxide                   1.322         0.52x  pass
-set_small                    diskcache              24.661
-set_small                    oxide                  18.462         0.75x  pass (target <= 0.85x)
-get_random_wide              diskcache               3.334
-get_random_wide              oxide                   2.642         0.79x  pass
-threads_99to1 x1             diskcache         418,710.745
-threads_99to1 x1             oxide             686,753.297         1.64x  pass
-threads_99to1 x2             diskcache         240,223.070
-threads_99to1 x2             oxide             682,014.476         2.84x  pass
-threads_99to1 x4             diskcache          78,866.454
-threads_99to1 x4             oxide             674,656.164         8.55x  pass
-threads_99to1 x8             diskcache          19,266.552
-threads_99to1 x8             oxide             670,485.312        34.80x  pass
-threads_1000to1 x1           diskcache         466,071.215
-threads_1000to1 x1           oxide             770,021.126         1.65x  pass
-threads_1000to1 x2           diskcache         218,735.589
-threads_1000to1 x2           oxide             762,367.853         3.49x  pass
-threads_1000to1 x4           diskcache          70,047.349
-threads_1000to1 x4           oxide             757,997.143        10.82x  pass
-threads_1000to1 x8           diskcache          19,107.079
-threads_1000to1 x8           oxide             757,635.618        39.65x  pass
+get_hit_small                diskcache               1.798
+get_hit_small                oxide                   0.836         0.47x  pass (target <= 0.55x)
+get_miss                     diskcache               1.392
+get_miss                     oxide                   0.729         0.52x  pass
+get_hit_small_dict           diskcache               2.505
+get_hit_small_dict           oxide                   1.155         0.46x  pass
+set_small                    diskcache              24.188
+set_small                    oxide                  18.235         0.75x  pass (target <= 0.85x)
+get_random_wide              diskcache               3.300
+get_random_wide              oxide                   2.508         0.76x  pass
+threads_99to1 x1             diskcache         432,949.935
+threads_99to1 x1             oxide             718,274.773         1.66x  pass
+threads_99to1 x2             diskcache         241,013.693
+threads_99to1 x2             oxide             714,656.925         2.97x  pass
+threads_99to1 x4             diskcache          75,863.689
+threads_99to1 x4             oxide             710,983.736         9.37x  pass
+threads_99to1 x8             diskcache          18,702.086
+threads_99to1 x8             oxide             709,182.618        37.92x  pass
+threads_1000to1 x1           diskcache         475,427.157
+threads_1000to1 x1           oxide             820,349.503         1.73x  pass
+threads_1000to1 x2           diskcache         218,815.444
+threads_1000to1 x2           oxide             812,115.427         3.71x  pass
+threads_1000to1 x4           diskcache          69,501.594
+threads_1000to1 x4           oxide             810,125.366        11.66x  pass
+threads_1000to1 x8           diskcache          19,533.870
+threads_1000to1 x8           oxide             804,923.748        41.21x  pass
 
 oxide: GO

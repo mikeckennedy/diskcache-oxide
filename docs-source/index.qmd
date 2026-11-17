@@ -9,7 +9,7 @@ Every Python web app arrives at the same crossroads. A query that was fine at la
 
 [python-diskcache](https://github.com/grantjenks/python-diskcache) showed there was a third road: a cache that is just a directory. Every thread and every process on the machine opens the same path and sees the same entries, and the entries are still there tomorrow, because a directory doesn't restart. No daemon, no network hop, no second system to keep alive. It's the kind of idea that sounds too simple to be fast, and for years that was the catch. diskcache itself has had no commits since 2023, and its issues and pull requests go unanswered.
 
-diskcache-oxide removes the catch. It keeps the diskcache API you already know and rebuilds everything beneath it for where Python is going: many cores, many worker processes, free-threaded CPython, and async frameworks that can't afford a slow call on the event loop. The engine is Rust. The storage is SQLite. The Python layer is as thin as it can be. One thread gets nearly 700,000 cache operations a second out of a `Cache`, and eight threads sharing it still get that rate while python-diskcache's falls below 20,000. Nothing on your disk is a pickle unless you asked for one (increasing compatibility and security), and memory and disk use stay where you set them.
+diskcache-oxide removes the catch. It keeps the diskcache API you already know and rebuilds everything beneath it for where Python is going: many cores, many worker processes, free-threaded CPython, and async frameworks that can't afford a slow call on the event loop. The engine is Rust. The storage is SQLite. The Python layer is as thin as it can be. One thread gets over 700,000 cache operations a second out of a `Cache`, and eight threads sharing it still get that rate while python-diskcache's falls below 20,000. Nothing on your disk is a pickle unless you asked for one (increasing compatibility and security), and memory and disk use stay where you set them.
 
 **Source on GitHub: <https://github.com/mikeckennedy/diskcache-oxide>** · [Issues](https://github.com/mikeckennedy/diskcache-oxide/issues)
 
@@ -42,11 +42,11 @@ claims.close()
 
 And here is what it does under load. Every thread shares one cache, the x axis adds threads, and the two libraries go in opposite directions:
 
-::: {.dco-chart data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Max, Python 3.14 with the GIL, four interleaved rounds, the 0.3.5 code (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers."}
+::: {.dco-chart data-type="lines" data-x-labels="1,2,4,8" data-x="threads" data-y="operations per second" data-unit="ops/s" data-title="Eight threads on one cache: diskcache's throughput collapses, diskcache-oxide's holds" data-note="bench/gate.py on an 18-core Apple M5 Max, Python 3.14 with the GIL, four interleaved rounds, the released 0.3.5 PGO wheel, 2026-11-16 (bench/results/macos/gate-3.14.txt). Higher is better; hover for the numbers."}
 | Mix | diskcache-oxide | diskcache 5.6.3 |
 |---|---|---|
-| 99 reads to 1 write | 687k / 682k / 675k / 670k | 419k / 240k / 79k / 19k |
-| 1,000 reads to 1 write | 770k / 762k / 758k / 758k | 466k / 219k / 70k / 19k |
+| 99 reads to 1 write | 718k / 715k / 711k / 709k | 433k / 241k / 76k / 19k |
+| 1,000 reads to 1 write | 820k / 812k / 810k / 805k | 475k / 219k / 70k / 20k |
 :::
 
 ## An app with several caches
@@ -93,7 +93,7 @@ See [Vision and roadmap](user-guide/roadmap.qmd) for how each stage breaks down.
 
 ## Why diskcache-oxide
 
-- **[Fast where web apps spend their time.](user-guide/performance.qmd)** At a 99:1 read/write mix, one thread gets about 690,000 operations a second from a `Cache`, 1.6× diskcache's rate and cheap enough to call straight from the event loop. Add threads and the gap opens: at 8 threads on a GIL build, diskcache's per-thread connections pile into each other and its throughput falls to 19,000 a second, while oxide's stays near 670,000, 35× ahead (the chart above).
+- **[Fast where web apps spend their time.](user-guide/performance.qmd)** At a 99:1 read/write mix, one thread gets about 720,000 operations a second from a `Cache`, 1.7× diskcache's rate and cheap enough to call straight from the event loop. Add threads and the gap opens: at 8 threads on a GIL build, diskcache's per-thread connections pile into each other and its throughput falls to 19,000 a second, while oxide's stays near 710,000, 38× ahead (the chart above).
 - **[Scales out across worker processes.](user-guide/fanoutcache.qmd)** A plain `Cache` has one write lock, so a server with a worker per core ends up queueing on it. `FanoutCache` spreads keys over several SQLite databases so writes to different keys stop waiting on each other. With 8 processes it runs 1.5 million operations a second, 5.7× a plain `Cache` and 1.2× diskcache's `FanoutCache`, behind the same API and in one directory.
 - **[Built for free-threaded Python.](user-guide/concurrency-and-forks.qmd)** The extension is compiled with `gil_used = false` and never leans on the GIL for correctness, which matters on a build where there's no GIL to lean on. Every change is tested on 3.14, 3.14t, 3.15 and 3.15t.
 - **[Safe across `fork()`.](user-guide/concurrency-and-forks.qmd)** gunicorn, Celery's prefork pool and `multiprocessing` create workers by copying the parent, and the copy includes whatever SQLite lock a thread was holding at that instant. A process-wide fork barrier makes sure no child is ever born holding half a transaction.

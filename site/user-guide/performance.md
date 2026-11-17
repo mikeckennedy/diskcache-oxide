@@ -5,16 +5,16 @@ A microsecond is nothing until you multiply it. Web apps call their cache on alm
 
 # The numbers
 
-Measured with `bench/gate.py`, which runs python-diskcache 5.6.3 (its last release, from August 2023; the project has had no commits since) and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from an 18-core Apple M5 Max on macOS 27.2, on AC power with nothing else heavy running, measuring the 0.3.5 code on 2026-11-13 (`bench/results/macos/gate-3.14.txt` and `gate-3.14t.txt` in the repository). Both libraries ran in the same session, so the ratios compare like with like; the absolute numbers on an x86-64 Linux server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
+Measured with `bench/gate.py`, which runs python-diskcache 5.6.3 (its last release, from August 2023; the project has had no commits since) and diskcache-oxide in the same session on the same machine, in four interleaved rounds. These numbers come from an 18-core Apple M5 Max on macOS 27.2, on AC power with nothing else heavy running, measuring the released 0.3.5 PGO wheel on 2026-11-16 (`bench/results/macos/gate-3.14.txt` and `gate-3.14t.txt` in the repository). Both libraries ran in the same session, so the ratios compare like with like; the absolute numbers on an x86-64 Linux server will differ. Latencies are p50 in microseconds. Ratios are oxide's time divided by diskcache's, so lower is better.
 
 
 | Workload | 3.14 | 3.14t (free-threaded) |
 |----|----|----|
-| [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), small value, hit | **0.90 µs** (0.49×) | **0.88 µs** (0.54×) |
-| [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), miss | **0.76 µs** (0.54×) | **0.76 µs** (0.57×) |
-| [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), small dict | **1.32 µs** (0.52×) | **1.36 µs** (0.57×) |
-| [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), random keys over a large database | **2.64 µs** (0.79×) | **2.68 µs** (0.85×) |
-| [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), small value | **18.5 µs** (0.75×) | **18.3 µs** (0.76×) |
+| [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), small value, hit | **0.84 µs** (0.47×) | **0.86 µs** (0.52×) |
+| [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), miss | **0.73 µs** (0.52×) | **0.76 µs** (0.56×) |
+| [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), small dict | **1.16 µs** (0.46×) | **1.24 µs** (0.52×) |
+| [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), random keys over a large database | **2.51 µs** (0.76×) | **2.59 µs** (0.82×) |
+| [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), small value | **18.2 µs** (0.75×) | **18.3 µs** (0.76×) |
 
 
 Threaded throughput, every thread sharing one [Cache](../reference/Cache.md#diskcache_oxide.Cache), in operations per second at 1/2/4/8 threads (ratios are oxide's throughput over diskcache's, so higher is better):
@@ -22,14 +22,14 @@ Threaded throughput, every thread sharing one [Cache](../reference/Cache.md#disk
 
 | Mix | 3.14 | 3.14t (free-threaded) |
 |----|----|----|
-| 99:1 reads to writes | **687k / 682k / 675k / 670k** (1.6-34.8×) | **690k / 766k / 951k / 753k** (1.5-2.1×) |
-| 1,000:1 reads to writes | **770k / 762k / 758k / 758k** (1.7-39.7×) | **777k / 1,054k / 1,294k / 915k** (1.5-2.5×) |
+| 99:1 reads to writes | **718k / 715k / 711k / 709k** (1.7-37.9×) | **710k / 802k / 981k / 766k** (1.6-2.2×) |
+| 1,000:1 reads to writes | **820k / 812k / 810k / 805k** (1.7-41.2×) | **803k / 1,086k / 1,313k / 932k** (1.6-2.6×) |
 
 
 Two things stand out:
 
-- **On GIL builds, diskcache collapses as threads are added and oxide doesn't.** At 99:1, diskcache drops from about 419k to 19k operations per second going from 1 to 8 threads; oxide stays flat around 670-690k. diskcache's per-thread connections end up fighting over the GIL and SQLite's locks.
-- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** At 1,000:1 throughput peaks at about 1.3M operations per second at 4 threads, 1.7× one thread, and falls back to about 0.9M at 8. That's what the free-threaded work below is for.
+- **On GIL builds, diskcache collapses as threads are added and oxide doesn't.** At 99:1, diskcache drops from about 433k to 19k operations per second going from 1 to 8 threads; oxide stays flat around 710-720k. diskcache's per-thread connections end up fighting over the GIL and SQLite's locks.
+- **On free-threaded builds, oxide is faster at every thread count, but it doesn't scale yet.** At 1,000:1 throughput peaks at about 1.3M operations per second at 4 threads, 1.6× one thread, and falls back to about 0.9M at 8. That's what the free-threaded work below is for.
 
 Run them yourself with `python -m bench.gate`. Numbers vary by machine; the ratios are what the gate enforces.
 
