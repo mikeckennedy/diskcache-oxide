@@ -773,7 +773,8 @@ class Cache:
     def expire(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove every expired entry, and its value file.
 
-        Works in chunks and lets other writers in between them.
+        Works in chunks and lets other writers in between them. Background maintenance already
+        does this every `maintenance_interval`, so call it only when you want it done now.
 
         Args:
             timeout: Seconds each chunk may wait for the write lock (another thread's or another
@@ -787,7 +788,7 @@ class Cache:
 
         Examples:
             ```python
-            removed = cache.expire(timeout=10.0)   # from a scheduled job, with its own timeout
+            removed = cache.expire(timeout=10.0)   # when it has to be done now, with its own timeout
             ```
         """
     def clear(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:

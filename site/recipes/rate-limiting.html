@@ -695,7 +695,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="a-fixed-window-limiter" class="level1">
 <h1>A fixed-window limiter</h1>
 <p>Each client gets a counter for the current window, with the window’s number in the key. When the window ends, requests move on to a new key and the old one simply expires.</p>
-<div id="b9e9635c" class="cell" data-execution_count="1">
+<div id="331c1095" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> Cache</span>
@@ -722,7 +722,7 @@ True</code></pre>
 <ul>
 <li><strong><a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> then <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a>.</strong> <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> creates the counter with an expiry the first time and does nothing after that. <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> keeps a key’s existing expiry, so the counter expires on schedule however many times it’s incremented. Calling <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> alone would create a counter that never expires.</li>
 <li><strong>The window number is in the key.</strong> A new window means a new key, so no reset is needed, and there’s no race where one request resets the counter while another increments it.</li>
-<li><strong>The expiry is two windows long,</strong> so a counter can’t expire while its window is still current. Expired counters are cleaned up by <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or eviction like any other entry.</li>
+<li><strong>The expiry is two windows long,</strong> so a counter can’t expire while its window is still current. Expired counters are removed like any other entry, by background maintenance, with nothing to schedule.</li>
 </ul>
 <p>In a real app, use <code>time.time()</code> and leave out <code>clock=</code>; the fake clock is only here so the example can jump to the next minute.</p>
 </section>
