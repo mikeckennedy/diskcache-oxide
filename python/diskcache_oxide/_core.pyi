@@ -4,7 +4,7 @@ import os
 import warnings
 from collections.abc import Callable, Iterable, Iterator
 from types import TracebackType
-from typing import Any, Literal, Self, final, overload
+from typing import Any, Literal, Optional, Self, final, overload
 
 from diskcache_oxide._types import Key, MaintenanceStats, Memoizer
 
@@ -101,7 +101,7 @@ def sqlite_compile_options() -> list[str]:
     """The compile-time options of the linked SQLite (`PRAGMA compile_options`)."""
 
 def _encode(
-    value: object, serializer: str = 'msgpack', pickle: bool = False, types: TypeRegistry | None = None
+    value: object, serializer: str = 'msgpack', pickle: bool = False, types: Optional[TypeRegistry] = None
 ) -> tuple[int, bytes | int | float]:
     """Test hook: `_core._encode(value, serializer='msgpack', pickle=False, types=None) -> (mode, payload)`."""
 
@@ -122,24 +122,24 @@ def _maintenance_totals() -> tuple[int, int]:
 
 def _open_fanout_keeping_stored(
     directory: str | os.PathLike[str],
-    timeout: float | None = None,
+    timeout: Optional[float] = None,
     *,
     shards: int,
-    size_limit: int | None = None,
-    cull_limit: int | None = None,
-    eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
+    size_limit: Optional[int] = None,
+    cull_limit: Optional[int] = None,
+    eviction_policy: Optional[Literal['least-recently-stored', 'none']] = None,
     serializer: str = 'msgpack',
     pickle: bool = False,
-    types: TypeRegistry | None = None,
-    clock: Callable[[], float] | None = None,
-    max_connections: int | None = None,
-    sqlite_cache_size: int | None = None,
-    wal_size_limit: int | None = None,
+    types: Optional[TypeRegistry] = None,
+    clock: Optional[Callable[[], float]] = None,
+    max_connections: Optional[int] = None,
+    sqlite_cache_size: Optional[int] = None,
+    wal_size_limit: Optional[int] = None,
     wal_checkpoint: Literal['manual', 'auto'] = 'manual',
-    on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
+    on_decode_error: Optional[Literal['raise', 'miss'] | Callable[[str, Exception], object]] = None,
     durable: bool = False,
     raise_on_mismatch: bool = False,
-    maintenance_interval: float | None = None,
+    maintenance_interval: Optional[float] = None,
 ) -> FanoutCache:
     """For the `Caches` registry: `FanoutCache(...)`, but `shards` is the count for a new root only.
 
@@ -161,7 +161,9 @@ def _sqlite_error(code: int) -> BaseException:
 def _sqlite_memory(reset: bool = False) -> tuple[int, int]:
     """Test hook: the bundled SQLite's (bytes in use, high-water mark), optionally resetting the mark."""
 
-def _decode(mode: int, payload: bytes | float, allow_pickle: bool = False, types: TypeRegistry | None = None) -> object:
+def _decode(
+    mode: int, payload: bytes | float, allow_pickle: bool = False, types: Optional[TypeRegistry] = None
+) -> object:
     """Test hook: `_core._decode(mode, payload, allow_pickle=False, types=None)`, with the payload a
     `bytes`, `int` or `float` standing for a BLOB, INTEGER or REAL column."""
 
@@ -285,22 +287,22 @@ class Cache:
     def __new__(
         cls,
         directory: str | os.PathLike[str],
-        timeout: float | None = None,
+        timeout: Optional[float] = None,
         *,
-        size_limit: int | None = None,
-        cull_limit: int | None = None,
-        eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
+        size_limit: Optional[int] = None,
+        cull_limit: Optional[int] = None,
+        eviction_policy: Optional[Literal['least-recently-stored', 'none']] = None,
         serializer: str = 'msgpack',
         pickle: bool = False,
-        types: TypeRegistry | None = None,
-        clock: Callable[[], float] | None = None,
-        max_connections: int | None = None,
-        sqlite_cache_size: int | None = None,
-        wal_size_limit: int | None = None,
+        types: Optional[TypeRegistry] = None,
+        clock: Optional[Callable[[], float]] = None,
+        max_connections: Optional[int] = None,
+        sqlite_cache_size: Optional[int] = None,
+        wal_size_limit: Optional[int] = None,
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
-        on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
+        on_decode_error: Optional[Literal['raise', 'miss'] | Callable[[str, Exception], object]] = None,
         durable: bool = False,
-        maintenance_interval: float | None = None,
+        maintenance_interval: Optional[float] = None,
     ) -> Cache: ...
     @property
     def directory(self) -> str:
@@ -375,7 +377,7 @@ class Cache:
         expire_time: Literal[True],
         tag: Literal[False] = False,
         retry: bool = False,
-    ) -> tuple[Any, float | None]: ...
+    ) -> tuple[Any, Optional[float]]: ...
     @overload
     def get(
         self,
@@ -389,8 +391,10 @@ class Cache:
     @overload
     def get(
         self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
-    ) -> tuple[Any, float | None, Key]: ...
-    def set(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
+    ) -> tuple[Any, Optional[float], Key]: ...
+    def set(
+        self, key: Key, value: Any, expire: Optional[float] = None, *, tag: Key = None, retry: bool = False
+    ) -> bool:
         """Store `value` under `key`, replacing any existing value.
 
         Values of 64 KiB or more (after encoding) are stored in their own file.
@@ -422,7 +426,9 @@ class Cache:
             cache.set('config', {'retries': 3})                   # never expires
             ```
         """
-    def add(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
+    def add(
+        self, key: Key, value: Any, expire: Optional[float] = None, *, tag: Key = None, retry: bool = False
+    ) -> bool:
         """Store `value` only if `key` is missing or expired.
 
         Atomic across threads and processes: when several callers race to add one key, exactly one
@@ -526,7 +532,7 @@ class Cache:
         expire_time: Literal[True],
         tag: Literal[False] = False,
         retry: bool = False,
-    ) -> tuple[Any, float | None]: ...
+    ) -> tuple[Any, Optional[float]]: ...
     @overload
     def pop(
         self,
@@ -540,8 +546,8 @@ class Cache:
     @overload
     def pop(
         self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
-    ) -> tuple[Any, float | None, Key]: ...
-    def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
+    ) -> tuple[Any, Optional[float], Key]: ...
+    def touch(self, key: Key, expire: Optional[float] = None, *, retry: bool = False) -> bool:
         """Change the expiry of an existing entry without rewriting its value.
 
         Args:
@@ -563,7 +569,7 @@ class Cache:
             ```
         """
     # Defaults are delta=1, default=0; PyO3 reports them as `...` at runtime.
-    def incr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
+    def incr(self, key: Key, delta: float = ..., default: Optional[float] = ..., *, retry: bool = False) -> int | float:
         """Add `delta` to the number stored under `key`, atomically, and return the result.
 
         Atomic across threads and processes, so concurrent increments are never lost. The entry
@@ -595,7 +601,7 @@ class Cache:
             allowed = cache.incr('rate:203.0.113.7:1731') <= 100  # then count; incr keeps the expiry
             ```
         """
-    def decr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
+    def decr(self, key: Key, delta: float = ..., default: Optional[float] = ..., *, retry: bool = False) -> int | float:
         """Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 
         Returns:
@@ -603,9 +609,9 @@ class Cache:
         """
     def memoize(
         self,
-        name: str | None = None,
+        name: Optional[str] = None,
         typed: bool = False,
-        expire: float | None = None,
+        expire: Optional[float] = None,
         tag: Key = None,
         ignore: Iterable[int | str] = (),
     ) -> Memoizer:
@@ -764,7 +770,7 @@ class Cache:
         """
     @overload
     def iterkeys(self, *, prefix: None = None, reverse: bool = False) -> Iterator[Key]: ...
-    def expire(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def expire(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove every expired entry, and its value file.
 
         Works in chunks and lets other writers in between them.
@@ -784,7 +790,7 @@ class Cache:
             removed = cache.expire(timeout=10.0)   # from a scheduled job, with its own timeout
             ```
         """
-    def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def clear(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove every entry that existed when the call started.
 
         Works in chunks and lets other writers in between them. Writes that land while it runs,
@@ -808,7 +814,7 @@ class Cache:
             cache.clear(timeout=10.0)   # safe while other processes keep writing
             ```
         """
-    def evict(self, tag: Key, *, timeout: float | None = None, retry: bool = False) -> int:
+    def evict(self, tag: Key, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove every entry tagged `tag` that existed when the call started.
 
         Works in chunks as `clear` does, and keeps writes that land while it runs. Tags compare by
@@ -836,7 +842,7 @@ class Cache:
             cache.evict('user:42')   # 2
             ```
         """
-    def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def cull(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove expired entries, then evict the least recently stored until under `size_limit`.
 
         Args:
@@ -851,7 +857,7 @@ class Cache:
         """
     def volume(self) -> int:
         """The cache's size on disk in bytes: the database plus value files."""
-    def checkpoint(self, *, timeout: float | None = None) -> bool:
+    def checkpoint(self, *, timeout: Optional[float] = None) -> bool:
         """Copy the write-ahead log into the database and truncate it to zero.
 
         With readers in other processes, a burst of writes can leave the log much larger than the
@@ -913,11 +919,11 @@ class Cache:
         value: Any,
         prefix: None = None,
         side: Literal['front', 'back'] = 'back',
-        expire: float | None = None,
+        expire: Optional[float] = None,
         *,
         tag: Key = None,
         retry: bool = False,
-    ) -> int | None:
+    ) -> Optional[int]:
         """Push `value` onto a queue and return its key, as diskcache's `push`.
 
         With `prefix=None` the queue's keys are ints, numbered from 500,000,000,000,000; with a prefix,
@@ -955,25 +961,25 @@ class Cache:
         value: Any,
         prefix: str,
         side: Literal['front', 'back'] = 'back',
-        expire: float | None = None,
+        expire: Optional[float] = None,
         *,
         tag: Key = None,
         retry: bool = False,
-    ) -> str | None: ...
+    ) -> Optional[str]: ...
     @overload
     def push(
         self,
         value: Any,
-        prefix: str | None = None,
+        prefix: Optional[str] = None,
         side: Literal['front', 'back'] = 'back',
-        expire: float | None = None,
+        expire: Optional[float] = None,
         *,
         tag: Key = None,
         retry: bool = False,
-    ) -> int | str | None: ...
+    ) -> Optional[int | str]: ...
     def pull(
         self,
-        prefix: str | None = None,
+        prefix: Optional[str] = None,
         default: Any = (None, None),
         side: Literal['front', 'back'] = 'front',
         *,
@@ -1014,7 +1020,7 @@ class Cache:
 
     def peek(
         self,
-        prefix: str | None = None,
+        prefix: Optional[str] = None,
         default: Any = (None, None),
         side: Literal['front', 'back'] = 'front',
         *,
@@ -1101,9 +1107,9 @@ class Cache:
         """Return the cache, for `with Cache(...) as cache:`."""
     def __exit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
         /,
     ) -> None:
         """Close the cache, as `close()` does."""
@@ -1193,24 +1199,24 @@ class FanoutCache:
     def __new__(
         cls,
         directory: str | os.PathLike[str],
-        timeout: float | None = None,
+        timeout: Optional[float] = None,
         *,
-        shards: int | None = None,
-        size_limit: int | None = None,
-        cull_limit: int | None = None,
-        eviction_policy: Literal['least-recently-stored', 'none'] | None = None,
+        shards: Optional[int] = None,
+        size_limit: Optional[int] = None,
+        cull_limit: Optional[int] = None,
+        eviction_policy: Optional[Literal['least-recently-stored', 'none']] = None,
         serializer: str = 'msgpack',
         pickle: bool = False,
-        types: TypeRegistry | None = None,
-        clock: Callable[[], float] | None = None,
-        max_connections: int | None = None,
-        sqlite_cache_size: int | None = None,
-        wal_size_limit: int | None = None,
+        types: Optional[TypeRegistry] = None,
+        clock: Optional[Callable[[], float]] = None,
+        max_connections: Optional[int] = None,
+        sqlite_cache_size: Optional[int] = None,
+        wal_size_limit: Optional[int] = None,
         wal_checkpoint: Literal['manual', 'auto'] = 'manual',
-        on_decode_error: Literal['raise', 'miss'] | Callable[[str, Exception], object] | None = None,
+        on_decode_error: Optional[Literal['raise', 'miss'] | Callable[[str, Exception], object]] = None,
         durable: bool = False,
         raise_on_mismatch: bool = False,
-        maintenance_interval: float | None = None,
+        maintenance_interval: Optional[float] = None,
     ) -> FanoutCache: ...
     @property
     def directory(self) -> str:
@@ -1306,7 +1312,7 @@ class FanoutCache:
         expire_time: Literal[True],
         tag: Literal[False] = False,
         retry: bool = False,
-    ) -> tuple[Any, float | None]: ...
+    ) -> tuple[Any, Optional[float]]: ...
     @overload
     def get(
         self,
@@ -1320,10 +1326,14 @@ class FanoutCache:
     @overload
     def get(
         self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
-    ) -> tuple[Any, float | None, Key]: ...
-    def set(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
+    ) -> tuple[Any, Optional[float], Key]: ...
+    def set(
+        self, key: Key, value: Any, expire: Optional[float] = None, *, tag: Key = None, retry: bool = False
+    ) -> bool:
         """As `Cache.set`, on the key's shard."""
-    def add(self, key: Key, value: Any, expire: float | None = None, *, tag: Key = None, retry: bool = False) -> bool:
+    def add(
+        self, key: Key, value: Any, expire: Optional[float] = None, *, tag: Key = None, retry: bool = False
+    ) -> bool:
         """As `Cache.add`, on the key's shard: atomic across threads and processes."""
     def delete(self, key: Key, *, retry: bool = False) -> bool:
         """As `Cache.delete`, on the key's shard."""
@@ -1347,7 +1357,7 @@ class FanoutCache:
         expire_time: Literal[True],
         tag: Literal[False] = False,
         retry: bool = False,
-    ) -> tuple[Any, float | None]: ...
+    ) -> tuple[Any, Optional[float]]: ...
     @overload
     def pop(
         self,
@@ -1361,19 +1371,19 @@ class FanoutCache:
     @overload
     def pop(
         self, key: Key, default: Any = None, *, expire_time: Literal[True], tag: Literal[True], retry: bool = False
-    ) -> tuple[Any, float | None, Key]: ...
-    def touch(self, key: Key, expire: float | None = None, *, retry: bool = False) -> bool:
+    ) -> tuple[Any, Optional[float], Key]: ...
+    def touch(self, key: Key, expire: Optional[float] = None, *, retry: bool = False) -> bool:
         """As `Cache.touch`, on the key's shard."""
-    def incr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
+    def incr(self, key: Key, delta: float = ..., default: Optional[float] = ..., *, retry: bool = False) -> int | float:
         """As `Cache.incr`, on the key's shard: atomic across threads and processes."""
-    def decr(self, key: Key, delta: float = ..., default: float | None = ..., *, retry: bool = False) -> int | float:
+    def decr(self, key: Key, delta: float = ..., default: Optional[float] = ..., *, retry: bool = False) -> int | float:
         """As `Cache.decr`, on the key's shard."""
     def volume(self) -> int:
         """The total disk use in bytes of every shard (databases plus value files).
 
         Raises on any shard's failure, under `durable=True` too.
         """
-    def expire(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def expire(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove every expired entry from every shard, and its value file, as `Cache.expire` does.
 
         Args:
@@ -1401,7 +1411,7 @@ class FanoutCache:
                 exc.failed_shards, exc.removed   # which shards were skipped, and how many entries went anyway
             ```
         """
-    def clear(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def clear(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove every entry that existed when the call started, from every shard.
 
         Every shard's starting point is taken before anything is removed, so writes that land while
@@ -1418,7 +1428,7 @@ class FanoutCache:
         Raises:
             Timeout: As for `expire`, with `removed` and `failed_shards`.
         """
-    def evict(self, tag: Key, *, timeout: float | None = None, retry: bool = False) -> int:
+    def evict(self, tag: Key, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove every entry tagged `tag` that existed when the call started, from every shard, as
         `Cache.evict`.
 
@@ -1435,7 +1445,7 @@ class FanoutCache:
             TypeError: `tag` isn't a key type.
             Timeout: As for `expire`, with `removed` and `failed_shards`.
         """
-    def cull(self, *, timeout: float | None = None, retry: bool = False) -> int:
+    def cull(self, *, timeout: Optional[float] = None, retry: bool = False) -> int:
         """Remove expired entries, then evict the least recently stored from each shard until it's
         under its share of `size_limit`.
 
@@ -1450,7 +1460,7 @@ class FanoutCache:
         Raises:
             Timeout: As for `expire`, with `removed` and `failed_shards`.
         """
-    def checkpoint(self, *, timeout: float | None = None) -> bool:
+    def checkpoint(self, *, timeout: Optional[float] = None) -> bool:
         """Checkpoint every shard's write-ahead log and truncate it to zero, as `Cache.checkpoint` does.
 
         Args:
@@ -1467,9 +1477,9 @@ class FanoutCache:
         """
     def memoize(
         self,
-        name: str | None = None,
+        name: Optional[str] = None,
         typed: bool = False,
-        expire: float | None = None,
+        expire: Optional[float] = None,
         tag: Key = None,
         ignore: Iterable[int | str] = (),
     ) -> Memoizer:
@@ -1645,9 +1655,9 @@ class FanoutCache:
         """Return the cache, for `with FanoutCache(...) as cache:`."""
     def __exit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
         /,
     ) -> None:
         """Close the cache, as `close()` does."""
@@ -1684,9 +1694,9 @@ class Transaction[C]:
         """
     def __exit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
+        exc_type: Optional[type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[TracebackType],
         /,
     ) -> bool:
         """Commit (no exception) or roll back, and return False. A joined transaction's exit does neither.
@@ -1734,8 +1744,8 @@ class TypeRegistry:
         cls: type[T],
         *,
         name: str,
-        encode: Callable[[T], object] | None = None,
-        decode: Callable[[Any], T] | None = None,
+        encode: Optional[Callable[[T], object]] = None,
+        decode: Optional[Callable[[Any], T]] = None,
     ) -> None:
         """Register `cls` under `name`.
 

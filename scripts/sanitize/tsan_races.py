@@ -36,6 +36,7 @@ import collections
 import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 REPORT = re.compile(r'^WARNING: ThreadSanitizer: (.*)$', re.M)
 # A frame: `#N <name> <location> (<module>+0x<offset>)`, on both platforms; a demangled name can hold
@@ -75,7 +76,7 @@ def entry_matches(entry: str, func: str) -> bool:
     return func == entry or (entry[:1].isdigit() and entry in func)
 
 
-def pair_for(f1: str, f2: str, pairs: list[tuple[str, str]]) -> tuple[str, str] | None:
+def pair_for(f1: str, f2: str, pairs: list[tuple[str, str]]) -> Optional[tuple[str, str]]:
     for a, b in pairs:
         if (entry_matches(a, f1) and entry_matches(b, f2)) or (entry_matches(b, f1) and entry_matches(a, f2)):
             return (a, b)

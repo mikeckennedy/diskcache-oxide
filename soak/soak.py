@@ -36,7 +36,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 # The soak needs fork, SIGKILL, SIGUSR1/2 and the load average: Unix only (plan 25 leaves its port for later).
 assert sys.platform != 'win32'
@@ -1007,7 +1007,7 @@ class Soak:
         """A counter summed over every worker of the run, including ones that exited."""
         return sum(s.get(key, 0) or 0 for s in self.last_stats.values())
 
-    def ctotal(self, key: str, python: str | None = None) -> int:
+    def ctotal(self, key: str, python: Optional[str] = None) -> int:
         """A plan 09 lane's counter summed over every worker of the run, or one interpreter's."""
         return sum(
             (s.get('c') or {}).get(key, 0)

@@ -77,7 +77,7 @@ import traceback
 import warnings
 import zlib
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Optional, cast
 
 import diskcache_oxide
 from diskcache_oxide import Cache, FanoutCache, Timeout, _core
@@ -241,7 +241,7 @@ def soak_tag(rng: random.Random) -> Any:
     return None if rng.random() < 0.33 else rng.choice(SOAK_TAGS)
 
 
-def make_value(key: Any, rng: random.Random, expire_at: float | None, stored_tag: Any = None) -> Any:
+def make_value(key: Any, rng: random.Random, expire_at: Optional[float], stored_tag: Any = None) -> Any:
     tag = key_tag(key)
     roll = rng.random()
     if roll < 0.90:
@@ -262,7 +262,7 @@ def make_value(key: Any, rng: random.Random, expire_at: float | None, stored_tag
 
 def check_value(
     key: Any, value: Any, now: float, stored_tag: Any = UNCHECKED, stored_expire: Any = UNCHECKED
-) -> str | None:
+) -> Optional[str]:
     """None if `value` is intact and current (and, if `stored_tag` is given, was stored with that
     tag), else what's wrong with it.
 
@@ -1199,7 +1199,7 @@ class LaneWorker(Worker):
         self.count('durable_calls')
         return result
 
-    def truth_version(self, key: str) -> int | str | None:
+    def truth_version(self, key: str) -> Optional[int | str]:
         try:
             return held_version(key, self.truth.get(key))
         except Timeout:
@@ -1512,7 +1512,7 @@ def open_fanout(run_dir: Path) -> FanoutCache:
     return FanoutCache(run_dir / 'fanout', timeout=30.0, shards=FANOUT_SHARDS, size_limit=FANOUT_SIZE_LIMIT)
 
 
-def db_fds_inside(root: Path) -> list[str] | None:
+def db_fds_inside(root: Path) -> Optional[list[str]]:
     """The paths of this process's fds on a database, WAL or -shm file under `root`, one per fd, or
     None where that can't be read. Value files are left out: a read of a spilled value holds one for
     a moment."""
@@ -1884,7 +1884,7 @@ def wal_stats(cache: Cache) -> dict[str, int]:
     return dict(get()) if get else {}
 
 
-def summarize(samples: list[int]) -> dict[str, float] | None:
+def summarize(samples: list[int]) -> Optional[dict[str, float]]:
     if not samples:
         return None
     ordered = sorted(samples)

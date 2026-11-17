@@ -18,7 +18,7 @@ import traceback
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 WATCHDOG = 40.0
 # A call's timeout behind a fork, and how far past it a call may return on a loaded machine.
@@ -82,12 +82,12 @@ class StuckFork:
     must complete and its child exit cleanly.
     """
 
-    def __init__(self, directory: Path, child: Callable[[], None] | None = None) -> None:
+    def __init__(self, directory: Path, child: Optional[Callable[[], None]] = None) -> None:
         from diskcache_oxide import Cache
 
         self.held = Cache(directory / 'held', timeout=30.0)
         self.child = child
-        self.exit_code: int | None = None
+        self.exit_code: Optional[int] = None
         self.done = threading.Event()
 
     def _fork(self) -> None:
@@ -281,7 +281,7 @@ def fds_inside(directory: Path) -> int:
     """How many of this process's open fds point at a path inside `directory`."""
     root = os.path.realpath(directory) + os.sep
 
-    def path_of(fd: int) -> str | None:
+    def path_of(fd: int) -> Optional[str]:
         try:
             if sys.platform == 'darwin':
                 import fcntl
@@ -323,7 +323,7 @@ class DroppedOnItsOwnThread:
     def __init__(self, make: Callable[[], Any]) -> None:
         self.ready = threading.Event()
         self.go = threading.Event()
-        self.took: float | None = None
+        self.took: Optional[float] = None
         self.thread = threading.Thread(target=self._run, args=(make,), daemon=True)
         self.thread.start()
         assert self.ready.wait(CALL_LIMIT), 'the cache never opened'
@@ -486,7 +486,7 @@ def ticker_gap(directory: Path) -> None:
 # -- pickle hooks ----------------------------------------------------------------------------------
 
 # What the hook does. Set by each scenario before its `get`.
-HOOK: Callable[[], None] | None = None
+HOOK: Optional[Callable[[], None]] = None
 
 
 def rebuild() -> Hooked:

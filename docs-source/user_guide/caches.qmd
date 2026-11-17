@@ -56,27 +56,16 @@ from typing import Literal, Optional
 
 from diskcache_oxide import Caches, TransactionalCacheLike
 
-CacheName = Literal['pages', 'markdown', 'etags']
+CacheName = Literal['pages', 'etags']
 caches: Optional[Caches[CacheName]] = None
 
 
 def setup(base_folder: str) -> None:
     global caches
-    if caches is not None:
-        return
-
     registry: Caches[CacheName] = Caches(base_folder, durable=True, timeout=1.0)
     registry.register('pages')
-    registry.register('markdown')
     registry.register('etags')
     caches = registry
-
-
-def close() -> None:
-    global caches
-    if caches is not None:
-        caches.close_all()
-        caches = None
 
 
 def cache(name: CacheName) -> TransactionalCacheLike:
@@ -89,44 +78,15 @@ def pages_cache() -> TransactionalCacheLike:
     return cache('pages')
 
 
-def markdown_cache() -> TransactionalCacheLike:
-    return cache('markdown')
-
-
 def etag_cache() -> TransactionalCacheLike:
     return cache('etags')
 ```
 
-Call `site_caches.setup(...)` once at startup and `site_caches.close()` at shutdown. Everywhere else, ask for the cache where you use it:
-
 ```python
-import site_caches
-
-def render_page(url: str) -> Response:
-    etag: Optional[str] = site_caches.etag_cache().get(url)
-    page: Optional[str] = site_caches.pages_cache().get(url)
-
-    if page is not None:
-        return Response(body=page, etag=etag)
-
-    html = render_page_contents(url)
-    etag = etag_from_body(html)
-
-    site_caches.etag_cache().set(url, etag)
-    site_caches.pages_cache().set(url, html)
-
-    return Response(body=html, etag=etag)
+html = site_caches.pages_cache().get(url)
 ```
 
-A few things make this work:
-
-- **The functions look the cache up on every call** rather than keeping it in a module variable. That's the one dict read from above, and it's what lets a cache that failed to open come back without a restart, and `disable()` take effect.
-- **Each name is written once per cache function**, and the `Literal` makes a typo there a type error. Nothing outside the module has to spell a name at all.
-- **The registry is still there** as `site_caches.caches` for the rest: `stats()` for an admin page, `disable()` for a load test. It's `None` until `setup()` runs.
-
-The two caches in `render_page` are written and evicted separately, so a page can come back with no etag: handle `etag is None` on a hit, or store `(etag, html)` as one entry in `pages`, since a tuple round-trips as a tuple.
-
-A decorator such as `@site_caches.pages_cache().memoize()` runs when its module is imported, which is before `setup()`, so it raises. Use the per-call decorator from [`memoize` on a registered cache](#memoize-on-a-registered-cache) for those.
+The functions look the cache up on every call rather than keeping it in a variable, which is what lets a cache that failed to open come back, and `disable()` take effect. The recipe [One typed module for your caches](../recipes/site-caches.qmd) has the whole module, with shutdown, `memoize`, tests and where the pattern stops.
 
 ## When a cache can't open
 

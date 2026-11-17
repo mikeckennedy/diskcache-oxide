@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
-from typing import Any
+from typing import Any, Optional
 
 from diskcache_oxide import Cache
 
@@ -29,7 +29,7 @@ def enqueue(jobs: Cache, kind: str, **fields: Any) -> dict:
     return job
 
 
-def take(jobs: Cache, worker: str) -> dict | None:
+def take(jobs: Cache, worker: str) -> Optional[dict]:
     """The next job, recorded as running in the same transaction as the pull, so no crash can fall
     between the two. None if the queue is empty."""
     if jobs.peek(prefix=QUEUE) == (None, None):  # an idle worker reads; it doesn't open a write transaction

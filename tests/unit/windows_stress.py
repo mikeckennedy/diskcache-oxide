@@ -31,7 +31,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from tests.proctitle import set_title
 
@@ -57,7 +57,7 @@ def make_value(key: str, writer: str, seq: int, size: int) -> bytes:
     return head + (block * (room // len(block) + 1))[:room]
 
 
-def value_problem(key: str, value: object) -> str | None:
+def value_problem(key: str, value: object) -> Optional[str]:
     """Why `value` isn't one `make_value` made for `key`, or None if it is."""
     if not isinstance(value, bytes):
         return f'{key}: not bytes but {type(value).__name__}'
@@ -99,7 +99,7 @@ def _stop_signal(base: Path) -> threading.Event:
     return stop
 
 
-def _open_caches(root: Path) -> tuple[Any, Any, Any | None]:
+def _open_caches(root: Path) -> tuple[Any, Any, Optional[Any]]:
     from diskcache_oxide import Cache, FanoutCache
 
     ledger = Cache(root / 'ledger', timeout=TIMEOUT, size_limit=1 << 40)

@@ -30,7 +30,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from tests.conformance.backends import BACKENDS, Backend
 from tests.proctitle import set_title
@@ -223,8 +223,8 @@ WORKLOADS = (
 def run(
     backend: Backend,
     quick: bool,
-    only: set[str] | None = None,
-    opts: dict[str, Any] | None = None,
+    only: Optional[set[str]] = None,
+    opts: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Run the selected workloads (all by default); `opts` are passed to every make_cache call."""
     global LOOP_OVERHEAD_NS

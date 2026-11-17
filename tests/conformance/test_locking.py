@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -203,7 +203,7 @@ def _run_maintenance(backend_name: str, directory: str, op: str, done: Any, resu
         cache.close()
 
 
-def _populate(cache: Any, count: int, expire: Callable[[int], float] | None = None) -> None:
+def _populate(cache: Any, count: int, expire: Optional[Callable[[int], float]] = None) -> None:
     def write() -> None:
         for i in range(count):
             cache.set(f'k{i}', i, expire=None if expire is None else expire(i))
@@ -216,7 +216,7 @@ def _populate(cache: Any, count: int, expire: Callable[[int], float] | None = No
         write()
 
 
-def _writes_during(cache: Any, backend: Backend, directory: Path, op: str, count: int) -> tuple[int, int] | None:
+def _writes_during(cache: Any, backend: Backend, directory: Path, op: str, count: int) -> Optional[tuple[int, int]]:
     """Run `op` in another process while this one retries sets. (landed, removed), or None if the
     call finished before it could be observed mid-run."""
     ctx = multiprocessing.get_context('spawn')

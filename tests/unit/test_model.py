@@ -16,7 +16,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import hypothesis.strategies as st
 from diskcache_oxide import Cache, FanoutCache
@@ -80,7 +80,7 @@ class CacheModel(RuleBasedStateMachine):
         super().__init__()
         self.root = Path(tempfile.mkdtemp(prefix='dco-model-'))
         self.now = 1_000_000.0
-        self.model: dict[Any, tuple[Any, float | None, Any]] = {}
+        self.model: dict[Any, tuple[Any, Optional[float], Any]] = {}
         self.cache = self.make(self.root / 'c')
 
     def teardown(self) -> None:
@@ -98,13 +98,13 @@ class CacheModel(RuleBasedStateMachine):
     def live_count(self) -> int:
         return sum(1 for k in self.model if self.live(k) is not MISSING)
 
-    def expire_time(self, expire: float | None) -> float | None:
+    def expire_time(self, expire: Optional[float]) -> Optional[float]:
         return None if expire is None else self.now + expire
 
     # -- rules --------------------------------------------------------------------------------
 
     @rule(key=KEYS, value=VALUES, expire=EXPIRES, tag=TAGS)
-    def set(self, key: Any, value: Any, expire: float | None, tag: Any) -> None:
+    def set(self, key: Any, value: Any, expire: Optional[float], tag: Any) -> None:
         assert self.cache.set(key, value, expire=expire, tag=tag) is True
         self.model[key] = (value, self.expire_time(expire), tag)
 
@@ -114,7 +114,7 @@ class CacheModel(RuleBasedStateMachine):
         self.model[key] = (value, None, None)  # No tag: an overwrite clears one.
 
     @rule(key=KEYS, value=VALUES, expire=EXPIRES, tag=TAGS)
-    def add(self, key: Any, value: Any, expire: float | None, tag: Any) -> None:
+    def add(self, key: Any, value: Any, expire: Optional[float], tag: Any) -> None:
         added = self.live(key) is MISSING
         assert self.cache.add(key, value, expire=expire, tag=tag) is added
         if added:
@@ -139,7 +139,7 @@ class CacheModel(RuleBasedStateMachine):
             del self.model[key]
 
     @rule(key=KEYS, expire=EXPIRES)
-    def touch(self, key: Any, expire: float | None) -> None:
+    def touch(self, key: Any, expire: Optional[float]) -> None:
         present = self.live(key) is not MISSING
         assert self.cache.touch(key, expire=expire) is present
         if present:
@@ -200,7 +200,7 @@ class CacheModel(RuleBasedStateMachine):
             del self.model[key]
 
     @rule(prefix=st.sampled_from([None, '', 'a', 'b', 'z']), reverse=st.booleans())
-    def iterkeys(self, prefix: str | None, reverse: bool) -> None:
+    def iterkeys(self, prefix: Optional[str], reverse: bool) -> None:
         keys: list[Any] = list(self.cache.iterkeys(prefix=prefix, reverse=reverse))
         assert keys == sorted(keys, key=key_order, reverse=reverse), keys
         # A prefix walks str keys only. Expired rows not yet removed are hidden (D-060), so: exactly

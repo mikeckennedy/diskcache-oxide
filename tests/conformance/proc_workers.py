@@ -34,7 +34,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from tests.proctitle import set_title, titled
 
@@ -527,7 +527,7 @@ def _os_fork(body: Any) -> int:
     return pid
 
 
-def _wait_or_kill(pid: int, deadline: float = CHILD_DEADLINE) -> int | None:
+def _wait_or_kill(pid: int, deadline: float = CHILD_DEADLINE) -> Optional[int]:
     """The child's exit code, or None if it was still running at the deadline (it is then killed)."""
     assert sys.platform != 'win32'
     end = time.monotonic() + deadline
@@ -541,7 +541,7 @@ def _wait_or_kill(pid: int, deadline: float = CHILD_DEADLINE) -> int | None:
     return None
 
 
-def _fork_children(cache: Any, backend: Backend, mode: str) -> tuple[list[int | None], list[str]]:
+def _fork_children(cache: Any, backend: Backend, mode: str) -> tuple[list[Optional[int]], list[str]]:
     """The original check: two children and the parent incr together; children write a spilled value."""
     assert sys.platform != 'win32'
     size = spill_min(backend)
@@ -587,7 +587,7 @@ def _forked_get_and_set(cache: Any) -> None:
     assert cache.get('from-child') == 'child'
 
 
-def _fork_while_hammered(cache: Any, writes: bool) -> tuple[list[int | None], list[str]]:
+def _fork_while_hammered(cache: Any, writes: bool) -> tuple[list[Optional[int]], list[str]]:
     """Fork while another parent thread is mid-get (and, with `writes`, mid-set) on the same Cache.
 
     A child that inherits a mutex, or SQLite lock state, that a parent thread held at the moment of
@@ -610,7 +610,7 @@ def _fork_while_hammered(cache: Any, writes: bool) -> tuple[list[int | None], li
 
     thread = threading.Thread(target=hammer, name='hammer')
     thread.start()
-    exit_codes: list[int | None] = []
+    exit_codes: list[Optional[int]] = []
     try:
         for _ in range(FORK_CHILDREN):
             # Fork only once the hammer is demonstrably mid-run.
@@ -630,7 +630,7 @@ def _fork_while_hammered(cache: Any, writes: bool) -> tuple[list[int | None], li
     return exit_codes, failures
 
 
-def _fork_in_write_transaction(cache: Any, backend: Backend) -> tuple[list[int | None], list[str]]:
+def _fork_in_write_transaction(cache: Any, backend: Backend) -> tuple[list[Optional[int]], list[str]]:
     """Fork while another parent thread holds the cache's write transaction (backend.hold_write_transaction).
 
     The deterministic worst case of _fork_while_hammered(writes=True). The holder commits on its own
@@ -688,7 +688,7 @@ def _fork_in_write_transaction(cache: Any, backend: Backend) -> tuple[list[int |
 HOLD_SECONDS = 1.0
 
 
-def _fork_child_closes(cache: Any, backend: Backend) -> tuple[list[int | None], list[str]]:
+def _fork_child_closes(cache: Any, backend: Backend) -> tuple[list[Optional[int]], list[str]]:
     """A forked child closes its inherited Cache and exits; the parent must keep working."""
     size = spill_min(backend)
     exit_codes = []
@@ -708,7 +708,7 @@ def _fork_child_closes(cache: Any, backend: Backend) -> tuple[list[int | None], 
     return exit_codes, failures
 
 
-def _fork_two_caches_idle(a: Any, backend: Backend, directory: Path) -> tuple[list[int | None], list[str]]:
+def _fork_two_caches_idle(a: Any, backend: Backend, directory: Path) -> tuple[list[Optional[int]], list[str]]:
     """Test C, variant 1: two Cache objects on one directory, both used, then an idle fork.
 
     The child reads and writes through both inherited objects while the parent keeps incrementing
@@ -746,7 +746,7 @@ def _fork_two_caches_idle(a: Any, backend: Backend, directory: Path) -> tuple[li
     return exit_codes, failures
 
 
-def _fork_while_other_cache_writes(a: Any, backend: Backend, directory: Path) -> tuple[list[int | None], list[str]]:
+def _fork_while_other_cache_writes(a: Any, backend: Backend, directory: Path) -> tuple[list[Optional[int]], list[str]]:
     """Test C, variant 2: a parent thread hammers writes through `b` while the main thread forks with `a`.
 
     The child's inherited `a` was idle, so only a fork barrier that covers every Cache in the
@@ -774,7 +774,7 @@ def _fork_while_other_cache_writes(a: Any, backend: Backend, directory: Path) ->
 
     thread = threading.Thread(target=hammer, name='hammer')
     thread.start()
-    exit_codes: list[int | None] = []
+    exit_codes: list[Optional[int]] = []
     try:
         for _ in range(FORK_CHILDREN):
             start = ops[0]
@@ -794,7 +794,7 @@ def _fork_while_other_cache_writes(a: Any, backend: Backend, directory: Path) ->
     return exit_codes, failures
 
 
-def _fork_then_open_new_cache(cache: Any, backend: Backend, directory: Path) -> tuple[list[int | None], list[str]]:
+def _fork_then_open_new_cache(cache: Any, backend: Backend, directory: Path) -> tuple[list[Optional[int]], list[str]]:
     """Test G: after the parent used a cache, a forked child opens a brand-new Cache elsewhere and uses it."""
     other = directory.parent / f'{directory.name}-forked-child'
     size = spill_min(backend)

@@ -18,7 +18,7 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 from diskcache_oxide import Cache, Timeout, TransactionAborted, TransactionBusy
@@ -459,7 +459,7 @@ def test_an_exit_with_an_exception_doesnt_wait_for_an_end_elsewhere(tmp_path: Pa
 class _ExitsWithAnException:
     """Unpickling it starts a commit on another thread, then exits the transaction with an exception."""
 
-    txn: Transaction | None = None
+    txn: Optional[Transaction] = None
     ender: threading.Thread
     ending: threading.Event
     results: list[object] = []
@@ -507,7 +507,7 @@ def test_the_owners_exit_after_a_commit_elsewhere_succeeds(cache: Cache) -> None
 class _DropsTheTransaction:
     """Unpickling it drops the last reference to a manually entered Transaction, inside the get()."""
 
-    txn: Transaction | None = None
+    txn: Optional[Transaction] = None
 
     def __init__(self) -> None:
         self.n = 1
@@ -539,7 +539,7 @@ def test_a_transaction_dropped_inside_its_own_operation_rolls_back_when_it_retur
 class _ExitsItsOwnTransaction:
     """Unpickling it exits the transaction from inside the get() that decodes it."""
 
-    txn: Transaction | None = None
+    txn: Optional[Transaction] = None
     refused: list[str] = []
 
     def __init__(self) -> None:

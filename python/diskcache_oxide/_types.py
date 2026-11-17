@@ -1,9 +1,9 @@
 """Type aliases shared by the stubs, the protocols and `NullCache`."""
 
 from collections.abc import Callable
-from typing import Protocol, TypedDict
+from typing import Optional, Protocol, TypedDict
 
-type Key = str | bytes | int | float | bool | None | tuple[Key, ...]
+type Key = Optional[str | bytes | int | float | bool | tuple[Key, ...]]
 """A cache key: `str`, `bytes`, `int` (64-bit), `float` (not NaN), `bool`, `None`, or a tuple of those,
 nested up to 32 deep. Only the exact types; keys compare by exact type, so `1`, `1.0` and `True` are
 three keys."""
@@ -42,4 +42,4 @@ class MaintenanceStats(TypedDict):
     turns: int
     removed: int
     failures: int
-    last_error: str | None
+    last_error: Optional[str]

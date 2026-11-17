@@ -11,7 +11,7 @@ import threading
 import time
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 from diskcache_oxide import Cache, FanoutCache, Timeout, TransactionAborted, TransactionBusy
@@ -65,7 +65,7 @@ CLEAR_KEYS = 50_000
 CLEAR_ATTEMPTS = 3
 
 
-def _writes_during_clear(cache: Cache, count: int) -> tuple[int, int, list[str]] | None:
+def _writes_during_clear(cache: Cache, count: int) -> Optional[tuple[int, int, list[str]]]:
     """Clear `count` keys on another thread while this one writes with the cache's 1 s timeout.
 
     Returns (removed, writes landed while clear() ran, the keys written), or None if clear()
@@ -538,7 +538,7 @@ def test_beginning_a_second_caches_transaction_behind_another_threads_write_lock
 class _ExitsTheHold:
     """Unpickling it ends the hold from inside the get() that decodes it, and swallows the error."""
 
-    hold: AbstractContextManager[object] | None = None
+    hold: Optional[AbstractContextManager[object]] = None
     refused: list[str] = []
 
     def __init__(self) -> None:

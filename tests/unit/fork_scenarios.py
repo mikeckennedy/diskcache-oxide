@@ -18,6 +18,7 @@ import traceback
 import warnings
 from collections.abc import Callable
 from pathlib import Path
+from typing import Optional
 
 from diskcache_oxide import Cache, FanoutCache, Timeout, register_type, unregister_type
 
@@ -47,7 +48,7 @@ def fork(body: Callable[[], None]) -> int:
     return pid
 
 
-def wait(pid: int, deadline: float = CHILD_DEADLINE) -> int | None:
+def wait(pid: int, deadline: float = CHILD_DEADLINE) -> Optional[int]:
     assert sys.platform != 'win32'
     end = time.monotonic() + deadline
     while time.monotonic() < end:
@@ -309,7 +310,7 @@ def two_forkers(directory: Path) -> list[str]:
     cache.set('before', 'parent')
     stop = threading.Event()
     barrier = threading.Barrier(2)
-    codes: list[int | None] = []
+    codes: list[Optional[int]] = []
     errors: list[BaseException] = []
 
     def hammer() -> None:
@@ -419,7 +420,7 @@ def shared_iterator_while_a_fork_waits(directory: Path) -> list[str]:
             held.set()
             release.wait(TIMEOUT)
 
-    codes: list[int | None] = []
+    codes: list[Optional[int]] = []
     threading.Thread(target=holder, daemon=True).start()
     held.wait(TIMEOUT)
     forker = threading.Thread(target=lambda: codes.append(wait(fork(lambda: None))), daemon=True)
@@ -494,7 +495,7 @@ def transact_fork_from_the_owner(directory: Path) -> list[str]:
 class ForkOnDecode:
     """A registered type whose decoder runs `ForkOnDecode.hook` (inside the read that decodes it)."""
 
-    hook: Callable[[], None] | None = None
+    hook: Optional[Callable[[], None]] = None
 
     def __init__(self, n: int) -> None:
         self.n = n
@@ -524,7 +525,7 @@ def transact_inherited_mid_operation(directory: Path) -> list[str]:
     txn = cache.transact()
     inside = threading.Event()
     claimed = threading.Event()
-    b_codes: list[int | None] = []
+    b_codes: list[Optional[int]] = []
     errors: list[BaseException] = []
 
     def b_forks() -> None:

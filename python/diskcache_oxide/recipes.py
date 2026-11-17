@@ -33,7 +33,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Optional
 
 from diskcache_oxide._memoize import _MISS, _culprit, _full_name, args_to_key
 from diskcache_oxide._types import Key
@@ -105,7 +105,7 @@ class Averager:
     to it agrees. `None` while nothing has been added.
     """
 
-    def __init__(self, cache: Any, key: Key, expire: float | None = None, tag: Key = None) -> None:
+    def __init__(self, cache: Any, key: Key, expire: Optional[float] = None, tag: Key = None) -> None:
         _coordinating(cache, 'Averager')
         _check_tag(tag)
         self._tag = tag
@@ -119,12 +119,12 @@ class Averager:
             total, count = self._cache.get(self._key, default=(0.0, 0))
             self._cache.set(self._key, (total + value, count + 1), expire=self._expire, tag=self._tag)
 
-    def get(self) -> float | None:
+    def get(self) -> Optional[float]:
         """The current average, or None if nothing has been added."""
         total, count = self._cache.get(self._key, default=(0.0, 0), retry=True)
         return None if count == 0 else total / count
 
-    def pop(self) -> float | None:
+    def pop(self) -> Optional[float]:
         """The current average, removing it."""
         total, count = self._cache.pop(self._key, default=(0.0, 0), retry=True)
         return None if count == 0 else total / count
@@ -138,7 +138,7 @@ class Lock:
     dies without releasing doesn't keep it forever.
     """
 
-    def __init__(self, cache: Any, key: Key, expire: float | None = None, tag: Key = None) -> None:
+    def __init__(self, cache: Any, key: Key, expire: Optional[float] = None, tag: Key = None) -> None:
         _coordinating(cache, 'Lock')
         _check_tag(tag)
         self._tag = tag
@@ -171,7 +171,7 @@ class RLock:
     """A reentrant lock shared by every thread and process on the cache: the thread holding it may
     take it again, and must release it as many times. Another thread or process waits."""
 
-    def __init__(self, cache: Any, key: Key, expire: float | None = None, tag: Key = None) -> None:
+    def __init__(self, cache: Any, key: Key, expire: Optional[float] = None, tag: Key = None) -> None:
         _coordinating(cache, 'RLock')
         _check_tag(tag)
         self._tag = tag
@@ -215,7 +215,7 @@ class BoundedSemaphore:
     """A semaphore shared by every thread and process on the cache: at most `value` holders at once.
     Releasing more than were acquired raises `AssertionError`."""
 
-    def __init__(self, cache: Any, key: Key, value: int = 1, expire: float | None = None, tag: Key = None) -> None:
+    def __init__(self, cache: Any, key: Key, value: int = 1, expire: Optional[float] = None, tag: Key = None) -> None:
         _coordinating(cache, 'BoundedSemaphore')
         _check_tag(tag)
         self._tag = tag
@@ -254,8 +254,8 @@ def throttle(
     cache: Any,
     count: int,
     seconds: float,
-    name: str | None = None,
-    expire: float | None = None,
+    name: Optional[str] = None,
+    expire: Optional[float] = None,
     tag: Key = None,
     time_func: Callable[[], float] = time.time,
     sleep_func: Callable[[float], object] = time.sleep,
@@ -301,8 +301,8 @@ def throttle(
 def barrier(
     cache: Any,
     lock_factory: Callable[..., Any],
-    name: str | None = None,
-    expire: float | None = None,
+    name: Optional[str] = None,
+    expire: Optional[float] = None,
     tag: Key = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """A decorator running the function under a lock made by `lock_factory(cache, key, expire=...)`
@@ -328,7 +328,7 @@ def barrier(
 def memoize_stampede(
     cache: Any,
     expire: float,
-    name: str | None = None,
+    name: Optional[str] = None,
     typed: bool = False,
     tag: Key = None,
     beta: float = 1,

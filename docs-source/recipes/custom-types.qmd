@@ -58,7 +58,7 @@ class Invoice:
     id: uuid.UUID
     plan: Plan
     issued: datetime.date
-    paid_within: datetime.timedelta | None = None
+    paid_within: Optional[datetime.timedelta] = None
 
 diskcache_oxide.register_type(Invoice, name='app.Invoice')
 

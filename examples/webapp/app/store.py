@@ -13,6 +13,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -133,7 +134,7 @@ class Store:
         time.sleep(self.delay)  # the slow part a cache saves you from
         return sorted(self._read().values(), key=lambda e: e.number, reverse=True)
 
-    def get(self, number: int) -> Episode | None:
+    def get(self, number: int) -> Optional[Episode]:
         time.sleep(self.delay)
         return self._read().get(number)
 
