@@ -284,9 +284,9 @@ INHERITED_ASYNC = {'aget_or_set', 'aincr_version', 'adecr_version'}
 
 # Each async method, the sync form it must call, the arguments to pass, and what the sync form gets.
 ASYNC_FORMS = [
-    ('aadd', 'add', ('k', 'v'), ('k', 'v', DEFAULT_TIMEOUT, None)),
+    ('aadd', 'add', ('k', 'v'), ('k', 'v', DEFAULT_TIMEOUT, None, None)),
     ('aget', 'get', ('k',), ('k', None, None)),
-    ('aset', 'set', ('k', 'v'), ('k', 'v', DEFAULT_TIMEOUT, None)),
+    ('aset', 'set', ('k', 'v'), ('k', 'v', DEFAULT_TIMEOUT, None, None)),
     ('atouch', 'touch', ('k',), ('k', DEFAULT_TIMEOUT, None)),
     ('adelete', 'delete', ('k',), ('k', None)),
     ('ahas_key', 'has_key', ('k',), ('k', None)),

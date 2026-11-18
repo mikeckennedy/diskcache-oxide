@@ -23,7 +23,23 @@ every backend.
 
 Refused with `ImproperlyConfigured`: a missing `LOCATION`, an unknown option, `clock`, and Django's
 `MAX_ENTRIES` and `CULL_FREQUENCY` (a cache is bounded by `size_limit` in bytes, not by an entry
-count).
+count). A `durable=True` alias that the `cache` or `cached_db` session engine uses (or a subclass of
+either) is refused too, on the first use of the alias: a durable write that can't get the lock is
+dropped instead of raising, and the session engines read that as "try again" (the cache engine's
+`create()` up to 10,000 times) or only log it.
+
+**Errors raise.** A write that can't get the lock within `timeout` raises `Timeout`, as a Redis backend
+raises on a lost connection. `OPTIONS = {'durable': True}` is for a page cache that must never fail a
+request: single-key writes are dropped instead (`add`, `touch` and `delete` return False, `set_many`
+returns the keys it didn't store), and reads miss. It doesn't cover everything: `incr` raises
+Django's `ValueError`, as for a missing key, and `clear()` raises `Timeout`. If a durable alias's
+directory can't be opened at all, the backend serves a `NullCache` (where `add` always succeeds and
+nothing is stored) and tries again later, as the `Caches` registry does: after 1 s for a `Timeout`,
+logged at WARNING, and after 10 s for anything else, logged at ERROR with the traceback, about once
+per retry.
+
+**Beyond Django's API**: `tag=` on `set` and `add`, `evict(tag)`, `pop`, `expire()`, `cull()`,
+`stats()`, `maintenance_stats()`, `check()`, and `cache`, the `Cache` underneath.
 
 **One cache per directory per process.** Django builds a backend instance per thread, and under ASGI
 up to one per request. Instances hold no cache of their own: every instance for a directory, in every
@@ -36,8 +52,10 @@ changes `CACHES` with `override_settings`.
 from __future__ import annotations
 
 import inspect
+import logging
 import os
 import time
+from importlib import import_module
 from typing import Any, Optional
 
 from asgiref.sync import sync_to_async
@@ -49,10 +67,15 @@ from django.core.cache.backends.base import (
 )
 from django.core.exceptions import ImproperlyConfigured
 from django.core.signals import setting_changed
+from django.utils.module_loading import import_string
 
-from diskcache_oxide._core import Cache, FanoutCache
+from diskcache_oxide._core import Cache, FanoutCache, Timeout
+from diskcache_oxide._types import Key, MaintenanceStats
+from diskcache_oxide.null import NullCache
 
 __all__ = ['DjangoCache', 'close_all']
+
+log = logging.getLogger('diskcache_oxide')
 
 
 def keyword_defaults(kind: type) -> dict[str, Any]:
@@ -95,6 +118,20 @@ REFUSED_PARAMS = {
 handles: dict[str, Cache | FanoutCache] = {}
 configured: dict[str, dict[str, Any]] = {}
 
+# A durable alias whose directory couldn't be opened: when to try again, and the NullCache served
+# until then. `Timeout` is an `OSError`; `RuntimeError` covers a directory holding the other kind of
+# cache (`LayoutMismatchError`) and a child forked mid-transaction. Bad settings still raise.
+unavailable: dict[str, tuple[float, NullCache]] = {}
+RETRY_OPEN_AFTER = 10.0
+RETRY_AFTER_BUSY = 1.0  # a Timeout at open means busy (a fork, a peer holding the lock), not broken
+OPEN_ERRORS = (OSError, RuntimeError)
+
+# The session engines that store sessions in a cache, and this backend's dotted names.
+CACHE_SESSION_ENGINES = frozenset(
+    {'django.contrib.sessions.backends.cache', 'django.contrib.sessions.backends.cached_db'}
+)
+BACKEND_NAMES = frozenset({'diskcache_oxide.DjangoCache', 'diskcache_oxide.djangocache.DjangoCache'})
+
 # A miss in `get_many`, so a stored None is returned.
 MISSING = object()
 
@@ -121,6 +158,7 @@ def close_all() -> None:
                 handle.close(checkpoint=False)
     finally:
         configured.clear()
+        unavailable.clear()
 
 
 def close_all_when_caches_change(*, setting: str, **kwargs: Any) -> None:
@@ -138,6 +176,45 @@ def options_mismatch(directory: str) -> ImproperlyConfigured:
     )
 
 
+def is_cache_session_engine(engine: object) -> bool:
+    if engine in CACHE_SESSION_ENGINES:
+        return True
+    if not isinstance(engine, str):
+        return False
+    try:  # a subclass of either engine's SessionStore
+        from django.contrib.sessions.backends import cache, cached_db
+
+        store = import_module(engine).SessionStore
+        return issubclass(store, cache.SessionStore | cached_db.SessionStore)
+    except Exception:
+        return False
+
+
+def is_this_backend(dotted: object) -> bool:
+    if dotted in BACKEND_NAMES:
+        return True
+    try:
+        return isinstance(dotted, str) and issubclass(import_string(dotted), DjangoCache)
+    except Exception:
+        return False
+
+
+def refuse_durable_sessions(directory: str) -> None:
+    """Raise if the cache or cached_db session engine stores its sessions in this durable directory."""
+    from django.conf import settings
+
+    params = settings.CACHES.get(settings.SESSION_CACHE_ALIAS) or {}
+    location = params.get('LOCATION')
+    if not location or os.path.abspath(os.fspath(location)) != directory:
+        return
+    if is_this_backend(params.get('BACKEND')) and is_cache_session_engine(getattr(settings, 'SESSION_ENGINE', None)):
+        raise ImproperlyConfigured(
+            f'SESSION_CACHE_ALIAS {settings.SESSION_CACHE_ALIAS!r} is a durable=True DjangoCache: a durable '
+            "write that can't get the lock returns False instead of raising, which the session engine reads "
+            'as "try again" (up to 10,000 times) or only logs. Give sessions an alias without durable=True.'
+        )
+
+
 def exact_str(made: object) -> str:
     if isinstance(made, str):
         return str.__str__(made)  # a str subclass (a SafeString) as an exact str; str() would keep the type
@@ -152,8 +229,9 @@ class DjangoCache(BaseCache):
         params: The rest of the alias's settings, as Django passes them.
 
     Raises:
-        ImproperlyConfigured: No `LOCATION`, an unknown or refused option, or another alias on the
-            same directory with different `OPTIONS`.
+        ImproperlyConfigured: No `LOCATION`, an unknown or refused option, another alias on the
+            same directory with different `OPTIONS`, or a `durable=True` alias that the cache or
+            cached_db session engine stores sessions in.
     """
 
     def __init__(self, location: str | os.PathLike[str], params: dict[str, Any]) -> None:
@@ -183,30 +261,65 @@ class DjangoCache(BaseCache):
         filled = {**defaults, **options}
         if configured.setdefault(directory, filled) != filled:
             raise options_mismatch(directory)
+        if filled['durable']:
+            refuse_durable_sessions(directory)
         self.directory = directory
         self.sharded = sharded
         self.options = filled
 
     @property
-    def cache(self) -> Cache | FanoutCache:
+    def cache(self) -> Cache | FanoutCache | NullCache:
         """The `Cache` (or `FanoutCache`) under this backend, shared by every alias on its directory.
 
-        Its keys are the made keys (`prefix:version:key`), not the ones passed to the backend.
+        Its keys are the made keys (`prefix:version:key`), not the ones passed to the backend. On a
+        `durable=True` alias whose directory couldn't be opened, a `NullCache` until the next try.
         """
         handle = handles.get(self.directory)
         if handle is None:
             handle = self.open_handle()
         return handle
 
-    def open_handle(self) -> Cache | FanoutCache:
+    def open_handle(self) -> Cache | FanoutCache | NullCache:
         # Again, since close_all() may have run since __init__: then an instance built after it decides.
         if configured.setdefault(self.directory, self.options) != self.options:
             raise options_mismatch(self.directory)
-        new = (FanoutCache if self.sharded else Cache)(self.directory, **self.options)
+        durable = self.options['durable']
+        down = unavailable.get(self.directory) if durable else None
+        if down is not None:
+            now = time.monotonic()
+            if now < down[0]:
+                return down[1]
+            # This thread retries; the others keep serving the NullCache meanwhile, rather than all
+            # retrying at once (and all logging). Without a lock, a few may still race here.
+            unavailable[self.directory] = (now + RETRY_AFTER_BUSY, down[1])
+        try:
+            new = (FanoutCache if self.sharded else Cache)(self.directory, **self.options)
+        except OPEN_ERRORS as error:
+            if not durable:
+                raise
+            return self.serve_null(error, down)
+        unavailable.pop(self.directory, None)
         handle = handles.setdefault(self.directory, new)
         if handle is not new:
             new.close(checkpoint=False)
         return handle
+
+    def serve_null(self, error: BaseException, down: Optional[tuple[float, NullCache]]) -> NullCache:
+        busy = isinstance(error, Timeout)
+        retry_after = RETRY_AFTER_BUSY if busy else RETRY_OPEN_AFTER
+        entry = (time.monotonic() + retry_after, down[1] if down is not None else NullCache())
+        if down is None:
+            # The first failure: only the thread whose entry went in logs it.
+            if unavailable.setdefault(self.directory, entry) is not entry:
+                return unavailable[self.directory][1]
+        else:
+            unavailable[self.directory] = entry
+        message = 'DjangoCache could not open %s; serving a NullCache, trying again in %.0f s'
+        if busy:
+            log.warning(message + ' (%s)', self.directory, retry_after, error)
+        else:
+            log.error(message, self.directory, retry_after, exc_info=error)
+        return entry[1]
 
     # Keys and timeouts.
 
@@ -238,17 +351,23 @@ class DjangoCache(BaseCache):
 
     # Single keys.
 
-    def add(self, key: Any, value: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None) -> bool:
+    def add(
+        self, key: Any, value: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None, tag: Key = None
+    ) -> bool:
+        """Django's `add`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`."""
         key = self.make_and_validate_key(key, version=version)
-        return self.cache.add(key, value, self.get_backend_timeout(timeout))
+        return self.cache.add(key, value, self.get_backend_timeout(timeout), tag=tag)
 
     def get(self, key: Any, default: Any = None, version: Optional[int] = None) -> Any:
         key = self.make_and_validate_key(key, version=version)
         return self.cache.get(key, default)
 
-    def set(self, key: Any, value: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None) -> None:
+    def set(
+        self, key: Any, value: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None, tag: Key = None
+    ) -> None:
+        """Django's `set`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`."""
         key = self.make_and_validate_key(key, version=version)
-        self.cache.set(key, value, self.get_backend_timeout(timeout))
+        self.cache.set(key, value, self.get_backend_timeout(timeout), tag=tag)
 
     def touch(self, key: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None) -> bool:
         key = self.make_and_validate_key(key, version=version)
@@ -293,17 +412,23 @@ class DjangoCache(BaseCache):
     def set_many(self, data: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None) -> list[Any]:
         """A `set` per key, not one transaction: a value's pickling can run arbitrary code (load a
         session, run a query), which mustn't run holding the cache's write lock. Returns the keys
-        that weren't stored, which only a `durable=True` cache can have: once one `set` returns False
-        (after waiting out the lock wait), that key and every one after it are returned untried, so a
-        batch waits one lock wait, not one per key.
+        that weren't stored, which only a `durable=True` cache can have. A durable `set` behind a held
+        lock waits out the lock wait and returns False, so once one returns False after half a lock wait
+        has passed, it and every key after it are returned untried: one wait, not one per key.
+        A failure that comes at once (one value that can't be written) only fails that key.
         """
         expire = self.get_backend_timeout(timeout)
         cache = self.cache
+        deadline = time.monotonic() + self.options['timeout'] / 2
+        failed = []
         items = iter(data.items())
         for key, value in items:
             if cache.set(self.make_and_validate_key(key, version=version), value, expire) is False:
-                return [key, *(rest for rest, _ in items)]
-        return []
+                failed.append(key)
+                if time.monotonic() >= deadline:
+                    failed.extend(rest for rest, _ in items)
+                    break
+        return failed
 
     def delete_many(self, keys: Any, version: Optional[int] = None) -> None:
         """Delete the keys, up to `DELETE_CHUNK` at a time in one transaction (one per shard on a
@@ -314,12 +439,12 @@ class DjangoCache(BaseCache):
 
         Under `durable=True`, single deletes, which durable covers and a transaction doesn't. A durable
         delete that can't get the lock returns False after the lock wait, as a miss does at once, so
-        the batch stops at the first False past one lock wait: one wait, not one per key.
+        the batch stops at the first False past half a lock wait: one wait, not one per key.
         """
         made = [self.make_and_validate_key(key, version=version) for key in keys]
         cache = self.cache
         if self.options['durable']:
-            deadline = time.monotonic() + self.options['timeout']
+            deadline = time.monotonic() + self.options['timeout'] / 2
             for key in made:
                 if not cache.delete(key) and time.monotonic() >= deadline:
                     return
@@ -349,18 +474,52 @@ class DjangoCache(BaseCache):
     def close(self, **kwargs: Any) -> None:
         """Nothing: Django calls it after every request, and the handle lives for the process."""
 
+    # Beyond Django's API. Each acts on the whole directory, every alias on it included, except `pop`.
+
+    def pop(self, key: Any, default: Any = None, version: Optional[int] = None) -> Any:
+        """Remove the key and return its value, or `default` if it's missing, atomically."""
+        return self.cache.pop(self.make_and_validate_key(key, version=version), default)
+
+    def evict(self, tag: Key) -> int:
+        """Remove every entry tagged `tag` (with `set(..., tag=)` or `add(..., tag=)`). Returns how many."""
+        return self.cache.evict(tag)
+
+    def expire(self) -> int:
+        """Remove expired entries now, rather than waiting for background maintenance. Returns how many."""
+        return self.cache.expire()
+
+    def cull(self) -> int:
+        """Remove expired entries, then evict until the cache is under `size_limit`. Returns how many."""
+        return self.cache.cull()
+
+    def stats(self, enable: bool = True, reset: bool = False) -> tuple[int, int]:
+        """`(hits, misses)` since counting was enabled; see `Cache.stats`."""
+        return self.cache.stats(enable, reset)
+
+    def maintenance_stats(self) -> MaintenanceStats:
+        """What background maintenance has done; see `Cache.maintenance_stats`."""
+        return self.cache.maintenance_stats()
+
+    def check(self, fix: bool = False) -> list[Any]:
+        """Check the cache's consistency, returning the problems as warnings; see `Cache.check`."""
+        return self.cache.check(fix)
+
     # Async: each runs its sync form in one `sync_to_async` call, as Django 6.1 does for an overridden
     # method. On 5.2 and 6.0, `BaseCache`'s own `aincr` is an `aget` and then an `aset`: not atomic,
     # and it resets the expiry. Overriding every one keeps the three lines the same.
 
-    async def aadd(self, key: Any, value: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None) -> bool:
-        return await sync_to_async(self.add, thread_sensitive=True)(key, value, timeout, version)
+    async def aadd(
+        self, key: Any, value: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None, tag: Key = None
+    ) -> bool:
+        return await sync_to_async(self.add, thread_sensitive=True)(key, value, timeout, version, tag)
 
     async def aget(self, key: Any, default: Any = None, version: Optional[int] = None) -> Any:
         return await sync_to_async(self.get, thread_sensitive=True)(key, default, version)
 
-    async def aset(self, key: Any, value: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None) -> None:
-        return await sync_to_async(self.set, thread_sensitive=True)(key, value, timeout, version)
+    async def aset(
+        self, key: Any, value: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None, tag: Key = None
+    ) -> None:
+        return await sync_to_async(self.set, thread_sensitive=True)(key, value, timeout, version, tag)
 
     async def atouch(self, key: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None) -> bool:
         return await sync_to_async(self.touch, thread_sensitive=True)(key, timeout, version)
