@@ -1,0 +1,18 @@
+Python 3.14.10, macOS-27.2.1-arm64-arm-64bit-Mach-O, FanoutCache(shards=8), RLIMIT_NOFILE soft 245760
+each thread sets and gets 128 keys (every shard), then waits; counts while all wait
+backend     threads  process  in root  after close  error
+diskcache         1       40       40           32  
+diskcache         8      152      152          144  
+diskcache        16      280      280          272  
+diskcache        32      536      536          528  
+diskcache        64     1048     1048         1040  
+oxide             1       32       32            0  
+oxide             8       32       32            0  
+oxide            16       32       32            0  
+oxide            32       32       32            0  
+oxide            64       32       32            0  
+process = over the count before the open; in root = inside the cache root; after close = in root, after
+
+Probe: soft RLIMIT_NOFILE 256, 1 to 64 threads, one fresh process per count
+  diskcache: first fails at 15 threads; at 14 threads it held 248 fds: sqlite3.OperationalError: unable to open database file
+  oxide: no failure up to 64 threads; at 64 threads it held 32 fds

@@ -1,6 +1,14 @@
 # Plan 30: a FanoutCache's default page cache is split across its shards
 
-Status: approved (2026-11-17), not started: the floor and the 8-shard default are 64 pages, from the studio run. Proposed 2026-11-16. Reviewed once by the-rust-architect (findings folded in below: keep every core file untouched so the tier stays Patch; the fork wording; the closed-handle reuse path; `Caches(defaults=...)`; a test hook; the shard counts the tests use; the memory assertion; D-037; large inline values against the floor). Michael's decision (2026-11-16): change the default, but don't make `FanoutCache` the default or recommended cache yet.
+Status: **not doing** (Michael, 2026-11-17): a `FanoutCache` keeps today's default page cache, 256 pages per connection, and the docs present `sqlite_cache_size=64` as the setting for memory-tight deployments, with its cost. The decision came from the reruns below on a fixed benchmark; everything after that section is the plan as it stood before, kept for the record. Proposed 2026-11-16, approved at 64 pages earlier on 2026-11-17 from runs whose working set turned out to be about 9 MB.
+
+## Why not (2026-11-17)
+
+The architect's review of plan 29 found that `bench/fanout.py`'s plans covered about 9 MB of the 50 MB database, and that the warm-up replayed exactly what was measured, so the page-cache sizing runs behind the 64-page decision ran with nearly everything cached. The benchmark was fixed (every key in every plan, a different window from the warm-up, process-private memory, at least 1,000 samples for a p99.9) and rerun on the studio, with a new `sizing2` group for 4 KiB, 8 KiB and a mix of sizes (50% 1 KiB, 30% 4 KiB, 15% 16 KiB, 5% 64 KiB), threads and processes, as Michael asked (`bench/results/fanout-3.14.10-studio.*`, `fanout-3.14.10t-studio.*`, `fanout-sizing2-3.14.10-studio.*`, `fanout-sizing2-3.14.10t-studio.*`).
+
+- **Across `sizing2`'s 48 cases**, `FanoutCache(8)` at 64 pages ran at 0.98x (3.14) and 0.99x (3.14t) the default's speed (geometric mean), worst 0.95x on 3.14 (the 3.14t worst, 0.82x, was noise: the default swung 308k-400k in that case), as stable as the default, the same `set` p99.9, and cut a one-thread or one-process `FanoutCache`'s private memory growth from 12.0-12.6 MiB to 4.4-4.9 MiB (a plain `Cache`: 2.0-2.4). 32 pages: 0.97x, 3.1-3.6 MiB. `FanoutCache(4)` at 64 pages: 0.88-0.89x, worst 0.65x, the least stable. A plain `Cache` at 128 or 64 pages saved about 1 MiB for 1-3% (it keeps 256, as decided).
+- **But with 1 KB values and 8 threads on free-threaded Python**, 64 pages lost 15-16% (558k against 663k ops/s with even keys, 729k against 858k with hot keys; 32 pages lost 22-25%), saving only 5-9 MiB of private memory there. Michael chose to keep the speed: the default stays at 256 pages.
+
 
 ## Why
 

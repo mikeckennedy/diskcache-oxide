@@ -725,7 +725,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <section id="should-you-use-it" class="level1">
 <h1>Should you use it?</h1>
 <p>Use a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> for a cache that <strong>many writers share</strong>: a web server with several worker processes (a web garden), many threads on free-threaded Python, or a write-heavy load. It’s faster in all three, by up to 4x, and it costs about 10 MiB more memory per process than a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. A plain <a href="../user-guide/getting-started.html"><code>Cache</code></a> stays the default, and the <a href="../recipes/web-workers.html#the-recommended-setup">recommended setup</a> uses one for every cache: it’s smaller, it keeps fewer files, and it’s the only kind with queues and full transactions. Make the one cache your workers write to most a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> when its numbers matter.</p>
-<p>The numbers below come from the benchmark in the repository (<code>bench/fanout.py</code>, the released 0.3.5 wheels, a Mac Studio with 18 cores, 1 KB values over 50,000 keys, three rounds; <code>bench/results/fanout-3.14.10-studio-scaling.txt</code> and <code>fanout-3.14.10t-studio-scaling.txt</code>).</p>
+<p>The numbers below come from the benchmark in the repository (<code>bench/fanout.py</code>, the released 0.3.5 wheels, a Mac Studio with 18 cores, 1 KB values over 50,000 keys, every key in each worker’s plan, three rounds; <code>bench/results/fanout-3.14.10-studio.txt</code> and <code>fanout-3.14.10t-studio.txt</code>).</p>
 <p><strong>Several processes.</strong> Each worker process opens the cache and does 99 reads to 1 write, on Python 3.14:</p>
 <div class="dco-chart" data-type="lines" data-x="Processes" data-y="operations per second" data-title="Add worker processes and a plain Cache falls off; a FanoutCache keeps climbing" data-note="bench/fanout.py: 99 reads to 1 write, 1 KB values, one thread per process, Python 3.14, Mac Studio (M5 Max). Higher is better. Hover for the numbers.">
 <table class="caption-top table">
@@ -740,28 +740,28 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <tbody>
 <tr class="odd">
 <td>1</td>
-<td>424k ops/s</td>
-<td>462k</td>
-<td>340k</td>
+<td>375k ops/s</td>
+<td>428k</td>
+<td>320k</td>
 </tr>
 <tr class="even">
 <td>4</td>
-<td>522k</td>
-<td>1,048k</td>
-<td>770k</td>
+<td>519k</td>
+<td>1,004k</td>
+<td>729k</td>
 </tr>
 <tr class="odd">
 <td>8</td>
-<td>269k</td>
-<td>1,108k</td>
-<td>982k</td>
+<td>261k</td>
+<td>1,094k</td>
+<td>950k</td>
 </tr>
 </tbody>
 </table>
 </div>
 <ul>
-<li><strong>It removes the write-lock ceiling.</strong> A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops climbing past a few processes and then falls, because the 1% of operations that are writes all queue on one database file’s write lock. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> keeps climbing: 4.1x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 8 processes, and 1.13x diskcache’s own <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>. A pre-forking server (gunicorn, uvicorn workers) with a worker per core is this case.</li>
-<li><strong>Writes make the gap wider.</strong> At 90 reads to 10 writes with 8 processes, a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> gets 137k ops/s and a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> 450k (3.3x); at 50:50, 37k against 117k.</li>
+<li><strong>It removes the write-lock ceiling.</strong> A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops climbing past a few processes and then falls, because the 1% of operations that are writes all queue on one database file’s write lock. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> keeps climbing: 4.2x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 8 processes, and 1.15x diskcache’s own <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>. A pre-forking server (gunicorn, uvicorn workers) with a worker per core is this case.</li>
+<li><strong>Writes make the gap wider.</strong> At 90 reads to 10 writes with 8 processes, a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> gets 138k ops/s and a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> 431k (3.1x); at 50:50, 38k against 116k.</li>
 </ul>
 <p><strong>Several threads in one process.</strong> Threads share one handle, with hot keys (a few keys read far more than the rest, as a real site’s pages are):</p>
 <table class="caption-top table">
@@ -777,65 +777,65 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <tbody>
 <tr class="odd">
 <td>1</td>
-<td>537k ops/s</td>
-<td>591k</td>
-<td>538k</td>
-<td>591k</td>
+<td>482k ops/s</td>
+<td>551k</td>
+<td>497k</td>
+<td>575k</td>
 </tr>
 <tr class="even">
 <td>4</td>
-<td>701k</td>
-<td>1,012k</td>
-<td>512k</td>
-<td>565k</td>
+<td>666k</td>
+<td>981k</td>
+<td>491k</td>
+<td>556k</td>
 </tr>
 <tr class="odd">
 <td>8</td>
-<td>525k</td>
-<td>900k</td>
-<td>507k</td>
-<td>571k</td>
+<td>503k</td>
+<td>858k</td>
+<td>498k</td>
+<td>560k</td>
 </tr>
 </tbody>
 </table>
 <ul>
-<li><strong>On free-threaded Python, a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> lets threads scale.</strong> At 8 threads it’s 1.7x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> with hot keys and 2.0x with keys spread evenly (699k against 347k), and 2.2x at 90:10 (301k against 136k).</li>
-<li><strong>On GIL builds, threads are flat for every cache,</strong> as the GIL says they must be, and a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> is about 10% ahead at every thread count. diskcache, by comparison, falls from 360-400k at one thread to about 20k at 8.</li>
+<li><strong>On free-threaded Python, a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> lets threads scale.</strong> At 8 threads it’s 1.7x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> with hot keys and 2.0x with keys spread evenly (663k against 338k), and 2.2x at 90:10 (275k against 127k). The free-threaded thread runs were the noisiest here, spreading up to 13% between rounds.</li>
+<li><strong>On GIL builds, threads are flat for every cache,</strong> as the GIL says they must be, and a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> is 12-16% ahead at every thread count. diskcache, by comparison, falls from 310-360k at one thread to about 20k at 8.</li>
 </ul>
-<p><strong>Large values.</strong> A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> tends to keep the slowest writes of large values shorter: with 64 KiB values and one thread on 3.14, the slowest of about 800 <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>s took 3-4 ms on a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and 0.1-0.2 ms on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> in two rounds of three (the third round’s slowest was 2.8 ms). Each shard’s database and write-ahead log are smaller, so a checkpoint has less to copy (<code>bench/results/fanout-3.14.10-studio.txt</code>, sizing group).</p>
-<p><strong>What it costs.</strong> Each shard has its own SQLite connections and page caches, so a process holds more memory. RSS growth per process over its baseline, with 99:1 and 1 KB values:</p>
+<p><strong>Large values.</strong> A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> keeps the slowest writes of large values far shorter: with 64 KiB values and one thread, the p99.9 of a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> (over 1,000 or more per round) is 2.8-4.4 ms on a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and 0.07-0.12 ms on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, on 3.14 and 3.14t, with keys spread evenly or hot. Each shard’s database and write-ahead log are smaller, so a checkpoint has less to copy (sizing group in the same results).</p>
+<p><strong>What it costs.</strong> Each shard has its own SQLite connections and page caches, so a process holds more memory. Growth of each process’s own (private) memory over its baseline, with 99:1 and 1 KB values (macOS <code>phys_footprint</code>; RSS would also count file pages mapped into memory, which are shared and reclaimable):</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
 <th>Case</th>
 <th>Plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></th>
 <th><code>FanoutCache(shards=8)</code></th>
-<th>Difference</th>
+<th>diskcache <code>FanoutCache(8)</code></th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>1 process, 1 thread, 3.14</td>
-<td>3.3 MiB</td>
-<td>13.6 MiB</td>
-<td>+10.3 MiB</td>
+<td>1 thread, 3.14</td>
+<td>2.6 MiB</td>
+<td>11.8 MiB</td>
+<td>15.0 MiB</td>
 </tr>
 <tr class="even">
-<td>1 process, 1 thread, 3.14t</td>
-<td>5.0 MiB</td>
-<td>15.4 MiB</td>
-<td>+10.4 MiB</td>
+<td>1 thread, 3.14t</td>
+<td>3.9 MiB</td>
+<td>14.1 MiB</td>
+<td>15.1 MiB</td>
 </tr>
 <tr class="odd">
-<td>1 process, 8 threads, 3.14t</td>
-<td>16.1 MiB</td>
-<td>24.7 MiB</td>
-<td>+8.6 MiB</td>
+<td>8 threads, 3.14t</td>
+<td>20.3 MiB</td>
+<td>30.0 MiB</td>
+<td>42.5 MiB</td>
 </tr>
 </tbody>
 </table>
 <ul>
-<li><strong>About 10 MiB more per process</strong>, so about 80 MiB across 8 workers. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> thread holds 1. Pass <code>sqlite_cache_size=64</code> to give each a 256 KiB page cache instead: on these runs it cut the extra memory by about three quarters (one thread on 3.14: 5.9 MiB against 13.6) and kept the speed within about 5% in most cases, 11% at worst (<code>bench/results/fanout-3.14.10-studio.txt</code> and <code>fanout-3.14.10t-studio.txt</code>, page-cache groups; see <a href="#choosing-shards-and-max_connections">Choosing <code>shards</code> and <code>max_connections</code></a>).</li>
+<li><strong>About 10 MiB more per process than a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></strong>, so about 80 MiB across 8 workers, and less than diskcache’s own <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> thread holds 1. Where memory matters more than the last bit of speed, pass <code>sqlite_cache_size=64</code> to give each a 256 KiB page cache instead. Across 1 KB to 64 KiB values and a realistic mix of sizes, for threads and worker processes, it cut the extra private memory by about two thirds (one thread or process: 4.4-4.9 MiB against 12.0-12.6) and cost 0-5% in almost every case, with no loss of stability. The exception is many threads on free-threaded Python with small values: 8 threads with 1 KB values ran about 15% slower (558k ops/s against 663k), still 1.6x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. The default stays at 256 pages for that reason (<code>bench/results/fanout-sizing2-3.14.10-studio.txt</code> and <code>fanout-sizing2-3.14.10t-studio.txt</code>, and the page-cache group in <code>fanout-3.14.10t-studio.txt</code>; see <a href="#choosing-shards-and-max_connections">Choosing <code>shards</code> and <code>max_connections</code></a>).</li>
 <li><strong>More files.</strong> Each shard is a database, a write-ahead log and a shared-memory file, and the process holds descriptors for them (below).</li>
 <li><strong>Less for a single process with few writes.</strong> A read-mostly cache in one process on a GIL build gains about 10% for that memory and those files.</li>
 </ul>

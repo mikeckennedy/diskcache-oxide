@@ -72,7 +72,7 @@ WHY_CHOOSE_IT = (
     'threads, where diskcache falls from 433,000 to 19,000 (Apple M5 Max, Python 3.14 with the GIL; '
     '`bench/results/macos/gate-3.14.txt`). See the chart on the [home page]({base}).',
     '- Eight worker processes writing to a `FanoutCache(shards=8)`: about 1.1 million operations a second, against '
-    "269,000 for a plain `Cache` and 982,000 for diskcache's own `FanoutCache`. See "
+    "261,000 for a plain `Cache` and 950,000 for diskcache's own `FanoutCache`. See "
     '[FanoutCache]({base}user-guide/fanoutcache.html).',
     '- A prefix scan over 400,000 keys in about 10 ms, against about 25 seconds in diskcache, because '
     '`iterkeys(prefix=)` is an indexed range scan. See '
