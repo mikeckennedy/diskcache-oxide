@@ -511,7 +511,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="12" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="13" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -950,6 +950,46 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </table>
 </div>
 <p>A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops climbing past two processes and then falls, and the writes aren’t the cause: at 1,000 reads to 1 write it falls the same way (295k at 8 processes), and so it does with no writes at all. The likely cause is the lock every read takes in SQLite’s shared-memory file, which processes reading one database contend for (not yet profiled across processes); it’s the top item for the <a href="../user-guide/performance.html#next-free-threaded-scaling">free-threaded phase</a>. Shards spread the reads over 8 files, which is what <code>OPTIONS = {'shards': 8}</code> is for: with 8 worker processes it’s 5.3x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and 1.1x diskcache’s backend, which is always sharded. The free-threaded build’s process numbers are the same or up to 13% lower.</p>
+<p><strong>Four worker processes, the options side by side.</strong> A typical small deployment, gunicorn with <code>workers = 4</code>, measured on its own: each backend at 4 processes, median of 3 rounds of 3 seconds, on Python 3.14 (<code>bench/django_procs.py</code>; <code>bench/results/django-4procs-macbook-m5-pro.md</code>):</p>
+<div class="dco-chart" data-type="hbars" data-y="operations per second, all 4 workers together" data-title="Four Django workers: shards=8 is the fastest shared cache" data-note="bench/django_procs.py: 4 worker processes, one thread each, through django.core.cache, 1 KB str values, Django 6.1.3, Python 3.14, MacBook Pro (M5 Pro). Higher is better. LocMemCache is left out: each worker has its own, so nothing is shared. Hover for the numbers.">
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Backend</th>
+<th>99 reads : 1 write</th>
+<th>1,000 reads : 1 write</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>diskcache-oxide, <code>shards=8</code></td>
+<td><strong>1,320k ops/s</strong></td>
+<td><strong>1,750k ops/s</strong></td>
+</tr>
+<tr class="even">
+<td>diskcache 5.6.3 (always 8 shards)</td>
+<td>970k</td>
+<td>1,165k</td>
+</tr>
+<tr class="odd">
+<td>diskcache-oxide, plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></td>
+<td>597k</td>
+<td>622k</td>
+</tr>
+<tr class="even">
+<td><code>DatabaseCache</code> (SQLite)</td>
+<td>258k</td>
+<td>280k</td>
+</tr>
+<tr class="odd">
+<td><code>FileBasedCache</code></td>
+<td>117k</td>
+<td>156k</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>With 4 workers, <code>shards=8</code> is 2.2x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 99:1 (2.8x at 1,000:1), 1.4x diskcache’s backend (1.5x), about 5x <code>DatabaseCache</code> and 11x <code>FileBasedCache</code>. A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> already sits below diskcache’s sharded backend here, which is why a site with several workers should shard its busy alias. On Python 3.14t the numbers are within 7% of these, since each process runs one thread either way. <code>LocMemCache</code> reached about 4.1M, but that’s four private dicts: a page one worker caches is a miss in the other three.</p>
 <p>Threads in one process are the other case. With 8 threads sharing one alias on Python 3.14, a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> keeps 510k ops/s where diskcache’s backend falls to 18k. On the free-threaded build the gap closes: at 8 threads and 99:1, 676k (871k with <code>shards=8</code>) against diskcache’s 430k, and at 1,000:1 diskcache’s backend (986k) edges out a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (823k) and matches <code>shards=8</code> (993k).</p>
 <p>Redis (Django’s <code>RedisCache</code>) was measured too, in a container on the same Mac, but its numbers aren’t shown: at over 100 µs a read, they mostly measure the port forwarding into the container’s VM rather than Redis.</p>
 <section id="async-reads" class="level2">

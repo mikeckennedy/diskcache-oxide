@@ -152,6 +152,20 @@ Writes are mixed. Storing the 50 KiB response took 36 µs, against diskcache's 3
 
 A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) stops climbing past two processes and then falls, and the writes aren't the cause: at 1,000 reads to 1 write it falls the same way (295k at 8 processes), and so it does with no writes at all. The likely cause is the lock every read takes in SQLite's shared-memory file, which processes reading one database contend for (not yet profiled across processes); it's the top item for the [free-threaded phase](performance.md#next-free-threaded-scaling). Shards spread the reads over 8 files, which is what `OPTIONS = {'shards': 8}` is for: with 8 worker processes it's 5.3x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) and 1.1x diskcache's backend, which is always sharded. The free-threaded build's process numbers are the same or up to 13% lower.
 
+**Four worker processes, the options side by side.** A typical small deployment, gunicorn with `workers = 4`, measured on its own: each backend at 4 processes, median of 3 rounds of 3 seconds, on Python 3.14 (`bench/django_procs.py`; `bench/results/django-4procs-macbook-m5-pro.md`):
+
+
+| Backend | 99 reads : 1 write | 1,000 reads : 1 write |
+|----|----|----|
+| diskcache-oxide, `shards=8` | **1,320k ops/s** | **1,750k ops/s** |
+| diskcache 5.6.3 (always 8 shards) | 970k | 1,165k |
+| diskcache-oxide, plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) | 597k | 622k |
+| `DatabaseCache` (SQLite) | 258k | 280k |
+| `FileBasedCache` | 117k | 156k |
+
+
+With 4 workers, `shards=8` is 2.2x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) at 99:1 (2.8x at 1,000:1), 1.4x diskcache's backend (1.5x), about 5x `DatabaseCache` and 11x `FileBasedCache`. A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) already sits below diskcache's sharded backend here, which is why a site with several workers should shard its busy alias. On Python 3.14t the numbers are within 7% of these, since each process runs one thread either way. `LocMemCache` reached about 4.1M, but that's four private dicts: a page one worker caches is a miss in the other three.
+
 Threads in one process are the other case. With 8 threads sharing one alias on Python 3.14, a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) keeps 510k ops/s where diskcache's backend falls to 18k. On the free-threaded build the gap closes: at 8 threads and 99:1, 676k (871k with `shards=8`) against diskcache's 430k, and at 1,000:1 diskcache's backend (986k) edges out a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) (823k) and matches `shards=8` (993k).
 
 Redis (Django's `RedisCache`) was measured too, in a container on the same Mac, but its numbers aren't shown: at over 100 µs a read, they mostly measure the port forwarding into the container's VM rather than Redis.

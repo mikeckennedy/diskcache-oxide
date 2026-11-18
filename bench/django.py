@@ -65,7 +65,7 @@ from pathlib import Path
 from typing import Any
 
 RESULTS_DIR = Path(__file__).parent / 'results'
-THREAD_COUNTS = (1, 2, 4, 8)
+THREAD_COUNTS: tuple[int, ...] = (1, 2, 4, 8)
 MIXES = {'99to1': 100, '1000to1': 1_000}
 KEYS = 1_000
 BIG = 100_000
