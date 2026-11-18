@@ -51,10 +51,11 @@ strays = sorted(
     and getattr(module, '__file__', None)
     and not os.path.abspath(module.__file__).startswith(root + os.sep)
 )
-# Django's test app has a generic name; make sure it's the sdist's.
-test_app = sys.modules.get('cache.tests')
-if test_app is not None and not os.path.abspath(test_app.__file__).startswith(os.path.join(root, 'tests') + os.sep):
-    strays.append(f'cache.tests ({test_app.__file__})')
+# Django's test modules have generic names; make sure they're the sdist's.
+for name in ('cache.tests', 'sessions_tests.tests', 'urls'):
+    module = sys.modules.get(name)
+    if module is not None and not os.path.abspath(module.__file__).startswith(os.path.join(root, 'tests') + os.sep):
+        strays.append(f'{name} ({module.__file__})')
 if strays:
     print(f'Django modules loaded from outside {root}: {strays[:5]}', flush=True)
     code = code or 1

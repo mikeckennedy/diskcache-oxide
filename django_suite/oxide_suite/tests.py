@@ -16,6 +16,7 @@ import unittest
 from unittest import mock
 
 import cache.tests as django_tests
+import sessions_tests.tests as session_tests
 from asgiref.sync import async_to_sync
 from diskcache_oxide import FanoutCache, djangocache
 from diskcache_oxide.djangocache import DjangoCache
@@ -43,9 +44,23 @@ SKIPS = {
 # so one that starts passing fails the run.
 EXPECTED_FAILURES: dict[str, dict[str, str]] = {}
 
-# Inherited tests that set CACHES to another backend for themselves (locmem, dummy, a failing cache),
-# so they pass without touching ours. Listed so a pass there isn't read as coverage.
-NOT_OURS: dict[str, dict[str, str]] = {}
+# Inherited tests that change CACHES or SESSION_CACHE_ALIAS for themselves (to locmem, the dummy backend,
+# a failing cache, or an alias that doesn't exist), so they pass without touching ours. Listed so a pass
+# there isn't read as coverage. Enforced both ways: a test that changes either setting must be listed,
+# and a listed test must change one.
+NOT_OURS: dict[str, dict[str, str]] = {
+    'OxideCacheSessionTests': {
+        'test_non_default_cache': "sets CACHES to the dummy backend and a locmem 'sessions' alias",
+    },
+    **{
+        cls: {
+            'test_non_default_cache': "points SESSION_CACHE_ALIAS at an alias that doesn't exist",
+            'test_cache_set_failure_non_fatal': "sets CACHES to Django's failing test cache",
+            'test_cache_async_set_failure_non_fatal': "sets CACHES to Django's failing test cache",
+        }
+        for cls in ('OxideCacheDBSessionTests', 'OxideCacheDBSessionWithTimeZoneTests')
+    },
+}
 
 
 def open_fds() -> int:
@@ -55,13 +70,16 @@ def open_fds() -> int:
 class Harness:
     """A temporary LOCATION per test, every handle closed before it's deleted, and a descriptor check.
 
-    The descriptor count is taken before the class and after it, and only `tearDown` closes handles,
-    so a test that leaves one open fails the class.
+    The descriptor count is taken before the class and after it, and only each test's `release`
+    cleanup closes handles, so a test that leaves one open fails the class. A class whose tests never
+    opened a handle fails too (when the whole class ran): it tested some other backend.
     """
 
     @classmethod
     def setUpClass(cls):
         cls.fds_before = open_fds() if os.name != 'nt' else 0
+        cls.handles_opened = 0
+        cls.tests_released = 0
         super().setUpClass()
 
     @classmethod
@@ -71,19 +89,51 @@ class Harness:
             after = open_fds()
             if after != cls.fds_before:
                 raise AssertionError(f'{cls.__name__} left descriptors open: {cls.fds_before} before, {after} after')
+        # Only when every test in the class ran: a filtered run of one test may rightly open nothing.
+        whole_class = cls.tests_released == len(unittest.TestLoader().getTestCaseNames(cls))
+        if whole_class and not cls.handles_opened:
+            raise AssertionError(f'no test in {cls.__name__} opened a DjangoCache')
+
+    # True: each alias gets its own directory (CacheMiddlewareTest's `default` and `other` must be two
+    # caches). False: every alias shares one, as BaseCacheTests needs for its prefix and version tests.
+    separate_locations = False
 
     def setUp(self):
-        super().setUp()
+        # Before super().setUp(), which in CacheMiddlewareTest and the session tests already takes
+        # backend instances from `caches`. As FileBasedCacheTests does: override_settings can't change
+        # LOCATION per test, so the settings are changed in place and the signal sent by hand.
+        # DjangoCache's receiver closes the previous test's handles.
         self.dirname = tempfile.mkdtemp()
-        # As FileBasedCacheTests does: override_settings can't change LOCATION per test, so the
-        # settings are changed in place and the signal sent by hand. DjangoCache's receiver closes
-        # the previous test's handles.
-        for params in settings.CACHES.values():
-            params['LOCATION'] = self.dirname
+        for alias, params in settings.CACHES.items():
+            params['LOCATION'] = os.path.join(self.dirname, alias) if self.separate_locations else self.dirname
         setting_changed.send(self.__class__, setting='CACHES', enter=False)
+        # A cleanup, not tearDown: cleanups run after tearDown, last registered first, and Django's own
+        # setUp registers some that use the cache (CacheMiddlewareTest's `clear`s), which would reopen
+        # it. Registered before super().setUp(), this one runs after all of them.
+        self.addCleanup(self.release)
+        super().setUp()
+        for alias in settings.CACHES:
+            self.assertIsInstance(caches[alias], DjangoCache, f'CACHES[{alias!r}] is not ours')
+        # Registered last, so it runs first among the cleanups, before Django's and before release.
+        self.changed_cache_settings = False
+        setting_changed.connect(self.note_cache_settings)
+        self.addCleanup(self.check_not_ours)
 
-    def tearDown(self):
-        super().tearDown()  # BaseCacheTests clears the cache
+    def note_cache_settings(self, *, setting, **kwargs):
+        if setting in ('CACHES', 'SESSION_CACHE_ALIAS'):
+            self.changed_cache_settings = True
+
+    def check_not_ours(self):
+        setting_changed.disconnect(self.note_cache_settings)
+        listed = self._testMethodName in NOT_OURS.get(type(self).__name__, {})
+        if self.changed_cache_settings and not listed:
+            self.fail('this test changes CACHES or SESSION_CACHE_ALIAS for itself, and NOT_OURS does not list it')
+        if listed and not self.changed_cache_settings:
+            self.fail('NOT_OURS lists this test, but it never changed CACHES or SESSION_CACHE_ALIAS')
+
+    def release(self):
+        type(self).handles_opened += len(djangocache.handles)
+        type(self).tests_released += 1
         djangocache.close_all()
         shutil.rmtree(self.dirname)
 
@@ -146,6 +196,89 @@ class OxidePrefixedCacheTests(Harness, django_tests.BaseCacheTests, TestCase):
             self.assertEqual(caches[alias].key_prefix != 'site', alias == 'prefix', alias)
 
 
+# The framework on top: Django's middleware, utils, i18n and template-response classes, and its cache
+# session backends, each hard-wired to locmem in Django and pointed at DjangoCache here. Their other
+# class-level settings (CACHE_MIDDLEWARE_KEY_PREFIX and the rest) are inherited.
+
+# The harness sets LOCATION per test; this placeholder fails loudly at first open if anything uses
+# an instance built before it does.
+UNSET = '/dev/null/set-per-test'
+
+
+def one():
+    return {'default': {'BACKEND': BACKEND, 'LOCATION': UNSET}}
+
+
+def prefixed():
+    return {'default': {'BACKEND': BACKEND, 'LOCATION': UNSET, 'KEY_PREFIX': 'cacheprefix'}}
+
+
+@strict
+@override_settings(CACHES=one())
+class OxideCacheUtils(Harness, django_tests.CacheUtils):
+    pass
+
+
+@strict
+@override_settings(CACHES=prefixed())
+class OxidePrefixedCacheUtils(Harness, django_tests.PrefixedCacheUtils):
+    pass
+
+
+@strict
+@override_settings(CACHES=one())
+class OxideCacheHEADTest(Harness, django_tests.CacheHEADTest):
+    pass
+
+
+@strict
+@override_settings(CACHES=one())
+class OxideCacheI18nTest(Harness, django_tests.CacheI18nTest):
+    pass
+
+
+@strict
+@override_settings(CACHES=prefixed())
+class OxidePrefixedCacheI18nTest(Harness, django_tests.PrefixedCacheI18nTest):
+    pass
+
+
+@strict
+@override_settings(
+    CACHES={
+        'default': {'BACKEND': BACKEND, 'LOCATION': UNSET},
+        # As in Django's class: a string TIMEOUT, which BaseCache coerces.
+        'other': {'BACKEND': BACKEND, 'LOCATION': UNSET, 'TIMEOUT': '1'},
+    }
+)
+class OxideCacheMiddlewareTest(Harness, django_tests.CacheMiddlewareTest):
+    separate_locations = True
+
+
+@strict
+@override_settings(CACHES=one())
+class OxideTestWithTemplateResponse(Harness, django_tests.TestWithTemplateResponse):
+    pass
+
+
+@strict
+@override_settings(CACHES=one())
+class OxideCacheSessionTests(Harness, session_tests.CacheSessionTests):
+    pass
+
+
+@strict
+@override_settings(CACHES=one())
+class OxideCacheDBSessionTests(Harness, session_tests.CacheDBSessionTests):
+    pass
+
+
+@strict
+@override_settings(CACHES=one())
+class OxideCacheDBSessionWithTimeZoneTests(Harness, session_tests.CacheDBSessionWithTimeZoneTests):
+    pass
+
+
 # Async methods DjangoCache leaves to BaseCache, built from the ones it overrides.
 INHERITED_ASYNC = {'aget_or_set', 'aincr_version', 'adecr_version'}
 
@@ -166,7 +299,7 @@ ASYNC_FORMS = [
 ]
 
 
-@override_settings(CACHES={'default': {'BACKEND': BACKEND, 'LOCATION': 'set per test'}})
+@override_settings(CACHES={'default': {'BACKEND': BACKEND, 'LOCATION': UNSET}})
 class OxideBackendTests(Harness, SimpleTestCase):
     """What BaseCacheTests can't see on every Django line: that each async method calls its sync form.
 
@@ -249,12 +382,14 @@ def check_strict_tables(cases, result) -> list[str]:
         problems.append(f'{cls}.{name} skipped, and SKIPS does not list it')
     for cls, name in sorted(should_skip - skipped):
         problems.append(f'{cls}.{name} is in SKIPS but ran')
-    ran = {(type(test).__name__, test._testMethodName) for test in cases}
+    # A listed method must exist on its class (a renamed Django test), whether or not this run ran it,
+    # so a filtered run of one class still passes.
     for table_name, table in (('EXPECTED_FAILURES', EXPECTED_FAILURES), ('NOT_OURS', NOT_OURS)):
-        for cls, names in table.items():
+        for cls_name, names in table.items():
+            cls = globals().get(cls_name)
             for name in names:
-                if (cls, name) not in ran:
-                    problems.append(f'{table_name} lists {cls}.{name}, which did not run')
+                if cls is None or not hasattr(cls, name):
+                    problems.append(f'{table_name} lists {cls_name}.{name}, which does not exist')
     return problems
 
 

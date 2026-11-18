@@ -8,7 +8,7 @@
 #   line       5.2, 6.0 or 6.1. Default: every line that supports the environment's Python.
 #
 # Each sdist is downloaded once into .django-src/ (ignored). Every run checks the tarball against its
-# sha256 here and extracts it afresh, so the tests never run against a different Django than they
+# sha256 here and extracts it afresh into a directory of its own, so the tests never run against a different Django than they
 # shipped with, edited or not. django_suite/run.py runs the tests in-process from the sdist; see its
 # docstring for why.
 set -euo pipefail
@@ -42,22 +42,29 @@ pyver="$("$python" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_in
 # The fd-heavy tests need more than macOS's default 256 over non-interactive ssh.
 ulimit -n 10240
 
+# Each run extracts into its own directory, so two runs at once never share a tree.
+mkdir -p "$SRC"
+# A run killed with SIGKILL leaves its tree (about 65 MB a line); sweep those older than a day.
+find "$SRC" -maxdepth 1 -name 'run.*' -type d -mtime +0 -exec rm -rf {} + 2>/dev/null || true
+RUN_DIR="$(mktemp -d "$PWD/$SRC/run.XXXXXX")"
+trap 'rm -rf "$RUN_DIR"' EXIT
+
 fetch() {  # version sha256 -> prints the sdist root
-    local version="$1" sha="$2" dir="$SRC/$1" tarball="$SRC/django-$1.tar.gz"
-    mkdir -p "$SRC"
+    local version="$1" sha="$2" dir="$RUN_DIR/$1" tarball="$SRC/django-$1.tar.gz"
     if [[ ! -f "$tarball" ]]; then
-        curl -fsSL -o "$tarball.part" "https://files.pythonhosted.org/packages/source/d/django/django-$version.tar.gz"
-        mv "$tarball.part" "$tarball"
+        # `|| return 1` throughout: set -e doesn't apply inside $(fetch ...).
+        curl -fsSL -o "$tarball.part.$$" "https://files.pythonhosted.org/packages/source/d/django/django-$version.tar.gz" \
+            || { rm -f "$tarball.part.$$"; echo "could not download django-$version.tar.gz" >&2; return 1; }
+        mv "$tarball.part.$$" "$tarball" || return 1
     fi
     if [[ "$(shasum -a 256 "$tarball" | cut -d' ' -f1)" != "$sha" ]]; then
         echo "django-$version.tar.gz does not match its sha256; deleted it" >&2
         rm -f "$tarball"
         return 1
     fi
-    rm -rf "$dir"
-    mkdir -p "$dir"
-    tar xzf "$tarball" -C "$dir"
-    echo "$PWD/$dir/django-$version"
+    mkdir -p "$dir" || return 1
+    tar xzf "$tarball" -C "$dir" || return 1
+    echo "$dir/django-$version"
 }
 
 failed=()
