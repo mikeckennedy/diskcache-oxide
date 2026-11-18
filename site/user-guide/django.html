@@ -496,6 +496,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="../example-apps/index.html"> 
+<span class="menu-text">Example apps</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -507,7 +511,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="7" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="12" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -684,6 +688,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   </ul></li>
   <li><a href="#one-cache-per-directory-every-worker-sharing-it" id="toc-one-cache-per-directory-every-worker-sharing-it" class="nav-link" data-scroll-target="#one-cache-per-directory-every-worker-sharing-it">One cache per directory, every worker sharing it</a></li>
   <li><a href="#the-calls" id="toc-the-calls" class="nav-link" data-scroll-target="#the-calls">The calls</a></li>
+  <li><a href="#performance" id="toc-performance" class="nav-link" data-scroll-target="#performance">Performance</a>
+  <ul class="collapse">
+  <li><a href="#async-reads" id="toc-async-reads" class="nav-link" data-scroll-target="#async-reads">Async reads</a></li>
+  </ul></li>
   <li><a href="#in-tests" id="toc-in-tests" class="nav-link" data-scroll-target="#in-tests">In tests</a></li>
   <li><a href="#coming-from-diskcaches-djangocache" id="toc-coming-from-diskcaches-djangocache" class="nav-link" data-scroll-target="#coming-from-diskcaches-djangocache">Coming from diskcache’s DjangoCache</a></li>
   </ul>
@@ -746,7 +754,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a>SESSION_ENGINE <span class="op">=</span> <span class="st">'django.contrib.sessions.backends.cache'</span></span>
 <span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>SESSION_CACHE_ALIAS <span class="op">=</span> <span class="st">'state'</span></span></code></pre></div>
-<p><code>default</code> is durable: a write that can’t get the lock in time is dropped and a read that fails is a miss (see <a href="#errors-raise-durable-drops">durable</a> below). <code>state</code> isn’t, so a write that fails raises, and it never evicts for size, so sessions aren’t pushed out by pages; it grows until entries expire, so don’t make a session for every anonymous visitor. Keep state out of the directory you’d delete on a deploy: here pages live under <code>cache/</code> and state under <code>state/</code>, as in <a href="../recipes/web-workers.html#the-recommended-setup">Sharing a cache across web workers</a>. The <a href="https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django">example project</a> is this setup under gunicorn.</p>
+<p><code>default</code> is durable: a write that can’t get the lock in time is dropped and a read that fails is a miss (see <a href="#errors-raise-durable-drops">durable</a> below). <code>state</code> isn’t, so a write that fails raises, and it never evicts for size, so sessions aren’t pushed out by pages; it grows until entries expire, so don’t make a session for every anonymous visitor. Keep state out of the directory you’d delete on a deploy: here pages live under <code>cache/</code> and state under <code>state/</code>, as in <a href="../recipes/web-workers.html#the-recommended-setup">Sharing a cache across web workers</a>. The <a href="https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django">example project</a> is this setup under gunicorn, and <a href="../example-apps/django.html">the Django example</a> walks through its code.</p>
 </section>
 <section id="settings" class="level1">
 <h1>Settings</h1>
@@ -804,7 +812,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong><a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> does nothing.</strong> Django calls it after every request; closing would reopen the cache on the next one. The handles live for the process, and background maintenance keeps the cache tidy.</li>
 <li><strong><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> clears the directory</strong>: every alias, prefix and version on that <code>LOCATION</code>, as Django’s file and Redis backends do. Aliases that must clear separately need separate <code>LOCATION</code>s.</li>
 <li><strong>Never delete the directory under running workers.</strong> They would carry on in the deleted files, and a worker started later would get a new, empty cache the others never see. Use <code>cache.clear()</code>.</li>
-<li><strong>When to use <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a>.</strong> A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> suits most sites. Make the alias that many worker processes write to most a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> with <code>OPTIONS = {'shards': 8}</code>: with 8 worker processes at 99 reads to 1 write it’s about 4x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (<a href="../user-guide/fanoutcache.html">FanoutCache</a> has the numbers). Choose it before the directory is made: a directory holds one kind or the other.</li>
+<li><strong>When to use <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a>.</strong> A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> suits most sites. Make an alias that several worker processes use heavily, reading or writing, a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> with <code>OPTIONS = {'shards': 8}</code>: with 8 worker processes it’s about 5x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (<a href="#performance">performance</a> below, and <a href="../user-guide/fanoutcache.html">FanoutCache</a>). Choose it before the directory is made: a directory holds one kind or the other.</li>
 </ul>
 </section>
 <section id="the-calls" class="level1">
@@ -814,7 +822,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>, <a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a>, <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, <a href="../reference/DjangoCache.has_key.html#diskcache_oxide.DjangoCache.has_key" class="gdls-link gdls-code">has_key</a></strong>: one call each. A timeout of 0 or less stores nothing (and removes the key if it was there), <code>None</code> is forever. A timeout that isn’t a number (a <code>Decimal</code>, a <code>str</code>, a <code>bool</code>) raises <code>TypeError</code>.</li>
 <li><strong><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> and <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr</a></strong> are atomic across threads and processes and keep the entry’s expiry. A missing key raises <code>ValueError</code>; a value that isn’t a number (an <code>int</code> or a <code>float</code>; a stored <code>bool</code> doesn’t count) raises <code>TypeError</code>.</li>
 <li><strong><a href="../reference/DjangoCache.get_many.html#diskcache_oxide.DjangoCache.get_many" class="gdls-link gdls-code">get_many</a></strong> returns a stored <code>None</code>; <strong><a href="../reference/DjangoCache.set_many.html#diskcache_oxide.DjangoCache.set_many" class="gdls-link gdls-code">set_many</a></strong> is a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> per key, so no pickling code runs while the cache’s write lock is held; <strong><a href="../reference/DjangoCache.delete_many.html#diskcache_oxide.DjangoCache.delete_many" class="gdls-link gdls-code">delete_many</a></strong> deletes up to 100 keys per transaction (per shard on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>), validating every key first.</li>
-<li><strong>The async methods</strong> (<a href="../reference/DjangoCache.aget.html#diskcache_oxide.DjangoCache.aget" class="gdls-link gdls-code">aget</a>, <a href="../reference/DjangoCache.aset.html#diskcache_oxide.DjangoCache.aset" class="gdls-link gdls-code">aset</a>, <a href="../reference/DjangoCache.aincr.html#diskcache_oxide.DjangoCache.aincr" class="gdls-link gdls-code">aincr</a> and the rest) each run their sync form in one call through asgiref’s <code>sync_to_async</code>, as Django does, so <a href="../reference/DjangoCache.aincr.html#diskcache_oxide.DjangoCache.aincr" class="gdls-link gdls-code">aincr</a> is atomic and keeps the expiry on every supported Django line (Django 5.2’s and 6.0’s own <a href="../reference/DjangoCache.aincr.html#diskcache_oxide.DjangoCache.aincr" class="gdls-link gdls-code">aincr</a> is a get and then a set).</li>
+<li><strong>The async methods</strong> (<a href="../reference/DjangoCache.aget.html#diskcache_oxide.DjangoCache.aget" class="gdls-link gdls-code">aget</a>, <a href="../reference/DjangoCache.aset.html#diskcache_oxide.DjangoCache.aset" class="gdls-link gdls-code">aset</a>, <a href="../reference/DjangoCache.aincr.html#diskcache_oxide.DjangoCache.aincr" class="gdls-link gdls-code">aincr</a> and the rest) each run their sync form in one call through asgiref’s <code>sync_to_async</code>, as Django does, so <a href="../reference/DjangoCache.aincr.html#diskcache_oxide.DjangoCache.aincr" class="gdls-link gdls-code">aincr</a> is atomic and keeps the expiry on every supported Django line (Django 5.2’s and 6.0’s own <a href="../reference/DjangoCache.aincr.html#diskcache_oxide.DjangoCache.aincr" class="gdls-link gdls-code">aincr</a> is a get and then a set). Reads hop to a thread too, though a read is faster than the hop; <a href="#async-reads">async reads</a> says why.</li>
 </ul>
 <p><code>get_or_set</code>, <code>incr_version</code>, <code>decr_version</code> and their async forms are Django’s own, built from the calls above. Beyond Django’s API: <code>tag=</code> on <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> and <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a> (and <a href="../reference/DjangoCache.aset.html#diskcache_oxide.DjangoCache.aset" class="gdls-link gdls-code">aset</a>, <a href="../reference/DjangoCache.aadd.html#diskcache_oxide.DjangoCache.aadd" class="gdls-link gdls-code">aadd</a>), then <code>evict(tag)</code> removes every entry with that tag; <code>pop(key)</code>; <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> and <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a>; <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="gdls-link gdls-code">maintenance_stats()</a> and <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a>; and <a href="../reference/DjangoCache.cache.html#diskcache_oxide.DjangoCache.cache" class="gdls-link gdls-code">cache</a>, the <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> or <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> underneath, whose keys are the made keys (<code>prefix:version:key</code>).</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> django.core.cache <span class="im">import</span> cache</span>
@@ -835,6 +843,146 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <p><code>@cache_page</code> stores the response before <code>SessionMiddleware</code> adds <code>Vary: Cookie</code>, so a cached view that reads the session serves one visitor’s page to everyone. Add <code>@vary_on_cookie</code> to such a view, or keep the session out of it. This is Django’s behavior on every backend.</p>
 </div>
 </div>
+</section>
+<section id="performance" class="level1">
+<h1>Performance</h1>
+<p>Measured with <code>bench/django.py</code>, which reaches every backend through <code>django.core.cache.caches</code>, so each pays the same framework cost. Django 6.1.3 on Python 3.14, a MacBook Pro (M5 Pro) on AC power; only compare numbers from the same machine. Django’s own backends were given <code>MAX_ENTRIES</code> of 100,000 so none of them culls during the run. <a href="../reference/DjangoCache.html#diskcache_oxide.DjangoCache" class="gdls-link gdls-code">DjangoCache</a> adds about 0.27 µs to a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">Cache.get</a> for Django’s key making and validation.</p>
+<p><strong>Reads, one thread.</strong> p50 of a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> that hits, in µs. The 50 KiB and 100 KiB values are what <code>cache_page</code> stores: a pickled <code>HttpResponse</code>.</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Value</th>
+<th>diskcache-oxide</th>
+<th><code>shards=8</code></th>
+<th>diskcache 5.6.3</th>
+<th><code>FileBasedCache</code></th>
+<th><code>DatabaseCache</code> (SQLite)</th>
+<th><code>LocMemCache</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Small dict</td>
+<td>1.3</td>
+<td>1.4</td>
+<td>2.7</td>
+<td>12.9</td>
+<td>10.7</td>
+<td>1.0</td>
+</tr>
+<tr class="even">
+<td>4 KiB str</td>
+<td>1.6</td>
+<td>1.6</td>
+<td>2.6</td>
+<td>15.3</td>
+<td>15.0</td>
+<td>1.0</td>
+</tr>
+<tr class="odd">
+<td>50 KiB response</td>
+<td>6.0</td>
+<td>6.0</td>
+<td>21.7</td>
+<td>49.6</td>
+<td>62.5</td>
+<td>3.1</td>
+</tr>
+<tr class="even">
+<td>100 KiB response</td>
+<td>22.2</td>
+<td>21.8</td>
+<td>23.1</td>
+<td>59.4</td>
+<td>110.4</td>
+<td>3.8</td>
+</tr>
+</tbody>
+</table>
+<p>Writes are mixed. Storing the 50 KiB response took 36 µs, against diskcache’s 323, <code>FileBasedCache</code>’s 601 and <code>DatabaseCache</code>’s 95. At 100 KiB, past the 64 KiB line where a value goes in a file of its own, it took 177 µs: still under diskcache’s 337 and <code>FileBasedCache</code>’s 1,193, but over <code>DatabaseCache</code>’s 141. <code>LocMemCache</code> is the ceiling: a dict in the process, which no other worker can see.</p>
+<p><strong>Worker processes.</strong> Each process opens the alias and runs 99 reads to 1 write over 1,000 keys holding a 1 KB <code>str</code>, in operations per second:</p>
+<div class="dco-chart" data-type="lines" data-x="Processes" data-y="operations per second" data-title="With many worker processes, shards keeps climbing" data-note="bench/django.py: 99 reads to 1 write through django.core.cache, 1 KB str values, one thread per process, Django 6.1.3, Python 3.14, MacBook Pro (M5 Pro). Higher is better. Hover for the numbers.">
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Processes</th>
+<th>diskcache-oxide</th>
+<th><code>shards=8</code></th>
+<th>diskcache 5.6.3</th>
+<th><code>DatabaseCache</code> (SQLite)</th>
+<th><code>FileBasedCache</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>514k ops/s</td>
+<td>547k</td>
+<td>341k</td>
+<td>79k</td>
+<td>43k</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>610k</td>
+<td>894k</td>
+<td>610k</td>
+<td>144k</td>
+<td>65k</td>
+</tr>
+<tr class="odd">
+<td>4</td>
+<td>607k</td>
+<td>1,397k</td>
+<td>1,013k</td>
+<td>262k</td>
+<td>115k</td>
+</tr>
+<tr class="even">
+<td>8</td>
+<td>269k</td>
+<td>1,431k</td>
+<td>1,270k</td>
+<td>300k</td>
+<td>129k</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops climbing past two processes and then falls, and the writes aren’t the cause: at 1,000 reads to 1 write it falls the same way (295k at 8 processes), and so it does with no writes at all. The likely cause is the lock every read takes in SQLite’s shared-memory file, which processes reading one database contend for (not yet profiled across processes); it’s the top item for the <a href="../user-guide/performance.html#next-free-threaded-scaling">free-threaded phase</a>. Shards spread the reads over 8 files, which is what <code>OPTIONS = {'shards': 8}</code> is for: with 8 worker processes it’s 5.3x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and 1.1x diskcache’s backend, which is always sharded. The free-threaded build’s process numbers are the same or up to 13% lower.</p>
+<p>Threads in one process are the other case. With 8 threads sharing one alias on Python 3.14, a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> keeps 510k ops/s where diskcache’s backend falls to 18k. On the free-threaded build the gap closes: at 8 threads and 99:1, 676k (871k with <code>shards=8</code>) against diskcache’s 430k, and at 1,000:1 diskcache’s backend (986k) edges out a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (823k) and matches <code>shards=8</code> (993k).</p>
+<p>Redis (Django’s <code>RedisCache</code>) was measured too, in a container on the same Mac, but its numbers aren’t shown: at over 100 µs a read, they mostly measure the port forwarding into the container’s VM rather than Redis.</p>
+<section id="async-reads" class="level2">
+<h2 class="anchored" data-anchor-id="async-reads">Async reads</h2>
+<p>Every async method, <a href="../reference/DjangoCache.aget.html#diskcache_oxide.DjangoCache.aget" class="gdls-link gdls-code">aget</a> included, runs its sync form on a thread through <code>sync_to_async</code>, as Django’s own backends do. That hop costs more than the read:</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Case</th>
+<th><code>await cache.aget()</code> p50 / p99.9</th>
+<th><code>cache.get()</code> inline p50 / p99.9</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Small dict</td>
+<td>58 / 191 µs</td>
+<td>2.5 / 12 µs</td>
+</tr>
+<tr class="even">
+<td>100 KiB response</td>
+<td>86 / 138 µs</td>
+<td>24 / 65 µs</td>
+</tr>
+<tr class="odd">
+<td>Small dict, beside a process writing</td>
+<td>58 / 82 µs</td>
+<td>7.2 / 20 µs</td>
+</tr>
+</tbody>
+</table>
+<p>Reading a small value inline would be about 20 times faster (3.6 times for the 100 KiB response), and the hop stays anyway, because an <code>await</code> on a coroutine that never suspends doesn’t give the event loop a turn. An inline <a href="../reference/DjangoCache.aget.html#diskcache_oxide.DjangoCache.aget" class="gdls-link gdls-code">aget</a> in a loop over a million keys would hold every other request on that worker until the loop ended, however fast each read was, and that breaks what an <code>await</code> promises. On a thread, the loop runs other work while each read happens, and a rare slow read (a cold disk, a busy moment) delays only the request that made it. Where 60 µs a read matters, call <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get()</a> directly from the async view and accept that it holds the loop for the read.</p>
+</section>
 </section>
 <section id="in-tests" class="level1">
 <h1>In tests</h1>

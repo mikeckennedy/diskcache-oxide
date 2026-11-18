@@ -126,9 +126,30 @@ def test_serializer_name_is_checked() -> None:
     assert _encode({}) == _encode({}, 'msgpack')
 
 
-def test_lone_surrogate_str_is_refused() -> None:
+@pytest.mark.parametrize('pickle', [False, True])
+def test_lone_surrogate_str_is_refused(pickle: bool) -> None:
+    # A top-level str raises even with pickle, as in diskcache, whose SQLite binding refuses it.
     with pytest.raises(UnicodeEncodeError):
-        _encode('\ud800')
+        _encode('\ud800', 'msgpack', pickle)
+
+
+NESTED_SURROGATES = [{'q': '\ud800'}, ['ok', '\udfff'], ('\ud83d',), {'\ud800': 1}]
+
+
+@pytest.mark.parametrize('serializer', SERIALIZERS)
+@pytest.mark.parametrize('value', NESTED_SURROGATES, ids=repr)
+def test_a_nested_lone_surrogate_raises_without_pickle(serializer: str, value: Any) -> None:
+    with pytest.raises(UnicodeEncodeError):
+        _encode(value, serializer)
+
+
+@pytest.mark.parametrize('serializer', SERIALIZERS)
+@pytest.mark.parametrize('value', NESTED_SURROGATES, ids=repr)
+def test_a_nested_lone_surrogate_falls_back_to_pickle(serializer: str, value: Any) -> None:
+    # As diskcache stores it: a Django session holding one must save under pickle=True.
+    mode, _ = _encode(value, serializer, True)
+    assert mode == PICKLE
+    assert exact_equal(roundtrip(value, serializer, pickle=True), value)
 
 
 def test_plain_json_is_standard_json() -> None:
@@ -283,10 +304,13 @@ def test_pickle_only_when_the_serializer_cannot(serializer: str) -> None:
     assert _encode('x', serializer, pickle=True)[0] == RAW_STR
 
 
-def test_mutation_errors_never_fall_back_to_pickle() -> None:
-    # Only TypeError (can't represent) falls back; other errors propagate.
-    with pytest.raises(UnicodeEncodeError):
-        _encode(['\ud800'], pickle=True)
+@pytest.mark.parametrize('serializer', SERIALIZERS)
+def test_mutation_errors_never_fall_back_to_pickle(serializer: str) -> None:
+    # Only TypeError (can't represent) and UnicodeEncodeError (a nested lone surrogate) fall back;
+    # other errors propagate. An int past Python's int-to-str digit limit raises ValueError.
+    with pytest.raises(ValueError, match='4300 digits') as raised:
+        _encode([10**5000], serializer, True)
+    assert not isinstance(raised.value, UnicodeEncodeError)
 
 
 class Spy(dt.tzinfo):

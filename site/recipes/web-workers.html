@@ -496,6 +496,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="../example-apps/index.html"> 
+<span class="menu-text">Example apps</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -507,7 +511,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="7" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="12" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -837,7 +841,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="django" class="level2">
 <h2 class="anchored" data-anchor-id="django">Django</h2>
-<p>Django’s own cache runs on diskcache-oxide through <code>'BACKEND': 'diskcache_oxide.DjangoCache'</code>: pages and fragments on a durable alias, sessions and counters on a plain one, each in its own directory under the app’s root. <a href="../user-guide/django.html">Django cache backend</a> has the settings, and the <a href="https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django">example project</a> runs them under gunicorn. The backend opens nothing until first use and Django’s per-request <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> does nothing, so there’s no startup or shutdown hook to write. For caches the app uses directly, outside <code>django.core.cache</code> (a <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry, a <a href="../reference/Lock.html#diskcache_oxide.Lock" class="gdls-link gdls-code">Lock</a>, a work queue), put the setup in a module of its own (<code>myapp/caching.py</code>), take <code>ROOT</code> from <code>settings</code>, and import it where it’s needed.</p>
+<p>Django’s own cache runs on diskcache-oxide through <code>'BACKEND': 'diskcache_oxide.DjangoCache'</code>: pages and fragments on a durable alias, sessions and counters on a plain one, each in its own directory under the app’s root. <a href="../user-guide/django.html">Django cache backend</a> has the settings, and the <a href="https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django">example project</a> runs them under gunicorn (<a href="../example-apps/django.html">walked through here</a>). The backend opens nothing until first use and Django’s per-request <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> does nothing, so there’s no startup or shutdown hook to write. For caches the app uses directly, outside <code>django.core.cache</code> (a <a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a> registry, a <a href="../reference/Lock.html#diskcache_oxide.Lock" class="gdls-link gdls-code">Lock</a>, a work queue), put the setup in a module of its own (<code>myapp/caching.py</code>), take <code>ROOT</code> from <code>settings</code>, and import it where it’s needed.</p>
 </section>
 <section id="celery-and-other-background-workers" class="level2">
 <h2 class="anchored" data-anchor-id="celery-and-other-background-workers">Celery and other background workers</h2>

@@ -107,6 +107,7 @@ def test_the_workers_were_forked_from_a_master_that_opened_the_cache(client: htt
     warmed_in = {r.headers['x-warmed-in'] for r in responses}
     workers = {r.headers['x-worker'] for r in responses}
     assert len(warmed_in) == 1 and not warmed_in & workers  # one process, and not a worker: the master
+    assert len(workers) > 1
 
 
 def test_a_session_follows_the_visitor_across_workers(client: httpx.Client) -> None:

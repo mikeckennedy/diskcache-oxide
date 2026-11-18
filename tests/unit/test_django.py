@@ -258,6 +258,18 @@ def test_pickle_is_on_by_default(tmp_path: Path) -> None:
     assert type(backend.get('safe')) is SafeString
 
 
+def test_a_session_holding_a_lone_surrogate_saves(tmp_path: Path) -> None:
+    # What the cache session engine stores: a dict, here with a lone surrogate from a form field.
+    # msgpack can't hold it, so under pickle (the default) it's pickled, as diskcache's backend does.
+    backend = make(tmp_path)
+    session = {'_auth_user_id': '1', 'query': 'caf\udce9'}
+    backend.set('django.contrib.sessions.cache1', session)
+    assert backend.get('django.contrib.sessions.cache1') == session
+    off = make(tmp_path / 'off', OPTIONS={'pickle': False})
+    with pytest.raises(UnicodeEncodeError):
+        off.set('s', session)
+
+
 def test_pickle_off_stores_plain_types_only(tmp_path: Path) -> None:
     backend = make(tmp_path, OPTIONS={'pickle': False})
     backend.set('plain', {'a': [1, 2.5, 'x']})

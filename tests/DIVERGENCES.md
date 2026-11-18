@@ -510,6 +510,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: Django's cache also holds sessions and rate limits, where a request that waits silently for as long as the lock is held is a bug; closing per request reopened the cache on every request; and a plain `Cache` is the documented default since plan 29. `pickle=True` because Django's contract is "any picklable object": the framework itself caches `HttpResponse`s, `SafeString`s, model instances and session dicts (plan 31).
 - Tests: `tests/unit/test_django.py`, and `django_suite/oxide_suite/tests.py` (Django's `BaseCacheTests` on a plain `Cache`, a `FanoutCache` and a prefixed setup, its framework and session test classes, and `OxideBackendTests`).
 
+## D-063 An int past Python's digit limit raises, even with pickle
+
+- Kind: test-visible
+- diskcache: pickles any value, so an int of any size, at the top level or nested (`[10**5000]`), is stored.
+- oxide: an int outside 64 bits is written as decimal text, and Python refuses to make that text past `sys.get_int_max_str_digits()` (4,300 digits by default), so `set` raises `ValueError` from Python's own check, with or without `pickle=True`. Only `TypeError` (a type the format can't hold) and `UnicodeEncodeError` (a lone surrogate inside a value) fall back to pickle. Raising the interpreter's limit, or setting it to 0, lifts this.
+- Why: Michael's decision (2026-11-18, plan 31's step 6 review). Such ints are rare, Python's error says what happened, and an error that isn't about what the format can represent shouldn't be papered over by pickle.
+- Tests: `test_values.py` (`test_an_int_past_the_digit_limit_is_stored_with_pickle`, a strict xfail on oxide), `tests/unit/test_codec.py` (`test_mutation_errors_never_fall_back_to_pickle`).
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.

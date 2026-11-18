@@ -34,6 +34,8 @@ Fix it in this order:
 2.  Or store a plain structure instead: a dict from a model's `model_dump()`, and rebuild the object on the way out.
 3.  If you really need arbitrary objects, open a separate cache for them with `Cache('/var/cache/my-app-objects', pickle=True)`. Don't turn `pickle=True` on for a cache that other code shares just to make the error go away: every reader of that directory then runs `pickle.loads` on whatever is written there. See [Serialization](serialization.md).
 
+A `str` holding a lone surrogate (`'\ud800'`, which can arrive from a JSON body or `surrogateescape` decoding) can't be stored as UTF-8. Nested inside a value it raises `UnicodeEncodeError` without pickle and is pickled with it, as diskcache does; as a top-level value it raises either way, as it does in diskcache.
+
 A registered type that still raises here is one whose `encode` function raised, or returned something the codec can't store, or a dataclass with a field it can't store. That raises even on a cache with `pickle=True`: a registered type is never pickled.
 
 

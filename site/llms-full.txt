@@ -37,7 +37,9 @@ Args:
     serializer: `'msgpack'` (the default) or `'json'`, for values that aren't plain `str` or
         `bytes`.
     pickle: Allow pickle for values the serializer can't represent exactly. Without it, such
-        values raise `TypeError` and pickled values are never read. Once the encoder has used a
+        values raise `TypeError` (`UnicodeEncodeError` for a `str` with a lone surrogate nested
+        inside a value) and pickled values are never read. A lone surrogate in a top-level `str`
+        raises `UnicodeEncodeError` either way. Once the encoder has used a
         registration (`types`, or the global `registry`) for any part of a value, that value is
         never pickled: it is stored through the registration, or raises.
     types: A `TypeRegistry` consulted before the process-wide `diskcache_oxide.registry`, for a
@@ -185,6 +187,8 @@ Returns:
 Raises:
     TypeError: The value can't be stored exactly without pickle, `expire` is a `bool`, or
         `tag` isn't a valid key type.
+    UnicodeEncodeError: The value is a `str` with a lone surrogate, or holds one and the
+        cache has no pickle.
     Timeout: Another process held the write lock for longer than `timeout`.
 
 Examples:
@@ -216,6 +220,8 @@ Returns:
 
 Raises:
     TypeError: The value can't be stored exactly without pickle, or `expire` is a `bool`.
+    UnicodeEncodeError: The value is a `str` with a lone surrogate, or holds one and the
+        cache has no pickle.
     Timeout: Another process held the write lock for longer than `timeout`.
 
 Examples:
@@ -1848,11 +1854,11 @@ validate_key(self, key: 'str') -> 'None'
 
 Warn (`CacheKeyWarning`) about a key memcached couldn't store, as every Django backend does.
 
-get_backend_timeout(self, timeout: 'Any' = <object object at 0x11200e550>) -> 'Optional[float]'
+get_backend_timeout(self, timeout: 'Any' = <object object at 0x1161f2550>) -> 'Optional[float]'
 
 Seconds from now, or None for forever. Zero or less means "don't store it", as in Django.
 
-add(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+add(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1161f2550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
 
 Django's `add`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
 
@@ -1860,11 +1866,11 @@ get(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) ->
 
 The value, or `default` on a miss (a stored None is returned as None).
 
-set(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+set(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1161f2550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
 
 Django's `set`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
 
-touch(self, key: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None) -> 'bool'
+touch(self, key: 'Any', timeout: 'Any' = <object object at 0x1161f2550>, version: 'Optional[int]' = None) -> 'bool'
 
 Give the key a new timeout. Returns whether it was there.
 
@@ -1892,7 +1898,7 @@ get_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]'
 
 The keys that are there, with their values; a stored None is returned.
 
-set_many(self, data: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None) -> 'list[Any]'
+set_many(self, data: 'Any', timeout: 'Any' = <object object at 0x1161f2550>, version: 'Optional[int]' = None) -> 'list[Any]'
 
 A `set` per key, not one transaction: a value's pickling can run arbitrary code (load a
 session, run a query), which mustn't run holding the cache's write lock. Returns the keys
@@ -1949,7 +1955,7 @@ check(self, fix: 'bool' = False) -> 'list[Any]'
 
 Check the cache's consistency, returning the problems as warnings; see `Cache.check`.
 
-aadd(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+aadd(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1161f2550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
 
 `add`, run in one `sync_to_async` call.
 
@@ -1957,11 +1963,11 @@ aget(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) -
 
 `get`, run in one `sync_to_async` call.
 
-aset(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+aset(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1161f2550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
 
 `set`, run in one `sync_to_async` call.
 
-atouch(self, key: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None) -> 'bool'
+atouch(self, key: 'Any', timeout: 'Any' = <object object at 0x1161f2550>, version: 'Optional[int]' = None) -> 'bool'
 
 `touch`, run in one `sync_to_async` call.
 
@@ -1985,7 +1991,7 @@ aget_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]
 
 `get_many`, run in one `sync_to_async` call.
 
-aset_many(self, data: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None) -> 'list[Any]'
+aset_many(self, data: 'Any', timeout: 'Any' = <object object at 0x1161f2550>, version: 'Optional[int]' = None) -> 'list[Any]'
 
 `set_many`, run in one `sync_to_async` call.
 
@@ -2904,7 +2910,7 @@ The limit is per handle, so a `with Cache(...)` per request logs on every reques
 
 ## More than one process writing
 
-A single `Cache` has one write lock per directory. Reads never wait for it, but every write does, so eight worker processes that all bump counters are eight writers lining up for one lock. Start with plain caches anyway: most apps mostly read, a plain cache uses less memory (one connection pool, not one per shard), and its writes take about 20 µs. If one cache that many processes write to (counters, rate limits) does show the lines, open it as a [`FanoutCache`](fanoutcache.qmd): it spreads the keys over several databases, each with its own lock, and in the repository's benchmark it holds its rate at 8 processes where a plain `Cache` falls to about 40% of its one-process rate.
+A single `Cache` is one database file. Every write in every process queues on its one write lock, and reads, though they never wait for that lock, take a lock of their own in SQLite's shared-memory file that processes contend for. So past two or three worker processes a plain `Cache` gets slower, even if they only read. Start with plain caches anyway: a single worker process (a GIL build's threads, or one async worker) doesn't hit this, a plain cache uses less memory (one connection pool, not one per shard), and its writes take about 20 µs. If one cache that several worker processes use heavily does show it, open it as a [`FanoutCache`](fanoutcache.qmd): it spreads the keys over several databases, and in the repository's benchmark it holds its rate at 8 processes where a plain `Cache` falls to about 40% of its one-process rate.
 
 ## Shutting down
 
@@ -3169,6 +3175,8 @@ Fix it in this order:
 1. Register the type: `diskcache_oxide.register_type(Episode, name='tp.Episode')` for a dataclass, or with `encode=` and `decode=` functions for anything else (an `ObjectId`, a namedtuple, a `str` subclass). The value is stored without pickle and comes back as the type you stored. See [Your own types](serialization.qmd#your-own-types).
 2. Or store a plain structure instead: a dict from a model's `model_dump()`, and rebuild the object on the way out.
 3. If you really need arbitrary objects, open a separate cache for them with `Cache('/var/cache/my-app-objects', pickle=True)`. Don't turn `pickle=True` on for a cache that other code shares just to make the error go away: every reader of that directory then runs `pickle.loads` on whatever is written there. See [Serialization](serialization.qmd).
+
+A `str` holding a lone surrogate (`'\ud800'`, which can arrive from a JSON body or `surrogateescape` decoding) can't be stored as UTF-8. Nested inside a value it raises `UnicodeEncodeError` without pickle and is pickled with it, as diskcache does; as a top-level value it raises either way, as it does in diskcache.
 
 A registered type that still raises here is one whose `encode` function raised, or returned something the codec can't store, or a dataclass with a field it can't store. That raises even on a cache with `pickle=True`: a registered type is never pickled.
 
@@ -3667,7 +3675,7 @@ What the registry guarantees:
 - **Nothing is imported by name.** A registered value is stored as `{"$t:bson.ObjectId": "..."}`, and a reader looks that name up in its own registry. A process that hasn't registered it gets `ForeignValueError`, and the row stays for one that has. That is the whole difference from pickle.
 - **The name is yours.** Rename or move the class and the stored rows still read, because the tag is the name you chose, not the class's path.
 - **Lookup is by exact type.** A subclass of a registered class is its own registration. The codec's own types (`str`, `dict`, `datetime` and the rest) can't be registered, since their wire form is a contract across versions; their subclasses can, which is how a namedtuple or a `str` subclass gets in.
-- **A registered type is never pickled**, even on a cache with `pickle=True`. Once the encoder has used a registration for any part of a value, that value is stored through it or `set()` raises: if its `encode` raises, or returns something the codec can't store. You registered it to stay off pickle, and a silent fallback would hide the bug.
+- **A registered type is never pickled**, even on a cache with `pickle=True`. Once the encoder has used a registration for any part of a value, that value is stored through it or `set()` raises: if its `encode` raises, or returns something the codec can't store. You registered it to stay off pickle, and a silent fallback would hide the bug. The encoder reads a value in order, so on a cache with `pickle=True`, `[Registered(), Unstorable()]` raises while `[Unstorable(), Registered()]` is pickled whole, since the second list fails on its first item, before any registration is used. A lone surrogate in a nested `str` counts as unstorable here, as diskcache stores it by pickling.
 - **Last registration wins**, by class and by name, so a module that a dev server reloads can register its new class object again.
 - **A decode function's errors are classified as a pickle hook's would be.** A `Timeout` or `OSError` raises with the row kept (a miss under `durable=True`). An error about the row, such as a `TypeError` from a dataclass row written before a field was removed, becomes `CorruptValueError` with yours as `__cause__`, and `on_decode_error='miss'` deletes that row so the writer replaces it. Decode runs while the cache holds a connection, as unpickling does, so a slow `decode` delays forks and checkpoints for as long as it runs; one that re-enters the cache is fine.
 
@@ -4104,7 +4112,7 @@ What stays in the app: reading its settings file and environment variables (pass
 
 ### FanoutCache: sharded caches
 
-A plain `Cache` has one write lock per database file, which makes it a shop with one checkout lane: readers walk straight through, but every writer queues, and eight worker processes that all bump counters are eight carts in one lane. A `FanoutCache` opens more lanes. It's one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key, so writes to different keys go to different files and stop queueing on one lock. It has the same methods as `Cache` for single keys, and it's one directory, shared by any number of threads and processes.
+A plain `Cache` is one SQLite database file, which makes it a shop with one checkout lane. Every writer in every process queues on its one write lock, and every read takes a lock in its shared-memory file, which processes reading the same database contend for. So past two or three worker processes a plain `Cache` gets slower, not faster, even when nobody writes. A `FanoutCache` opens more lanes. It's one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key, so reads and writes of different keys go to different files and stop contending on one. It has the same methods as `Cache` for single keys, and it's one directory, shared by any number of threads and processes.
 
 ```python
 from diskcache_oxide import FanoutCache
@@ -4118,7 +4126,7 @@ cache.shard_of('ip:203.0.113.7')   # 0 to 7, the same in every process and every
 
 ## Should you use it?
 
-Use a `FanoutCache` for a cache that **many writers share**: a web server with several worker processes (a web garden), many threads on free-threaded Python, or a write-heavy load. It's faster in all three, by up to 4x, and it costs about 10 MiB more memory per process than a plain `Cache`. A plain [`Cache`](getting-started.qmd) stays the default, and the [recommended setup](../recipes/web-workers.qmd#the-recommended-setup) uses one for every cache: it's smaller, it keeps fewer files, and it's the only kind with queues and full transactions. Make the one cache your workers write to most a `FanoutCache` when its numbers matter.
+Use a `FanoutCache` for a cache that **several processes or many threads use heavily**: a web server with several worker processes (a web garden), reading or writing, many threads on free-threaded Python, or a write-heavy load. It's faster in all three, by up to 4x (up to 6x with 8 processes only reading), and it costs about 10 MiB more memory per process than a plain `Cache`. A plain [`Cache`](getting-started.qmd) stays the default, and the [recommended setup](../recipes/web-workers.qmd#the-recommended-setup) uses one for every cache: it's smaller, it keeps fewer files, and it's the only kind with queues and full transactions. Make the one cache your worker processes use most a `FanoutCache` when its numbers matter. A site with one worker process (several threads on a GIL build) gains little from it.
 
 The numbers below come from the benchmark in the repository (`bench/fanout.py`, the released 0.3.5 wheels, a Mac Studio with 18 cores, 1 KB values over 50,000 keys, every key in each worker's plan, three rounds; `bench/results/fanout-3.14.10-studio.txt` and `fanout-3.14.10t-studio.txt`).
 
@@ -4130,7 +4138,7 @@ The numbers below come from the benchmark in the repository (`bench/fanout.py`, 
 | 4 | 519k | 1,004k | 729k |
 | 8 | 261k | 1,094k | 950k |
 
-- **It removes the write-lock ceiling.** A plain `Cache` stops climbing past a few processes and then falls, because the 1% of operations that are writes all queue on one database file's write lock. A `FanoutCache` keeps climbing: 4.2x a plain `Cache` at 8 processes, and 1.15x diskcache's own `FanoutCache`. A pre-forking server (gunicorn, uvicorn workers) with a worker per core is this case.
+- **It removes the one-file ceiling.** A plain `Cache` stops climbing past a few processes and then falls. The writes aren't what does it: with no writes at all it falls the same way, from 836k ops/s at 2 processes to 296k at 8, while a `FanoutCache(8)` climbs to 1,741k and diskcache's to 1,684k (`bench/read_procs.py` on a MacBook Pro, M5 Pro, Python 3.14; `bench/results/read-procs-3.14.10-macbook-m5-pro.md`). The likely cause is the lock every read takes in SQLite's shared-memory file, which the processes contend for; it hasn't been profiled across processes yet, and it's the top item for the [free-threaded phase](performance.qmd#next-free-threaded-scaling). A `FanoutCache` keeps climbing: 4.2x a plain `Cache` at 8 processes, and 1.15x diskcache's own `FanoutCache`. A pre-forking server (gunicorn, uvicorn workers) with a worker per core is this case.
 - **Writes make the gap wider.** At 90 reads to 10 writes with 8 processes, a plain `Cache` gets 138k ops/s and a `FanoutCache` 431k (3.1x); at 50:50, 38k against 116k.
 
 **Several threads in one process.** Threads share one handle, with hot keys (a few keys read far more than the rest, as a real site's pages are):
@@ -4330,7 +4338,7 @@ SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 SESSION_CACHE_ALIAS = 'state'
 ```
 
-`default` is durable: a write that can't get the lock in time is dropped and a read that fails is a miss (see [durable](#errors-raise-durable-drops) below). `state` isn't, so a write that fails raises, and it never evicts for size, so sessions aren't pushed out by pages; it grows until entries expire, so don't make a session for every anonymous visitor. Keep state out of the directory you'd delete on a deploy: here pages live under `cache/` and state under `state/`, as in [Sharing a cache across web workers](../recipes/web-workers.qmd#the-recommended-setup). The [example project](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django) is this setup under gunicorn.
+`default` is durable: a write that can't get the lock in time is dropped and a read that fails is a miss (see [durable](#errors-raise-durable-drops) below). `state` isn't, so a write that fails raises, and it never evicts for size, so sessions aren't pushed out by pages; it grows until entries expire, so don't make a session for every anonymous visitor. Keep state out of the directory you'd delete on a deploy: here pages live under `cache/` and state under `state/`, as in [Sharing a cache across web workers](../recipes/web-workers.qmd#the-recommended-setup). The [example project](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django) is this setup under gunicorn, and [the Django example](../example-apps/django.qmd) walks through its code.
 
 ## Settings
 
@@ -4382,7 +4390,7 @@ Django builds a backend instance per thread, and under ASGI up to one per reques
 - **`close()` does nothing.** Django calls it after every request; closing would reopen the cache on the next one. The handles live for the process, and background maintenance keeps the cache tidy.
 - **`clear()` clears the directory**: every alias, prefix and version on that `LOCATION`, as Django's file and Redis backends do. Aliases that must clear separately need separate `LOCATION`s.
 - **Never delete the directory under running workers.** They would carry on in the deleted files, and a worker started later would get a new, empty cache the others never see. Use `cache.clear()`.
-- **When to use `shards`.** A plain `Cache` suits most sites. Make the alias that many worker processes write to most a `FanoutCache` with `OPTIONS = {'shards': 8}`: with 8 worker processes at 99 reads to 1 write it's about 4x a plain `Cache` ([FanoutCache](fanoutcache.qmd) has the numbers). Choose it before the directory is made: a directory holds one kind or the other.
+- **When to use `shards`.** A plain `Cache` suits most sites. Make an alias that several worker processes use heavily, reading or writing, a `FanoutCache` with `OPTIONS = {'shards': 8}`: with 8 worker processes it's about 5x a plain `Cache` ([performance](#performance) below, and [FanoutCache](fanoutcache.qmd)). Choose it before the directory is made: a directory holds one kind or the other.
 
 ## The calls
 
@@ -4391,7 +4399,7 @@ Every call goes through Django's `make_and_validate_key`, so `KEY_PREFIX`, `VERS
 - **`get`, `set`, `add`, `touch`, `delete`, `has_key`**: one call each. A timeout of 0 or less stores nothing (and removes the key if it was there), `None` is forever. A timeout that isn't a number (a `Decimal`, a `str`, a `bool`) raises `TypeError`.
 - **`incr` and `decr`** are atomic across threads and processes and keep the entry's expiry. A missing key raises `ValueError`; a value that isn't a number (an `int` or a `float`; a stored `bool` doesn't count) raises `TypeError`.
 - **`get_many`** returns a stored `None`; **`set_many`** is a `set` per key, so no pickling code runs while the cache's write lock is held; **`delete_many`** deletes up to 100 keys per transaction (per shard on a `FanoutCache`), validating every key first.
-- **The async methods** (`aget`, `aset`, `aincr` and the rest) each run their sync form in one call through asgiref's `sync_to_async`, as Django does, so `aincr` is atomic and keeps the expiry on every supported Django line (Django 5.2's and 6.0's own `aincr` is a get and then a set).
+- **The async methods** (`aget`, `aset`, `aincr` and the rest) each run their sync form in one call through asgiref's `sync_to_async`, as Django does, so `aincr` is atomic and keeps the expiry on every supported Django line (Django 5.2's and 6.0's own `aincr` is a get and then a set). Reads hop to a thread too, though a read is faster than the hop; [async reads](#async-reads) says why.
 
 `get_or_set`, `incr_version`, `decr_version` and their async forms are Django's own, built from the calls above. Beyond Django's API: `tag=` on `set` and `add` (and `aset`, `aadd`), then `evict(tag)` removes every entry with that tag; `pop(key)`; `expire()` and `cull()`; `stats()`, `maintenance_stats()` and `check()`; and `cache`, the `Cache` or `FanoutCache` underneath, whose keys are the made keys (`prefix:version:key`).
 
@@ -4406,6 +4414,48 @@ cache.evict(f'episode:{n}')   # after an edit: both entries go
 ## A cached view that reads the session
 
 `@cache_page` stores the response before `SessionMiddleware` adds `Vary: Cookie`, so a cached view that reads the session serves one visitor's page to everyone. Add `@vary_on_cookie` to such a view, or keep the session out of it. This is Django's behavior on every backend.
+
+## Performance
+
+Measured with `bench/django.py`, which reaches every backend through `django.core.cache.caches`, so each pays the same framework cost. Django 6.1.3 on Python 3.14, a MacBook Pro (M5 Pro) on AC power; only compare numbers from the same machine. Django's own backends were given `MAX_ENTRIES` of 100,000 so none of them culls during the run. `DjangoCache` adds about 0.27 µs to a `Cache.get` for Django's key making and validation.
+
+**Reads, one thread.** p50 of a `get` that hits, in µs. The 50 KiB and 100 KiB values are what `cache_page` stores: a pickled `HttpResponse`.
+
+| Value | diskcache-oxide | `shards=8` | diskcache 5.6.3 | `FileBasedCache` | `DatabaseCache` (SQLite) | `LocMemCache` |
+|---|---|---|---|---|---|---|
+| Small dict | 1.3 | 1.4 | 2.7 | 12.9 | 10.7 | 1.0 |
+| 4 KiB str | 1.6 | 1.6 | 2.6 | 15.3 | 15.0 | 1.0 |
+| 50 KiB response | 6.0 | 6.0 | 21.7 | 49.6 | 62.5 | 3.1 |
+| 100 KiB response | 22.2 | 21.8 | 23.1 | 59.4 | 110.4 | 3.8 |
+
+Writes are mixed. Storing the 50 KiB response took 36 µs, against diskcache's 323, `FileBasedCache`'s 601 and `DatabaseCache`'s 95. At 100 KiB, past the 64 KiB line where a value goes in a file of its own, it took 177 µs: still under diskcache's 337 and `FileBasedCache`'s 1,193, but over `DatabaseCache`'s 141. `LocMemCache` is the ceiling: a dict in the process, which no other worker can see.
+
+**Worker processes.** Each process opens the alias and runs 99 reads to 1 write over 1,000 keys holding a 1 KB `str`, in operations per second:
+
+| Processes | diskcache-oxide | `shards=8` | diskcache 5.6.3 | `DatabaseCache` (SQLite) | `FileBasedCache` |
+|---|---|---|---|---|---|
+| 1 | 514k ops/s | 547k | 341k | 79k | 43k |
+| 2 | 610k | 894k | 610k | 144k | 65k |
+| 4 | 607k | 1,397k | 1,013k | 262k | 115k |
+| 8 | 269k | 1,431k | 1,270k | 300k | 129k |
+
+A plain `Cache` stops climbing past two processes and then falls, and the writes aren't the cause: at 1,000 reads to 1 write it falls the same way (295k at 8 processes), and so it does with no writes at all. The likely cause is the lock every read takes in SQLite's shared-memory file, which processes reading one database contend for (not yet profiled across processes); it's the top item for the [free-threaded phase](performance.qmd#next-free-threaded-scaling). Shards spread the reads over 8 files, which is what `OPTIONS = {'shards': 8}` is for: with 8 worker processes it's 5.3x a plain `Cache` and 1.1x diskcache's backend, which is always sharded. The free-threaded build's process numbers are the same or up to 13% lower.
+
+Threads in one process are the other case. With 8 threads sharing one alias on Python 3.14, a plain `Cache` keeps 510k ops/s where diskcache's backend falls to 18k. On the free-threaded build the gap closes: at 8 threads and 99:1, 676k (871k with `shards=8`) against diskcache's 430k, and at 1,000:1 diskcache's backend (986k) edges out a plain `Cache` (823k) and matches `shards=8` (993k).
+
+Redis (Django's `RedisCache`) was measured too, in a container on the same Mac, but its numbers aren't shown: at over 100 µs a read, they mostly measure the port forwarding into the container's VM rather than Redis.
+
+### Async reads {#async-reads}
+
+Every async method, `aget` included, runs its sync form on a thread through `sync_to_async`, as Django's own backends do. That hop costs more than the read:
+
+| Case | `await cache.aget()` p50 / p99.9 | `cache.get()` inline p50 / p99.9 |
+|---|---|---|
+| Small dict | 58 / 191 µs | 2.5 / 12 µs |
+| 100 KiB response | 86 / 138 µs | 24 / 65 µs |
+| Small dict, beside a process writing | 58 / 82 µs | 7.2 / 20 µs |
+
+Reading a small value inline would be about 20 times faster (3.6 times for the 100 KiB response), and the hop stays anyway, because an `await` on a coroutine that never suspends doesn't give the event loop a turn. An inline `aget` in a loop over a million keys would hold every other request on that worker until the loop ended, however fast each read was, and that breaks what an `await` promises. On a thread, the loop runs other work while each read happens, and a rare slow read (a cold disk, a busy moment) delays only the request that made it. Where 60 µs a read matters, call `get()` directly from the async view and accept that it holds the loop for the read.
 
 ## In tests
 
@@ -4624,7 +4674,7 @@ Any number of processes can open the same directory, each with its own `Cache`. 
 - **Atomic across processes.** `add()`, `incr()`, `decr()` and every other write is a single transaction. Two processes can't both win an `add()`, and two `incr()` calls never lose an update. `pop()` is a read and then a transaction that deletes exactly the version it read, so two processes can't both get the same value.
 - **Maintenance that doesn't destroy work.** Every write gets a new sequence number. `clear()` and `expire()` note the latest number when they start and only touch older rows, so writes from other processes that land while they run are kept.
 - **Large values are always whole.** A process reading a large value while another overwrites it gets the old value or the new one, never a miss. (diskcache's standalone reproduction of that race sees about 40 misses in every 325,000 reads.)
-- **One write lock per database file.** Every writer to a directory queues on its lock, so with many processes writing often a plain `Cache` stops scaling at a couple of processes. A [`FanoutCache`](fanoutcache.qmd) has one lock per shard and keeps scaling (4.2x a plain `Cache` at 8 processes on a 99:1 read/write mix), for about 10 MiB more memory per process.
+- **One database file, shared by every process.** Every writer to a directory queues on its write lock, and every read takes a lock in its shared-memory file that the processes contend for, so a plain `Cache` stops scaling at a couple of processes, even when they only read. A [`FanoutCache`](fanoutcache.qmd) spreads both over its shards and keeps scaling (4.2x a plain `Cache` at 8 processes on a 99:1 read/write mix), for about 10 MiB more memory per process.
 - **Opening and reading don't write.** Opening a cache with unchanged settings and reading from it never takes the write lock or touches the database file, so a read-mostly worker costs the writers nothing. [Background maintenance](storage-and-wal.qmd#background-maintenance) does write, when it has work and once an hour per cache to coordinate with other processes (D-061); `maintenance_interval=0` keeps a process write-free.
 
 ## Forks
@@ -4894,7 +4944,7 @@ Profiling a cached `get` shows that about 60% of its time is one system call: SQ
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;
 - cheaper reference counting on shared `Cache` objects in free-threaded builds;
-- making threads that share one handle scale. [`FanoutCache`](fanoutcache.qmd) is built: it removes the multi-process write-lock ceiling and lifts this read ceiling part of the way (1.7x a plain `Cache` at 8 threads on 3.14t with hot keys, about 10% on GIL builds), and the shared per-handle path is still being worked on.
+- making threads that share one handle scale. [`FanoutCache`](fanoutcache.qmd) is built: it removes the multi-process ceiling (a plain `Cache` falls past two processes even when they only read, which points at this same lock; not yet profiled across processes) and lifts this read ceiling part of the way (1.7x a plain `Cache` at 8 threads on 3.14t with hot keys, about 10% on GIL builds), and the shared per-handle path is still being worked on.
 
 Past that, the [network server](roadmap.qmd) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. In a 2026-10-28 measurement with Python's own `sqlite3` module, reads dropped from 1.18 µs to 0.69 µs (a different harness from the gate above, so compare the two figures with each other, not with the gate's 0.84 µs).
 
@@ -5189,6 +5239,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-059 | A directory holding another diskcache-oxide format | (no such thing) `directory` is the one passed | Opens `diskcache-oxide-format-N` inside it; `directory` says so |
 | D-060 | `len()` and iteration | Count and list expired entries until something removes them | Leave them out the moment they expire |
 | D-061 | Between calls | Nothing happens: expired rows, an over-limit cache and stray files wait for a call | Background maintenance looks after every open cache, every 5 minutes by default |
+| D-063 | An int past 4,300 digits, `pickle=True` | Pickled and stored | `ValueError` from Python's digit limit |
 
 ## Safety
 
@@ -5300,6 +5351,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-060:** an expired entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it expires, as it already left `get` and `in`. diskcache keeps counting and listing it until a `set()`, `expire()` or `cull()` removes its row. Nothing is written by the check: the row and its space, in `volume()`, stay until a `set()`, `expire()` or `cull()` removes them, or background maintenance does (D-061).
 - **D-061:** one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every `maintenance_interval` (default 5 minutes, 0 for off), with the caches and the processes taking turns. It never waits for a lock and holds the write lock only for short chunks, so a request in the same process waits at most one chunk (about 130 µs for 100 small rows); a writer in another process can wait for a few chunks, never past the turn's 50 ms. So an explicit `expire()` or `cull()` can return less than diskcache's would, `volume()` changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
 - **D-062:** the Django backend is diskcache-oxide's own, not a port of `diskcache.DjangoCache`: `'BACKEND': 'diskcache_oxide.DjangoCache'` with `OPTIONS` in `Cache`'s keyword names, a plain `Cache` unless `OPTIONS['shards']`, a 1.0 s lock wait and errors that raise unless `durable` (diskcache's is always a `FanoutCache`, 8 shards by default, and its writes retry a 10 ms wait silently, for as long as the lock is held), `close()` a no-op, `MAX_ENTRIES` refused rather than ignored, `pickle=True` by default (Django caches responses and model instances), and `incr` the engine's atomic one, so a `bool`, `Decimal`, `IntEnum` or an int past 64 bits raises `TypeError` where Django's locmem backend adds it. No `read=`, `deque()`, `index()`, `cache(name)`, `memoize` or tag-index calls. See [Django cache backend](django.qmd).
+- **D-063:** an int past Python's int-to-str digit limit (4,300 digits by default, `sys.get_int_max_str_digits()`), top-level or nested, raises `ValueError` at `set` even with `pickle=True`, where diskcache pickles it. Big ints are stored as decimal text, and only a type the format can't hold or a lone surrogate inside a value falls back to pickle. Raising the interpreter's limit lifts it.
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)
@@ -5423,7 +5475,7 @@ atexit.register(close_everything)
 
 ### Django
 
-Django's own cache runs on diskcache-oxide through `'BACKEND': 'diskcache_oxide.DjangoCache'`: pages and fragments on a durable alias, sessions and counters on a plain one, each in its own directory under the app's root. [Django cache backend](../user-guide/django.qmd) has the settings, and the [example project](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django) runs them under gunicorn. The backend opens nothing until first use and Django's per-request `close()` does nothing, so there's no startup or shutdown hook to write. For caches the app uses directly, outside `django.core.cache` (a `Caches` registry, a `Lock`, a work queue), put the setup in a module of its own (`myapp/caching.py`), take `ROOT` from `settings`, and import it where it's needed.
+Django's own cache runs on diskcache-oxide through `'BACKEND': 'diskcache_oxide.DjangoCache'`: pages and fragments on a durable alias, sessions and counters on a plain one, each in its own directory under the app's root. [Django cache backend](../user-guide/django.qmd) has the settings, and the [example project](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django) runs them under gunicorn ([walked through here](../example-apps/django.qmd)). The backend opens nothing until first use and Django's per-request `close()` does nothing, so there's no startup or shutdown hook to write. For caches the app uses directly, outside `django.core.cache` (a `Caches` registry, a `Lock`, a work queue), put the setup in a module of its own (`myapp/caching.py`), take `ROOT` from `settings`, and import it where it's needed.
 
 ### Celery and other background workers
 

@@ -182,6 +182,7 @@ Profile on 3.14t with the share-nothing benchmark before changing anything. **Fi
 Findings that seed Phase 4 (2026-10-28, 04-design.md section 7):
 - On 3.14t, calls through shared extension objects don't scale (a no-op `_core` call is 3× slower at 8 threads, most likely because of contended reference counts).
 - The shared `-shm` file is a secondary limit.
+- **Across processes it's the first limit (2026-11-18, plan 31's step 6 review).** With no writes at all, a plain `Cache` read by spawned processes peaks at 2 and falls: 836k ops/s at 2, 605k at 4, 296k at 8, while `FanoutCache(8)` climbs to 1.7M (`bench/read_procs.py`, MacBook Pro M5 Pro, `bench/results/read-procs-3.14.10-macbook-m5-pro.md`). The docs had blamed the write lock; they now say read side, likely the `-shm` read lock, not yet profiled across processes. Michael wants it investigated, as a spike plan after plan 31 ships: profile 8 processes reading one `Cache` on macOS and on a real Linux host, then try a per-process `-shm` lock-caching VFS shim or longer read snapshots. Talk Python runs a single worker process, so it isn't urgent there.
 - Same-process writers race on SQLite's write lock.
 - Phase 2 fixes the benchmark loop and adds an in-process write lock per database file. Phase 4 tries deferred reference counting on `Cache` instances.
 

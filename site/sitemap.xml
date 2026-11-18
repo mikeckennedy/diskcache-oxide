@@ -1861,6 +1861,24 @@
     <priority>0.5</priority>
   </url>
   <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/example-apps/</loc>
+    <lastmod>2026-11-18</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/example-apps/django.html</loc>
+    <lastmod>2026-11-18</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://mkennedy.codes/docs/diskcache-oxide/example-apps/fastapi.html</loc>
+    <lastmod>2026-11-18</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
     <loc>https://mkennedy.codes/docs/diskcache-oxide/license.html</loc>
     <lastmod>2026-11-18</lastmod>
     <changefreq>monthly</changefreq>

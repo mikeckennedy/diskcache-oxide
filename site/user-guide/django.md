@@ -41,7 +41,7 @@ SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 SESSION_CACHE_ALIAS = 'state'
 ```
 
-`default` is durable: a write that can't get the lock in time is dropped and a read that fails is a miss (see [durable](#errors-raise-durable-drops) below). `state` isn't, so a write that fails raises, and it never evicts for size, so sessions aren't pushed out by pages; it grows until entries expire, so don't make a session for every anonymous visitor. Keep state out of the directory you'd delete on a deploy: here pages live under `cache/` and state under `state/`, as in [Sharing a cache across web workers](../recipes/web-workers.md#the-recommended-setup). The [example project](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django) is this setup under gunicorn.
+`default` is durable: a write that can't get the lock in time is dropped and a read that fails is a miss (see [durable](#errors-raise-durable-drops) below). `state` isn't, so a write that fails raises, and it never evicts for size, so sessions aren't pushed out by pages; it grows until entries expire, so don't make a session for every anonymous visitor. Keep state out of the directory you'd delete on a deploy: here pages live under `cache/` and state under `state/`, as in [Sharing a cache across web workers](../recipes/web-workers.md#the-recommended-setup). The [example project](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django) is this setup under gunicorn, and [the Django example](../example-apps/django.md) walks through its code.
 
 
 # Settings
@@ -97,7 +97,7 @@ Django builds a backend instance per thread, and under ASGI up to one per reques
 - **[close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) does nothing.** Django calls it after every request; closing would reopen the cache on the next one. The handles live for the process, and background maintenance keeps the cache tidy.
 - **[clear()](../reference/Cache.clear.md#diskcache_oxide.Cache.clear) clears the directory**: every alias, prefix and version on that `LOCATION`, as Django's file and Redis backends do. Aliases that must clear separately need separate `LOCATION`s.
 - **Never delete the directory under running workers.** They would carry on in the deleted files, and a worker started later would get a new, empty cache the others never see. Use `cache.clear()`.
-- **When to use [shards](../reference/FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards).** A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) suits most sites. Make the alias that many worker processes write to most a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) with `OPTIONS = {'shards': 8}`: with 8 worker processes at 99 reads to 1 write it's about 4x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) ([FanoutCache](fanoutcache.md) has the numbers). Choose it before the directory is made: a directory holds one kind or the other.
+- **When to use [shards](../reference/FanoutCache.shards.md#diskcache_oxide.FanoutCache.shards).** A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) suits most sites. Make an alias that several worker processes use heavily, reading or writing, a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) with `OPTIONS = {'shards': 8}`: with 8 worker processes it's about 5x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) ([performance](#performance) below, and [FanoutCache](fanoutcache.md)). Choose it before the directory is made: a directory holds one kind or the other.
 
 
 # The calls
@@ -107,7 +107,7 @@ Every call goes through Django's [make_and_validate_key](../reference/DjangoCach
 - **[get](../reference/Cache.get.md#diskcache_oxide.Cache.get), [set](../reference/Cache.set.md#diskcache_oxide.Cache.set), [add](../reference/Cache.add.md#diskcache_oxide.Cache.add), [touch](../reference/Cache.touch.md#diskcache_oxide.Cache.touch), [delete](../reference/Cache.delete.md#diskcache_oxide.Cache.delete), [has_key](../reference/DjangoCache.has_key.md#diskcache_oxide.DjangoCache.has_key)**: one call each. A timeout of 0 or less stores nothing (and removes the key if it was there), `None` is forever. A timeout that isn't a number (a `Decimal`, a `str`, a `bool`) raises `TypeError`.
 - **[incr](../reference/Cache.incr.md#diskcache_oxide.Cache.incr) and [decr](../reference/Cache.decr.md#diskcache_oxide.Cache.decr)** are atomic across threads and processes and keep the entry's expiry. A missing key raises `ValueError`; a value that isn't a number (an `int` or a `float`; a stored `bool` doesn't count) raises `TypeError`.
 - **[get_many](../reference/DjangoCache.get_many.md#diskcache_oxide.DjangoCache.get_many)** returns a stored `None`; **[set_many](../reference/DjangoCache.set_many.md#diskcache_oxide.DjangoCache.set_many)** is a [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) per key, so no pickling code runs while the cache's write lock is held; **[delete_many](../reference/DjangoCache.delete_many.md#diskcache_oxide.DjangoCache.delete_many)** deletes up to 100 keys per transaction (per shard on a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache)), validating every key first.
-- **The async methods** ([aget](../reference/DjangoCache.aget.md#diskcache_oxide.DjangoCache.aget), [aset](../reference/DjangoCache.aset.md#diskcache_oxide.DjangoCache.aset), [aincr](../reference/DjangoCache.aincr.md#diskcache_oxide.DjangoCache.aincr) and the rest) each run their sync form in one call through asgiref's `sync_to_async`, as Django does, so [aincr](../reference/DjangoCache.aincr.md#diskcache_oxide.DjangoCache.aincr) is atomic and keeps the expiry on every supported Django line (Django 5.2's and 6.0's own [aincr](../reference/DjangoCache.aincr.md#diskcache_oxide.DjangoCache.aincr) is a get and then a set).
+- **The async methods** ([aget](../reference/DjangoCache.aget.md#diskcache_oxide.DjangoCache.aget), [aset](../reference/DjangoCache.aset.md#diskcache_oxide.DjangoCache.aset), [aincr](../reference/DjangoCache.aincr.md#diskcache_oxide.DjangoCache.aincr) and the rest) each run their sync form in one call through asgiref's `sync_to_async`, as Django does, so [aincr](../reference/DjangoCache.aincr.md#diskcache_oxide.DjangoCache.aincr) is atomic and keeps the expiry on every supported Django line (Django 5.2's and 6.0's own [aincr](../reference/DjangoCache.aincr.md#diskcache_oxide.DjangoCache.aincr) is a get and then a set). Reads hop to a thread too, though a read is faster than the hop; [async reads](#async-reads) says why.
 
 `get_or_set`, `incr_version`, `decr_version` and their async forms are Django's own, built from the calls above. Beyond Django's API: `tag=` on [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) and [add](../reference/Cache.add.md#diskcache_oxide.Cache.add) (and [aset](../reference/DjangoCache.aset.md#diskcache_oxide.DjangoCache.aset), [aadd](../reference/DjangoCache.aadd.md#diskcache_oxide.DjangoCache.aadd)), then `evict(tag)` removes every entry with that tag; `pop(key)`; [expire()](../reference/Cache.expire.md#diskcache_oxide.Cache.expire) and [cull()](../reference/Cache.cull.md#diskcache_oxide.Cache.cull); [stats()](../reference/Cache.stats.md#diskcache_oxide.Cache.stats), [maintenance_stats()](../reference/Cache.maintenance_stats.md#diskcache_oxide.Cache.maintenance_stats) and [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check); and [cache](../reference/DjangoCache.cache.md#diskcache_oxide.DjangoCache.cache), the [Cache](../reference/Cache.md#diskcache_oxide.Cache) or [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) underneath, whose keys are the made keys (`prefix:version:key`).
 
@@ -122,6 +122,52 @@ cache.evict(f'episode:{n}')   # after an edit: both entries go
 > **Warning: A cached view that reads the session**
 >
 > `@cache_page` stores the response before `SessionMiddleware` adds `Vary: Cookie`, so a cached view that reads the session serves one visitor's page to everyone. Add `@vary_on_cookie` to such a view, or keep the session out of it. This is Django's behavior on every backend.
+
+
+# Performance
+
+Measured with `bench/django.py`, which reaches every backend through `django.core.cache.caches`, so each pays the same framework cost. Django 6.1.3 on Python 3.14, a MacBook Pro (M5 Pro) on AC power; only compare numbers from the same machine. Django's own backends were given `MAX_ENTRIES` of 100,000 so none of them culls during the run. [DjangoCache](../reference/DjangoCache.md#diskcache_oxide.DjangoCache) adds about 0.27 µs to a [Cache.get](../reference/Cache.get.md#diskcache_oxide.Cache.get) for Django's key making and validation.
+
+**Reads, one thread.** p50 of a [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) that hits, in µs. The 50 KiB and 100 KiB values are what `cache_page` stores: a pickled `HttpResponse`.
+
+| Value | diskcache-oxide | `shards=8` | diskcache 5.6.3 | `FileBasedCache` | `DatabaseCache` (SQLite) | `LocMemCache` |
+|----|----|----|----|----|----|----|
+| Small dict | 1.3 | 1.4 | 2.7 | 12.9 | 10.7 | 1.0 |
+| 4 KiB str | 1.6 | 1.6 | 2.6 | 15.3 | 15.0 | 1.0 |
+| 50 KiB response | 6.0 | 6.0 | 21.7 | 49.6 | 62.5 | 3.1 |
+| 100 KiB response | 22.2 | 21.8 | 23.1 | 59.4 | 110.4 | 3.8 |
+
+Writes are mixed. Storing the 50 KiB response took 36 µs, against diskcache's 323, `FileBasedCache`'s 601 and `DatabaseCache`'s 95. At 100 KiB, past the 64 KiB line where a value goes in a file of its own, it took 177 µs: still under diskcache's 337 and `FileBasedCache`'s 1,193, but over `DatabaseCache`'s 141. `LocMemCache` is the ceiling: a dict in the process, which no other worker can see.
+
+**Worker processes.** Each process opens the alias and runs 99 reads to 1 write over 1,000 keys holding a 1 KB `str`, in operations per second:
+
+
+| Processes | diskcache-oxide | `shards=8` | diskcache 5.6.3 | `DatabaseCache` (SQLite) | `FileBasedCache` |
+|----|----|----|----|----|----|
+| 1 | 514k ops/s | 547k | 341k | 79k | 43k |
+| 2 | 610k | 894k | 610k | 144k | 65k |
+| 4 | 607k | 1,397k | 1,013k | 262k | 115k |
+| 8 | 269k | 1,431k | 1,270k | 300k | 129k |
+
+
+A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) stops climbing past two processes and then falls, and the writes aren't the cause: at 1,000 reads to 1 write it falls the same way (295k at 8 processes), and so it does with no writes at all. The likely cause is the lock every read takes in SQLite's shared-memory file, which processes reading one database contend for (not yet profiled across processes); it's the top item for the [free-threaded phase](performance.md#next-free-threaded-scaling). Shards spread the reads over 8 files, which is what `OPTIONS = {'shards': 8}` is for: with 8 worker processes it's 5.3x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) and 1.1x diskcache's backend, which is always sharded. The free-threaded build's process numbers are the same or up to 13% lower.
+
+Threads in one process are the other case. With 8 threads sharing one alias on Python 3.14, a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) keeps 510k ops/s where diskcache's backend falls to 18k. On the free-threaded build the gap closes: at 8 threads and 99:1, 676k (871k with `shards=8`) against diskcache's 430k, and at 1,000:1 diskcache's backend (986k) edges out a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) (823k) and matches `shards=8` (993k).
+
+Redis (Django's `RedisCache`) was measured too, in a container on the same Mac, but its numbers aren't shown: at over 100 µs a read, they mostly measure the port forwarding into the container's VM rather than Redis.
+
+
+## Async reads
+
+Every async method, [aget](../reference/DjangoCache.aget.md#diskcache_oxide.DjangoCache.aget) included, runs its sync form on a thread through `sync_to_async`, as Django's own backends do. That hop costs more than the read:
+
+| Case | `await cache.aget()` p50 / p99.9 | `cache.get()` inline p50 / p99.9 |
+|----|----|----|
+| Small dict | 58 / 191 µs | 2.5 / 12 µs |
+| 100 KiB response | 86 / 138 µs | 24 / 65 µs |
+| Small dict, beside a process writing | 58 / 82 µs | 7.2 / 20 µs |
+
+Reading a small value inline would be about 20 times faster (3.6 times for the 100 KiB response), and the hop stays anyway, because an `await` on a coroutine that never suspends doesn't give the event loop a turn. An inline [aget](../reference/DjangoCache.aget.md#diskcache_oxide.DjangoCache.aget) in a loop over a million keys would hold every other request on that worker until the loop ended, however fast each read was, and that breaks what an `await` promises. On a thread, the loop runs other work while each read happens, and a rare slow read (a cold disk, a busy moment) delays only the request that made it. Where 60 µs a read matters, call [get()](../reference/Cache.get.md#diskcache_oxide.Cache.get) directly from the async view and accept that it holds the loop for the read.
 
 
 # In tests

@@ -91,6 +91,10 @@ sections:
     dir: recipes
     index: true
     navbar_after: User Guide
+  - title: Example apps
+    dir: example-apps
+    index: true
+    navbar_after: Recipes
 
 # The agent skill is hand-written (docs-source/skills/diskcache-oxide/SKILL.md). Great Docs copies it verbatim to
 # skill.md, .well-known/agent-skills/diskcache-oxide/SKILL.md (with index.json from its frontmatter)

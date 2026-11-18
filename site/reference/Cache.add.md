@@ -57,6 +57,9 @@ returns True, so use a non-durable handle for claims and locks.
 `TypeError`  
 The value can't be stored exactly without pickle, or [expire](Cache.expire.md#diskcache_oxide.Cache.expire) is a `bool`.
 
+`UnicodeEncodeError`  
+The value is a `str` with a lone surrogate, or holds one and the cache has no pickle.
+
 `Timeout`  
 Another process held the write lock for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
 

@@ -152,6 +152,21 @@ def test_diskcache_top_level_nan_reads_back_as_none(cache: Any) -> None:
     assert exact_equal(cache.get('nested'), [math.nan])
 
 
+@pytest.mark.diverges(
+    backend='oxide',
+    ref='D-063',
+    reason='oxide raises ValueError for an int past the int-to-str digit limit, even with pickle=True',
+    raises=ValueError,
+)
+def test_an_int_past_the_digit_limit_is_stored_with_pickle(make_cache: Callable[..., Any], cache_dir: Path) -> None:
+    # diskcache pickles the list; oxide's codec writes big ints as text, which Python refuses past
+    # sys.get_int_max_str_digits() (4,300 by default), and that ValueError never falls back to pickle.
+    cache = make_cache(cache_dir, pickle=True)
+    value = [10**5000]
+    assert cache.set('k', value) is True
+    assert cache.get('k') == value
+
+
 # ---------------------------------------------------------------------------
 # Oxide's side of D-001
 # ---------------------------------------------------------------------------

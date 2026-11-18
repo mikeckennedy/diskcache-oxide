@@ -6,7 +6,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
-<meta name="description" content="A cache sharded over several SQLite databases, so many writing processes stop queueing on one write lock, and when a plain Cache is the better choice.">
+<meta name="description" content="A cache sharded over several SQLite databases, so many worker processes stop contending on one database file, and when a plain Cache is the better choice.">
 
 <title>FanoutCache: sharded caches – diskcache-oxide | diskcache-oxide</title>
 <style>
@@ -457,13 +457,13 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html">
   <meta property="og:type" content="website">
   <meta property="og:title" content="FanoutCache: sharded caches – diskcache-oxide | diskcache-oxide">
-  <meta property="og:description" content="A cache sharded over several SQLite databases, so many writing processes stop queueing on one write lock, and when a plain Cache is the better choice.">
+  <meta property="og:description" content="A cache sharded over several SQLite databases, so many worker processes stop contending on one database file, and when a plain Cache is the better choice.">
   <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/fanoutcache.html">
   <meta property="og:site_name" content="diskcache-oxide">
   <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="FanoutCache: sharded caches – diskcache-oxide | diskcache-oxide">
-  <meta name="twitter:description" content="A cache sharded over several SQLite databases, so many writing processes stop queueing on one write lock, and when a plain Cache is the better choice.">
+  <meta name="twitter:description" content="A cache sharded over several SQLite databases, so many worker processes stop contending on one database file, and when a plain Cache is the better choice.">
   <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
 </head>
 
@@ -496,6 +496,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="../example-apps/index.html"> 
+<span class="menu-text">Example apps</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -507,7 +511,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="7" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="12" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -703,7 +707,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 <div>
   <div class="description">
-    A cache sharded over several SQLite databases, so many writing processes stop queueing on one write lock, and when a plain Cache is the better choice.
+    A cache sharded over several SQLite databases, so many worker processes stop contending on one database file, and when a plain Cache is the better choice.
   </div>
 </div>
 
@@ -720,7 +724,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </header>
 
 
-<p>A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> has one write lock per database file, which makes it a shop with one checkout lane: readers walk straight through, but every writer queues, and eight worker processes that all bump counters are eight carts in one lane. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> opens more lanes. It’s one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key, so writes to different keys go to different files and stop queueing on one lock. It has the same methods as <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> for single keys, and it’s one directory, shared by any number of threads and processes.</p>
+<p>A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is one SQLite database file, which makes it a shop with one checkout lane. Every writer in every process queues on its one write lock, and every read takes a lock in its shared-memory file, which processes reading the same database contend for. So past two or three worker processes a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> gets slower, not faster, even when nobody writes. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> opens more lanes. It’s one cache spread over several SQLite databases, called shards. Each key lives in exactly one shard, chosen by a fixed hash of the key, so reads and writes of different keys go to different files and stop contending on one. It has the same methods as <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> for single keys, and it’s one directory, shared by any number of threads and processes.</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> diskcache_oxide <span class="im">import</span> FanoutCache</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> FanoutCache(<span class="st">'/var/cache/my-app-rate-limits'</span>, shards<span class="op">=</span><span class="dv">8</span>)</span>
@@ -730,7 +734,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>cache.shard_of(<span class="st">'ip:203.0.113.7'</span>)   <span class="co"># 0 to 7, the same in every process and every release</span></span></code></pre></div>
 <section id="should-you-use-it" class="level1">
 <h1>Should you use it?</h1>
-<p>Use a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> for a cache that <strong>many writers share</strong>: a web server with several worker processes (a web garden), many threads on free-threaded Python, or a write-heavy load. It’s faster in all three, by up to 4x, and it costs about 10 MiB more memory per process than a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. A plain <a href="../user-guide/getting-started.html"><code>Cache</code></a> stays the default, and the <a href="../recipes/web-workers.html#the-recommended-setup">recommended setup</a> uses one for every cache: it’s smaller, it keeps fewer files, and it’s the only kind with queues and full transactions. Make the one cache your workers write to most a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> when its numbers matter.</p>
+<p>Use a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> for a cache that <strong>several processes or many threads use heavily</strong>: a web server with several worker processes (a web garden), reading or writing, many threads on free-threaded Python, or a write-heavy load. It’s faster in all three, by up to 4x (up to 6x with 8 processes only reading), and it costs about 10 MiB more memory per process than a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. A plain <a href="../user-guide/getting-started.html"><code>Cache</code></a> stays the default, and the <a href="../recipes/web-workers.html#the-recommended-setup">recommended setup</a> uses one for every cache: it’s smaller, it keeps fewer files, and it’s the only kind with queues and full transactions. Make the one cache your worker processes use most a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> when its numbers matter. A site with one worker process (several threads on a GIL build) gains little from it.</p>
 <p>The numbers below come from the benchmark in the repository (<code>bench/fanout.py</code>, the released 0.3.5 wheels, a Mac Studio with 18 cores, 1 KB values over 50,000 keys, every key in each worker’s plan, three rounds; <code>bench/results/fanout-3.14.10-studio.txt</code> and <code>fanout-3.14.10t-studio.txt</code>).</p>
 <p><strong>Several processes.</strong> Each worker process opens the cache and does 99 reads to 1 write, on Python 3.14:</p>
 <div class="dco-chart" data-type="lines" data-x="Processes" data-y="operations per second" data-title="Add worker processes and a plain Cache falls off; a FanoutCache keeps climbing" data-note="bench/fanout.py: 99 reads to 1 write, 1 KB values, one thread per process, Python 3.14, Mac Studio (M5 Max). Higher is better. Hover for the numbers.">
@@ -766,7 +770,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </table>
 </div>
 <ul>
-<li><strong>It removes the write-lock ceiling.</strong> A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops climbing past a few processes and then falls, because the 1% of operations that are writes all queue on one database file’s write lock. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> keeps climbing: 4.2x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 8 processes, and 1.15x diskcache’s own <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>. A pre-forking server (gunicorn, uvicorn workers) with a worker per core is this case.</li>
+<li><strong>It removes the one-file ceiling.</strong> A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops climbing past a few processes and then falls. The writes aren’t what does it: with no writes at all it falls the same way, from 836k ops/s at 2 processes to 296k at 8, while a <code>FanoutCache(8)</code> climbs to 1,741k and diskcache’s to 1,684k (<code>bench/read_procs.py</code> on a MacBook Pro, M5 Pro, Python 3.14; <code>bench/results/read-procs-3.14.10-macbook-m5-pro.md</code>). The likely cause is the lock every read takes in SQLite’s shared-memory file, which the processes contend for; it hasn’t been profiled across processes yet, and it’s the top item for the <a href="../user-guide/performance.html#next-free-threaded-scaling">free-threaded phase</a>. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> keeps climbing: 4.2x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 8 processes, and 1.15x diskcache’s own <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>. A pre-forking server (gunicorn, uvicorn workers) with a worker per core is this case.</li>
 <li><strong>Writes make the gap wider.</strong> At 90 reads to 10 writes with 8 processes, a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> gets 138k ops/s and a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> 431k (3.1x); at 50:50, 38k against 116k.</li>
 </ul>
 <p><strong>Several threads in one process.</strong> Threads share one handle, with hot keys (a few keys read far more than the rest, as a real site’s pages are):</p>

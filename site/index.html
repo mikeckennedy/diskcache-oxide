@@ -509,6 +509,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="./example-apps/index.html"> 
+<span class="menu-text">Example apps</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="./reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -520,7 +524,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="7" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="12" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -665,7 +669,7 @@ section.level2:first-of-type > h2:first-child,
 <span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>sessions.close()</span></code></pre></div>
 <p>An entry is gone the moment it expires, for every read, <code>len()</code> and iteration, and its space comes back on its own: a small thread in each process looks after every open cache every 5 minutes, removing expired entries, trimming a cache that’s over its size limit and keeping the write-ahead log small, with the workers taking turns so they don’t all do the same work. There’s nothing to schedule. <a href="./user-guide/storage-and-wal.html#background-maintenance">Background maintenance</a> has the details and the one setting, <code>maintenance_interval</code>.</p>
 <p>Talk Python runs its eight caches this way. <a href="./user-guide/caches.html">Named caches</a> covers the registry in full.</p>
-<p>The <a href="https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp">example app</a> is this setup in a whole FastAPI app, with gunicorn, a background worker and Docker Compose: a durable registry for pages, slow lookups and rate limits, and plain caches for sessions, job claims and a work queue. Every page shows which cache reads served it.</p>
+<p>The <a href="https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp">example app</a> is this setup in a whole FastAPI app, with gunicorn, a background worker and Docker Compose: a durable registry for pages, slow lookups and rate limits, and plain caches for sessions, job claims and a work queue. Every page shows which cache reads served it. <a href="./example-apps/fastapi.html">The FastAPI example</a> walks through its code, and <a href="./example-apps/django.html">the Django example</a> does the same for a Django project on the <a href="reference/DjangoCache.html#diskcache_oxide.DjangoCache" class="gdls-link gdls-code">DjangoCache</a> backend.</p>
 </section>
 <section id="where-this-is-going" class="level2">
 <h2 class="anchored" data-anchor-id="where-this-is-going">Where this is going</h2>
@@ -681,7 +685,7 @@ section.level2:first-of-type > h2:first-child,
 <h2 class="anchored" data-anchor-id="why-diskcache-oxide">Why diskcache-oxide</h2>
 <ul>
 <li><strong><a href="./user-guide/performance.html">Fast where web apps spend their time.</a></strong> At a 99:1 read/write mix, one thread gets about 720,000 operations a second from a <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, 1.7× diskcache’s rate and cheap enough to call straight from the event loop. Add threads and the gap opens: at 8 threads on a GIL build, diskcache’s per-thread connections pile into each other and its throughput falls to 19,000 a second, while oxide’s stays near 710,000, 38× ahead (the chart above).</li>
-<li><strong><a href="./user-guide/fanoutcache.html">Scales out across worker processes.</a></strong> A plain <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> has one write lock, so a server with a worker per core ends up queueing on it. <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> spreads keys over several SQLite databases so writes to different keys stop waiting on each other. With 8 processes it runs about 1.1 million operations a second, 4× a plain <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and 1.15× diskcache’s <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, and it lets threads scale on free-threaded Python too, for about 10 MiB more memory per process, behind the same API and in one directory.</li>
+<li><strong><a href="./user-guide/fanoutcache.html">Scales out across worker processes.</a></strong> A plain <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is one database file, and past two or three worker processes its reads and writes contend on it, so a server with a worker per core gets slower, not faster. <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> spreads keys over several SQLite databases so reads and writes of different keys stop contending. With 8 processes it runs about 1.1 million operations a second, 4× a plain <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and 1.15× diskcache’s <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, and it lets threads scale on free-threaded Python too, for about 10 MiB more memory per process, behind the same API and in one directory.</li>
 <li><strong><a href="./user-guide/concurrency-and-forks.html">Built for free-threaded Python.</a></strong> The extension is compiled with <code>gil_used = false</code> and never leans on the GIL for correctness, which matters on a build where there’s no GIL to lean on. Every change is tested on 3.14, 3.14t, 3.15 and 3.15t.</li>
 <li><strong><a href="./user-guide/concurrency-and-forks.html">Safe across <code>fork()</code>.</a></strong> gunicorn, Celery’s prefork pool and <code>multiprocessing</code> create workers by copying the parent, and the copy includes whatever SQLite lock a thread was holding at that instant. A process-wide fork barrier makes sure no child is ever born holding half a transaction.</li>
 <li><strong><a href="./user-guide/serialization.html">No pickle on your disk.</a></strong> Values are msgpack (or JSON) with exact type tags, so tuples, sets, datetimes, dates, Decimals, big ints and NaN come back as what you stored, not as whatever the format could manage. Your own types are registered once and read back only where the name is registered. Pickle is opt-in, and a cache that didn’t opt in refuses to unpickle anything it finds, however it got there.</li>
@@ -747,7 +751,7 @@ Note
 <li><a href="./user-guide/performance.html">Performance</a>: the measured numbers, and where the next speedups come from.</li>
 <li><a href="./user-guide/divergences.html">Divergences</a>: every deliberate difference from diskcache, with the reason.</li>
 <li><a href="./recipes/index.html">Recipes</a>: caching expensive calls, stale-while-revalidate, upstream HTTP responses, invalidation by prefix or tag, your own types, job claims, rate limiting, counters, work queues, single-use keys, sessions, web workers, Docker and Compose, asyncio, monitoring, upgrading across a format change, and testing.</li>
-<li><a href="https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/webapp">Example app</a>: a FastAPI app built the way these docs recommend, with Docker Compose and tests.</li>
+<li><a href="./example-apps/index.html">Example apps</a>: a FastAPI app and a Django project built the way these docs recommend, each walked through, with tests that run real worker processes.</li>
 <li><a href="./skills.html">Agent skill</a>: a cheat sheet for AI coding agents, with <a href="llms.txt">llms.txt</a> and <a href="llms-full.txt">llms-full.txt</a> alongside.</li>
 </ul>
 

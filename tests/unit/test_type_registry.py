@@ -434,7 +434,14 @@ def test_a_registered_type_is_never_pickled(directory: Path) -> None:
 
     register_type(Recursive, name='t.Recursive', encode=lambda o: o, decode=lambda _: Recursive())
 
+    class Surrogate:
+        pass
+
+    register_type(Surrogate, name='t.Surrogate', encode=lambda _: '\ud800', decode=lambda _: Surrogate())
+
     with Cache(directory, pickle=True) as cache:
+        with pytest.raises(UnicodeEncodeError):  # the fallback for a nested lone surrogate skips it too
+            cache.set('surrogate', Surrogate())
         cache.set('plain', Unstorable())  # the fallback still works for a value that reached no registration
         assert _mode(directory, 'plain') == PICKLE
         with pytest.raises(TypeError, match='from encode'):
