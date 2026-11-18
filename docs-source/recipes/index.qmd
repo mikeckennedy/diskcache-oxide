@@ -58,4 +58,4 @@ For locks, semaphores and a throttle that hold across every process, see the [Co
 
 ## In the user guide
 
-Some features have more to them than a recipe can hold, so they have guide pages of their own: [Coordination](../user-guide/coordination.qmd) (locks, semaphores, `throttle`, `barrier`, `Averager` and `memoize_stampede`, which refreshes a hot value before it expires), [`FanoutCache`](../user-guide/fanoutcache.qmd) for many writing processes, and [Transactions](../user-guide/transactions.qmd). What's coming next is on the [roadmap](../user-guide/roadmap.qmd).
+Some features have more to them than a recipe can hold, so they have guide pages of their own: [Coordination](../user-guide/coordination.qmd) (locks, semaphores, `throttle`, `barrier`, `Averager` and `memoize_stampede`, which refreshes a hot value before it expires), [`FanoutCache`](../user-guide/fanoutcache.qmd) for a cache many writers share, and [Transactions](../user-guide/transactions.qmd). What's coming next is on the [roadmap](../user-guide/roadmap.qmd).

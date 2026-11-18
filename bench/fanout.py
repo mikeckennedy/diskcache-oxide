@@ -5,12 +5,13 @@ Usage (from the repo root, on AC power, on a quiet machine):
     .venv-ft/bin/python -m bench.fanout                  # 3.14t
     venv/bin/python -m bench.fanout --group all          # every group (see below for how long each takes)
     venv/bin/python -m bench.fanout --group pagecache --group sizing
+    venv/bin/python -m bench.fanout --group sizing2      # the page-cache default across value sizes
     venv/bin/python -m bench.fanout --quick --group all  # smoke test, one short round
     venv/bin/python -m bench.fanout --only small --rounds 5
     venv/bin/python -m bench.fanout --mixes 99:1 --counts 1,2,4,8 --stress-counts none   # the plan-13 grid
 
 Groups (--group, repeatable; default scaling). A variant in several groups runs each case once.
-Times are for 3 rounds at the defaults on an M-series Mac; --group all takes about 30 minutes.
+Times are for 3 rounds at the defaults on an M-series Mac; --group all takes about 55 minutes.
 - scaling (about 15 minutes): does sharding scale, and what does it cost? oxide Cache at the default
   connection budget and at max_connections=16; oxide FanoutCache(8) at the default budget, at
   max_connections=16, and at sqlite_cache_size=32 (the default is 256 pages, 1 MiB, per connection,
@@ -30,12 +31,30 @@ Times are for 3 rounds at the defaults on an M-series Mac; --group all takes abo
   threshold once encoded); 99:1 at 1 and 8 threads, 90:10 at 8, uniform and Zipf; threads only. A
   large-value database holds SIZING_BYTES (64 MiB), four times the largest variant's page-cache
   budget, so filling stays quick. Cut to fit the time: the 90:10 mix at 1 thread, the processes
-  cases, and FanoutCache(32) at 1 KB (it runs 16 KiB and 64 KiB only).
-pagecache and sizing print one row per case and variant: ops/s median, min-max and cv across rounds,
-memory, and sampled get and set latency (p50, p99, p99.9), with UNSTABLE, TAIL-GET and TAIL-SET
-flags on a row that stands out from the other variants in the same case (see print_detail). Every
-case records the latency, whatever group it's in; about one get in 61 and one operation in 100
-that's a write are timed with perf_counter_ns, into buffers allocated before the memory baseline.
+  cases, and FanoutCache(32) at 1 KB (it runs 16 KiB and 64 KiB only). The 16 KiB and 64 KiB cases
+  are the tail cases: they time every write and one get in 7, and their measured window runs past
+  --seconds until the threads have taken TAIL_SAMPLES (1,000) get and set samples between them, up to
+  TAIL_MAX_SECONDS (10 s), so their p99.9 rests on at least 1,000 samples (a slow variant at 99:1
+  and 1 thread takes about 3 s). ops/s is still operations over the window's actual length.
+- sizing2 (deciding plan 30's page-cache default across value sizes, about 23 minutes): oxide Cache
+  at 256 (the default), 128 and 64 pages; FanoutCache(8) at the default (256), 64 and 32;
+  FanoutCache(4) at 64. 4 KiB, 8 KiB and mixed values (the 'mix' size, below); 99:1 and 90:10, each
+  at 1 and 8; uniform and Zipf; threads and processes (a web garden). Every case is a tail case
+  (values over 1 KB): in a procs case each process runs past --seconds until it holds its share of
+  TAIL_SAMPLES (1,000 / N) get and set samples, up to TAIL_MAX_SECONDS, so p99.9 rests on at least
+  1,000 samples there too; its ops/s is over its own window. Datasets hold SIZING_BYTES, as in sizing.
+  The 'mix' size is a web cache's spread: 50% of keys 1 KiB, 30% 4 KiB, 15% 16 KiB, 5% 64 KiB
+  (65,472, inline), each key's size fixed by a keyed blake2b hash of the key (mix_value_len), so the
+  fill and every process agree, and a write sets the key's own size. Its value_bytes is the mean
+  (7,472 B), and meta.value_mix records the distribution and the dataset's actual counts and mean.
+pagecache, sizing and sizing2 print one row per case and variant: ops/s median, min-max and cv across rounds,
+memory, and sampled get and set latency (p50, p99, p99.9) with the fewest samples any round took,
+and UNSTABLE, TAIL-GET and TAIL-SET flags on a row that stands out from the other variants in the
+same case (see print_detail). Every case records the latency, whatever group it's in; outside the
+tail cases about one get in 61 and one operation in 100 that's a write are timed with
+perf_counter_ns, into buffers allocated before the memory baseline. A percentile needs enough samples
+to mean anything: p99 is NaN (printed '-') under 100 samples and p99.9 under 1,000, so the 1 KB
+cases' set p99.9 is usually '-' at 99:1 (about 1,000 writes a second over all threads, 1 in 100 timed).
 Outside every group (pass --variant-list, which replaces each selected group's variants): oxide
 FanoutCache(8) at 64 pages in the scaling grid, max_connections=32 on Cache and FanoutCache(8), to
 tell a connection-budget limit from a shard one, and FanoutCache(8) with an explicit
@@ -46,10 +65,11 @@ such in the table; they show where sharding the write lock matters. Zipf (s=1.0)
 hot-working-set case, where the page-cache size matters most.
 
 Cases (N is the thread or process count; non-headline mixes and value sizes are in the name):
-- threads-{uniform,zipf}[-90to10|-50to50][-v16k|-v64k]-N: N threads in one fresh process sharing one
+- threads-{uniform,zipf}[-90to10|-50to50][-v4k|-v8k|-v16k|-v64k|-vmix]-N: N threads in one fresh process sharing one
   handle. 1 KB values over KEYS (default 50,000) keys: a ~50 MB database, larger than any variant's
-  page-cache budget. ops/s for the process, and memory (below).
-- procs-{uniform,zipf}[-90to10|-50to50]-N: the same mix from N spawned processes, one thread each,
+  page-cache budget (FanoutCache(8)'s default is 16 MiB), and every thread's plan reads all of it
+  (Key plans, below). ops/s for the process, and memory (below).
+- procs-{uniform,zipf}[-90to10|-50to50][-v4k|-v8k|-vmix]-N: the same mix from N spawned processes, one thread each,
   each opening the directory itself (a web garden). ops/s summed over the processes; memory per
   process, the median across them (not summed).
 - small-1t / small-4t-shared / small-4t-separate: scale_probe's free-threaded small-read case (700
@@ -59,34 +79,58 @@ Cases (N is the thread or process count; non-headline mixes and value sizes are 
 drops them), --full runs 1, 2, 4 and 8 everywhere, --mixes, --dists and --sizes narrow the grid, and
 --only PREFIX filters case names on top (threads, procs-zipf, threads-uniform-50to50, small...).
 
+Key plans. Each thread (or process) cycles its own plan of plan_len(keys) operations: at least
+PLAN_MIN (10,000) and at least twice the database's keys, a whole number of passes over them (100,000
+for 50,000 keys). Uniform plans are shuffled passes, each key once per pass, so every key is read
+equally often and the plan covers the whole database; Zipf plans draw from every key, weighted by
+rank. The warm-up starts at the plan's first operation and the measured window at its midpoint, so
+the window doesn't just replay what the warm-up read. meta.plans records each dataset's plan length
+and distinct keys per plan (thread 0's, computed).
+
 Memory. Every threads and procs case runs in fresh processes against a database filled beforehand
 by another process, so filling never shows up in its numbers. A case process imports the variant's
-module and builds its key plans, takes its RSS as the baseline, then opens the cache, warms up for
-WARM_SECONDS, and runs the measured window. It reports, in MiB over that baseline: `rss` (current
-RSS just after the window, before closing the cache) and `peak` (ru_maxrss at the same point, which
-is bytes on macOS and KiB on Linux). Both include the threads' own stacks and Python objects, alike
-for every variant; the differences between variants are the cache's. On Windows they're NaN.
+module and builds its key plans, takes its memory as the baseline, then opens the cache, warms up
+for WARM_SECONDS, and runs the measured window. It reports, in MiB over that baseline: `rss`
+(current RSS just after the window, before closing the cache), `peak` (ru_maxrss at the same point,
+which is bytes on macOS and KiB on Linux) and `private` (process-private memory at the same point:
+phys_footprint from proc_pid_rusage on macOS, Private_Dirty plus Swap from /proc/self/smaps_rollup on
+Linux). RSS counts resident pages of mapped files, and stock diskcache maps up to 64 MiB of its
+database (sqlite_mmap_size), so its RSS growth is mostly the database file: shared with every
+process mapping it and reclaimable. `private` leaves that out (a file mapped read-only stays clean),
+so it's the number to compare across variants. All three include the threads' own stacks and Python
+objects, alike for every variant; the differences between variants are the cache's. NaN where we
+can't read them (Windows; `private` on other platforms too).
 
 Each round runs every variant in a fresh worker process (the order rotates each round, so drift hits
 all of them alike), and each variant's databases are filled once per run, before its first round.
 The driver reports the median over rounds and the min-max spread. Only compare results from the same
-machine. Writes bench/results/fanout-<python>-<machine>.json: per variant and case, the ops/s
-`median`/`min`/`max`/`samples` as before, plus `cv`, `mix`, `value_bytes`, `rss_growth_mib`,
-`peak_growth_mib` and `latency_us` (get and set, each p50/p99/p999 with its own median, min, max,
-cv and samples, and the sample counts `n`). Results from before this
-extension used 1,000 keys, the 99:1 mix only and one process for all of a variant's cases;
-`meta.keys` says which.
+machine. Writes bench/results/fanout-<python>-<machine>.json after every round: per variant and
+case, the ops/s `median`/`min`/`max`/`samples` as before, plus `cv`, `mix`, `value_bytes`,
+`rss_growth_mib`, `peak_growth_mib`, `private_growth_mib` and `latency_us` (get and set, each
+p50/p99/p999 with its own median, min, max, cv and samples, and the sample counts `n`), and
+`errors` when a round failed. A case that fails (a crashed case process, an exception, a worker
+that dies) is recorded as NaN with its error for that round, and the run goes on; meta.errors lists
+them. Results from before this extension used 1,000 keys, the 99:1 mix only and one process for all
+of a variant's cases; `meta.keys` says which. Results from before meta.plans cycled a 10,000-pick
+plan (about 9,000 distinct keys) and measured from the same start as the warm-up.
+
+The driver raises its soft RLIMIT_NOFILE to the hard limit before starting (every worker and case
+process inherits it) and warns below 4,096: stock diskcache's FanoutCache opens a connection per
+thread per shard, and under the 256 a non-interactive ssh shell gets on macOS it fails partway
+through (bench/fanout_fds.py measures where). meta.nofile records the limit.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import math
 import multiprocessing
 import os
 import platform
+import queue
 import random
 import statistics
 import subprocess
@@ -95,11 +139,12 @@ import sysconfig
 import tempfile
 import threading
 import time
+import traceback
 from array import array
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 RESULTS_DIR = Path(__file__).parent / 'results'
 THREAD_COUNTS = (1, 2, 4, 8)
@@ -107,10 +152,16 @@ KEYS = 50_000
 QUICK_KEYS = 5_000
 SIZING_BYTES = 64 * 2**20  # Values per sizing database: 4x the 16 MiB page cache of FanoutCache(8)'s default.
 QUICK_SIZING_BYTES = 8 * 2**20
-PLAN_LEN = 10_000
+PLAN_MIN = 10_000  # Operations per plan, at least; plan_len() also makes it at least two passes over the keys.
 STOP_CHECK = 500
 GET_SAMPLE_EVERY = 61  # Time about one get in 61 (prime, so it never lines up with the writes).
+TAIL_GET_SAMPLE_EVERY = 7  # In the tail cases (values over 1 KB), one get in 7, and every write.
+TAIL_SAMPLES = 1_000  # A tail case's window runs until the threads hold this many get and set samples ...
+TAIL_MAX_SECONDS = 10.0  # ... or for this long, whichever comes first (never shorter than --seconds).
 SAMPLES_PER_SECOND = 40_000  # Latency buffer per thread and kind; past it, samples stop (only at > 2.4M gets/s).
+MIN_P99 = 100  # Fewer samples than these and the percentile is NaN: it would be the max, or near it.
+MIN_P999 = 1_000
+FD_WARN = 4_096
 TIMEOUT = 10.0
 SECONDS = 1.0
 WARM_SECONDS = 0.2
@@ -120,9 +171,16 @@ MIB = 2**20
 MIXES: dict[str, int] = {'99:1': 100, '90:10': 10, '50:50': 2}
 HEADLINE = '99:1'
 DISTS = ('uniform', 'zipf')
-# Value size label -> characters. 64k stays under spill::THRESHOLD (65,536 bytes) once encoded, so it's inline.
-SIZES: dict[str, int] = {'1k': 1_024, '16k': 16_384, '64k': 65_472}
+# Value mix (the 'mix' size): (characters, percent of keys), like a web cache's spread of fragments and pages.
+# Each key's size is fixed by a keyed hash of the key (mix_value_len), so the fill and every process agree.
+VALUE_MIX: tuple[tuple[int, int], ...] = ((1_024, 50), (4_096, 30), (16_384, 15), (65_472, 5))
+VALUE_MIX_KEY = b'bench.fanout value mix 1'
+MIX_MEAN = sum(chars * pct for chars, pct in VALUE_MIX) // 100  # 7,472
+# Value size label -> characters ('mix': the mean). 64k stays under spill::THRESHOLD (65,536 bytes) once encoded,
+# so it's inline.
+SIZES: dict[str, int] = {'1k': 1_024, '4k': 4_096, '8k': 8_192, '16k': 16_384, '64k': 65_472, 'mix': MIX_MEAN}
 DEFAULT_SIZE = '1k'
+MIX = 'mix'
 
 SMALL_KEYS = 700
 SMALL_OPS = 60_000  # Reads per thread, as in bench/scaling/scale_probe.py.
@@ -138,6 +196,7 @@ VARIANTS: dict[str, tuple[str, str, dict[str, Any]]] = {
     'oxide-fanout8-cs64': ('diskcache_oxide', 'FanoutCache', {'shards': 8, 'sqlite_cache_size': 64}),
     'oxide-fanout8-cs32': ('diskcache_oxide', 'FanoutCache', {'shards': 8, 'sqlite_cache_size': 32}),
     'oxide-fanout8-cs16': ('diskcache_oxide', 'FanoutCache', {'shards': 8, 'sqlite_cache_size': 16}),
+    'oxide-fanout4-cs64': ('diskcache_oxide', 'FanoutCache', {'shards': 4, 'sqlite_cache_size': 64}),
     'oxide-fanout32-cs64': ('diskcache_oxide', 'FanoutCache', {'shards': 32, 'sqlite_cache_size': 64}),
     'oxide-fanout32-cs32': ('diskcache_oxide', 'FanoutCache', {'shards': 32, 'sqlite_cache_size': 32}),
     'oxide-fanout32-cs16': ('diskcache_oxide', 'FanoutCache', {'shards': 32, 'sqlite_cache_size': 16}),
@@ -213,9 +272,19 @@ GROUPS: dict[str, Group] = {
         mixes=('99:1', '90:10'),
         counts=(1, 8),
         stress_counts=(8,),
-        sizes=tuple(SIZES),
+        sizes=('1k', '16k', '64k'),
         detail=True,
         large_values_only=('oxide-fanout32-cs64', 'oxide-fanout32-cs32', 'oxide-fanout32-cs16'),
+    ),
+    'sizing2': Group(
+        about='the page-cache default across value sizes: 4 KiB, 8 KiB and a web-cache mix, threads and processes',
+        variants=(*PAGE_CACHE_VARIANTS, 'oxide-fanout4-cs64'),
+        kinds=('threads', 'procs'),
+        mixes=('99:1', '90:10'),
+        counts=(1, 8),
+        stress_counts=(1, 8),
+        sizes=('4k', '8k', MIX),
+        detail=True,
     ),
 }
 
@@ -232,6 +301,7 @@ class Samples:
         cap = int(seconds * SAMPLES_PER_SECOND) + 1_000
         self.gets = array('q', bytes(8 * cap))
         self.sets = array('q', bytes(8 * cap))
+        # Updated after every chunk of the loop, so run_threads can see how many a tail case has taken so far.
         self.n_gets = 0
         self.n_sets = 0
 
@@ -240,15 +310,20 @@ class Samples:
 
 
 def percentiles(values: list[int]) -> dict[str, float]:
-    """p50, p99 and p99.9 in microseconds, and the sample count."""
-    if not values:
+    """p50, p99 and p99.9 in microseconds (nearest rank), and the sample count.
+
+    p99 is NaN under MIN_P99 samples and p99.9 under MIN_P999: below those, the nearest rank is the
+    largest sample or close to it, and the percentile would just be the max under another name.
+    """
+    n = len(values)
+    if not n:
         return {'p50': math.nan, 'p99': math.nan, 'p999': math.nan, 'n': 0}
     values = sorted(values)
 
-    def at(q: float) -> float:
-        return values[min(len(values) - 1, int(q * len(values)))] / 1_000
+    def at(q: float, needed: int) -> float:
+        return values[max(0, math.ceil(q * n) - 1)] / 1_000 if n >= needed else math.nan
 
-    return {'p50': at(0.5), 'p99': at(0.99), 'p999': at(0.999), 'n': len(values)}
+    return {'p50': at(0.5, 1), 'p99': at(0.99, MIN_P99), 'p999': at(0.999, MIN_P999), 'n': n}
 
 
 def latency_report(samples: list[Samples]) -> dict[str, dict[str, float]]:
@@ -308,8 +383,136 @@ def peak_rss_bytes() -> float:
     return float(peak if sys.platform == 'darwin' else peak * 1024)
 
 
-def memory_report(base: float) -> dict[str, float]:
-    return {'rss_mib': (rss_bytes() - base) / MIB, 'peak_mib': (peak_rss_bytes() - base) / MIB}
+def darwin_phys_footprint() -> float:
+    """macOS: ri_phys_footprint from proc_pid_rusage(RUSAGE_INFO_V2), the figure Activity Monitor shows as Memory.
+
+    It counts this process's dirty private memory (and its compressed and swapped pages), not clean
+    pages of mapped files, so a database file mapped read-only doesn't show up in it.
+    """
+    import ctypes
+
+    class RusageInfoV2(ctypes.Structure):
+        _fields_ = [
+            ('ri_uuid', ctypes.c_uint8 * 16),
+            *(
+                (name, ctypes.c_uint64)
+                for name in (
+                    'ri_user_time',
+                    'ri_system_time',
+                    'ri_pkg_idle_wkups',
+                    'ri_interrupt_wkups',
+                    'ri_pageins',
+                    'ri_wired_size',
+                    'ri_resident_size',
+                    'ri_phys_footprint',
+                    'ri_proc_start_abstime',
+                    'ri_proc_exit_abstime',
+                    'ri_child_user_time',
+                    'ri_child_system_time',
+                    'ri_child_pkg_idle_wkups',
+                    'ri_child_interrupt_wkups',
+                    'ri_child_pageins',
+                    'ri_child_elapsed_abstime',
+                    'ri_diskio_bytesread',
+                    'ri_diskio_byteswritten',
+                )
+            ),
+        ]
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    info = RusageInfoV2()
+    if libc.proc_pid_rusage(os.getpid(), 2, ctypes.byref(info)) != 0:  # 2 = RUSAGE_INFO_V2
+        return math.nan
+    return float(info.ri_phys_footprint)
+
+
+def linux_private_bytes() -> float:
+    """Linux: Private_Dirty plus Swap from /proc/self/smaps_rollup.
+
+    Private_Clean is left out on purpose: a database file mapped by this process alone lands there,
+    which is exactly the file-backed memory this metric exists to exclude.
+    """
+    fields: dict[str, int] = {}
+    with open('/proc/self/smaps_rollup') as f:
+        for line in f:
+            name, _, rest = line.partition(':')
+            parts = rest.split()
+            if len(parts) == 2 and parts[1] == 'kB':
+                fields[name] = int(parts[0])
+    return float((fields.get('Private_Dirty', 0) + fields.get('Swap', 0)) * 1024)
+
+
+def private_bytes() -> float:
+    """This process's private memory in bytes, without resident pages of mapped files (NaN where we can't read it)."""
+    try:
+        if sys.platform == 'darwin':
+            return darwin_phys_footprint()
+        if sys.platform.startswith('linux'):
+            return linux_private_bytes()
+    except OSError, AttributeError:
+        pass
+    return math.nan
+
+
+def memory_baseline() -> tuple[float, float]:
+    return rss_bytes(), private_bytes()
+
+
+def memory_report(base: tuple[float, float]) -> dict[str, float]:
+    rss, private = base
+    return {
+        'rss_mib': (rss_bytes() - rss) / MIB,
+        'peak_mib': (peak_rss_bytes() - rss) / MIB,
+        'private_mib': (private_bytes() - private) / MIB,
+    }
+
+
+# ---------------------------------------------------------------------------------- file descriptors
+
+
+def raise_fd_limit() -> dict[str, Any]:
+    """Raise the soft RLIMIT_NOFILE as far as the hard limit allows; children inherit it. Returns soft and hard.
+
+    macOS reports an unlimited hard limit but refuses a soft one above kern.maxfilesperproc, so on a
+    refusal this tries that, then smaller round numbers.
+    """
+    if sys.platform == 'win32':
+        return {'soft': None, 'hard': None}
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    candidates: list[int] = []
+    if hard != resource.RLIM_INFINITY:
+        candidates.append(hard)
+    if sys.platform == 'darwin':
+        try:
+            out = subprocess.run(['sysctl', '-n', 'kern.maxfilesperproc'], capture_output=True, text=True, timeout=5)
+            candidates.append(int(out.stdout.strip()))
+        except OSError, ValueError, subprocess.SubprocessError:
+            pass
+    candidates += [1_048_576, 65_536, 10_240]
+    for limit in candidates:
+        if soft != resource.RLIM_INFINITY and limit <= soft:
+            break
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (limit, hard))
+            break
+        except ValueError, OSError:
+            continue
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    return {
+        'soft': None if soft == resource.RLIM_INFINITY else soft,
+        'hard': None if hard == resource.RLIM_INFINITY else hard,
+    }
+
+
+def warn_low_fd_limit(limit: dict[str, Any]) -> None:
+    if limit['soft'] is not None and limit['soft'] < FD_WARN:
+        print(
+            f'warning: RLIMIT_NOFILE soft limit is {limit["soft"]} (hard {limit["hard"]}) after raising it, '
+            f"below {FD_WARN:,}: stock diskcache's FanoutCache may fail with too many open files",
+            file=sys.stderr,
+        )
 
 
 # ---------------------------------------------------------------------------------- the mixes
@@ -343,32 +546,105 @@ def size_of(name: str) -> str:
     return DEFAULT_SIZE
 
 
+def size_text(size: str) -> str:
+    """How a printed header names a case's values."""
+    if size == MIX:
+        parts = ', '.join(f'{pct}% {chars:,}' for chars, pct in VALUE_MIX)
+        return f'mixed values ({parts} B), mean {SIZES[MIX]:,} B'
+    return f'{SIZES[size]:,} B values'
+
+
+def mix_value_len(key: str) -> int:
+    """A key's value length in the 'mix' size: a keyed blake2b of the key picks its bucket in VALUE_MIX."""
+    roll = int.from_bytes(hashlib.blake2b(key.encode(), digest_size=8, key=VALUE_MIX_KEY).digest(), 'big') % 100
+    for chars, pct in VALUE_MIX:
+        if roll < pct:
+            return chars
+        roll -= pct
+    return VALUE_MIX[-1][0]
+
+
+# A case's values: one string for every key, or (the 'mix' size) each key's own.
+Values = str | dict[str, str]
+
+
+def case_values(size: str, names: list[str]) -> Values:
+    """The values a case writes. In the 'mix' size every key keeps the length mix_value_len gives it."""
+    if size != MIX:
+        return 'v' * SIZES[size]
+    by_len = {chars: 'v' * chars for chars, _ in VALUE_MIX}  # Four strings, shared by every key.
+    return {name: by_len[mix_value_len(name)] for name in names}
+
+
+def mix_summary(keys: int) -> dict[str, Any]:
+    """For meta.value_mix: the distribution, and what a dataset of `keys` keys actually holds."""
+    lens = [mix_value_len(name) for name in key_names(keys)]
+    return {
+        'percent_of_keys_by_chars': {str(chars): pct for chars, pct in VALUE_MIX},
+        'mean_chars': SIZES[MIX],
+        'picked_by': 'blake2b(key, digest_size=8, keyed) % 100 against the cumulative percentages',
+        'dataset_keys': keys,
+        'dataset_keys_by_chars': {str(chars): lens.count(chars) for chars, _ in VALUE_MIX},
+        'dataset_mean_chars': statistics.fmean(lens) if lens else math.nan,
+    }
+
+
 def key_names(keys: int) -> list[str]:
     return [''.join(('t:', str(i))) for i in range(keys)]
 
 
-def key_plan(names: list[str], dist: str, every: int, seed: int) -> Plan:
+def plan_len(keys: int) -> int:
+    """Operations per plan: whole passes over the keys, at least two and at least PLAN_MIN operations."""
+    return keys * max(2, math.ceil(PLAN_MIN / keys))
+
+
+def key_picks(keys: int, dist: str, seed: int) -> list[int]:
+    """Key indices for one plan. Uniform: shuffled passes over every key. Zipf (s=1.0): draws over every key."""
+    rng = random.Random(seed)
+    length = plan_len(keys)
+    if dist == 'zipf':
+        weights = list(itertools.accumulate(1 / (rank + 1) for rank in range(keys)))
+        return rng.choices(range(keys), cum_weights=weights, k=length)
+    picks: list[int] = []
+    for _ in range(length // keys):
+        one_pass = list(range(keys))
+        rng.shuffle(one_pass)
+        picks += one_pass
+    return picks
+
+
+def key_plan(names: list[str], dist: str, every: int, seed: int, tail: bool = False) -> Plan:
     """A cycling plan of (key, is_write, is_timed) triples, built per thread so nothing Python-level is shared.
 
     About one get in 61 is timed, and one operation in 100 when it's a write (every write in the 99:1
-    mix, every 10th in 90:10, every 50th in 50:50), so the timing costs well under 1% of the loop.
+    mix, every 10th in 90:10, every 50th in 50:50), so the timing costs well under 1% of the loop. In
+    a tail case (`tail`, values over 1 KB, where one operation takes microseconds) every write and one
+    get in 7 are timed, so the window can gather TAIL_SAMPLES of each.
     """
-    rng = random.Random(seed)
-    keys = len(names)
-    if dist == 'zipf':
-        weights = list(itertools.accumulate(1 / (rank + 1) for rank in range(keys)))
-        picks = rng.choices(range(keys), cum_weights=weights, k=PLAN_LEN)
-    else:
-        picks = [rng.randrange(keys) for _ in range(PLAN_LEN)]
     plan = []
-    for i, k in enumerate(picks):
+    for i, k in enumerate(key_picks(len(names), dist, seed)):
         write = i % every == 0
-        plan.append((names[k], write, i % 100 == 0 if write else i % GET_SAMPLE_EVERY == 7))
+        if tail:
+            timed = write or i % TAIL_GET_SAMPLE_EVERY == 3
+        else:
+            timed = i % 100 == 0 if write else i % GET_SAMPLE_EVERY == 7
+        plan.append((names[k], write, timed))
     return plan
 
 
+def plan_summary(keys: int) -> dict[str, Any]:
+    """For meta.plans: the plan length and thread 0's distinct keys per distribution."""
+    return {
+        'dataset_keys': keys,
+        'plan_len': plan_len(keys),
+        'distinct_keys': {dist: len(set(key_picks(keys, dist, 0))) for dist in DISTS},
+        'measured_window_starts_at': plan_len(keys) // 2,
+    }
+
+
 def dataset_keys(size: str, keys: int, quick: bool) -> int:
-    """1 KB values get `keys` keys; larger values get a fixed byte budget, so filling stays quick."""
+    """1 KB values get `keys` keys; larger values (and the mix, by its mean) get a fixed byte budget, so filling
+    stays quick and every dataset stays four times the largest page-cache budget compared (FanoutCache(8)'s 16 MiB)."""
     if size == DEFAULT_SIZE:
         return keys
     return (QUICK_SIZING_BYTES if quick else SIZING_BYTES) // SIZES[size]
@@ -383,41 +659,53 @@ def filled_keys(directory: Path | str) -> int:
     return json.loads(fill_marker(directory).read_text())['keys']
 
 
-def ensure_filled(variant: str, directory: Path, keys: int, value: str) -> None:
+def ensure_filled(variant: str, directory: Path, keys: int, size: str) -> None:
     """Fill the variant's database once per run (in this process, which never measures memory)."""
     marker = fill_marker(directory)
-    if marker.exists() and json.loads(marker.read_text()) == {'keys': keys, 'value': len(value)}:
+    wanted_marker = {'keys': keys, 'size': size, 'value': SIZES[size]}
+    if marker.exists() and json.loads(marker.read_text()) == wanted_marker:
         return
     started = time.perf_counter()
     directory.parent.mkdir(parents=True, exist_ok=True)
+    names = key_names(keys)
+    values = case_values(size, names)
     cache = make(variant, directory)
-    for i in range(keys):
-        cache.set(f't:{i}', value)
+    for name in names:
+        cache.set(name, values if isinstance(values, str) else values[name])
     cache.close()
-    marker.write_text(json.dumps({'keys': keys, 'value': len(value)}))
+    marker.write_text(json.dumps(wanted_marker))
     print(
-        f'  filled {variant}: {keys:,} keys x {len(value):,} B in {time.perf_counter() - started:.1f} s',
+        f'  filled {variant}: {keys:,} keys x {size_text(size)} in {time.perf_counter() - started:.1f} s',
         file=sys.stderr,
     )
 
 
-def run_loop(cache: Any, plan: Plan, value: str, stop: Callable[[], bool], samples: Samples) -> int:
+def run_loop(cache: Any, plan: Plan, values: Values, stop: Callable[[], bool], samples: Samples, start: int = 0) -> int:
+    """Run the plan in a cycle from operation `start` (rounded down to a chunk) until `stop()`; returns operations.
+
+    A write sets `values` itself when it's one string, or the key's own value from the 'mix' size's dict.
+    """
     get, set_ = cache.get, cache.set
+    value = values if isinstance(values, str) else ''
+    per_key = None if isinstance(values, str) else values
     clock = time.perf_counter_ns
     gets, sets = samples.gets, samples.sets
     cap = len(gets)
     n_gets = n_sets = 0
+    samples.n_gets = samples.n_sets = 0
     ops = 0
     # Check the clock every STOP_CHECK operations, so a slow variant doesn't overrun its window by a whole plan.
     chunks = [plan[i : i + STOP_CHECK] for i in range(0, len(plan), STOP_CHECK)]
-    for chunk in itertools.cycle(chunks):
+    first = (start // STOP_CHECK) % len(chunks)
+    for chunk in itertools.cycle(chunks[first:] + chunks[:first]):
         if stop():
             break
         for key, write, timed in chunk:
             if timed:
                 if write:
+                    v = value if per_key is None else per_key[key]
                     t0 = clock()
-                    set_(key, value)
+                    set_(key, v)
                     if n_sets < cap:
                         sets[n_sets] = clock() - t0
                         n_sets += 1
@@ -428,15 +716,25 @@ def run_loop(cache: Any, plan: Plan, value: str, stop: Callable[[], bool], sampl
                         gets[n_gets] = clock() - t0
                         n_gets += 1
             elif write:
-                set_(key, value)
+                set_(key, value if per_key is None else per_key[key])
             else:
                 get(key)
         ops += len(chunk)
-    samples.n_gets, samples.n_sets = n_gets, n_sets
+        samples.n_gets, samples.n_sets = n_gets, n_sets
     return ops
 
 
-def run_threads(cache: Any, plans: list[Plan], value: str, seconds: float, samples: list[Samples]) -> float:
+def run_threads(
+    cache: Any,
+    plans: list[Plan],
+    values: Values,
+    seconds: float,
+    samples: list[Samples],
+    start: int = 0,
+    min_samples: int = 0,
+    max_seconds: float = 0.0,
+) -> float:
+    """ops/s over a window of `seconds`, or longer, up to `max_seconds`, until every kind has `min_samples`."""
     threads = len(plans)
     counts = [0] * threads
     stop = threading.Event()
@@ -444,68 +742,160 @@ def run_threads(cache: Any, plans: list[Plan], value: str, seconds: float, sampl
 
     def worker(n: int) -> None:
         barrier.wait()
-        counts[n] = run_loop(cache, plans[n], value, stop.is_set, samples[n])
+        counts[n] = run_loop(cache, plans[n], values, stop.is_set, samples[n], start)
 
     pool = [threading.Thread(target=worker, args=(n,)) for n in range(threads)]
     for t in pool:
         t.start()
     barrier.wait()
-    start = time.perf_counter()
+    begin = time.perf_counter()
     time.sleep(seconds)
+    if min_samples:
+        deadline = begin + max(seconds, max_seconds)
+        while time.perf_counter() < deadline:
+            taken = min(sum(s.n_gets for s in samples), sum(s.n_sets for s in samples))
+            if taken >= min_samples:
+                break
+            time.sleep(0.05)
     stop.set()
     for t in pool:
         t.join()
-    return sum(counts) / (time.perf_counter() - start)
+    return sum(counts) / (time.perf_counter() - begin)
+
+
+def is_tail(case: Case) -> bool:
+    """The cases with values over 1 KB (the mix too), which time every write and run until they have TAIL_SAMPLES."""
+    return case[4] != DEFAULT_SIZE
 
 
 def thread_child(variant: str, directory: str, case: Case, timing: tuple[float, float], out: Any) -> None:
     """One threads case in a fresh process: baseline, open, warm, measure, report."""
     _, dist, mix, threads, size = case
     warm, seconds = timing
-    value = 'v' * SIZES[size]
+    tail = is_tail(case)
     import_variant(variant)
     names = key_names(filled_keys(directory))
-    plans = [key_plan(names, dist, MIXES[mix], n) for n in range(threads)]
+    values = case_values(size, names)
+    plans = [key_plan(names, dist, MIXES[mix], n, tail) for n in range(threads)]
     del names
-    samples = [Samples(seconds) for _ in range(threads)]
-    base = rss_bytes()
+    longest = max(seconds, TAIL_MAX_SECONDS) if tail else seconds
+    samples = [Samples(longest) for _ in range(threads)]
+    base = memory_baseline()
     cache = make(variant, Path(directory))
-    run_threads(cache, plans, value, warm, samples)  # The warm-up's samples are overwritten.
-    rate = run_threads(cache, plans, value, seconds, samples)
+    run_threads(cache, plans, values, warm, samples)  # The warm-up's samples are overwritten.
+    middle = len(plans[0]) // 2  # Measure from the plans' midpoint, not from where the warm-up started.
+    if tail:
+        rate = run_threads(cache, plans, values, seconds, samples, middle, TAIL_SAMPLES, TAIL_MAX_SECONDS)
+    else:
+        rate = run_threads(cache, plans, values, seconds, samples, middle)
     report = memory_report(base)
     cache.close()
     out.put({'ops': rate, **report, **latency_report(samples)})
+
+
+def collect(out: Any, children: list[Any], count: int, timeout: float) -> list[Any]:
+    """`count` results from the queue, failing fast if a child exits with an error rather than waiting out `timeout`."""
+    deadline = time.monotonic() + timeout
+    results: list[Any] = []
+    while len(results) < count:
+        try:
+            results.append(out.get(timeout=0.5))
+            continue
+        except queue.Empty:
+            pass
+        failed = [p for p in children if p.exitcode not in (None, 0)]
+        if failed:
+            raise RuntimeError(f'case process {failed[0].pid} exited with code {failed[0].exitcode}')
+        if time.monotonic() > deadline:
+            raise TimeoutError(f'no result from the case processes after {timeout:.0f} s')
+    return results
+
+
+def stop_children(children: list[Any], grace: float) -> None:
+    """Give the children `grace` seconds to exit, then terminate whatever is still running and reap everything."""
+    deadline = time.monotonic() + grace
+    for p in children:
+        p.join(max(0.0, deadline - time.monotonic()))
+    for p in children:
+        if p.is_alive():
+            p.terminate()
+    for p in children:
+        p.join(5)
+        if p.is_alive():
+            p.kill()
+            p.join(5)
 
 
 def threads_case(variant: str, directory: Path, case: Case, timing: tuple[float, float]) -> dict[str, Any]:
     ctx = multiprocessing.get_context('spawn')
     out = ctx.Queue()
     child = ctx.Process(target=thread_child, args=(variant, str(directory), case, timing, out))
-    child.start()
-    result = out.get(timeout=120 + sum(timing))
-    child.join()
-    return result
+    grace = 0.0  # A failure kills the child at once; a result gives it time to exit on its own.
+    try:
+        child.start()
+        limit = 120 + sum(timing) + (TAIL_MAX_SECONDS if is_tail(case) else 0)
+        result = collect(out, [child], 1, limit)[0]
+        grace = 30.0
+        return result
+    finally:
+        stop_children([child], grace)
+
+
+def wait_for_start(start: Any, children: list[Any], timeout: float) -> None:
+    """Join the start barrier, aborting it (which frees the children waiting on it) if a child dies first."""
+    broken: list[BaseException] = []
+
+    def waiter() -> None:
+        try:
+            start.wait(timeout=timeout)
+        except threading.BrokenBarrierError as exc:
+            broken.append(exc)
+
+    thread = threading.Thread(target=waiter, daemon=True)
+    thread.start()
+    while thread.is_alive():
+        failed = [p for p in children if p.exitcode not in (None, 0)]
+        if failed:
+            start.abort()
+            thread.join()
+            raise RuntimeError(f'case process {failed[0].pid} exited with code {failed[0].exitcode} before the start')
+        thread.join(0.2)
+    if broken:
+        raise RuntimeError(f'the case processes never all reached the start within {timeout:.0f} s')
 
 
 def proc_child(
     variant: str, directory: str, case: Case, seed: int, timing: tuple[float, float], start: Any, out: Any
 ) -> None:
-    _, dist, mix, _, size = case
+    _, dist, mix, procs, size = case
     warm, seconds = timing
-    value = 'v' * SIZES[size]
+    tail = is_tail(case)
     import_variant(variant)
     names = key_names(filled_keys(directory))
-    plan = key_plan(names, dist, MIXES[mix], seed)
+    values = case_values(size, names)
+    plan = key_plan(names, dist, MIXES[mix], seed, tail)
     del names
-    samples = Samples(seconds)
-    base = rss_bytes()
+    samples = Samples(max(seconds, TAIL_MAX_SECONDS) if tail else seconds)
+    base = memory_baseline()
     cache = make(variant, Path(directory))
     warm_end = time.perf_counter() + warm
-    run_loop(cache, plan, value, lambda: time.perf_counter() >= warm_end, samples)
+    run_loop(cache, plan, values, lambda: time.perf_counter() >= warm_end, samples)
     start.wait(timeout=120)  # Every process has opened and warmed up before any clock starts.
     begin = time.perf_counter()
     end = begin + seconds
-    ops = run_loop(cache, plan, value, lambda: time.perf_counter() >= end, samples)
+    # A tail case's process runs past `seconds` until it holds its share of TAIL_SAMPLES get and set samples, up
+    # to TAIL_MAX_SECONDS, so the case's p99.9 rests on at least TAIL_SAMPLES. Its ops/s is over its own window.
+    need = math.ceil(TAIL_SAMPLES / procs) if tail else 0
+    deadline = begin + max(seconds, TAIL_MAX_SECONDS)
+
+    def done() -> bool:
+        now = time.perf_counter()
+        if now < end:
+            return False
+        return min(samples.n_gets, samples.n_sets) >= need or now >= deadline
+
+    # From the plan's midpoint, not from where the warm-up started.
+    ops = run_loop(cache, plan, values, done, samples, len(plan) // 2)
     elapsed = time.perf_counter() - begin
     report = memory_report(base)
     cache.close()
@@ -522,16 +912,20 @@ def procs_case(variant: str, directory: Path, case: Case, timing: tuple[float, f
         ctx.Process(target=proc_child, args=(variant, str(directory), case, 100 + n, timing, start, out))
         for n in range(procs)
     ]
-    for p in children:
-        p.start()
-    start.wait(timeout=120)
-    results = [out.get(timeout=120 + sum(timing)) for _ in children]
-    for p in children:
-        p.join()
+    grace = 0.0
+    try:
+        for p in children:
+            p.start()
+        wait_for_start(start, children, 120)
+        results = collect(out, children, procs, 120 + sum(timing) + (TAIL_MAX_SECONDS if is_tail(case) else 0))
+        grace = 30.0
+    finally:
+        stop_children(children, grace)
     return {
         'ops': sum(r['ops'] for r in results),
         'rss_mib': statistics.median(r['rss_mib'] for r in results),
         'peak_mib': statistics.median(r['peak_mib'] for r in results),
+        'private_mib': statistics.median(r['private_mib'] for r in results),
         'get_us': percentiles([ns for r in results for ns in r['gets']]),
         'set_us': percentiles([ns for r in results for ns in r['sets']]),
     }
@@ -666,21 +1060,53 @@ def check_grid_args(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------------- worker
 
 
+SMALL_CASES = ('small-1t', 'small-4t-shared', 'small-4t-separate')
+
+
+def failed_entry(name: str, error: str) -> Any:
+    """What a failed case records for its round: NaN everywhere, and the error."""
+    if name.startswith('small'):
+        return math.nan
+    return {
+        'ops': math.nan,
+        'rss_mib': math.nan,
+        'peak_mib': math.nan,
+        'private_mib': math.nan,
+        'get_us': percentiles([]),
+        'set_us': percentiles([]),
+        'error': error,
+    }
+
+
 def worker_main(args: argparse.Namespace) -> None:
+    """Run one variant's cases for one round. A failed case is recorded and the rest still run; results are
+    written after every case, so the driver keeps them if this process dies."""
     check_release_build()
+    raise_fd_limit()
     timing = (0.1, 0.3) if args.quick else (WARM_SECONDS, args.seconds)
     job = json.loads(Path(args.job).read_text())
     results: dict[str, Any] = {}
     for raw in job['cases']:
         case: Case = (raw[0], raw[1], raw[2], int(raw[3]), raw[4])
+        name = case_name(case)
         size = case[4]
         directory = Path(args.data_dir) / size
-        ensure_filled(args.variant, directory, dataset_keys(size, args.keys, args.quick), 'v' * SIZES[size])
-        run = threads_case if case[0] == 'threads' else procs_case
-        results[case_name(case)] = run(args.variant, directory, case, timing)
+        try:
+            ensure_filled(args.variant, directory, dataset_keys(size, args.keys, args.quick), size)
+            run = threads_case if case[0] == 'threads' else procs_case
+            results[name] = run(args.variant, directory, case, timing)
+        except Exception as exc:
+            traceback.print_exc()
+            print(f'  {args.variant} {name} failed: {exc!r}', file=sys.stderr)
+            results[name] = failed_entry(name, repr(exc))
+        Path(args.out).write_text(json.dumps(results))
     if job['small']:
-        with tempfile.TemporaryDirectory(prefix='dco-fanout-small-') as tmp_name:
-            results.update(small_cases(args.variant, Path(tmp_name), lambda name: wanted(args, name)))
+        try:
+            with tempfile.TemporaryDirectory(prefix='dco-fanout-small-') as tmp_name:
+                results.update(small_cases(args.variant, Path(tmp_name), lambda name: wanted(args, name)))
+        except Exception as exc:
+            traceback.print_exc()
+            print(f'  {args.variant} small cases failed: {exc!r}', file=sys.stderr)
     Path(args.out).write_text(json.dumps(results))
 
 
@@ -717,11 +1143,45 @@ def spread(values: list[float]) -> dict[str, Any]:
     return {'median': statistics.median(real), 'min': min(real), 'max': max(real), 'cv': cv, 'samples': values}
 
 
+def expected_cases(args: argparse.Namespace, plan: dict[str, list[Case]], small: set[str], variant: str) -> list[str]:
+    names = [case_name(c) for c in plan[variant]]
+    return names + ([n for n in SMALL_CASES if wanted(args, n)] if variant in small else [])
+
+
+def summarize(samples: dict[str, dict[str, list[Any]]]) -> dict[str, dict[str, dict[str, Any]]]:
+    summary: dict[str, dict[str, dict[str, Any]]] = {}
+    for variant, by_case in samples.items():
+        summary[variant] = {}
+        for case, values in by_case.items():
+            if isinstance(values[0], dict):
+                entry = spread([v['ops'] for v in values])
+                entry['mix'] = mix_of(case)
+                entry['value_bytes'] = SIZES[size_of(case)]  # The mean for the 'mix' size (meta.value_mix).
+                entry['value_size'] = size_of(case)
+                entry['rss_growth_mib'] = spread([v['rss_mib'] for v in values])
+                entry['peak_growth_mib'] = spread([v['peak_mib'] for v in values])
+                entry['private_growth_mib'] = spread([v.get('private_mib', math.nan) for v in values])
+                entry['latency_us'] = {
+                    op: {q: spread([v[f'{op}_us'][q] for v in values]) for q in ('p50', 'p99', 'p999')}
+                    | {'n': [v[f'{op}_us']['n'] for v in values]}
+                    for op in ('get', 'set')
+                }
+                errors = [v.get('error') for v in values]
+                if any(errors):
+                    entry['errors'] = errors
+            else:
+                entry = spread(values)
+            summary[variant][case] = entry
+    return summary
+
+
 def driver_main(args: argparse.Namespace) -> None:
     check_release_build()
     import diskcache
     import diskcache_oxide
 
+    nofile = raise_fd_limit()  # Before any worker starts: every worker and case process inherits it.
+    warn_low_fd_limit(nofile)
     plan, small = run_plan(args)
     variants = list(plan)
     if not variants:
@@ -736,7 +1196,72 @@ def driver_main(args: argparse.Namespace) -> None:
     )
     samples: dict[str, dict[str, list[Any]]] = {v: {} for v in variants}
     loads: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
     run_started = time.perf_counter()
+    groups = {
+        name: {
+            'about': GROUPS[name].about,
+            'variants': group_variants(args, GROUPS[name]),
+            'cases': [case_name(c) for c in group_cases(args, GROUPS[name])]
+            + ([n for n in SMALL_CASES if wanted(args, n)] if GROUPS[name].small and small else []),
+        }
+        for name in selected_groups(args)
+    }
+    sizes_used = sorted({c[4] for cases in plan.values() for c in cases}, key=list(SIZES).index)
+    plans = {s: plan_summary(dataset_keys(s, args.keys, args.quick)) for s in sizes_used}
+    out_path = args.out or RESULTS_DIR / f'fanout-{python}-{args.machine}{"-quick" if args.quick else ""}.json'
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write_results(rounds_done: int) -> dict[str, dict[str, dict[str, Any]]]:
+        summary = summarize(samples)
+        meta = {
+            'python': python,
+            'gil_enabled_at_runtime': sys._is_gil_enabled() if hasattr(sys, '_is_gil_enabled') else True,
+            'machine': args.machine,
+            'platform': platform.platform(),
+            'cpu_count': os.cpu_count(),
+            'power': power_source(),
+            'oxide_version': diskcache_oxide.__version__,
+            'diskcache_version': diskcache.__version__,
+            'rounds': args.rounds,
+            'rounds_done': rounds_done,
+            'seconds': 0.3 if args.quick else args.seconds,
+            'warm_seconds': 0.1 if args.quick else WARM_SECONDS,
+            'tail_sampling': {
+                'cases': 'value sizes over 1 KB',
+                'timed': f'every write and one get in {TAIL_GET_SAMPLE_EVERY}',
+                'window': f'at least seconds, then until {TAIL_SAMPLES:,} get and set samples, '
+                f'at most {TAIL_MAX_SECONDS:g} s',
+            },
+            'percentile_min_samples': {'p99': MIN_P99, 'p999': MIN_P999},
+            'quick': args.quick,
+            'full': args.full,
+            'only': args.only,
+            'keys': args.keys,
+            'value_bytes': SIZES[DEFAULT_SIZE],
+            'sizing_keys': {s: dataset_keys(s, args.keys, args.quick) for s in SIZES if s != DEFAULT_SIZE},
+            'value_mix': mix_summary(dataset_keys(MIX, args.keys, args.quick)),
+            'plans': plans,
+            'mix': f'1 write in {MIXES[HEADLINE]} operations',
+            'mixes': {mix: f'1 write in {every} operations' for mix, every in MIXES.items()},
+            'headline_mix': HEADLINE,
+            'groups': groups,
+            'variants': {v: VARIANTS[v][1] + repr(VARIANTS[v][2]) for v in variants},
+            'memory': 'MiB over the post-import baseline of each case process, measured just after the window: '
+            "rss_growth = current RSS (includes resident pages of mapped files, such as stock diskcache's "
+            '64 MiB database mmap), peak_growth = ru_maxrss, private_growth = process-private memory '
+            '(macOS phys_footprint, Linux Private_Dirty + Swap; excludes mapped files); procs cases report '
+            'the median process',
+            'nofile': nofile,
+            'errors': errors,
+            'loads': loads,
+            'elapsed_minutes': (time.perf_counter() - run_started) / 60,
+            'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+        }
+        out_path.write_text(json.dumps({'meta': meta, 'results': summary}, indent=2) + '\n')
+        return summary
+
+    summary: dict[str, dict[str, dict[str, Any]]] = {}
     with tempfile.TemporaryDirectory(prefix='dco-fanout-run-') as tmp:
         for variant in variants:
             Path(tmp, f'{variant}.job.json').write_text(json.dumps({'cases': plan[variant], 'small': variant in small}))
@@ -751,8 +1276,20 @@ def driver_main(args: argparse.Namespace) -> None:
                 cmd += ['--quick'] if args.quick else []
                 for prefix in args.only or []:
                     cmd += ['--only', prefix]
-                subprocess.run(cmd, check=True)
-                for case, value in json.loads(out.read_text()).items():
+                worker_error: Optional[str] = None
+                try:
+                    subprocess.run(cmd, check=True)
+                except subprocess.CalledProcessError as exc:
+                    worker_error = f'worker exited with code {exc.returncode}'
+                    errors.append({'round': r + 1, 'variant': variant, 'case': None, 'error': worker_error})
+                    print(f'round {r + 1}: {variant} {worker_error}; its missing cases are NaN', file=sys.stderr)
+                got = json.loads(out.read_text()) if out.exists() else {}
+                for case in expected_cases(args, plan, small, variant):
+                    value = got.get(case)
+                    if value is None:
+                        value = failed_entry(case, worker_error or 'no result')
+                    elif isinstance(value, dict) and value.get('error'):
+                        errors.append({'round': r + 1, 'variant': variant, 'case': case, 'error': value['error']})
                     samples[variant].setdefault(case, []).append(value)
                 minutes = (time.perf_counter() - run_started) / 60
                 print(
@@ -760,70 +1297,17 @@ def driver_main(args: argparse.Namespace) -> None:
                     file=sys.stderr,
                 )
             loads[-1]['load_after'] = loadavg()
+            summary = write_results(r + 1)  # After every round, so a run that dies later keeps what it measured.
 
-    summary: dict[str, dict[str, dict[str, Any]]] = {}
-    for variant, by_case in samples.items():
-        summary[variant] = {}
-        for case, values in by_case.items():
-            if isinstance(values[0], dict):
-                entry = spread([v['ops'] for v in values])
-                entry['mix'] = mix_of(case)
-                entry['value_bytes'] = SIZES[size_of(case)]
-                entry['rss_growth_mib'] = spread([v['rss_mib'] for v in values])
-                entry['peak_growth_mib'] = spread([v['peak_mib'] for v in values])
-                entry['latency_us'] = {
-                    op: {q: spread([v[f'{op}_us'][q] for v in values]) for q in ('p50', 'p99', 'p999')}
-                    | {'n': [v[f'{op}_us']['n'] for v in values]}
-                    for op in ('get', 'set')
-                }
-            else:
-                entry = spread(values)
-            summary[variant][case] = entry
-    groups = {
-        name: {
-            'about': GROUPS[name].about,
-            'variants': group_variants(args, GROUPS[name]),
-            'cases': [case_name(c) for c in group_cases(args, GROUPS[name])]
-            + (['small-1t', 'small-4t-shared', 'small-4t-separate'] if GROUPS[name].small and small else []),
-        }
-        for name in selected_groups(args)
-    }
-    meta = {
-        'python': python,
-        'gil_enabled_at_runtime': sys._is_gil_enabled() if hasattr(sys, '_is_gil_enabled') else True,
-        'machine': args.machine,
-        'platform': platform.platform(),
-        'cpu_count': os.cpu_count(),
-        'power': power_source(),
-        'oxide_version': diskcache_oxide.__version__,
-        'diskcache_version': diskcache.__version__,
-        'rounds': args.rounds,
-        'seconds': 0.3 if args.quick else args.seconds,
-        'warm_seconds': 0.1 if args.quick else WARM_SECONDS,
-        'quick': args.quick,
-        'full': args.full,
-        'only': args.only,
-        'keys': QUICK_KEYS if args.quick else args.keys,
-        'value_bytes': SIZES[DEFAULT_SIZE],
-        'sizing_keys': {s: dataset_keys(s, args.keys, args.quick) for s in SIZES if s != DEFAULT_SIZE},
-        'mix': f'1 write in {MIXES[HEADLINE]} operations',
-        'mixes': {mix: f'1 write in {every} operations' for mix, every in MIXES.items()},
-        'headline_mix': HEADLINE,
-        'groups': groups,
-        'variants': {v: VARIANTS[v][1] + repr(VARIANTS[v][2]) for v in variants},
-        'memory': 'MiB over the post-import RSS baseline of each case process; rss = current after the window, '
-        'peak = ru_maxrss; procs cases report the median process',
-        'loads': loads,
-        'elapsed_minutes': (time.perf_counter() - run_started) / 60,
-        'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
-    }
-    out_path = args.out or RESULTS_DIR / f'fanout-{python}-{args.machine}{"-quick" if args.quick else ""}.json'
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps({'meta': meta, 'results': summary}, indent=2) + '\n')
-    print(f'\nPython {python}, {meta["keys"]:,} keys x 1 KB, medians over {args.rounds} round(s)')
+    print(f'\nPython {python}, {args.keys:,} keys x 1 KB, medians over {args.rounds} round(s)')
     for name, info in groups.items():
         (print_detail if GROUPS[name].detail else print_tables)(name, info, summary)
-    print(f'\nWrote {out_path} ({meta["elapsed_minutes"]:.1f} min)')
+    if errors:
+        print(f'\n{len(errors)} failure(s), recorded as NaN:', file=sys.stderr)
+        for e in errors:
+            print(f'  round {e["round"]} {e["variant"]} {e["case"] or "(worker)"}: {e["error"]}', file=sys.stderr)
+    elapsed = (time.perf_counter() - run_started) / 60
+    print(f'\nWrote {out_path} ({elapsed:.1f} min)')
 
 
 def case_order(case: str) -> tuple[int, int, str, int]:
@@ -846,7 +1330,7 @@ def print_tables(group: str, info: dict[str, Any], summary: dict[str, dict[str, 
             if key != current and not case.startswith('small'):
                 current = key
                 label = 'headline' if key[1] == HEADLINE else 'stress case, write-heavy'
-                print(f'-- {key[1]} ({label}), {SIZES[key[0]]:,} B values')
+                print(f'-- {key[1]} ({label}), {size_text(key[0])}')
             row = f'{case:30}'
             for v in variants:
                 entry = summary.get(v, {}).get(case)
@@ -857,7 +1341,8 @@ def print_tables(group: str, info: dict[str, Any], summary: dict[str, dict[str, 
     memory_rows = [c for c in cases if not c.startswith('small')]
     if memory_rows:
         section(
-            'Memory, RSS growth per process in MiB: current after the window / peak (procs: the median process)',
+            'Memory growth per process in MiB: RSS after the window / RSS peak / private after the window '
+            '(private excludes mapped files; compare that one; procs: the median process)',
             memory_cell,
             memory_rows,
         )
@@ -876,10 +1361,13 @@ def print_detail(group: str, info: dict[str, Any], summary: dict[str, dict[str, 
     """
     variants = info['variants']
     print(f'\n[{group}: {info["about"]}]')
-    print('kops/s: median, min-max over rounds, cv = stdev/mean; memory: RSS growth MiB, current / peak')
+    print(
+        'kops/s: median, min-max over rounds, cv = stdev/mean; memory growth MiB: RSS / private (excludes '
+        'mapped files); latency us, median over rounds, - = too few samples; n = fewest samples in a round'
+    )
     header = (
-        f'  {"variant":21}{"kops/s":>8}{"min-max":>14}{"cv":>6}{"MiB":>12}'
-        f'{"get p50":>9}{"p99":>8}{"p99.9":>8}{"set p50":>9}{"p99":>8}{"p99.9":>8}  flags'
+        f'  {"variant":21}{"kops/s":>8}{"min-max":>14}{"cv":>6}{"rss/priv":>12}'
+        f'{"get p50":>9}{"p99":>8}{"p99.9":>8}{"set p50":>9}{"p99":>8}{"p99.9":>8}{"n get/set":>14}  flags'
     )
     for case in sorted((c for c in info['cases'] if not c.startswith('small')), key=case_order):
         rows = [(v, summary[v][case]) for v in variants if case in summary.get(v, {})]
@@ -887,7 +1375,7 @@ def print_detail(group: str, info: dict[str, Any], summary: dict[str, dict[str, 
             continue
         mix, size = mix_of(case), size_of(case)
         label = 'headline' if mix == HEADLINE else 'stress case, write-heavy'
-        print(f'\n{case}  ({mix} {label}, {SIZES[size]:,} B values)\n{header}')
+        print(f'\n{case}  ({mix} {label}, {size_text(size)})\n{header}')
 
         def middle(pick: Callable[[dict[str, Any]], float], rows: list[tuple[str, dict[str, Any]]] = rows) -> float:
             values = [x for x in (pick(e) for _, e in rows) if not math.isnan(x)]
@@ -898,7 +1386,7 @@ def print_detail(group: str, info: dict[str, Any], summary: dict[str, dict[str, 
         mid_set = middle(lambda e: e['latency_us']['set']['p999']['median'])
         for variant, e in rows:
             lat = {op: {q: e['latency_us'][op][q]['median'] for q in ('p50', 'p99', 'p999')} for op in ('get', 'set')}
-            flags = []
+            flags = ['FAILED'] if e.get('errors') else []
             if e['cv'] > 0.05 and e['cv'] > 2 * mid_cv:
                 flags.append('UNSTABLE')
             if lat['get']['p999'] > 3 * mid_get:
@@ -906,17 +1394,26 @@ def print_detail(group: str, info: dict[str, Any], summary: dict[str, dict[str, 
             if lat['set']['p999'] > 3 * mid_set:
                 flags.append('TAIL-SET')
             spread_text = f'{e["min"] / 1000:,.0f}-{e["max"] / 1000:,.0f}'
-            mem = f'{e["rss_growth_mib"]["median"]:.1f}/{e["peak_growth_mib"]["median"]:.1f}'
+            mem = f'{e["rss_growth_mib"]["median"]:.1f}/{e["private_growth_mib"]["median"]:.1f}'
+            fewest = f'{min_count(e["latency_us"]["get"]["n"])}/{min_count(e["latency_us"]["set"]["n"])}'
             print(
                 f'  {variant:21}{e["median"] / 1000:>8,.0f}{spread_text:>14}{e["cv"] * 100:>5.1f}%{mem:>12}'
                 f'{us(lat["get"]["p50"]):>9}{us(lat["get"]["p99"]):>8}{us(lat["get"]["p999"]):>8}'
-                f'{us(lat["set"]["p50"]):>9}{us(lat["set"]["p99"]):>8}{us(lat["set"]["p999"]):>8}'
+                f'{us(lat["set"]["p50"]):>9}{us(lat["set"]["p99"]):>8}{us(lat["set"]["p999"]):>8}{fewest:>14}'
                 f'  {" ".join(flags)}'
             )
 
 
+def min_count(counts: list[int]) -> str:
+    """The fewest samples any round took (0 for a failed round is left out, so a failure doesn't hide the rest)."""
+    real = [n for n in counts if n]
+    return f'{min(real):,}' if real else '0'
+
+
 def ops_cell(entry: dict[str, Any]) -> str:
     median = entry['median']
+    if math.isnan(median):
+        return 'FAILED'
     pct = (entry['max'] - entry['min']) / median * 100 if median else 0.0
     return f'{median / 1000:,.0f}k {pct:2.0f}%'
 
@@ -924,7 +1421,8 @@ def ops_cell(entry: dict[str, Any]) -> str:
 def memory_cell(entry: dict[str, Any]) -> str:
     if 'rss_growth_mib' not in entry:
         return '-'
-    return f'{entry["rss_growth_mib"]["median"]:.1f} / {entry["peak_growth_mib"]["median"]:.1f}'
+    rss, peak = entry['rss_growth_mib']['median'], entry['peak_growth_mib']['median']
+    return f'{rss:.1f}/{peak:.1f}/{entry["private_growth_mib"]["median"]:.1f}'
 
 
 def main() -> None:
@@ -942,7 +1440,7 @@ def main() -> None:
     parser.add_argument('--keys', type=int, default=KEYS, help=f'Keys in each 1 KB database (default {KEYS:,}).')
     parser.add_argument('--mixes', default=','.join(MIXES), help='Only these mixes (comma-separated).')
     parser.add_argument('--dists', default=','.join(DISTS), help='Only these key distributions: uniform, zipf.')
-    parser.add_argument('--sizes', default=','.join(SIZES), help='Only these value sizes: 1k, 16k, 64k.')
+    parser.add_argument('--sizes', default=','.join(SIZES), help=f'Only these value sizes: {", ".join(SIZES)}.')
     parser.add_argument('--counts', help='Counts for the 99:1 mix in every group, e.g. 1,2,4,8, or none.')
     parser.add_argument('--stress-counts', help='Counts for the 90:10 and 50:50 mixes in every group, or none.')
     parser.add_argument('--machine', default=platform.node().split('.')[0] or 'unknown')
@@ -966,6 +1464,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.rounds is None:
         args.rounds = 1 if args.quick else 3
+    if args.quick and args.keys == KEYS:
+        args.keys = QUICK_KEYS  # The driver passes it on, so the workers fill and read this many too.
     check_grid_args(args)
     if args.worker:
         worker_main(args)

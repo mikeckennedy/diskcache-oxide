@@ -27,7 +27,7 @@ The same Rust core, served over HTTP to many clients: a Redis-style central cach
 
 | Storage mode | Read | Write | Shared by several processes? |
 |----|----|----|----|
-| WAL (the library today) | 1.18 µs | 13.9 µs | Yes |
+| WAL (the library's mode; Python's `sqlite3`, 2026-10-28) | 1.18 µs | 13.9 µs | Yes |
 | WAL with exclusive locking (the server) | 0.69 µs | 16.5 µs | No, one owner |
 
 

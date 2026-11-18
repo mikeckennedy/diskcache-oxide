@@ -507,7 +507,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="5" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="7" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -802,15 +802,15 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>On free-threaded Python, a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> lets threads scale.</strong> At 8 threads it’s 1.7x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> with hot keys and 2.0x with keys spread evenly (699k against 347k), and 2.2x at 90:10 (301k against 136k).</li>
 <li><strong>On GIL builds, threads are flat for every cache,</strong> as the GIL says they must be, and a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> is about 10% ahead at every thread count. diskcache, by comparison, falls from 360-400k at one thread to about 20k at 8.</li>
 </ul>
-<p><strong>Large values.</strong> A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> keeps the slowest writes of large values far shorter: with 64 KiB values and one thread on 3.14, one <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> in a thousand takes 3-4 ms on a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and 0.1-0.2 ms on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, because each shard’s database and write-ahead log are smaller and checkpoint faster (<code>bench/results/fanout-3.14.10-studio.txt</code>, sizing group).</p>
-<p><strong>What it costs.</strong> Each shard has its own SQLite connections and page caches, so a process holds more memory. RSS growth per process, with 99:1 and 1 KB values:</p>
+<p><strong>Large values.</strong> A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> tends to keep the slowest writes of large values shorter: with 64 KiB values and one thread on 3.14, the slowest of about 800 <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>s took 3-4 ms on a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and 0.1-0.2 ms on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> in two rounds of three (the third round’s slowest was 2.8 ms). Each shard’s database and write-ahead log are smaller, so a checkpoint has less to copy (<code>bench/results/fanout-3.14.10-studio.txt</code>, sizing group).</p>
+<p><strong>What it costs.</strong> Each shard has its own SQLite connections and page caches, so a process holds more memory. RSS growth per process over its baseline, with 99:1 and 1 KB values:</p>
 <table class="caption-top table">
 <thead>
 <tr class="header">
 <th>Case</th>
 <th>Plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></th>
 <th><code>FanoutCache(shards=8)</code></th>
-<th>diskcache <code>FanoutCache(8)</code></th>
+<th>Difference</th>
 </tr>
 </thead>
 <tbody>
@@ -818,30 +818,24 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>1 process, 1 thread, 3.14</td>
 <td>3.3 MiB</td>
 <td>13.6 MiB</td>
-<td>65.8 MiB</td>
+<td>+10.3 MiB</td>
 </tr>
 <tr class="even">
 <td>1 process, 1 thread, 3.14t</td>
 <td>5.0 MiB</td>
 <td>15.4 MiB</td>
-<td>66.5 MiB</td>
+<td>+10.4 MiB</td>
 </tr>
 <tr class="odd">
-<td>each of 8 processes, 3.14t</td>
-<td>5.1 MiB</td>
-<td>8.3 MiB</td>
-<td>7.9 MiB</td>
-</tr>
-<tr class="even">
 <td>1 process, 8 threads, 3.14t</td>
 <td>16.1 MiB</td>
 <td>24.7 MiB</td>
-<td>77.1 MiB</td>
+<td>+8.6 MiB</td>
 </tr>
 </tbody>
 </table>
 <ul>
-<li><strong>About 10 MiB more per process at most</strong>, so 80 MiB across 8 workers, still a fifth of what diskcache’s <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> takes in one process. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> thread holds 1. Pass <code>sqlite_cache_size=64</code> to give each a 256 KiB page cache instead: on these runs it cut the extra memory by about three quarters (one thread on 3.14: 5.9 MiB against 13.6) and kept the speed within about 5% in most cases, 11% at worst (<code>bench/results/fanout-3.14.10-studio.txt</code> and <code>fanout-3.14.10t-studio.txt</code>, page-cache groups; see <a href="#choosing-shards-and-max_connections">Choosing <code>shards</code> and <code>max_connections</code></a>).</li>
+<li><strong>About 10 MiB more per process</strong>, so about 80 MiB across 8 workers. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> thread holds 1. Pass <code>sqlite_cache_size=64</code> to give each a 256 KiB page cache instead: on these runs it cut the extra memory by about three quarters (one thread on 3.14: 5.9 MiB against 13.6) and kept the speed within about 5% in most cases, 11% at worst (<code>bench/results/fanout-3.14.10-studio.txt</code> and <code>fanout-3.14.10t-studio.txt</code>, page-cache groups; see <a href="#choosing-shards-and-max_connections">Choosing <code>shards</code> and <code>max_connections</code></a>).</li>
 <li><strong>More files.</strong> Each shard is a database, a write-ahead log and a shared-memory file, and the process holds descriptors for them (below).</li>
 <li><strong>Less for a single process with few writes.</strong> A read-mostly cache in one process on a GIL build gains about 10% for that memory and those files.</li>
 </ul>

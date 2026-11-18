@@ -45,18 +45,17 @@ The numbers below come from the benchmark in the repository (`bench/fanout.py`, 
 - **On free-threaded Python, a `FanoutCache` lets threads scale.** At 8 threads it's 1.7x a plain `Cache` with hot keys and 2.0x with keys spread evenly (699k against 347k), and 2.2x at 90:10 (301k against 136k).
 - **On GIL builds, threads are flat for every cache,** as the GIL says they must be, and a `FanoutCache` is about 10% ahead at every thread count. diskcache, by comparison, falls from 360-400k at one thread to about 20k at 8.
 
-**Large values.** A `FanoutCache` keeps the slowest writes of large values far shorter: with 64 KiB values and one thread on 3.14, one `set` in a thousand takes 3-4 ms on a plain `Cache` and 0.1-0.2 ms on a `FanoutCache`, because each shard's database and write-ahead log are smaller and checkpoint faster (`bench/results/fanout-3.14.10-studio.txt`, sizing group).
+**Large values.** A `FanoutCache` tends to keep the slowest writes of large values shorter: with 64 KiB values and one thread on 3.14, the slowest of about 800 `set`s took 3-4 ms on a plain `Cache` and 0.1-0.2 ms on a `FanoutCache` in two rounds of three (the third round's slowest was 2.8 ms). Each shard's database and write-ahead log are smaller, so a checkpoint has less to copy (`bench/results/fanout-3.14.10-studio.txt`, sizing group).
 
-**What it costs.** Each shard has its own SQLite connections and page caches, so a process holds more memory. RSS growth per process, with 99:1 and 1 KB values:
+**What it costs.** Each shard has its own SQLite connections and page caches, so a process holds more memory. RSS growth per process over its baseline, with 99:1 and 1 KB values:
 
-| Case | Plain `Cache` | `FanoutCache(shards=8)` | diskcache `FanoutCache(8)` |
+| Case | Plain `Cache` | `FanoutCache(shards=8)` | Difference |
 |---|---|---|---|
-| 1 process, 1 thread, 3.14 | 3.3 MiB | 13.6 MiB | 65.8 MiB |
-| 1 process, 1 thread, 3.14t | 5.0 MiB | 15.4 MiB | 66.5 MiB |
-| each of 8 processes, 3.14t | 5.1 MiB | 8.3 MiB | 7.9 MiB |
-| 1 process, 8 threads, 3.14t | 16.1 MiB | 24.7 MiB | 77.1 MiB |
+| 1 process, 1 thread, 3.14 | 3.3 MiB | 13.6 MiB | +10.3 MiB |
+| 1 process, 1 thread, 3.14t | 5.0 MiB | 15.4 MiB | +10.4 MiB |
+| 1 process, 8 threads, 3.14t | 16.1 MiB | 24.7 MiB | +8.6 MiB |
 
-- **About 10 MiB more per process at most**, so 80 MiB across 8 workers, still a fifth of what diskcache's `FanoutCache` takes in one process. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain `Cache` thread holds 1. Pass `sqlite_cache_size=64` to give each a 256 KiB page cache instead: on these runs it cut the extra memory by about three quarters (one thread on 3.14: 5.9 MiB against 13.6) and kept the speed within about 5% in most cases, 11% at worst (`bench/results/fanout-3.14.10-studio.txt` and `fanout-3.14.10t-studio.txt`, page-cache groups; see [Choosing `shards` and `max_connections`](#choosing-shards-and-max_connections)).
+- **About 10 MiB more per process**, so about 80 MiB across 8 workers. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain `Cache` thread holds 1. Pass `sqlite_cache_size=64` to give each a 256 KiB page cache instead: on these runs it cut the extra memory by about three quarters (one thread on 3.14: 5.9 MiB against 13.6) and kept the speed within about 5% in most cases, 11% at worst (`bench/results/fanout-3.14.10-studio.txt` and `fanout-3.14.10t-studio.txt`, page-cache groups; see [Choosing `shards` and `max_connections`](#choosing-shards-and-max_connections)).
 - **More files.** Each shard is a database, a write-ahead log and a shared-memory file, and the process holds descriptors for them (below).
 - **Less for a single process with few writes.** A read-mostly cache in one process on a GIL build gains about 10% for that memory and those files.
 

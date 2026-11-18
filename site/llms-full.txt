@@ -2879,7 +2879,7 @@ Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples 
 - **A busy shard raises `Timeout`** after `timeout` (60 seconds by default) instead of silently giving False or the default after 10 ms. `durable=True` gives the miss answers, and logs them (D-034).
 - **Maintenance shares one `timeout`** across the shards, doesn't retry forever, and reports partial progress: a failure raises with `failed_shards` and `removed` (D-035).
 - **`size_limit` is a total**, split evenly with at least 1 MiB per shard, and it reads back as the total, not shard 0's share (D-036).
-- **`max_connections` is a total** across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least `shards` (D-037).
+- **`max_connections` is a total** across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least `shards` (D-037). With 8 shards, diskcache's `FanoutCache` holds 152 descriptors at 8 threads and 536 at 32, where diskcache-oxide's holds 32, and under a 256 limit it fails at 15 threads. If a diskcache app has failed with `sqlite3.OperationalError: unable to open database file` under a low `ulimit -n`, this is likely why.
 - **`transact()` takes a key** and covers one shard: `with cache.transact(key=k):` where diskcache's `with cache.transact():` locks every shard. Calls for keys on other shards inside the block raise `ValueError`, reads included. A ported bare `transact()` raises `TypeError` (D-040).
 - **No queue calls.** `push`, `pull`, `peek` and `peekitem` are on `Cache` only, since a queue spread over shards would have no order. Use a plain `Cache` for a queue.
 - **Not there:** `cache()`, `deque()` and `index()`, and `read()` and `read=` (D-039). `memoize`, `retry=`, `stats()`, `check()`, `reset()`, `reversed()`, pickling, tags with `evict()`, `eviction_policy=` and settings as attributes all work as on `Cache`.
@@ -3256,7 +3256,7 @@ The same Rust core, served over HTTP to many clients: a Redis-style central cach
 
 | Storage mode | Read | Write | Shared by several processes? |
 |---|---|---|---|
-| WAL (the library today) | 1.18 µs | 13.9 µs | Yes |
+| WAL (the library's mode; Python's `sqlite3`, 2026-10-28) | 1.18 µs | 13.9 µs | Yes |
 | WAL with exclusive locking (the server) | 0.69 µs | 16.5 µs | No, one owner |
 
 ## Where things stand
@@ -3929,18 +3929,17 @@ The numbers below come from the benchmark in the repository (`bench/fanout.py`, 
 - **On free-threaded Python, a `FanoutCache` lets threads scale.** At 8 threads it's 1.7x a plain `Cache` with hot keys and 2.0x with keys spread evenly (699k against 347k), and 2.2x at 90:10 (301k against 136k).
 - **On GIL builds, threads are flat for every cache,** as the GIL says they must be, and a `FanoutCache` is about 10% ahead at every thread count. diskcache, by comparison, falls from 360-400k at one thread to about 20k at 8.
 
-**Large values.** A `FanoutCache` keeps the slowest writes of large values far shorter: with 64 KiB values and one thread on 3.14, one `set` in a thousand takes 3-4 ms on a plain `Cache` and 0.1-0.2 ms on a `FanoutCache`, because each shard's database and write-ahead log are smaller and checkpoint faster (`bench/results/fanout-3.14.10-studio.txt`, sizing group).
+**Large values.** A `FanoutCache` tends to keep the slowest writes of large values shorter: with 64 KiB values and one thread on 3.14, the slowest of about 800 `set`s took 3-4 ms on a plain `Cache` and 0.1-0.2 ms on a `FanoutCache` in two rounds of three (the third round's slowest was 2.8 ms). Each shard's database and write-ahead log are smaller, so a checkpoint has less to copy (`bench/results/fanout-3.14.10-studio.txt`, sizing group).
 
-**What it costs.** Each shard has its own SQLite connections and page caches, so a process holds more memory. RSS growth per process, with 99:1 and 1 KB values:
+**What it costs.** Each shard has its own SQLite connections and page caches, so a process holds more memory. RSS growth per process over its baseline, with 99:1 and 1 KB values:
 
-| Case | Plain `Cache` | `FanoutCache(shards=8)` | diskcache `FanoutCache(8)` |
+| Case | Plain `Cache` | `FanoutCache(shards=8)` | Difference |
 |---|---|---|---|
-| 1 process, 1 thread, 3.14 | 3.3 MiB | 13.6 MiB | 65.8 MiB |
-| 1 process, 1 thread, 3.14t | 5.0 MiB | 15.4 MiB | 66.5 MiB |
-| each of 8 processes, 3.14t | 5.1 MiB | 8.3 MiB | 7.9 MiB |
-| 1 process, 8 threads, 3.14t | 16.1 MiB | 24.7 MiB | 77.1 MiB |
+| 1 process, 1 thread, 3.14 | 3.3 MiB | 13.6 MiB | +10.3 MiB |
+| 1 process, 1 thread, 3.14t | 5.0 MiB | 15.4 MiB | +10.4 MiB |
+| 1 process, 8 threads, 3.14t | 16.1 MiB | 24.7 MiB | +8.6 MiB |
 
-- **About 10 MiB more per process at most**, so 80 MiB across 8 workers, still a fifth of what diskcache's `FanoutCache` takes in one process. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain `Cache` thread holds 1. Pass `sqlite_cache_size=64` to give each a 256 KiB page cache instead: on these runs it cut the extra memory by about three quarters (one thread on 3.14: 5.9 MiB against 13.6) and kept the speed within about 5% in most cases, 11% at worst (`bench/results/fanout-3.14.10-studio.txt` and `fanout-3.14.10t-studio.txt`, page-cache groups; see [Choosing `shards` and `max_connections`](#choosing-shards-and-max_connections)).
+- **About 10 MiB more per process**, so about 80 MiB across 8 workers. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain `Cache` thread holds 1. Pass `sqlite_cache_size=64` to give each a 256 KiB page cache instead: on these runs it cut the extra memory by about three quarters (one thread on 3.14: 5.9 MiB against 13.6) and kept the speed within about 5% in most cases, 11% at worst (`bench/results/fanout-3.14.10-studio.txt` and `fanout-3.14.10t-studio.txt`, page-cache groups; see [Choosing `shards` and `max_connections`](#choosing-shards-and-max_connections)).
 - **More files.** Each shard is a database, a write-ahead log and a shared-memory file, and the process holds descriptors for them (below).
 - **Less for a single process with few writes.** A read-mostly cache in one process on a GIL build gains about 10% for that memory and those files.
 
@@ -4552,9 +4551,9 @@ Profiling a cached `get` shows that about 60% of its time is one system call: SQ
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;
 - cheaper reference counting on shared `Cache` objects in free-threaded builds;
-- making threads that share one handle scale. [`FanoutCache`](fanoutcache.qmd) is built and removes the multi-process write-lock ceiling, but at its default settings it doesn't lift this read ceiling, so the shared per-handle path is being worked on.
+- making threads that share one handle scale. [`FanoutCache`](fanoutcache.qmd) is built: it removes the multi-process write-lock ceiling and lifts this read ceiling part of the way (1.7x a plain `Cache` at 8 threads on 3.14t with hot keys, about 10% on GIL builds), and the shared per-handle path is still being worked on.
 
-Past that, the [network server](roadmap.qmd) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. Measured reads drop from 1.18 µs to 0.69 µs.
+Past that, the [network server](roadmap.qmd) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. In a 2026-10-28 measurement with Python's own `sqlite3` module, reads dropped from 1.18 µs to 0.69 µs (a different harness from the gate above, so compare the two figures with each other, not with the gate's 0.84 µs).
 
 
 ### Building from source
@@ -4967,7 +4966,7 @@ These are covered together in [FanoutCache: sharded caches](fanoutcache.qmd), an
 - **D-033:** the hash is fixed by its definition and part of the format, and `iterkeys(prefix=)` gives `FanoutCache` the ordered listing `Cache` has.
 - **D-034:** a silently dropped write and a hang are both worse than an error the caller chose how to handle; `durable=True` is that choice.
 - **D-035:** a maintenance job must finish in bounded time, and when it can't, it must say what it did.
-- **D-036 and D-037:** budgets (size, connections, file descriptors) follow configuration, not the number of threads or shards.
+- **D-036 and D-037:** budgets (size, connections, file descriptors) follow configuration, not the number of threads or shards. With 8 shards and every thread touching every shard, diskcache's `FanoutCache` holds 40 file descriptors at 1 thread, 152 at 8, 536 at 32 and 1,048 at 64; diskcache-oxide's holds 32 at every count. Under a 256-descriptor limit (a macOS shell over ssh, many launchd jobs and containers) diskcache's `FanoutCache` fails at 15 threads with `sqlite3.OperationalError: unable to open database file`, and sooner once `close()` has left connections open (D-018).
 - **D-038:** a typo shouldn't leave a directory that neither kind of cache can open, or a shard written behind the `FanoutCache`'s back.
 - **D-039:** `shards` is keyword-only so that the second positional argument is `timeout`, as on `Cache`. The sub-collections and `read()` would each need their own design across shards, so they aren't copied from diskcache (see the [roadmap](roadmap.qmd)). Everything else on `Cache`, apart from the queue calls, works on a `FanoutCache` too.
 - **D-040:** holding every shard's lock would serialize the whole cache behind one transaction, which is what sharding exists to avoid.

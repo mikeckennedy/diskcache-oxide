@@ -71,6 +71,6 @@ Profiling a cached [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) sh
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;
 - cheaper reference counting on shared [Cache](../reference/Cache.md#diskcache_oxide.Cache) objects in free-threaded builds;
-- making threads that share one handle scale. [`FanoutCache`](fanoutcache.md) is built and removes the multi-process write-lock ceiling, but at its default settings it doesn't lift this read ceiling, so the shared per-handle path is being worked on.
+- making threads that share one handle scale. [`FanoutCache`](fanoutcache.md) is built: it removes the multi-process write-lock ceiling and lifts this read ceiling part of the way (1.7x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) at 8 threads on 3.14t with hot keys, about 10% on GIL builds), and the shared per-handle path is still being worked on.
 
-Past that, the [network server](roadmap.md) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. Measured reads drop from 1.18 µs to 0.69 µs.
+Past that, the [network server](roadmap.md) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. In a 2026-10-28 measurement with Python's own `sqlite3` module, reads dropped from 1.18 µs to 0.69 µs (a different harness from the gate above, so compare the two figures with each other, not with the gate's 0.84 µs).
