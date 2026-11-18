@@ -610,6 +610,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/django.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Django cache backend</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Transactions</span></a>
   </div>
@@ -875,13 +881,18 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>Supported, with differences; see <a href="../user-guide/coordination.html">Coordination</a></td>
 </tr>
 <tr class="even">
-<td><code>Deque</code>, <code>Index</code>, <code>DjangoCache</code>, <code>disk=</code>, <code>read=</code></td>
+<td><a href="../reference/DjangoCache.html#diskcache_oxide.DjangoCache" class="gdls-link gdls-code">DjangoCache</a></td>
+<td><code>diskcache.DjangoCache</code>: always a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> (8 shards by default), writes retrying a 10 ms lock wait silently</td>
+<td><a href="../reference/DjangoCache.html#diskcache_oxide.DjangoCache" class="gdls-link gdls-code">diskcache_oxide.DjangoCache</a>, a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> unless <code>OPTIONS['shards']</code>, errors that raise unless <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a> (D-062); see <a href="../user-guide/django.html">Django cache backend</a></td>
+</tr>
+<tr class="odd">
+<td><code>Deque</code>, <code>Index</code>, <code>disk=</code>, <code>read=</code></td>
 <td>Supported</td>
 <td>Not available</td>
 </tr>
 </tbody>
 </table>
-<p><code>DjangoCache</code>: keep Django’s cache on diskcache until diskcache-oxide’s Django backend ships (it’s next on the <a href="../user-guide/roadmap.html#next">roadmap</a>), and use diskcache-oxide directly for everything else.</p>
+<p><a href="../reference/DjangoCache.html#diskcache_oxide.DjangoCache" class="gdls-link gdls-code">DjangoCache</a>: change <code>'BACKEND'</code> to <code>'diskcache_oxide.DjangoCache'</code>, <code>SHARDS</code> to <code>OPTIONS['shards']</code> and <code>DATABASE_TIMEOUT</code> to <code>OPTIONS['timeout']</code>, and drop <code>MAX_ENTRIES</code> for <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>. <a href="../user-guide/django.html#coming-from-diskcaches-djangocache">Django cache backend</a> has the rest.</p>
 <section id="settings-passed-as-keywords" class="level2">
 <h2 class="anchored" data-anchor-id="settings-passed-as-keywords">Settings passed as keywords</h2>
 <p>diskcache takes its settings as keyword arguments (<code>Cache(directory, statistics=1)</code>). diskcache-oxide’s constructors list theirs explicitly, so a diskcache-only keyword raises <code>TypeError: unexpected keyword argument</code>. Here’s where each went:</p>
@@ -944,7 +955,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong><code>max_connections</code> is a total</strong> across the shards, so file descriptors are bounded and not one per thread per shard. It must be at least <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> (D-037). With 8 shards, diskcache’s <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> holds 152 descriptors at 8 threads and 536 at 32, where diskcache-oxide’s holds 32, and under a 256 limit it fails at 15 threads. If a diskcache app has failed with <code>sqlite3.OperationalError: unable to open database file</code> under a low <code>ulimit -n</code>, this is likely why.</li>
 <li><strong><a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> takes a key</strong> and covers one shard: <code>with cache.transact(key=k):</code> where diskcache’s <code>with cache.transact():</code> locks every shard. Calls for keys on other shards inside the block raise <code>ValueError</code>, reads included. A ported bare <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> raises <code>TypeError</code> (D-040).</li>
 <li><strong>No queue calls.</strong> <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push</a>, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull</a>, <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a> and <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem</a> are on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> only, since a queue spread over shards would have no order. Use a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> for a queue.</li>
-<li><strong>Not there:</strong> <code>cache()</code>, <code>deque()</code> and <code>index()</code>, and <code>read()</code> and <code>read=</code> (D-039). <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, <code>retry=</code>, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a>, <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset()</a>, <code>reversed()</code>, pickling, tags with <a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict()</a>, <code>eviction_policy=</code> and settings as attributes all work as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</li>
+<li><strong>Not there:</strong> <a href="../reference/DjangoCache.cache.html#diskcache_oxide.DjangoCache.cache" class="gdls-link gdls-code">cache()</a>, <code>deque()</code> and <code>index()</code>, and <code>read()</code> and <code>read=</code> (D-039). <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, <code>retry=</code>, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a>, <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset()</a>, <code>reversed()</code>, pickling, tags with <a href="../reference/Cache.evict.html#diskcache_oxide.Cache.evict" class="gdls-link gdls-code">evict()</a>, <code>eviction_policy=</code> and settings as attributes all work as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</li>
 </ul>
 </section>
 <section id="truthiness" class="level1">

@@ -17,7 +17,7 @@ Keep diskcache's API, fix what's wrong underneath it, and make it fast. With 0.2
 
 ### Stage 2: the complete local caching toolkit (in progress)
 
-The things a modern Python stack needs that diskcache never had. Sharding that doesn't lock every shard for a transaction and coordination recipes that hold across every process are already in. Still to come are a Django cache backend, threads that scale on free-threaded Python, and an async API.
+The things a modern Python stack needs that diskcache never had. Sharding that doesn't lock every shard for a transaction and coordination recipes that hold across every process are already in. So is a [Django cache backend](django.qmd). Still to come are threads that scale on free-threaded Python, and an async API.
 
 ### Stage 3: a cache server
 
@@ -83,11 +83,14 @@ An entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it e
 
 A cache looks after itself, with no `expire()` to schedule. One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (`maintenance_interval`). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don't all do the same work, a cache with nothing to do is written only once an hour, to coordinate them (`maintenance_interval=0` for none), and the thread holds the write lock only for short chunks and stops for every `os.fork()`. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
 
+### Done: a Django cache backend (0.4.6)
+
+`'BACKEND': 'diskcache_oxide.DjangoCache'` runs Django's cache framework (the low-level API, the per-view and per-site cache, template fragments and the cache session engines) on diskcache-oxide, every worker sharing one cache on disk, with `add()` and `incr()` atomic across processes. It passes Django's own cache tests from the source of Django 5.2, 6.0 and 6.1, on every Python each supports. See [Django cache backend](django.qmd).
+
 ### Next
 
 In roughly this order:
 
-- **Django cache backend**: A diskcache-oxide backend for Django's cache framework, tested against Django's own cache test suite. It's a big job, so it gets a phase of its own.
 - **Free-threaded performance**: Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target.
 - **`AsyncCache`**: An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. It starts as an experiment and ships only if it earns its place; if it doesn't, this page will say why.
 - **Network server**: Stage 3, above. Speculative, and a separate product if it happens.
@@ -112,5 +115,5 @@ Ideas being considered, not yet committed to:
 
 - Reading existing diskcache directories. diskcache-oxide uses its own on-disk format, so caches start cold when you switch.
 - A module named `diskcache` (it would collide with the real package).
-- diskcache's own `DjangoCache` class. A Django backend of diskcache-oxide's own is planned, above.
+- diskcache's own `DjangoCache` class, ported. diskcache-oxide has a [Django backend](django.qmd) of its own instead, above.
 - Python older than 3.14.

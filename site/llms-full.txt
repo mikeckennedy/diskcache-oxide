@@ -1005,7 +1005,7 @@ Args:
         whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
 Raises:
-    TypeError: `key` isn't a `str`, or `retry` isn't a `bool`.
+    TypeError: `key` isn't a key type, or `retry` isn't a `bool`.
 
 Examples:
     ```python
@@ -1799,6 +1799,217 @@ Return the cache, for use in a `with` block.
 __exit__(self, exc_type: 'Optional[type[BaseException]]', exc: 'Optional[BaseException]', tb: 'Optional[TracebackType]', /) -> 'None'
 
 Close the cache.
+
+
+## DjangoCache
+
+diskcache-oxide as a Django cache backend: 'BACKEND': 'diskcache_oxide.DjangoCache'.
+
+
+DjangoCache(location: 'str | os.PathLike[str]', params: 'dict[str, Any]') -> 'None'
+
+A Django cache backend on a diskcache-oxide `Cache` (or a `FanoutCache` with `OPTIONS['shards']`).
+
+`'BACKEND': 'diskcache_oxide.DjangoCache'`. `OPTIONS` takes `Cache`'s keyword names; the defaults
+are a 1.0 s lock wait (`OPTIONS['timeout']`) and `pickle=True`. Errors raise (`Timeout` for a held
+lock) unless `OPTIONS['durable']` is set, which drops single-key writes instead. Every instance
+and alias on a directory shares one handle per process, and `close()` does nothing. See the
+Django cache backend guide for the recommended setup.
+
+Args:
+    location: The cache directory, Django's `LOCATION`. Required.
+    params: The rest of the alias's settings, as Django passes them.
+
+Raises:
+    ImproperlyConfigured: No `LOCATION`, an unknown or refused option, another alias on the
+        same directory with different `OPTIONS`, or a `durable=True` alias that the cache or
+        cached_db session engine stores sessions in.
+
+
+## DjangoCache Methods
+
+Methods for the DjangoCache class
+
+
+cache
+
+The `Cache` (or `FanoutCache`) under this backend, shared by every alias on its directory.
+
+Its keys are the made keys (`prefix:version:key`), not the ones passed to the backend. On a
+`durable=True` alias whose directory couldn't be opened, a `NullCache` until the next try.
+
+make_and_validate_key(self, key: 'Any', version: 'Optional[int]' = None) -> 'str'
+
+The key as stored (`prefix:version:key`), checked by `validate_key`.
+
+A `KEY_FUNCTION`'s `str` subclass becomes a `str`; anything else raises `TypeError`.
+
+validate_key(self, key: 'str') -> 'None'
+
+Warn (`CacheKeyWarning`) about a key memcached couldn't store, as every Django backend does.
+
+get_backend_timeout(self, timeout: 'Any' = <object object at 0x11200e550>) -> 'Optional[float]'
+
+Seconds from now, or None for forever. Zero or less means "don't store it", as in Django.
+
+add(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+
+Django's `add`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
+
+get(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) -> 'Any'
+
+The value, or `default` on a miss (a stored None is returned as None).
+
+set(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+
+Django's `set`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
+
+touch(self, key: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None) -> 'bool'
+
+Give the key a new timeout. Returns whether it was there.
+
+delete(self, key: 'Any', version: 'Optional[int]' = None) -> 'bool'
+
+Delete the key. Returns whether it was there.
+
+has_key(self, key: 'Any', version: 'Optional[int]' = None) -> 'bool'
+
+Whether the key is there and unexpired.
+
+incr(self, key: 'Any', delta: 'int | float' = 1, version: 'Optional[int]' = None) -> 'int | float'
+
+Add `delta` atomically, across threads and processes, keeping the entry's expiry.
+
+Raises:
+    ValueError: The key is missing or expired.
+    TypeError: The stored value isn't a number (an `int` or a `float`; a stored `bool` doesn't count).
+
+decr(self, key: 'Any', delta: 'int | float' = 1, version: 'Optional[int]' = None) -> 'int | float'
+
+Subtract `delta` atomically, as `incr` adds it.
+
+get_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]'
+
+The keys that are there, with their values; a stored None is returned.
+
+set_many(self, data: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None) -> 'list[Any]'
+
+A `set` per key, not one transaction: a value's pickling can run arbitrary code (load a
+session, run a query), which mustn't run holding the cache's write lock. Returns the keys
+that weren't stored, which only a `durable=True` cache can have. A durable `set` behind a held
+lock waits out the lock wait and returns False, so once one returns False after half a lock wait
+has passed, it and every key after it are returned untried: one wait, not one per key.
+A failure that comes at once (one value that can't be written) only fails that key.
+
+delete_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'None'
+
+Delete the keys, up to `DELETE_CHUNK` at a time in one transaction (one per shard on a
+`FanoutCache`; a one-key chunk is a plain delete). Every key is made and validated first, so
+a `CacheKeyWarning` raised as an error deletes nothing. A `Timeout` part-way leaves the
+chunks before it deleted, as a loop of deletes would. Inside the caller's own transaction on
+one shard of a `FanoutCache`, keys on another shard raise the engine's `ValueError`.
+
+Under `durable=True`, single deletes, which durable covers and a transaction doesn't. A durable
+delete that can't get the lock returns False after the lock wait, as a miss does at once, so
+the batch stops at the first False past half a lock wait: one wait, not one per key.
+
+clear(self) -> 'None'
+
+Remove every entry in the directory: every alias, prefix and version on this `LOCATION`.
+
+close(self, **kwargs: 'Any') -> 'None'
+
+Nothing: Django calls it after every request, and the handle lives for the process.
+
+pop(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) -> 'Any'
+
+Remove the key and return its value, or `default` if it's missing, atomically.
+
+evict(self, tag: 'Key') -> 'int'
+
+Remove every entry tagged `tag` (with `set(..., tag=)` or `add(..., tag=)`). Returns how many.
+
+expire(self) -> 'int'
+
+Remove expired entries now, rather than waiting for background maintenance. Returns how many.
+
+cull(self) -> 'int'
+
+Remove expired entries, then evict until the cache is under `size_limit`. Returns how many.
+
+stats(self, enable: 'bool' = True, reset: 'bool' = False) -> 'tuple[int, int]'
+
+`(hits, misses)` since counting was enabled; see `Cache.stats`.
+
+maintenance_stats(self) -> 'MaintenanceStats'
+
+What background maintenance has done; see `Cache.maintenance_stats`.
+
+check(self, fix: 'bool' = False) -> 'list[Any]'
+
+Check the cache's consistency, returning the problems as warnings; see `Cache.check`.
+
+aadd(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+
+`add`, run in one `sync_to_async` call.
+
+aget(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) -> 'Any'
+
+`get`, run in one `sync_to_async` call.
+
+aset(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+
+`set`, run in one `sync_to_async` call.
+
+atouch(self, key: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None) -> 'bool'
+
+`touch`, run in one `sync_to_async` call.
+
+adelete(self, key: 'Any', version: 'Optional[int]' = None) -> 'bool'
+
+`delete`, run in one `sync_to_async` call.
+
+ahas_key(self, key: 'Any', version: 'Optional[int]' = None) -> 'bool'
+
+`has_key`, run in one `sync_to_async` call.
+
+aincr(self, key: 'Any', delta: 'int | float' = 1, version: 'Optional[int]' = None) -> 'int | float'
+
+`incr`, run in one `sync_to_async` call.
+
+adecr(self, key: 'Any', delta: 'int | float' = 1, version: 'Optional[int]' = None) -> 'int | float'
+
+`decr`, run in one `sync_to_async` call.
+
+aget_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]'
+
+`get_many`, run in one `sync_to_async` call.
+
+aset_many(self, data: 'Any', timeout: 'Any' = <object object at 0x11200e550>, version: 'Optional[int]' = None) -> 'list[Any]'
+
+`set_many`, run in one `sync_to_async` call.
+
+adelete_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'None'
+
+`delete_many`, run in one `sync_to_async` call.
+
+aclear(self) -> 'None'
+
+`clear`, run in one `sync_to_async` call.
+
+aclose(self, **kwargs: 'Any') -> 'None'
+
+Nothing, without a thread hop: `close()` does nothing.
+
+open_handle(self) -> 'Cache | FanoutCache | NullCache'
+
+Open this directory's handle and share it (or a durable alias's NullCache).
+
+Used by `cache`; not called directly.
+
+serve_null(self, error: 'BaseException', down: 'Optional[tuple[float, NullCache]]') -> 'NullCache'
+
+Record a durable alias's failed open and log it. Used by `open_handle`; not called directly.
 
 
 ## Caches
@@ -2806,9 +3017,10 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | `len()` and iteration | Count and list expired entries until something removes their rows | Leave them out the moment they expire (D-060) |
 | Between calls | Nothing happens: expired rows, an over-limit cache and stray files wait for a call, so apps schedule `expire()` | Background maintenance looks after every open cache, every 5 minutes by default; nothing to schedule (D-061) |
 | Locks, semaphores, `throttle`, `barrier`, `Averager`, `memoize_stampede` | Supported | Supported, with differences; see [Coordination](coordination.qmd) |
-| `Deque`, `Index`, `DjangoCache`, `disk=`, `read=` | Supported | Not available |
+| `DjangoCache` | `diskcache.DjangoCache`: always a `FanoutCache` (8 shards by default), writes retrying a 10 ms lock wait silently | `diskcache_oxide.DjangoCache`, a plain `Cache` unless `OPTIONS['shards']`, errors that raise unless `durable` (D-062); see [Django cache backend](django.qmd) |
+| `Deque`, `Index`, `disk=`, `read=` | Supported | Not available |
 
-`DjangoCache`: keep Django's cache on diskcache until diskcache-oxide's Django backend ships (it's next on the [roadmap](roadmap.qmd#next)), and use diskcache-oxide directly for everything else.
+`DjangoCache`: change `'BACKEND'` to `'diskcache_oxide.DjangoCache'`, `SHARDS` to `OPTIONS['shards']` and `DATABASE_TIMEOUT` to `OPTIONS['timeout']`, and drop `MAX_ENTRIES` for `size_limit`. [Django cache backend](django.qmd#coming-from-diskcaches-djangocache) has the rest.
 
 ### Settings passed as keywords
 
@@ -3248,7 +3460,7 @@ Keep diskcache's API, fix what's wrong underneath it, and make it fast. With 0.2
 
 ### Stage 2: the complete local caching toolkit (in progress)
 
-The things a modern Python stack needs that diskcache never had. Sharding that doesn't lock every shard for a transaction and coordination recipes that hold across every process are already in. Still to come are a Django cache backend, threads that scale on free-threaded Python, and an async API.
+The things a modern Python stack needs that diskcache never had. Sharding that doesn't lock every shard for a transaction and coordination recipes that hold across every process are already in. So is a [Django cache backend](django.qmd). Still to come are threads that scale on free-threaded Python, and an async API.
 
 ### Stage 3: a cache server
 
@@ -3312,11 +3524,14 @@ An entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it e
 
 A cache looks after itself, with no `expire()` to schedule. One small Rust thread per process frees expired entries' space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (`maintenance_interval`). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don't all do the same work, a cache with nothing to do is written only once an hour, to coordinate them (`maintenance_interval=0` for none), and the thread holds the write lock only for short chunks and stops for every `os.fork()`. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
 
+### Done: a Django cache backend (0.4.6)
+
+`'BACKEND': 'diskcache_oxide.DjangoCache'` runs Django's cache framework (the low-level API, the per-view and per-site cache, template fragments and the cache session engines) on diskcache-oxide, every worker sharing one cache on disk, with `add()` and `incr()` atomic across processes. It passes Django's own cache tests from the source of Django 5.2, 6.0 and 6.1, on every Python each supports. See [Django cache backend](django.qmd).
+
 ### Next
 
 In roughly this order:
 
-- **Django cache backend**: A diskcache-oxide backend for Django's cache framework, tested against Django's own cache test suite. It's a big job, so it gets a phase of its own.
 - **Free-threaded performance**: Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that's the first target.
 - **`AsyncCache`**: An async API for asyncio frameworks that can't slow down the sync one, including `transact_async()`. It starts as an experiment and ships only if it earns its place; if it doesn't, this page will say why.
 - **Network server**: Stage 3, above. Speculative, and a separate product if it happens.
@@ -3341,7 +3556,7 @@ Ideas being considered, not yet committed to:
 
 - Reading existing diskcache directories. diskcache-oxide uses its own on-disk format, so caches start cold when you switch.
 - A module named `diskcache` (it would collide with the real package).
-- diskcache's own `DjangoCache` class. A Django backend of diskcache-oxide's own is planned, above.
+- diskcache's own `DjangoCache` class, ported. diskcache-oxide has a [Django backend](django.qmd) of its own instead, above.
 - Python older than 3.14.
 
 
@@ -4073,6 +4288,134 @@ def bump(cache: ShardedCacheLike, key: str) -> None:
 The constructor takes `shards` as a keyword: stock's `FanoutCache(path, 4)` means four shards, but here the second argument is `timeout`, so write `shards=4`.
 
 
+### Django cache backend
+
+Django's cache framework runs on diskcache-oxide with one setting. `django.core.cache.cache`, the per-view and per-site cache, template fragment caching and the cache session engines all use it, and every worker process on the machine shares one cache on disk: `add()` and `incr()` are atomic across processes, which Django's file-based cache can't promise, and there's no server to run, unlike Redis or Memcached.
+
+```python
+CACHES = {
+    'default': {
+        'BACKEND': 'diskcache_oxide.DjangoCache',
+        'LOCATION': '/var/lib/my-site/cache/default',
+        'TIMEOUT': 300,
+    },
+}
+```
+
+Install it with `pip install 'diskcache-oxide[django]'`, which asks for Django 5.2 or newer. Importing `diskcache_oxide` never imports Django: the name `DjangoCache` loads on first use. Use the dotted `BACKEND` string as above; `from diskcache_oxide import DjangoCache` works too, but where Django isn't installed it fails with Python's plain "cannot import name" instead of the install hint.
+
+The backend runs Django's own cache tests (the `BaseCacheTests` every built-in backend passes, the middleware, template-response and i18n tests, and the cache and cached_db session tests) from each supported Django release's source, on every supported Python. Supported: Django 5.2 (the LTS), 6.0 and 6.1, on Python 3.14 and 3.14t, and Django 6.1 on 3.15 and 3.15t (5.2 and 6.0 don't support 3.15). On the free-threaded builds those tests run with the GIL staying off. They run Django single-threaded, though; the backend's own tests drive it from many threads at once, but whether Django itself is safe with many threads there is Django's question.
+
+## The recommended setup: pages and sessions as two aliases
+
+Most sites cache two kinds of thing. Pages, fragments and query results can be rebuilt, so a cache failure there should cost a slower page, never an error page. Sessions, rate-limit counters and job claims are state: a dropped write is a login that didn't stick, or a limit that let everyone through. Give each its own alias and directory:
+
+```python
+CACHES = {
+    'default': {
+        'BACKEND': 'diskcache_oxide.DjangoCache',
+        'LOCATION': '/var/lib/my-site/cache/pages',
+        'TIMEOUT': 600,
+        'OPTIONS': {'durable': True, 'size_limit': 2 * 1024**3},
+    },
+    'state': {
+        'BACKEND': 'diskcache_oxide.DjangoCache',
+        'LOCATION': '/var/lib/my-site/state/site',
+        'TIMEOUT': None,
+        'OPTIONS': {'eviction_policy': 'none'},
+    },
+}
+
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+SESSION_CACHE_ALIAS = 'state'
+```
+
+`default` is durable: a write that can't get the lock in time is dropped and a read that fails is a miss (see [durable](#errors-raise-durable-drops) below). `state` isn't, so a write that fails raises, and it never evicts for size, so sessions aren't pushed out by pages; it grows until entries expire, so don't make a session for every anonymous visitor. Keep state out of the directory you'd delete on a deploy: here pages live under `cache/` and state under `state/`, as in [Sharing a cache across web workers](../recipes/web-workers.qmd#the-recommended-setup). The [example project](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django) is this setup under gunicorn.
+
+## Settings
+
+`LOCATION` is the cache's directory, a `str` or a `Path`, and it's required; use an absolute path (a relative one is resolved against the working directory, every time a backend instance is made). `TIMEOUT`, `KEY_PREFIX`, `VERSION` and `KEY_FUNCTION` are Django's and work as in every backend.
+
+`OPTIONS` takes [`Cache`](getting-started.qmd)'s keywords by their own names: `timeout`, `size_limit`, `cull_limit`, `eviction_policy`, `serializer`, `pickle`, `types`, `max_connections`, `sqlite_cache_size`, `wal_size_limit`, `wal_checkpoint`, `on_decode_error`, `durable` and `maintenance_interval`. `shards` makes the alias a [`FanoutCache`](fanoutcache.qmd), which also takes `raise_on_mismatch`. Two defaults differ from `Cache`'s:
+
+- **`timeout` is 1.0 s, not 60.** It's the lock wait: how long a write waits for another writer before raising `Timeout`. gunicorn kills a worker after 30 s, so a 60 s wait would end in a killed worker, not an exception.
+- **`pickle` is True.** Django caches any picklable object: the per-view cache stores whole `HttpResponse`s, `{% cache %}` stores `SafeString`s, and sessions and model instances are common. Values msgpack can represent (`str`, `bytes`, numbers, lists, dicts, datetimes and the rest) are still stored without pickle; only what it can't represent falls back to it.
+
+## Two timeouts
+
+Django's `TIMEOUT` is how long an entry lives (300 s by default, `None` for forever). `OPTIONS['timeout']` is how long a write waits for the lock. diskcache's backend called the second one `DATABASE_TIMEOUT`.
+
+Refused with `ImproperlyConfigured`, so a setting can't silently mean something else:
+
+- **A missing `LOCATION`, or an unknown option**, named in the message.
+- **`MAX_ENTRIES` and `CULL_FREQUENCY`**, in `OPTIONS` or at the top level, in either case. diskcache-oxide bounds a cache by bytes (`size_limit`) and evicts `cull_limit` entries at a time, not by an entry count. (Django's Redis and Memcached backends ignore these silently.)
+- **diskcache's `SHARDS` and `DATABASE_TIMEOUT`**: use `OPTIONS['shards']` and `OPTIONS['timeout']`.
+- **`OPTIONS['timeout'] = None`**, which would be the 60 s wait; leave it out for 1.0.
+- **`clock`**, which would switch background maintenance off for the directory.
+- **Two aliases on one `LOCATION` with different `OPTIONS`.** They share one cache (see below), so the first one's settings would otherwise win silently. Django's settings (`TIMEOUT`, `KEY_PREFIX`, `VERSION`, `KEY_FUNCTION`) may differ.
+- **A durable alias that the `cache` or `cached_db` session engine uses**, or a subclass of either engine or of the backend. See [sessions](#sessions) below.
+
+`pickle: False` is allowed but narrow: only the low-level API with plain types works. Template fragments, the per-view and per-site cache and model instances raise `TypeError`, since what they store can't be represented without pickle. As with any Django cache, a cache that pickles must be writable only by the app: the backend creates its directory `0700`, and one you made yourself keeps the mode you gave it.
+
+## Errors raise; durable drops {#errors-raise-durable-drops}
+
+By default the backend raises, as a Redis backend raises on a lost connection: a write that can't get the lock within `timeout` raises `Timeout` (a `TimeoutError`), and a directory that can't be opened raises on first use. Django's cache also holds sessions and rate limits, where a silent drop is a bug.
+
+`OPTIONS = {'durable': True}` is for a page cache that must never fail a request. Then a single-key write that can't be done is dropped instead (`add`, `touch` and `delete` return False, `set` returns None as always, `set_many` returns the keys it didn't store), and a read that fails is a miss. A batch behind a held lock waits out the lock wait once, not once per key. Durable doesn't cover everything:
+
+- `incr` and `decr` raise Django's `ValueError`, as for a missing key, since the engine reports an outage there as a miss.
+- `clear()` raises `Timeout`.
+- If the directory can't be opened at all, the backend serves a `NullCache` until the next try (where every read misses, nothing is stored, and `add` always succeeds), as the [`Caches` registry](caches.qmd) does: after 1 s for a `Timeout`, logged as a WARNING on the `diskcache_oxide` logger, and after 10 s for any other failure to open, logged as an ERROR with the traceback. That includes a directory holding the other kind of cache (`shards` set on a plain cache's directory, or left out on a `FanoutCache`'s), which never heals by itself, so watch for that ERROR. Bad settings still raise.
+
+Because `add` succeeds on a `NullCache` and returns False behind a held lock, code that uses `add` as a lock or a once-only claim belongs on a plain alias. Django's own callers are fine: `get_or_set` works either way, and sessions can't use a durable alias.
+
+### Sessions {#sessions}
+
+A durable alias for the `cache` or `cached_db` session engine is refused. The cache engine reads a dropped write as "that session key is taken" and tries again, up to 10,000 times; the cached_db engine never learns of a dropped cache write, so later requests read the old session from the cache. The check happens when the alias's backend is first built: under `manage.py` that's at startup, since Django's system checks build every alias, and under a bare gunicorn it's the first request that uses the alias (or startup, if the app touches the cache at import, as the example's `wsgi.py` does).
+
+With `cached_db` sessions on a plain alias, a held write lock still costs something: reads succeed while writes wait. A `save()` gives up after the lock wait (Django only logs it), so the next request may read the previous session from the cache while the database has the new one; the next save fixes that. A logout can raise `Timeout` after the database row is gone, and then the old cookie still loads the session from the cache: the visitor stays logged in, and a request that changes the session gets Django's 400 (`SessionInterrupted`), until they log out again or the cache entry expires. This is how `cached_db` behaves on any cache that raises.
+
+## One cache per directory, every worker sharing it
+
+Django builds a backend instance per thread, and under ASGI up to one per request. None of them owns a cache: every instance for a directory, in every thread of a process, shares one `Cache`, opened on its first use and kept for the life of the process, so making an instance opens nothing. Every process that opens the same directory shares the same cache on disk. Opening before or after a `fork()` (gunicorn's `preload_app`, Celery's prefork pool) is fine: see [Concurrency and forks](concurrency-and-forks.qmd).
+
+- **`close()` does nothing.** Django calls it after every request; closing would reopen the cache on the next one. The handles live for the process, and background maintenance keeps the cache tidy.
+- **`clear()` clears the directory**: every alias, prefix and version on that `LOCATION`, as Django's file and Redis backends do. Aliases that must clear separately need separate `LOCATION`s.
+- **Never delete the directory under running workers.** They would carry on in the deleted files, and a worker started later would get a new, empty cache the others never see. Use `cache.clear()`.
+- **When to use `shards`.** A plain `Cache` suits most sites. Make the alias that many worker processes write to most a `FanoutCache` with `OPTIONS = {'shards': 8}`: with 8 worker processes at 99 reads to 1 write it's about 4x a plain `Cache` ([FanoutCache](fanoutcache.qmd) has the numbers). Choose it before the directory is made: a directory holds one kind or the other.
+
+## The calls
+
+Every call goes through Django's `make_and_validate_key`, so `KEY_PREFIX`, `VERSION` and `KEY_FUNCTION` work, and Django's `CacheKeyWarning` for keys memcached couldn't store still appears (keys are checked in under 0.1 µs when they're fine). A `KEY_FUNCTION` must return a `str`.
+
+- **`get`, `set`, `add`, `touch`, `delete`, `has_key`**: one call each. A timeout of 0 or less stores nothing (and removes the key if it was there), `None` is forever. A timeout that isn't a number (a `Decimal`, a `str`, a `bool`) raises `TypeError`.
+- **`incr` and `decr`** are atomic across threads and processes and keep the entry's expiry. A missing key raises `ValueError`; a value that isn't a number (an `int` or a `float`; a stored `bool` doesn't count) raises `TypeError`.
+- **`get_many`** returns a stored `None`; **`set_many`** is a `set` per key, so no pickling code runs while the cache's write lock is held; **`delete_many`** deletes up to 100 keys per transaction (per shard on a `FanoutCache`), validating every key first.
+- **The async methods** (`aget`, `aset`, `aincr` and the rest) each run their sync form in one call through asgiref's `sync_to_async`, as Django does, so `aincr` is atomic and keeps the expiry on every supported Django line (Django 5.2's and 6.0's own `aincr` is a get and then a set).
+
+`get_or_set`, `incr_version`, `decr_version` and their async forms are Django's own, built from the calls above. Beyond Django's API: `tag=` on `set` and `add` (and `aset`, `aadd`), then `evict(tag)` removes every entry with that tag; `pop(key)`; `expire()` and `cull()`; `stats()`, `maintenance_stats()` and `check()`; and `cache`, the `Cache` or `FanoutCache` underneath, whose keys are the made keys (`prefix:version:key`).
+
+```python
+from django.core.cache import cache
+
+cache.set(f'episode:{n}:html', html, timeout=600, tag=f'episode:{n}')
+cache.set(f'episode:{n}:summary', summary, timeout=600, tag=f'episode:{n}')
+cache.evict(f'episode:{n}')   # after an edit: both entries go
+```
+
+## A cached view that reads the session
+
+`@cache_page` stores the response before `SessionMiddleware` adds `Vary: Cookie`, so a cached view that reads the session serves one visitor's page to everyone. Add `@vary_on_cookie` to such a view, or keep the session out of it. This is Django's behavior on every backend.
+
+## In tests
+
+`override_settings(CACHES=...)` works: when `CACHES` changes, the backend closes every handle it opened, so a test suite that gives each test its own temporary `LOCATION` doesn't run out of file descriptors, and a test that deletes its directory doesn't leave a handle on deleted files. To release them yourself (before deleting a directory a test made, say), call `diskcache_oxide.djangocache.close_all()`; the next call reopens. On Windows, a directory can't be deleted while a handle on it is open, so this is what makes a Django-style teardown work there.
+
+## Coming from diskcache's DjangoCache
+
+Change `'BACKEND': 'diskcache.DjangoCache'` to `'BACKEND': 'diskcache_oxide.DjangoCache'`, then the settings: `SHARDS` becomes `OPTIONS['shards']` (diskcache's backend is always a `FanoutCache`, 8 shards by default; this one is a plain `Cache` unless you ask), `DATABASE_TIMEOUT` becomes `OPTIONS['timeout']`, and `MAX_ENTRIES` goes (use `size_limit`). The cache starts cold: diskcache-oxide doesn't read diskcache's files. diskcache's `read=`, `deque()`, `index()`, `cache(name)`, `memoize` and tag-index calls aren't here; its 10 ms timeout with silent retries, which wait for as long as the lock is held, is replaced by errors that raise, or `durable`. [Divergences](divergences.qmd) has the full list under D-062.
+
+
 ### Transactions
 
 Every write is already its own transaction, atomic across every thread and process using the directory. Sometimes one write at a time isn't enough. A request bumps a total, bumps a per-path counter and records when it happened, and a reader that sees two of those three has seen something that was never true. `transact()` groups several calls into one: they all commit together when the block exits, or none of them do.
@@ -4326,7 +4669,7 @@ CPython won't let a library refuse a fork, so the barrier can't wait for a [tran
 
 ## Free-threaded performance today
 
-On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 4 threads reach about 1.3 million operations per second. But that's only about 1.6× its single-thread number, and 8 threads fall back to about 0.9 million, so threads don't scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is on the [roadmap](roadmap.qmd), after the Django backend. Threads sharing one [`FanoutCache`](fanoutcache.qmd) handle go further, since each shard is its own database: 1.7x a plain `Cache` at 8 threads with hot keys, for about 10 MiB more memory per process. See [Performance](performance.qmd).
+On free-threaded 3.14t, diskcache-oxide is already faster than diskcache at every thread count, and at a 1,000:1 read/write mix 4 threads reach about 1.3 million operations per second. But that's only about 1.6× its single-thread number, and 8 threads fall back to about 0.9 million, so threads don't scale the way they should yet. Profiling shows where the time goes: about 60% of a cached read is one system call SQLite makes to take its shared-memory read lock, under a process-wide mutex. Removing that wall is next on the [roadmap](roadmap.qmd#next). Threads sharing one [`FanoutCache`](fanoutcache.qmd) handle go further, since each shard is its own database: 1.7x a plain `Cache` at 8 threads with hot keys, for about 10 MiB more memory per process. See [Performance](performance.qmd).
 
 
 ### Storage and WAL
@@ -4546,7 +4889,7 @@ Two oversubscribed cases measure slower than before the SQLite mutex spin and th
 
 ## Next: free-threaded scaling
 
-Profiling a cached `get` shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The free-threaded phase on the [roadmap](roadmap.qmd), after the Django backend, goes after it, along with:
+Profiling a cached `get` shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The free-threaded phase, next on the [roadmap](roadmap.qmd#next), goes after it, along with:
 
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;
@@ -4956,6 +5299,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-059:** when a cache directory holds a cache in another diskcache-oxide format (after an upgrade or a rollback), the cache opens in the subdirectory `diskcache-oxide-format-N` with a warning, and every later open uses it; `directory` reports where the cache really is. `remove_old_formats()` cleans up older formats once the old workers are gone. See [Upgrading across a format change](../recipes/upgrading.qmd).
 - **D-060:** an expired entry leaves `len()`, `iterkeys()`, `iter()` and `reversed()` the moment it expires, as it already left `get` and `in`. diskcache keeps counting and listing it until a `set()`, `expire()` or `cull()` removes its row. Nothing is written by the check: the row and its space, in `volume()`, stay until a `set()`, `expire()` or `cull()` removes them, or background maintenance does (D-061).
 - **D-061:** one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every `maintenance_interval` (default 5 minutes, 0 for off), with the caches and the processes taking turns. It never waits for a lock and holds the write lock only for short chunks, so a request in the same process waits at most one chunk (about 130 µs for 100 small rows); a writer in another process can wait for a few chunks, never past the turn's 50 ms. So an explicit `expire()` or `cull()` can return less than diskcache's would, `volume()` changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
+- **D-062:** the Django backend is diskcache-oxide's own, not a port of `diskcache.DjangoCache`: `'BACKEND': 'diskcache_oxide.DjangoCache'` with `OPTIONS` in `Cache`'s keyword names, a plain `Cache` unless `OPTIONS['shards']`, a 1.0 s lock wait and errors that raise unless `durable` (diskcache's is always a `FanoutCache`, 8 shards by default, and its writes retry a 10 ms wait silently, for as long as the lock is held), `close()` a no-op, `MAX_ENTRIES` refused rather than ignored, `pickle=True` by default (Django caches responses and model instances), and `incr` the engine's atomic one, so a `bool`, `Decimal`, `IntEnum` or an int past 64 bits raises `TypeError` where Django's locmem backend adds it. No `read=`, `deque()`, `index()`, `cache(name)`, `memoize` or tag-index calls. See [Django cache backend](django.qmd).
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)
@@ -5079,7 +5423,7 @@ atexit.register(close_everything)
 
 ### Django
 
-diskcache-oxide doesn't ship a Django cache backend yet. One is next on the [roadmap](../user-guide/roadmap.qmd#next); until then, `django.core.cache` keeps whatever it has. Put the setup in a module of its own (`myapp/caching.py`), take `ROOT` from `settings`, and import it where it's needed.
+Django's own cache runs on diskcache-oxide through `'BACKEND': 'diskcache_oxide.DjangoCache'`: pages and fragments on a durable alias, sessions and counters on a plain one, each in its own directory under the app's root. [Django cache backend](../user-guide/django.qmd) has the settings, and the [example project](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django) runs them under gunicorn. The backend opens nothing until first use and Django's per-request `close()` does nothing, so there's no startup or shutdown hook to write. For caches the app uses directly, outside `django.core.cache` (a `Caches` registry, a `Lock`, a work queue), put the setup in a module of its own (`myapp/caching.py`), take `ROOT` from `settings`, and import it where it's needed.
 
 ### Celery and other background workers
 

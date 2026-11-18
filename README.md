@@ -132,7 +132,7 @@ diskcache-oxide runs in production at [Talk Python](https://talkpython.fm), [Pyt
 It's being built in three stages:
 
 1. **A better diskcache:** done. diskcache's `Cache` and `FanoutCache`, safe across processes and forks, faster, and fixed where diskcache goes wrong.
-2. **The complete local caching toolkit:** mostly done. Keys of every native type, `memoize`, tags, `transact()`, work queues, `retry=`, `stats()`, `check()`, and the coordination recipes (`Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, `Averager` and `memoize_stampede`) are all in. Next come a Django cache backend, free-threaded scaling and `AsyncCache`.
+2. **The complete local caching toolkit:** mostly done. Keys of every native type, `memoize`, tags, `transact()`, work queues, `retry=`, `stats()`, `check()`, and the coordination recipes (`Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, `Averager` and `memoize_stampede`) are all in, and so is a [Django cache backend](https://mkennedy.codes/docs/diskcache-oxide/user-guide/django.html) (`'BACKEND': 'diskcache_oxide.DjangoCache'`). Next come free-threaded scaling and `AsyncCache`.
 3. **A cache server:** the same Rust engine served over the network, a Redis-style central cache with SQLite underneath.
 
 [Vision and roadmap](https://mkennedy.codes/docs/diskcache-oxide/user-guide/roadmap.html) has the detail.

@@ -66,7 +66,7 @@ Two oversubscribed cases measure slower than before the SQLite mutex spin and th
 
 # Next: free-threaded scaling
 
-Profiling a cached [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The free-threaded phase on the [roadmap](roadmap.md), after the Django backend, goes after it, along with:
+Profiling a cached [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The free-threaded phase, next on the [roadmap](roadmap.md#next), goes after it, along with:
 
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;

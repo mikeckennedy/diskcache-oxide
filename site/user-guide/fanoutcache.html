@@ -72,7 +72,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../site_libs/quarto-search/fuse.min.js"></script>
 <script src="../site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="../">
-<link href="../user-guide/transactions.html" rel="next">
+<link href="../user-guide/django.html" rel="next">
 <link href="../user-guide/caches.html" rel="prev">
 <link href="../favicon.ico" rel="icon">
 <script src="../site_libs/quarto-html/quarto.js" type="module"></script>
@@ -610,6 +610,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/django.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Django cache backend</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Transactions</span></a>
   </div>
@@ -933,7 +939,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="what-fanoutcache-doesnt-have" class="level1">
 <h1>What <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> doesn’t have</h1>
-<p><a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a>, <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset()</a>, <code>reversed()</code>, pickling, <code>retry=</code>, tags and <code>evict(tag)</code> (which removes the tag from every shard) and <code>eviction_policy=</code> (every shard’s) work as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. The queue calls <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push</a>, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull</a>, <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a> and <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem</a> are on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> only, because a queue spread over shards would have no order; keep a <a href="../recipes/work-queues.html">work queue</a> in a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. diskcache’s <code>cache()</code>, <code>deque()</code> and <code>index()</code> sub-collections and <code>read()</code>/<code>read=</code> aren’t here either (see the <a href="../user-guide/roadmap.html">roadmap</a>). <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a> is required and there’s no <code>disk=</code>, as for <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</p>
+<p><a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a>, <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a>, <a href="../reference/Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset()</a>, <code>reversed()</code>, pickling, <code>retry=</code>, tags and <code>evict(tag)</code> (which removes the tag from every shard) and <code>eviction_policy=</code> (every shard’s) work as on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. The queue calls <a href="../reference/Cache.push.html#diskcache_oxide.Cache.push" class="gdls-link gdls-code">push</a>, <a href="../reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull</a>, <a href="../reference/Cache.peek.html#diskcache_oxide.Cache.peek" class="gdls-link gdls-code">peek</a> and <a href="../reference/Cache.peekitem.html#diskcache_oxide.Cache.peekitem" class="gdls-link gdls-code">peekitem</a> are on <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> only, because a queue spread over shards would have no order; keep a <a href="../recipes/work-queues.html">work queue</a> in a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. diskcache’s <a href="../reference/DjangoCache.cache.html#diskcache_oxide.DjangoCache.cache" class="gdls-link gdls-code">cache()</a>, <code>deque()</code> and <code>index()</code> sub-collections and <code>read()</code>/<code>read=</code> aren’t here either (see the <a href="../user-guide/roadmap.html">roadmap</a>). <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a> is required and there’s no <code>disk=</code>, as for <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>.</p>
 <p>The constructor takes <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> as a keyword: stock’s <code>FanoutCache(path, 4)</code> means four shards, but here the second argument is <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, so write <code>shards=4</code>.</p>
 
 
@@ -1361,8 +1367,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="../user-guide/transactions.html" class="pagination-link" aria-label="Transactions">
-        <span class="nav-page-text">Transactions</span> <i class="bi bi-arrow-right-short"></i>
+      <a href="../user-guide/django.html" class="pagination-link" aria-label="Django cache backend">
+        <span class="nav-page-text">Django cache backend</span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

@@ -75,6 +75,7 @@ user_guide:
       - null-cache.qmd
       - caches.qmd
       - fanoutcache.qmd
+      - django.qmd
       - transactions.qmd
       - coordination.qmd
       - concurrency-and-forks.qmd
@@ -134,6 +135,10 @@ reference:
         - CacheLike
         - TransactionalCacheLike
         - ShardedCacheLike
+    - title: DjangoCache
+      desc: "diskcache-oxide as a Django cache backend: 'BACKEND': 'diskcache_oxide.DjangoCache'."
+      contents:
+        - DjangoCache
     - title: Caches
       desc: "A registry of named caches under one base directory."
       contents:

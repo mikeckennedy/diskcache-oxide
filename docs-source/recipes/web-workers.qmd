@@ -101,7 +101,7 @@ atexit.register(close_everything)
 
 ### Django
 
-diskcache-oxide doesn't ship a Django cache backend yet. One is next on the [roadmap](../user-guide/roadmap.qmd#next); until then, `django.core.cache` keeps whatever it has. Put the setup in a module of its own (`myapp/caching.py`), take `ROOT` from `settings`, and import it where it's needed.
+Django's own cache runs on diskcache-oxide through `'BACKEND': 'diskcache_oxide.DjangoCache'`: pages and fragments on a durable alias, sessions and counters on a plain one, each in its own directory under the app's root. [Django cache backend](../user-guide/django.qmd) has the settings, and the [example project](https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django) runs them under gunicorn. The backend opens nothing until first use and Django's per-request `close()` does nothing, so there's no startup or shutdown hook to write. For caches the app uses directly, outside `django.core.cache` (a `Caches` registry, a `Lock`, a work queue), put the setup in a module of its own (`myapp/caching.py`), take `ROOT` from `settings`, and import it where it's needed.
 
 ### Celery and other background workers
 

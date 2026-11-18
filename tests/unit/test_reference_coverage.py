@@ -44,3 +44,8 @@ def test_reference_lists_only_exports() -> None:
 
 def test_lazy_names_are_not_exports() -> None:
     assert not LAZY & set(diskcache_oxide.__all__)
+
+
+def test_lazy_names_are_in_the_reference() -> None:
+    missing = sorted(LAZY - reference_names())
+    assert not missing, f'loaded lazily but not in the reference of great-docs.yml: {missing}'

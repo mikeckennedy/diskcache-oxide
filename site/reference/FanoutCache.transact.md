@@ -41,7 +41,7 @@ On a [Timeout](Timeout.md#diskcache_oxide.Timeout), try again until the call get
 
 
 `TypeError`  
-`key` isn't a `str`, or `retry` isn't a `bool`.
+`key` isn't a key type, or `retry` isn't a `bool`.
 
 
 ## Examples

@@ -1,7 +1,7 @@
 ---
 name: diskcache-oxide
 description: >-
-  Use diskcache-oxide, a shared, durable disk cache for Python with a Rust engine, SQLite storage and python-diskcache's API, built for many threads, many worker processes and free-threaded CPython. Use when adding or configuring diskcache_oxide in an app (Cache, FanoutCache, NullCache, Caches), switching code from diskcache, choosing between Cache and FanoutCache or between raising, missing and switching caching off, writing tests around a cache, or when code raises Timeout, TransactionBusy, UnsafeValueError, CorruptValueError, LayoutMismatchError, FormatMismatchError, or "can't be stored without pickle".
+  Use diskcache-oxide, a shared, durable disk cache for Python with a Rust engine, SQLite storage and python-diskcache's API, built for many threads, many worker processes and free-threaded CPython. Use when adding or configuring diskcache_oxide in an app (Cache, FanoutCache, NullCache, Caches), configuring Django's cache on it (DjangoCache), switching code from diskcache, choosing between Cache and FanoutCache or between raising, missing and switching caching off, writing tests around a cache, or when code raises Timeout, TransactionBusy, UnsafeValueError, CorruptValueError, LayoutMismatchError, FormatMismatchError, or "can't be stored without pickle".
 license: MIT
 compatibility: Requires CPython 3.14 or 3.15 (GIL or free-threaded) on macOS, Linux or Windows (x86_64). SQLite is bundled; no runtime dependencies.
 ---
@@ -44,6 +44,27 @@ coordination.add('job:nightly', 1, expire=3600)  # exactly one worker wins
 Plain caches by default. A `FanoutCache` for one cache that many writers share (several worker processes, many threads on free-threaded Python, or a write-heavy load): up to 4× faster, for about 10 MiB more memory per process.
 
 In tests: `Cache(tmp_path / 'cache')` per test, `NullCache()` where caching must not interfere, and `Cache(tmp_path, clock=fake_clock)` to test expiry without sleeping. If tests patch `time.time`, pass `clock=lambda: time.time()`, since the cache reads the clock natively. A `clock=` handle gets no background maintenance, and a nonzero `maintenance_interval` with it raises `ValueError`; a cache's first turn comes at least one interval (5 minutes by default) after it opens, so short tests never see it.
+
+Django: `'BACKEND': 'diskcache_oxide.DjangoCache'` (`pip install 'diskcache-oxide[django]'`; Django 5.2, 6.0, 6.1). Two aliases, as for any app: pages and fragments on a durable one, sessions and counters on a plain, never-evicting one, in separate directories. `OPTIONS` takes `Cache`'s keyword names (`shards` makes it a `FanoutCache`); its defaults are a 1.0 s lock wait (`OPTIONS['timeout']`, not Django's `TIMEOUT`, which is the entry lifetime) and `pickle=True`. `MAX_ENTRIES`, `CULL_FREQUENCY`, diskcache's `SHARDS` and `DATABASE_TIMEOUT`, and a durable alias for the cache or cached_db session engine raise `ImproperlyConfigured`. Errors raise unless `durable`; `incr` raises `ValueError` and `clear()` `Timeout` even on a durable alias. Every instance shares one handle per directory per process; `close()` does nothing; in tests `override_settings(CACHES=...)` closes the handles, or call `diskcache_oxide.djangocache.close_all()`. A `cache_page` view that reads the session needs `@vary_on_cookie`.
+
+```python
+CACHES = {
+    'default': {
+        'BACKEND': 'diskcache_oxide.DjangoCache',
+        'LOCATION': '/var/lib/my-site/cache/pages',
+        'TIMEOUT': 600,
+        'OPTIONS': {'durable': True, 'size_limit': 2 * 1024**3},
+    },
+    'state': {
+        'BACKEND': 'diskcache_oxide.DjangoCache',
+        'LOCATION': '/var/lib/my-site/state/site',
+        'TIMEOUT': None,
+        'OPTIONS': {'eviction_policy': 'none'},
+    },
+}
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+SESSION_CACHE_ALIAS = 'state'
+```
 
 ## Rules
 
@@ -96,6 +117,7 @@ In tests: `Cache(tmp_path / 'cache')` per test, `NullCache()` where caching must
 | A work queue shared by worker processes | `push(value, prefix='jobs')` / `pull(prefix='jobs')` on a `Cache(dir, eviction_policy='none')` (not a `FanoutCache`) |
 | Tests of expiry without sleeping; tests that patch `time.time` | `Cache(tmp_path, clock=fake)`; `clock=lambda: time.time()` |
 | A huge `-wal` file after a write burst | `cache.checkpoint()`, or `Cache(..., wal_checkpoint='auto')` |
+| Django's cache framework (`django.core.cache`, `cache_page`, `{% cache %}`, cache sessions) | `'BACKEND': 'diskcache_oxide.DjangoCache'`: durable alias for pages, plain one for sessions |
 | Type a function that accepts any cache | `CacheLike`; `TransactionalCacheLike` if it calls `transact()`; `ShardedCacheLike` for `transact(key=)` |
 
 ## API
@@ -110,6 +132,7 @@ In tests: `Cache(tmp_path / 'cache')` per test, `NullCache()` where caching must
 - `register_type(cls, *, name, encode=None, decode=None)`, `unregister_type(cls) -> bool`, `registered_types() -> dict[str, type]`, on the process-wide `registry: TypeRegistry`; `TypeRegistry()` with the same `register`/`unregister`/`registered` for one cache's `types=`. Own built-in types can't be registered (`ValueError`); one of `encode`/`decode` alone, a non-dataclass with neither, or a dataclass with an `InitVar` is `TypeError`.
 - Exceptions: `Timeout(TimeoutError)`, `TransactionBusy(Timeout)`, `TransactionAborted(RuntimeError)`, `UnsafeValueError(TypeError)`, `CorruptValueError(ValueError)`, `CorruptKeyError(CorruptValueError)` (iteration met a stored key it can't read), `ForeignValueError(CorruptValueError)`, `FormatMismatchError(RuntimeError)`, `LayoutMismatchError(FormatMismatchError, ValueError)`.
 - Warnings from `check()`: `UnknownFileWarning`, `EmptyDirWarning`. Sentinels: `ENOVAL`, `UNKNOWN`. Types: `Key` (the key union), `Memoized`, `Memoizer`, `CacheStats`, `MaintenanceStats` (a `TypedDict`: `interval`, `turns`, `removed`, `failures`, `last_error`). Recipes: `Lock`, `RLock`, `BoundedSemaphore`, `Averager`, `throttle`, `barrier`, `memoize_stampede`.
+- `DjangoCache(location, params)`, Django's backend class, loaded lazily (not in `__all__`): Django's API plus `tag=` on `set`/`add`, `evict(tag)`, `pop(key, default=None, version=None)`, `expire()`, `cull()`, `stats()`, `maintenance_stats()`, `check(fix=False)`, and `cache` (the `Cache` underneath; its keys are `prefix:version:key`). `diskcache_oxide.djangocache.close_all()`.
 - `sqlite_version()`, `sqlite_compile_options()`, `BUNDLED_SQLITE_VERSION`, `__version__`. Logging goes to the `diskcache_oxide` logger. There is no CLI and no environment variable to configure.
 
 ## Reading an error

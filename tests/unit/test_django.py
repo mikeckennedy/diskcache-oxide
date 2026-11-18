@@ -192,6 +192,8 @@ def test_a_fanout_option_needs_shards(tmp_path: Path) -> None:
         ({'OPTIONS': {'CULL_FREQUENCY': 2}}, r"OPTIONS\['CULL_FREQUENCY'\].*cull_limit"),
         ({'OPTIONS': {'clock': lambda: 0.0}}, r"OPTIONS\['clock'\].*maintenance"),
         ({'max_entries': 10}, 'max_entries.*size_limit'),
+        ({'MAX_ENTRIES': 10}, 'MAX_ENTRIES.*size_limit'),
+        ({'CULL_FREQUENCY': 2}, 'CULL_FREQUENCY.*cull_limit'),
         ({'cull_frequency': 2}, 'cull_frequency.*cull_limit'),
         ({'SHARDS': 8}, r"SHARDS.*OPTIONS\['shards'\]"),
         ({'DATABASE_TIMEOUT': 0.01}, r"DATABASE_TIMEOUT.*OPTIONS\['timeout'\]"),
@@ -529,6 +531,12 @@ def test_incr_and_decr(tmp_path: Path) -> None:
     backend.set('s', 'text')
     with pytest.raises(TypeError):
         backend.incr('s')
+    backend.set('flag', True)
+    with pytest.raises(TypeError):
+        backend.incr('flag')
+    backend.set('f', 1.5)
+    assert backend.incr('f') == 2.5  # a float is a number
+    assert backend.incr('n', 1.5) == 11.5
 
 
 def test_clear_clears_every_alias_on_the_directory(tmp_path: Path) -> None:

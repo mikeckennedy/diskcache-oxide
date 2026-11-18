@@ -1288,7 +1288,7 @@ class FanoutCache:
                 whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Raises:
-            TypeError: `key` isn't a `str`, or `retry` isn't a `bool`.
+            TypeError: `key` isn't a key type, or `retry` isn't a `bool`.
 
         Examples:
             ```python

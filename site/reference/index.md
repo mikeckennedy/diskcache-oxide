@@ -581,6 +581,140 @@ Return the cache, for use in a `with` block.
 Close the cache.
 
 
+## DjangoCache
+
+
+diskcache-oxide as a Django cache backend: 'BACKEND': 'diskcache_oxide.DjangoCache'.
+
+
+[DjangoCache](DjangoCache.md#diskcache_oxide.DjangoCache)  
+A Django cache backend on a diskcache-oxide `Cache` (or a `FanoutCache` with `OPTIONS['shards']`).
+
+
+## DjangoCache Methods
+
+
+Methods for the DjangoCache class
+
+
+[DjangoCache.cache](DjangoCache.cache.md#diskcache_oxide.DjangoCache.cache)  
+The `Cache` (or `FanoutCache`) under this backend, shared by every alias on its directory.
+
+[DjangoCache.make_and_validate_key()](DjangoCache.make_and_validate_key.md#diskcache_oxide.DjangoCache.make_and_validate_key)  
+The key as stored (`prefix:version:key`), checked by `validate_key`.
+
+[DjangoCache.validate_key()](DjangoCache.validate_key.md#diskcache_oxide.DjangoCache.validate_key)  
+Warn (`CacheKeyWarning`) about a key memcached couldn't store, as every Django backend does.
+
+[DjangoCache.get_backend_timeout()](DjangoCache.get_backend_timeout.md#diskcache_oxide.DjangoCache.get_backend_timeout)  
+Seconds from now, or None for forever. Zero or less means "don't store it", as in Django.
+
+[DjangoCache.add()](DjangoCache.add.md#diskcache_oxide.DjangoCache.add)  
+Django's `add`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
+
+[DjangoCache.get()](DjangoCache.get.md#diskcache_oxide.DjangoCache.get)  
+The value, or `default` on a miss (a stored None is returned as None).
+
+[DjangoCache.set()](DjangoCache.set.md#diskcache_oxide.DjangoCache.set)  
+Django's `set`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
+
+[DjangoCache.touch()](DjangoCache.touch.md#diskcache_oxide.DjangoCache.touch)  
+Give the key a new timeout. Returns whether it was there.
+
+[DjangoCache.delete()](DjangoCache.delete.md#diskcache_oxide.DjangoCache.delete)  
+Delete the key. Returns whether it was there.
+
+[DjangoCache.has_key()](DjangoCache.has_key.md#diskcache_oxide.DjangoCache.has_key)  
+Whether the key is there and unexpired.
+
+[DjangoCache.incr()](DjangoCache.incr.md#diskcache_oxide.DjangoCache.incr)  
+Add `delta` atomically, across threads and processes, keeping the entry's expiry.
+
+[DjangoCache.decr()](DjangoCache.decr.md#diskcache_oxide.DjangoCache.decr)  
+Subtract `delta` atomically, as `incr` adds it.
+
+[DjangoCache.get_many()](DjangoCache.get_many.md#diskcache_oxide.DjangoCache.get_many)  
+The keys that are there, with their values; a stored None is returned.
+
+[DjangoCache.set_many()](DjangoCache.set_many.md#diskcache_oxide.DjangoCache.set_many)  
+A `set` per key, not one transaction: a value's pickling can run arbitrary code (load a
+
+[DjangoCache.delete_many()](DjangoCache.delete_many.md#diskcache_oxide.DjangoCache.delete_many)  
+Delete the keys, up to `DELETE_CHUNK` at a time in one transaction (one per shard on a
+
+[DjangoCache.clear()](DjangoCache.clear.md#diskcache_oxide.DjangoCache.clear)  
+Remove every entry in the directory: every alias, prefix and version on this `LOCATION`.
+
+[DjangoCache.close()](DjangoCache.close.md#diskcache_oxide.DjangoCache.close)  
+Nothing: Django calls it after every request, and the handle lives for the process.
+
+[DjangoCache.pop()](DjangoCache.pop.md#diskcache_oxide.DjangoCache.pop)  
+Remove the key and return its value, or `default` if it's missing, atomically.
+
+[DjangoCache.evict()](DjangoCache.evict.md#diskcache_oxide.DjangoCache.evict)  
+Remove every entry tagged `tag` (with `set(..., tag=)` or `add(..., tag=)`). Returns how many.
+
+[DjangoCache.expire()](DjangoCache.expire.md#diskcache_oxide.DjangoCache.expire)  
+Remove expired entries now, rather than waiting for background maintenance. Returns how many.
+
+[DjangoCache.cull()](DjangoCache.cull.md#diskcache_oxide.DjangoCache.cull)  
+Remove expired entries, then evict until the cache is under `size_limit`. Returns how many.
+
+[DjangoCache.stats()](DjangoCache.stats.md#diskcache_oxide.DjangoCache.stats)  
+`(hits, misses)` since counting was enabled; see `Cache.stats`.
+
+[DjangoCache.maintenance_stats()](DjangoCache.maintenance_stats.md#diskcache_oxide.DjangoCache.maintenance_stats)  
+What background maintenance has done; see `Cache.maintenance_stats`.
+
+[DjangoCache.check()](DjangoCache.check.md#diskcache_oxide.DjangoCache.check)  
+Check the cache's consistency, returning the problems as warnings; see `Cache.check`.
+
+[DjangoCache.aadd()](DjangoCache.aadd.md#diskcache_oxide.DjangoCache.aadd)  
+`add`, run in one `sync_to_async` call.
+
+[DjangoCache.aget()](DjangoCache.aget.md#diskcache_oxide.DjangoCache.aget)  
+`get`, run in one `sync_to_async` call.
+
+[DjangoCache.aset()](DjangoCache.aset.md#diskcache_oxide.DjangoCache.aset)  
+`set`, run in one `sync_to_async` call.
+
+[DjangoCache.atouch()](DjangoCache.atouch.md#diskcache_oxide.DjangoCache.atouch)  
+`touch`, run in one `sync_to_async` call.
+
+[DjangoCache.adelete()](DjangoCache.adelete.md#diskcache_oxide.DjangoCache.adelete)  
+`delete`, run in one `sync_to_async` call.
+
+[DjangoCache.ahas_key()](DjangoCache.ahas_key.md#diskcache_oxide.DjangoCache.ahas_key)  
+`has_key`, run in one `sync_to_async` call.
+
+[DjangoCache.aincr()](DjangoCache.aincr.md#diskcache_oxide.DjangoCache.aincr)  
+`incr`, run in one `sync_to_async` call.
+
+[DjangoCache.adecr()](DjangoCache.adecr.md#diskcache_oxide.DjangoCache.adecr)  
+`decr`, run in one `sync_to_async` call.
+
+[DjangoCache.aget_many()](DjangoCache.aget_many.md#diskcache_oxide.DjangoCache.aget_many)  
+`get_many`, run in one `sync_to_async` call.
+
+[DjangoCache.aset_many()](DjangoCache.aset_many.md#diskcache_oxide.DjangoCache.aset_many)  
+`set_many`, run in one `sync_to_async` call.
+
+[DjangoCache.adelete_many()](DjangoCache.adelete_many.md#diskcache_oxide.DjangoCache.adelete_many)  
+`delete_many`, run in one `sync_to_async` call.
+
+[DjangoCache.aclear()](DjangoCache.aclear.md#diskcache_oxide.DjangoCache.aclear)  
+`clear`, run in one `sync_to_async` call.
+
+[DjangoCache.aclose()](DjangoCache.aclose.md#diskcache_oxide.DjangoCache.aclose)  
+Nothing, without a thread hop: `close()` does nothing.
+
+[DjangoCache.open_handle()](DjangoCache.open_handle.md#diskcache_oxide.DjangoCache.open_handle)  
+Open this directory's handle and share it (or a durable alias's NullCache).
+
+[DjangoCache.serve_null()](DjangoCache.serve_null.md#diskcache_oxide.DjangoCache.serve_null)  
+Record a durable alias's failed open and log it. Used by `open_handle`; not called directly.
+
+
 ## Caches
 
 
