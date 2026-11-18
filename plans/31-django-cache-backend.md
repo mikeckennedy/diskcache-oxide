@@ -1,0 +1,174 @@
+# Plan 31: a Django cache backend
+
+Status: draft (2026-11-17), reviewed once by the-rust-architect, whose findings are folded in below (see the Log). Waiting for Michael's decisions. Nothing is built.
+
+Plug diskcache-oxide into Django's cache framework: `CACHES = {'default': {'BACKEND': ..., 'LOCATION': '/var/cache/my-site'}}`, and `django.core.cache.cache`, the per-view and per-site cache, template fragment caching and the cache session backends all run on it. It comes from [vision.md](vision.md#a-django-cache-backend) and is step 2a of the roadmap's order: "a big job", its own phase, an oxide backend of its own rather than a port of `diskcache.DjangoCache`.
+
+Why it fits: a Django site is many gunicorn or uvicorn workers on one host, the cross-process, fork-safe workload the soak tests. `add()` and `incr()` are atomic across processes, which Django's file-based cache can't promise, and there's no server to run, unlike Redis or Memcached.
+
+## What's known (checked 2026-11-17)
+
+**Django.** PyPI's current lines are 5.2.19 (the LTS; Python 3.10-3.14), 6.0.10 (3.12-3.14) and 6.1.3 (3.12-3.15). So on our Pythons: 3.14 can run all three, 3.15 only 6.1. Django is pure Python and none of the three declares free-threaded support either way; step 1 finds out what happens on 3.14t and 3.15t. Django has not been run against oxide yet: everything Django-side here is from reading 6.1.3's source.
+
+**Django's cache tests.** They aren't in the wheel, but the sdist has them (checked in `django-6.1.3.tar.gz`): `tests/cache/tests.py`, 3,430 lines. `BaseCacheTests` is a mixin of 62 tests that every built-in backend's test class inherits (`FileBasedCacheTests(BaseCacheTests, TestCase)` is the nearest model for ours). It expects aliases `default`, `prefix`, `v2`, `custom_key`, `custom_key2`, `cull` and `zero_cull` built by `caches_setting_for_tests(...)`, all on one `LOCATION`. The memcached and Redis classes leave out `cull` and `zero_cull` (`exclude=`), and the three cull tests then skip themselves; that's the precedent for a backend whose limit isn't an entry count. It needs the `cache` test app (a `Poll` model) and a database, so sqlite in memory. The architect walked all 62 tests against probes of 0.3.5 and expects the plain and `shards=8` classes to pass with only those three skips.
+
+**How oxide's calls already line up** (probed on 0.3.5, `venv/`, a `Cache(pickle=True)`, by me and again by the architect):
+
+- `set`/`add` with `expire=0` or a negative number store nothing readable: `get` returns the default and `in` is False. `touch(key, 0)` returns True and the key is gone. That's Django's "0 means don't cache" without special cases.
+- `incr` on a missing or expired key with `default=None` raises `KeyError` (Django wants `ValueError`); on a `None` or `str` value it raises `TypeError`, which is what `BaseCacheTests.incr_decr_type_error` expects. Expiry is kept. Edge cases that differ from locmem: a stored `True`, an int past 64 bits, a `Decimal` and an `IntEnum` each raise `TypeError`, and i64 max + 1 raises `OverflowError`.
+- An exception raised while pickling (`pickle.PickleError` from `__getstate__`) propagates unchanged from `set` and `add`, as `test_set_fail_on_pickleerror` and `test_add_fail_on_pickleerror` require.
+- With `pickle=True`, `str` and `int` subclasses (`SafeString`), `OrderedDict` and `defaultdict` round-trip with their types, and a stored `None` is distinct from a miss. With `pickle=False` a `str` subclass raises `TypeError`.
+- Keys: 251 to 2,000,000 characters, NUL, the empty key and CJK all work. A `str` subclass as a key raises `TypeError` (exact types only, D-044), and a lone surrogate raises `UnicodeEncodeError`.
+- A plain `Cache` holds 4 file descriptors and a `FanoutCache(shards=8)` 32. A second handle on an open directory costs about 10 µs to create. A closed handle reopens on its next call.
+- A handle whose directory was deleted under it keeps answering from the deleted files, and a new `Cache` on the same path gets a different store (stores are keyed by device and inode).
+- 100 `set`s in one `transact()` cost 3.7 µs a key against 16.7 µs for single `set`s.
+- Building the key (`'%s:%s:%s' % (prefix, version, key)`) adds about 0.07 µs to a 0.97 µs `get`.
+- Opening a `FanoutCache` on a plain `Cache`'s directory raises `LayoutMismatchError`, so the choice between them is a property of the directory.
+- Under `durable=True`: a single `set` behind a held write lock returns False after `timeout`, but `transact()` and `clear()` raise `Timeout`, and `incr(key, default=None)` raises `KeyError`, as if the key were missing. The constructor still raises.
+
+**diskcache's `DjangoCache`** (read for behavior only; nothing is copied): a `FanoutCache` with 8 shards behind `BaseCache`, `DATABASE_TIMEOUT` 10 ms, `retry=True` on writes, and extras beyond Django's API: `tag=`, `read=`, `retry=` and `expire_time=` arguments, `pop`, `read`, `expire`, `stats`, `evict`, `cull`, `create_tag_index`/`drop_tag_index`, `memoize`, and `cache(name)`/`deque(name)`/`index(name)`. Its `close()` closes the `FanoutCache`, and Django calls `close()` at the end of every request.
+
+## Decisions for Michael
+
+Each has a recommendation; the design below assumes them.
+
+1. **The name.** Recommended: the class is `DjangoCache` in `python/diskcache_oxide/djangocache.py`, and `diskcache_oxide.DjangoCache` resolves to it lazily (a module `__getattr__`, PEP 562), so `'BACKEND': 'diskcache.DjangoCache'` becomes `'BACKEND': 'diskcache_oxide.DjangoCache'`, the same one-word change as `Cache`. `import diskcache_oxide` still never imports Django, and a test holds that. The alternative from the vision is `diskcache_oxide.django.DiskcacheOxideCache`; a module named `django.py` inside the package works but reads badly in tracebacks and invites confusion with the real package.
+2. **Plain `Cache` or `FanoutCache` underneath.** Recommended: a plain `Cache` by default, matching the docs' own advice since plan 29, and `OPTIONS = {'shards': 8}` makes it a `FanoutCache`. diskcache's backend is always a `FanoutCache`; ours says in the Django page when to turn it on (many worker processes writing one hot cache: 4.2x at 8 processes).
+3. **Pickle.** Recommended: the backend defaults to `pickle=True`. Django's contract is "any picklable Python object": the framework itself caches `HttpResponse`s (the cache middleware), `SafeString`s (`{% cache %}`), model instances and session dicts. Every other Django backend pickles everything; ours still stores `str`, `bytes`, numbers, lists, dicts, datetimes and the rest natively (msgpack) and falls back to pickle only for what that can't represent. `OPTIONS = {'pickle': False}` is allowed but narrow, and the page says so: template fragments, the per-view and per-site cache and model instances raise `TypeError`; only the low-level API with plain types works. The page also says the cache directory must be writable only by the app (it is created 0700), as for any Django cache.
+4. **Django versions.** Recommended: 5.2 (LTS), 6.0 and 6.1. Test 6.1 on all four Pythons, 5.2 and 6.0 on 3.14 and 3.14t. If step 1 finds Django unusable on a free-threaded build, the backend is documented as GIL-only there for that Django line rather than held back.
+5. **Packaging.** Recommended: no new distribution and no dependency; the module imports Django when Django imports it. Add an extra, `diskcache-oxide[django]`, that carries only the supported range (`django>=5.2`), so a resolver can refuse a Django we don't test.
+6. **Lock-wait policy.** Recommended: errors raise. A write that can't get the write lock within `timeout` raises `Timeout`, as a Redis backend raises on a lost connection. Not diskcache's 10 ms timeout with silent retries: Django's cache also holds sessions and rate limits, where a silent drop is a bug. `OPTIONS = {'durable': True}` gives the page-cache behavior for single-key calls, and the page shows two aliases, a durable one for pages and a plain one for sessions. Three things under this need your call:
+   - **The lock wait's default.** oxide's default `timeout` is 60 s, longer than gunicorn's 30 s worker timeout, so a blocked write gets the worker killed before `Timeout` is raised. Recommended: the backend's own default is 1.0 s (the recommended setup's value for request paths), overridable in `OPTIONS`.
+   - **Sessions on a durable alias.** Django's cache session backend retries `create()` up to 10,000 times while `add` returns False, and a durable `add` returns False after waiting `timeout`, so an outage could hold a request for hours. Recommended: raise `ImproperlyConfigured` at startup when `SESSION_CACHE_ALIAS` names a durable alias. A warning or a docs callout are the weaker options.
+   - **What durable doesn't cover.** `incr` on a durable alias during an outage raises Django's `ValueError` (the engine reports `KeyError`), and `clear()` raises `Timeout`. Recommended: leave both as they are and document them, rather than re-implement the engine's outage classification in Python.
+7. **`MAX_ENTRIES` and `CULL_FREQUENCY`.** Recommended: raise `ImproperlyConfigured` naming `size_limit` and `cull_limit` if either is set, rather than ignore a limit someone configured. oxide bounds a cache by bytes, not entries. (Redis and memcached ignore them silently.)
+8. **Async methods.** Django's defaults run every `aget`/`aset` through `sync_to_async`, a thread hop that costs tens of microseconds for a 1 µs read. Recommended: decide on tails, not means. An inline read can block the event loop on a pending fork (up to `timeout`), on a value of 64 KiB or more (a file read plus unpickling), on the first-use open, and on waiting for a pooled connection; it does not wait for a held write transaction (probed). Step 6 measures p99.9 of `aget` beside a writer process, a fork and a 100 KiB value. Inline reads become the default only if those stay under a bound you set then; otherwise they're `OPTIONS = {'async_reads': 'inline'}` and Django's default stands. Writes keep Django's thread hop either way. This doesn't prejudge Phase 5's `AsyncCache`.
+9. **Extras beyond Django's API.** Recommended in: `tag=` on `set`/`add`, `evict(tag)`, `pop`, `expire()`, `cull()`, `stats()`, `maintenance_stats()`, `check()`, and a `cache` property returning the underlying `Cache` or `FanoutCache` (its keys are the made keys, `prefix:version:key`). Recommended out: `read=` and `read()` (D-046's large-file decision), `deque`/`index`/`cache(name)` (not in oxide), `create_tag_index`/`drop_tag_index` (no such setting), and `memoize` unless you want it for drop-in switching.
+10. **A Django example project.** Recommended: yes, small (`examples/django/`): one project with the per-view cache, a template fragment, cached sessions and a low-level `cache.get_or_set`, under gunicorn, with tests that `check.sh` runs on 3.14 and 3.14t like the FastAPI example's.
+11. **Version.** A new feature on unchanged storage: 0.4.6 by the numbering rule (the last number always goes up). CLAUDE.md ties a minor bump to a format change, so the changelog entry opens with "No format change".
+12. **`set_many` and `delete_many`.** The vision says "`*_many` as single transactions", and the first draft did that. The architect's probes show why `set_many` shouldn't: `durable=True` doesn't cover a transaction (it raises `Timeout` where a single `set` returns False); on a `FanoutCache`, a value whose pickling reads the cache (pickling `request.user` loads the session; a lazy QuerySet runs a query) raises `ValueError` inside another shard's transaction; the cross-process write lock would be held across user Python; and nothing in Django itself calls `set_many`, `delete_many` or `get_many`, so the 4.5x serves third-party callers only. Options:
+    1. **Recommended:** `delete_many` in a transaction (keys only, no user Python under the lock), `set_many` as a loop of `set`s. By the "clear win or no complexity" rule.
+    2. Both in transactions as first drafted, documented as atomic per chunk of 100, with the durable and `FanoutCache` hazards listed.
+    3. An engine `set_many` that encodes before `BEGIN`: the right fix, but core `ops` work, so the Full tier. It belongs in Phase 4 beside a native `get_many`.
+13. **A failed open on a durable alias.** Under `durable=True` the constructor still raises, so a locked or unreadable directory would raise on every request's first cache call, each after waiting `timeout`. Recommended: on a durable alias, an open that fails with `OSError` or `RuntimeError` yields a `NullCache` for 10 seconds and then retries, as the `Caches` registry does. On a plain alias it raises.
+14. **Where Django is installed.** `ty` needs Django importable to check the module, but putting it in the `dev` group puts it in every environment `dco_env` builds, the soak and sanitizer ones included, and leaves none without Django. Recommended: a non-default `django` group that `check.sh` installs into `venv/` and `.venv-ft/`, like `example`, with a subprocess test (`sys.modules['django'] = None`) for the no-Django path.
+15. **One release or two.** The architect suggests the first release could be steps 1-4 plus docs, with the extras (decision 9), the example project (10) and the benchmarks following. Recommended: one release, since the docs page wants the benchmark table and the extras are small; but it's a clean cut if you'd rather ship sooner.
+
+## Design
+
+### Shape
+
+One pure-Python module on the public API. No Rust changes, no `_core` changes, nothing on disk changes. That keeps the release in the Patch tier; if a step shows a Rust change is needed (see "What could raise the tier"), it stops and comes back to Michael first.
+
+```python
+CACHES = {
+    'default': {
+        'BACKEND': 'diskcache_oxide.DjangoCache',
+        'LOCATION': '/var/cache/my-site/default',
+        'TIMEOUT': 300,                       # Django's own: the default expiry
+        'OPTIONS': {'size_limit': 2 * 1024**3, 'durable': True},
+    },
+}
+```
+
+`LOCATION` is required (`ImproperlyConfigured` otherwise), a `str` or a `Path`. `OPTIONS` takes the constructor's keywords by their own names (`timeout`, `size_limit`, `cull_limit`, `eviction_policy`, `serializer`, `pickle`, `types`, `max_connections`, `sqlite_cache_size`, `wal_size_limit`, `wal_checkpoint`, `on_decode_error`, `durable`, `maintenance_interval`, and `shards` and `raise_on_mismatch` for a `FanoutCache`), checked against a precomputed set as `caches.py`'s `_public_settings` does, not `inspect.signature` per instance. An unknown key raises `ImproperlyConfigured`, and so does `clock` (it would switch background maintenance off for the directory). `TIMEOUT`, `KEY_PREFIX`, `VERSION` and `KEY_FUNCTION` are `BaseCache`'s and work unchanged. Note the two timeouts: Django's `TIMEOUT` is an entry's default lifetime, `OPTIONS['timeout']` is oxide's lock wait. The docs put that in a callout, since diskcache called the second one `DATABASE_TIMEOUT`.
+
+### The lazy name
+
+`DjangoCache` is not in `__all__`: with it there, `from diskcache_oxide import *` and `hasattr(diskcache_oxide, 'DjangoCache')` would raise `ModuleNotFoundError` wherever Django isn't installed (probed on a toy package). `__init__.py` gets a module `__getattr__` that imports `djangocache` on first access, raises `AttributeError` with an install hint when `django` itself is missing, and lets any other import error through; and `if TYPE_CHECKING: from .djangocache import DjangoCache` for ty. Django's `import_string` is a plain `getattr`, and `mock.patch('diskcache_oxide.DjangoCache.add')` works through it. `tests/unit/test_reference_coverage.py` gains a `LAZY = {'DjangoCache'}` set, checked separately, so the API reference entry doesn't fail "the reference lists only exports". `test_stubs.py` only checks `_core` and isn't affected.
+
+### One handle per directory per process
+
+Django builds a backend instance per thread, and under ASGI can build one per request. So `DjangoCache.__init__` doesn't own a cache: it looks one up in a module-level table keyed by the resolved directory and opens it on first use. Every instance for that alias, in every thread, shares one `Cache` (which is `Sync` and built for this). Two aliases on one `LOCATION` (as Django's own tests do, differing only in prefix or version) share the handle too; if their `OPTIONS` differ, that raises `ImproperlyConfigured` rather than letting the first one win silently.
+
+- **No lock.** The table is a plain dict; a lookup is one read; a racing open uses `dict.setdefault` and closes the loser with `close(checkpoint=False)`, as `Caches._open` does. `caches.py` rejects a lock for the reason that applies here: one held by another thread at `fork()` hangs the child, and an open can wait up to `timeout`. So there's no at-fork hook either. After a fork the table is inherited and the handles keep working; that's the engine's fork guarantee.
+- **No state on the instance.** A `DjangoCache` holds nothing mutable after `__init__`, since under ASGI one instance can be used from the loop thread and a sync thread at once.
+- **Not the `Caches` registry.** It refuses two names on one directory, and Django's suite puts five aliases on one `LOCATION`.
+- **Letting go.** The module has `close_all()`, which closes and forgets every handle; the next call reopens. A receiver on Django's `setting_changed` signal calls it when `CACHES` changes, so `override_settings(CACHES=...)` in a user's test suite doesn't leak 4 descriptors a test (32 on a `FanoutCache`), and a test that deletes its temp directory doesn't leave the table handing out a handle on deleted files. On Windows a directory can't be deleted while a handle is open, so this is what makes Django-style test teardown work there at all.
+- **Deleting the directory under running workers** leaves each worker on its own deleted files, no longer sharing. The docs say: never delete it; use `cache.clear()`.
+
+### `close()` does nothing
+
+Django sends `request_finished` to `close_caches`, which calls `close()` on every backend after every request. Ours is a no-op, like the locmem, file and database backends. Closing would checkpoint and reopen on every request. The handles live for the process; SQLite's autocheckpoint and background maintenance keep the WAL in check, and the handle's own drop closes it at exit.
+
+### Method mapping
+
+- **Keys.** Every method goes through `make_and_validate_key`. The made key must be a `str`: a `str` subclass (a custom `KEY_FUNCTION` returning a `SafeString`) is converted with `str()`, and anything else raises `TypeError` naming `KEY_FUNCTION`. Django's `validate_key` can't take a non-`str` anyway. Its memcached-portability warnings (`CacheKeyWarning`) stay, since `BaseCacheTests` checks them. On 6.1 `validate_key` is already a length test and one compiled regex, so there's no fast-path override unless step 1 finds 5.2 or 6.0 slower.
+- **Timeouts.** `get_backend_timeout` returns seconds or None: `DEFAULT_TIMEOUT` is the alias's `TIMEOUT`, None is forever, and 0 or a negative number is passed through as it is. A `Decimal`, `str` or `bool` timeout raises `TypeError`.
+- **`get`, `set`, `add`, `delete`, `touch`, `has_key`**: one call each. `delete` and `touch` return oxide's bool, which is Django's.
+- **`incr`, `decr`**: oxide's atomic `incr`, with `KeyError` turned into Django's `ValueError`. Atomic across processes, where `BaseCache`'s default is a `get` then a `set`. The entry's expiry is kept, as Django's database and Redis backends keep it.
+- **`get_many`**: a loop of `get`s with a private miss sentinel, so a stored `None` is returned.
+- **`delete_many`**: per decision 12, inside `transact()` in chunks of 100 keys; every key is made and validated before the transaction opens, so a `CacheKeyWarning` under `-W error` can't roll a chunk back. On a `FanoutCache` the keys are grouped by `shard_of` and each group gets its own `transact(key=...)`, reusing the shard switch in `recipes.py`. Under `durable=True` it falls back to single `delete`s, which durable does cover.
+- **`set_many`**: per decision 12, a loop of `set`s. It returns `[]`, or under `durable=True` the keys whose `set` returned False.
+- **`get_or_set`, `incr_version`, `decr_version`**: `BaseCache`'s own, built from the calls above.
+- **`clear`**: clears the directory, every prefix and version in it, as Django's file and Redis backends do. Aliases that must clear separately need separate `LOCATION`s; the docs say so.
+- **Async**: per decision 8. If reads go inline, `aget`, `ahas_key` and `aget_many` are each overridden explicitly: once `get_many` or `has_key` is overridden, `BaseCache` routes their async forms through `sync_to_async`. Each `sync_to_async` call runs one whole sync method on one thread, so thread-owned transactions are safe.
+
+### What differs from `diskcache.DjangoCache`
+
+A new divergence entry, D-062, in `tests/DIVERGENCES.md` and the docs' divergences page: the backend's name and settings (`OPTIONS` keywords by oxide's names; no top-level `SHARDS` or `DATABASE_TIMEOUT`), a plain `Cache` by default, `close()` a no-op, errors that raise instead of 10 ms silent retries, no `read=`/`deque`/`index`/`cache(name)`/tag-index calls, `MAX_ENTRIES` refused, `pickle=True` as this backend's default and why, and `incr`'s edge cases against Django's locmem backend (bools, `Decimal`, `IntEnum`, ints past 64 bits). The switching guide's row for `DjangoCache` moves from "Not available" to this entry.
+
+### What could raise the tier
+
+Nothing planned touches Rust. These would, and each is a stop-and-ask:
+
+- A native `get_many` or `set_many` (one snapshot or one commit for N keys, encoded before `BEGIN`). Only if step 6's numbers show the loops are a real cost; core `ops` work, so the Full tier, and it belongs in Phase 4.
+- A Django test that fails because of engine behavior rather than mapping. Then it's a decision: fix the engine (and take the tier that needs), or a documented expected failure.
+
+Found in passing, not part of this plan: `_core.pyi`'s `FanoutCache.transact` docstring says `TypeError` if `key` isn't a `str`, but `bytes`, `int` and tuple keys are accepted. Fix the docstring in step 8 (a `.pyi` is tier None).
+
+## Tests
+
+Three layers, and the first is the oracle.
+
+1. **Django's own suite.** `scripts/django-suite.sh [line ...]` holds one table (Django line, exact version, sdist sha256) that is the only source of the Django version: it downloads those sdists into an ignored directory, the lanes install `django==<exact>`, and the run asserts `django.__version__` equals the sdist's, so the tests never run against a different Django than they shipped with. It sets `ulimit -n 10240` and runs `python -m django test` (Django's `DiscoverRunner`, which makes the test database) with a minimal settings module (sqlite in memory, the `cache` test app) and the sdist's `tests/` on the path.
+   - **Where it lives:** `django_suite/` at the repo root, outside `tests/`, so a bare `venv/bin/pytest` (`testpaths = ["tests"]`) doesn't collect it, and excluded from `ty check`, which can't resolve `cache.tests`.
+   - **The classes:** `OxideCacheTests(BaseCacheTests, TestCase)`, modelled on `FileBasedCacheTests`: a temp `LOCATION` per test, `caches_setting_for_tests(BACKEND=..., exclude={'cull', 'zero_cull'})`, and `close_all()` in `tearDown` before the directory is removed. A second class on a `FanoutCache` (`shards=8`), a third with `KEY_PREFIX`. Then the framework-level classes hard-wired to locmem (`CacheUtils`, `CacheMiddlewareTest`, `CacheI18nTest`, `TestWithTemplateResponse`, `CacheHEADTest`) subclassed with our backend, and Django's cache session backend tests (`tests/sessions_tests`, the `cache` and `cached_db` classes) the same way. Our module imports Django's test module, not its classes (`import cache.tests as django_tests`), so the loader doesn't also collect the locmem originals from our namespace.
+   - **Two strict tables** in the test module, each entry with its reason: expected failures (marked `expectedFailure`, so one that starts passing fails the run) and skips (which can't detect a pass, so they're kept to tests that can't run at all; the three cull tests that skip themselves are listed there). An unlisted failure fails the run. Nothing is skipped silently.
+   - **A descriptor check:** each suite class asserts the process's open-descriptor count after the class equals the count before.
+   - Django's source is fetched, never vendored: 3,400 lines that change every release.
+2. **Our own tests**, `tests/unit/test_django.py`, skipped where Django isn't installed: the settings mapping and every `ImproperlyConfigured`; one handle per directory across threads and instances, with threads racing the first open; `close()` leaves the handle open and `close_all()` releases every descriptor; `setting_changed` closes the handles; `import diskcache_oxide` leaves `django` out of `sys.modules`, and the no-Django path (`sys.modules['django'] = None`: the `AttributeError` and its hint, `import *`), both in subprocesses; `add` and `incr` atomic across 8 processes through Django's API; a fork with a warm handle table (gunicorn with `preload_app`); `delete_many` across shards; `durable=True` return values, and the durable-sessions refusal; `tag=` and `evict`; the async methods under `asyncio`; pickle on and off. On 3.14 and 3.14t. The Windows machine runs this file and the suite too.
+3. **The example project's tests** (decision 10), which exercise sessions, the per-view cache and fragments end to end through Django's test client.
+
+`scripts/check.sh` gains the Django lanes: 6.1 on all four Pythons, 5.2 and 6.0 on 3.14 and 3.14t in their own environments (`.venv-dj52`, `.venv-dj60`: `dco_env`, then `uv pip install 'django==<exact>'`, which is within the no-`uv sync` rule).
+
+## Benchmarks
+
+`bench/django.py`, through `django.core.cache` so every backend pays the same framework cost: oxide (plain and `shards=8`), `diskcache.DjangoCache`, Django's `FileBasedCache`, `LocMemCache` (the ceiling: in-process, shares nothing), `DatabaseCache` on sqlite, and Redis on localhost if it's installed. The usual shape: 99:1 and 1,000:1, at 1, 2, 4 and 8 threads and processes, share-nothing loop, 3.14 and 3.14t, on the Mac Studio on AC power and not under nice. Values: a small dict, a 4 KiB string, a pickled 50 KiB `HttpResponse` (what the per-view cache stores, just under the 64 KiB value-file line) and a 100 KiB one (over it). It also reports the backend's overhead over a raw `Cache.get`, and the async tails decision 8 needs. The numbers go on the Django page; no number is published that the run didn't produce, and a mixed result is reported as mixed.
+
+## Steps
+
+One at a time, each ending with clippy and `cargo test` still green and the Python suites green on 3.14 and 3.14t against oxide, and each reviewed by the architect before the next. On a branch, `plan-31-django`, with a commit per step, if Michael approves that as for plan 28.
+
+1. **Spike: can the suite run?** Fetch the three sdists, stand up the settings module and the runner, and run `BaseCacheTests` against a 30-line throwaway backend (single calls only) on 3.14, 3.14t, 3.15 and 3.15t. Record what passes, what fails and why, whether Django imports and runs on the free-threaded builds, how many backend instances Django really creates under WSGI threads and under ASGI, and whether 5.2's and 6.0's `validate_key` and test files differ from 6.1's. Exit: the test plan above is confirmed or corrected, and decision 4 has facts under it.
+2. **The backend's core**: the handle table with `close_all()` and the `setting_changed` receiver, settings and their errors, single-key methods, `incr`/`decr`, timeouts, `close()`, the lazy name. `BaseCacheTests` green on a plain `Cache`, on all supported Django lines, with the descriptor check. `tests/unit/test_django.py` for this much, including the fork-with-a-warm-table and racing-first-open tests, since this is where the table is built.
+3. **Batches and shards**: `get_many`, `set_many`, `delete_many` per decision 12, the `FanoutCache` option with per-shard grouping, and the second and third suite classes.
+4. **The framework on top**: the middleware, utils, i18n, template-response and session test classes against our backend; fix what they find.
+5. **Processes and extras**: the cross-process tests, `tag=`/`evict`/`pop`/`expire`/`cull`/`stats`/`maintenance_stats`/`check`, the `cache` property, `durable=True` behavior including the `NullCache` fallback (decision 13) and the sessions refusal.
+6. **Async and benchmarks**: measure `sync_to_async` against inline reads by their tails, settle decision 8, write `bench/django.py` and run it on the Studio.
+7. **The example project** and its lane in `check.sh`.
+8. **Docs**: a new guide page (`user_guide/django.qmd`: setup, the two timeouts, pages and sessions as two aliases, when to use `shards`, pickle and what `pickle: False` supports, what `clear()` clears, never deleting the directory under workers, `close_all()` in tests, the benchmark table); the web-workers recipe's Django section; the switching guide's `DjangoCache` row and line; the roadmap page ("Done"), `index.qmd`, the README and `plans/00-roadmap.md`; the divergences page and D-062; the agent skill; an API reference entry; the changelog, opening with "No format change". Grep for "until the backend ships", "Still to come", "next on the roadmap" and "after the Django backend" so no page still says it's coming. `make docs`, commit `site/`.
+9. **Phase end**: the architect's phase review, `scripts/check.sh`, then the Patch gate (`scripts/sanitize.sh --quick`, a 2-hour release-shape soak). Because the sanitizers and the soak exercise none of this module, the gate adds two things of its own: a `-m slow` test that drives 8 processes of 4 threads through `django.core.cache` on 3.14 and 3.14t, with forks from a warm table, a SIGKILL in the middle of a `delete_many`, and threads racing the first open; and an install of each built wheel in a clean environment with Django, importing the backend by its dotted path. Then 0.4.6, wheels, PyPI, and the 24-hour soak on the released commit.
+
+## Out of scope
+
+- Reading a `diskcache.DjangoCache` directory. The cache starts cold, as for every switch.
+- Django's `MAX_ENTRIES` culling by entry count.
+- A native async path, and `AsyncCache` (Phase 5).
+- Native batch calls in the engine (decision 12, option 3).
+- A soak worker that drives the cache through Django. The backend adds no storage code and its handle table has no lock; step 9's slow test covers it.
+- Other frameworks' adapters (vision.md).
+
+## Risks
+
+- **Django on free-threaded Python.** Unknown until step 1. Worst case the backend ships GIL-only for some Django lines, documented.
+- **Django's test internals move between releases.** `BaseCacheTests` is not a public API. Pinning each sdist by hash keeps runs reproducible; a new Django line means a new row in the version table and possibly new entries in the strict tables.
+- **A shared handle and per-alias options.** Two aliases on one directory with different `OPTIONS` are refused; that's stricter than Django's file backend, and the suite's own aliases must all pass it (they differ only in `KEY_PREFIX`, `VERSION` and `KEY_FUNCTION`, which aren't cache options).
+- **`pickle=True` by default** is the opposite of `Cache`'s default (D-001). The page and D-062 must say why, so it doesn't read as the library changing its mind.
+- **`durable=True` has edges a Django user won't expect** (decision 6): sessions, `incr`, `clear()`, and a failed open. Each is either refused, handled or documented; none is left to be found in production.
+- **Module-level handles at interpreter shutdown** are closed by their drops in whatever order the interpreter picks. That's the same as any module-level `Cache` today, and not verified specifically for this table.
+
+## Log
+
+- 2026-11-17: plan drafted from the vision, Django 6.1.3's source and a probe of 0.3.5.
+- 2026-11-17: the-rust-architect's plan review, folded in. It confirmed that no engine change is needed (all 62 `BaseCacheTests` methods walked against probes) and that Patch is the right tier. Blockers: the handle table never released a handle (descriptor leaks across Django-style tests, stale handles on deleted directories, Windows teardown), now `close_all()` and the `setting_changed` receiver; and `set_many` in a transaction promised durable and `FanoutCache` behavior the engine doesn't give, now decision 12. Should-fixes folded in: a lock-free table as in `Caches`; a failed open on a durable alias (decision 13); the durable traps for sessions, `incr` and `clear()` and the 60 s default (decision 6); async decided on tails (decision 8); made keys must be `str`, and no `validate_key` fast path; the suite's runner, location, ty exclusion, single version table, split strict tables and descriptor check; the lazy name kept out of `__all__` with a `LAZY` set in the reference test; the gate's own slow test and wheel-install check; what `pickle: False` supports; where Django is installed (decision 14); one release or two (decision 15). Not verified by anyone yet: anything that needs Django running, Django 5.2 and 6.0's sources, and interpreter-shutdown order.
