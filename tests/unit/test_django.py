@@ -14,6 +14,7 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 import warnings
 from decimal import Decimal
 from pathlib import Path
@@ -561,3 +562,185 @@ def test_async_calls(tmp_path: Path) -> None:
         assert await backend.aclose() is None
 
     asyncio.run(main())
+
+
+# Several keys.
+
+
+def test_get_many_returns_what_is_there(tmp_path: Path) -> None:
+    backend = make(tmp_path)
+    backend.set('a', 1)
+    backend.set('none', None)
+    assert backend.get_many(['a', 'none', 'missing']) == {'a': 1, 'none': None}
+    assert backend.get_many([]) == {}
+
+
+def test_set_many_returns_no_failures(tmp_path: Path) -> None:
+    backend = make(tmp_path)
+    assert backend.set_many({'a': 1, 'b': [2]}, timeout=100) == []
+    assert backend.get_many(['a', 'b']) == {'a': 1, 'b': [2]}
+    _, expires = backend.cache.get(':1:a', expire_time=True)
+    assert expires is not None
+
+
+def test_set_many_with_timeout_zero_stores_nothing(tmp_path: Path) -> None:
+    backend = make(tmp_path)
+    backend.set_many({'a': 1}, timeout=0)
+    assert backend.get_many(['a']) == {}
+
+
+@pytest.mark.parametrize('options', [{}, {'shards': 8}, {'durable': True}], ids=['cache', 'fanout', 'durable'])
+@pytest.mark.parametrize('count', [0, 1, 2, 99, 100, 101, 350])
+def test_delete_many(tmp_path: Path, options: dict[str, Any], count: int) -> None:
+    backend = make(tmp_path, OPTIONS=options)
+    keys = [f'k{i}' for i in range(count)]
+    backend.set_many({key: key for key in keys})
+    backend.set('kept', 1)
+    backend.delete_many([*keys, 'never-set'])
+    assert backend.get_many(keys) == {}
+    assert backend.get('kept') == 1
+
+
+def test_delete_many_groups_keys_by_shard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Small chunks, so a group spans several transactions and a wrong grouping would raise ValueError
+    # (a key on another shard inside a shard's transaction).
+    monkeypatch.setattr(djangocache, 'DELETE_CHUNK', 3)
+    backend = make(tmp_path, OPTIONS={'shards': 8})
+    keys = [f'k{i}' for i in range(200)]
+    backend.set_many({key: 1 for key in keys})
+    fanout = backend.cache
+    assert isinstance(fanout, FanoutCache)
+    assert len({fanout.shard_of(backend.make_and_validate_key(key)) for key in keys}) == 8
+    backend.delete_many(keys)
+    assert backend.get_many(keys) == {}
+
+
+def test_delete_many_validates_every_key_before_deleting(tmp_path: Path) -> None:
+    backend = make(tmp_path)
+    backend.set_many({'a': 1, 'b': 2})
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheKeyWarning)
+        with pytest.raises(CacheKeyWarning):
+            backend.delete_many(['a', 'b', 'bad key'])
+    assert backend.get_many(['a', 'b']) == {'a': 1, 'b': 2}
+
+
+def test_delete_many_joins_the_callers_transaction(tmp_path: Path) -> None:
+    backend = make(tmp_path)
+    backend.set_many({'a': 1, 'b': 2})
+    cache = backend.cache
+    assert isinstance(cache, Cache)
+    with pytest.raises(RuntimeError, match='undo'), cache.transact():
+        backend.delete_many(['a', 'b'])
+        raise RuntimeError('undo')
+    assert backend.get_many(['a', 'b']) == {'a': 1, 'b': 2}
+
+
+@pytest.mark.parametrize('options', [{}, {'shards': 8}, {'durable': True}], ids=['cache', 'fanout', 'durable'])
+def test_delete_many_validates_before_any_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: dict[str, Any]
+) -> None:
+    monkeypatch.setattr(djangocache, 'DELETE_CHUNK', 2)
+    backend = make(tmp_path, OPTIONS=options)
+    keys = [f'k{i}' for i in range(20)]
+    backend.set_many({key: 1 for key in keys})
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheKeyWarning)
+        with pytest.raises(CacheKeyWarning):
+            backend.delete_many([*keys, 'bad key'])
+    assert len(backend.get_many(keys)) == 20
+
+
+def test_delete_many_passes_version(tmp_path: Path) -> None:
+    backend = make(tmp_path)
+    backend.set_many({'a': 1, 'b': 2})
+    backend.set_many({'a': 3, 'b': 4}, version=2)
+    backend.delete_many(['a', 'b'], version=2)
+    assert backend.get_many(['a', 'b']) == {'a': 1, 'b': 2}
+    assert backend.get_many(['a', 'b'], version=2) == {}
+
+
+def held_lock(backend):
+    locked, release = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        with backend.cache.transact():
+            locked.set()
+            release.wait()
+
+    thread = threading.Thread(target=hold)
+    thread.start()
+    locked.wait()
+    return release, thread
+
+
+def test_delete_many_on_a_durable_alias_uses_single_deletes(tmp_path: Path) -> None:
+    backend = make(tmp_path, OPTIONS={'durable': True, 'timeout': 0.05})
+    backend.set_many({'a': 1, 'b': 2})
+    release, thread = held_lock(backend)
+    try:
+        assert backend.delete_many(['a', 'b']) is None  # a transaction would raise Timeout
+    finally:
+        release.set()
+        thread.join()
+    assert backend.get_many(['a', 'b']) == {'a': 1, 'b': 2}
+
+
+class CountingCache:
+    def __init__(self, cache: Cache) -> None:
+        self.cache = cache
+        self.transactions = 0
+        self.deletes = 0
+
+    def transact(self) -> Any:
+        self.transactions += 1
+        return self.cache.transact()
+
+    def delete(self, key: str) -> bool:
+        self.deletes += 1
+        return self.cache.delete(key)
+
+
+@pytest.mark.parametrize(('count', 'transactions'), [(1, 0), (2, 1), (100, 1), (101, 1), (102, 2), (250, 3)])
+def test_delete_many_uses_one_transaction_per_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, count: int, transactions: int
+) -> None:
+    backend = make(tmp_path)
+    keys = [f'k{i}' for i in range(count)]
+    backend.set_many({key: 1 for key in keys})
+    real = backend.cache
+    assert isinstance(real, Cache)
+    counting = CountingCache(real)
+    monkeypatch.setitem(djangocache.handles, backend.directory, counting)
+    backend.delete_many(keys)
+    assert (counting.transactions, counting.deletes) == (transactions, count)
+    monkeypatch.undo()
+    assert backend.get_many(keys) == {}
+
+
+def test_a_durable_set_many_behind_a_held_lock_waits_once(tmp_path: Path) -> None:
+    backend = make(tmp_path, OPTIONS={'durable': True, 'timeout': 0.2})
+    release, thread = held_lock(backend)
+    try:
+        started = time.monotonic()
+        failed = backend.set_many({f'k{i}': i for i in range(6)})
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        thread.join()
+    assert failed == [f'k{i}' for i in range(6)]
+    assert elapsed < 0.5  # one lock wait, not six
+
+
+def test_a_durable_delete_many_behind_a_held_lock_waits_once(tmp_path: Path) -> None:
+    backend = make(tmp_path, OPTIONS={'durable': True, 'timeout': 0.2})
+    backend.set_many({f'k{i}': i for i in range(6)})
+    release, thread = held_lock(backend)
+    try:
+        started = time.monotonic()
+        backend.delete_many([f'k{i}' for i in range(6)])
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        thread.join()
+    assert elapsed < 0.7  # at most two lock waits (the deadline is checked after each False), not six

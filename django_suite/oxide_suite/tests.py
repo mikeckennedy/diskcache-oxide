@@ -17,7 +17,7 @@ from unittest import mock
 
 import cache.tests as django_tests
 from asgiref.sync import async_to_sync
-from diskcache_oxide import djangocache
+from diskcache_oxide import FanoutCache, djangocache
 from diskcache_oxide.djangocache import DjangoCache
 from django.conf import settings
 from django.core.cache import caches
@@ -114,6 +114,36 @@ def strict(cls):
 @override_settings(CACHES=django_tests.caches_setting_for_tests(BACKEND=BACKEND, exclude=NO_CULL))
 class OxideCacheTests(Harness, django_tests.BaseCacheTests, TestCase):
     """Django's BaseCacheTests on a plain Cache."""
+
+
+@strict
+@override_settings(
+    CACHES=django_tests.caches_setting_for_tests(BACKEND=BACKEND, exclude=NO_CULL, OPTIONS={'shards': 8})
+)
+class OxideFanoutCacheTests(Harness, django_tests.BaseCacheTests, TestCase):
+    """Django's BaseCacheTests on a FanoutCache with 8 shards."""
+
+    def test_every_alias_is_a_fanout_cache(self):
+        for alias in settings.CACHES:
+            handle = caches[alias].cache
+            self.assertIsInstance(handle, FanoutCache, alias)
+            self.assertEqual(handle.shards, 8, alias)
+
+
+@strict
+@override_settings(
+    # `base` has the lowest precedence, so every alias gets the site prefix except `prefix`, which
+    # keeps its own and must still be told apart from `default`.
+    CACHES=django_tests.caches_setting_for_tests(base={'BACKEND': BACKEND, 'KEY_PREFIX': 'site'}, exclude=NO_CULL)
+)
+class OxidePrefixedCacheTests(Harness, django_tests.BaseCacheTests, TestCase):
+    """Django's BaseCacheTests with a KEY_PREFIX on every alias, as a site sharing a directory would set."""
+
+    def test_every_alias_but_prefix_carries_the_site_prefix(self):
+        # Pins caches_setting_for_tests's precedence: if a Django line changes it, this class would
+        # silently become a copy of OxideCacheTests.
+        for alias in settings.CACHES:
+            self.assertEqual(caches[alias].key_prefix != 'site', alias == 'prefix', alias)
 
 
 # Async methods DjangoCache leaves to BaseCache, built from the ones it overrides.

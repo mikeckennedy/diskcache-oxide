@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import time
 from typing import Any, Optional
 
 from asgiref.sync import sync_to_async
@@ -93,6 +94,13 @@ REFUSED_PARAMS = {
 # forked child inherits the table and its handles keep working (the engine's fork guarantee).
 handles: dict[str, Cache | FanoutCache] = {}
 configured: dict[str, dict[str, Any]] = {}
+
+# A miss in `get_many`, so a stored None is returned.
+MISSING = object()
+
+# Keys per `delete_many` transaction: long enough to amortize the commit (100 deletes in one cost a fifth
+# or less of 100 single ones), short enough that the write lock is never held for long.
+DELETE_CHUNK = 100
 
 # Bound once: `memcached_error_chars_re` is a lazy proxy, and calling through it costs most of what
 # the fast path saves.
@@ -269,6 +277,70 @@ class DjangoCache(BaseCache):
 
     def decr(self, key: Any, delta: int = 1, version: Optional[int] = None) -> int | float:
         return self.incr(key, -delta, version=version)
+
+    # Several keys.
+
+    def get_many(self, keys: Any, version: Optional[int] = None) -> dict[Any, Any]:
+        """The keys that are there, with their values; a stored None is returned."""
+        cache = self.cache
+        found = {}
+        for key in keys:
+            value = cache.get(self.make_and_validate_key(key, version=version), MISSING)
+            if value is not MISSING:
+                found[key] = value
+        return found
+
+    def set_many(self, data: Any, timeout: Any = DEFAULT_TIMEOUT, version: Optional[int] = None) -> list[Any]:
+        """A `set` per key, not one transaction: a value's pickling can run arbitrary code (load a
+        session, run a query), which mustn't run holding the cache's write lock. Returns the keys
+        that weren't stored, which only a `durable=True` cache can have: once one `set` returns False
+        (after waiting out the lock wait), that key and every one after it are returned untried, so a
+        batch waits one lock wait, not one per key.
+        """
+        expire = self.get_backend_timeout(timeout)
+        cache = self.cache
+        items = iter(data.items())
+        for key, value in items:
+            if cache.set(self.make_and_validate_key(key, version=version), value, expire) is False:
+                return [key, *(rest for rest, _ in items)]
+        return []
+
+    def delete_many(self, keys: Any, version: Optional[int] = None) -> None:
+        """Delete the keys, up to `DELETE_CHUNK` at a time in one transaction (one per shard on a
+        `FanoutCache`; a one-key chunk is a plain delete). Every key is made and validated first, so
+        a `CacheKeyWarning` raised as an error deletes nothing. A `Timeout` part-way leaves the
+        chunks before it deleted, as a loop of deletes would. Inside the caller's own transaction on
+        one shard of a `FanoutCache`, keys on another shard raise the engine's `ValueError`.
+
+        Under `durable=True`, single deletes, which durable covers and a transaction doesn't. A durable
+        delete that can't get the lock returns False after the lock wait, as a miss does at once, so
+        the batch stops at the first False past one lock wait: one wait, not one per key.
+        """
+        made = [self.make_and_validate_key(key, version=version) for key in keys]
+        cache = self.cache
+        if self.options['durable']:
+            deadline = time.monotonic() + self.options['timeout']
+            for key in made:
+                if not cache.delete(key) and time.monotonic() >= deadline:
+                    return
+            return
+        fanout = cache if isinstance(cache, FanoutCache) else None
+        if fanout is not None:
+            by_shard: dict[int, list[str]] = {}
+            for key in made:
+                by_shard.setdefault(fanout.shard_of(key), []).append(key)
+            groups = list(by_shard.values())
+        else:
+            groups = [made]
+        for group in groups:
+            for start in range(0, len(group), DELETE_CHUNK):
+                chunk = group[start : start + DELETE_CHUNK]
+                if len(chunk) == 1:
+                    cache.delete(chunk[0])
+                    continue
+                with cache.transact(key=chunk[0]) if isinstance(cache, FanoutCache) else cache.transact():
+                    for key in chunk:
+                        cache.delete(key)
 
     def clear(self) -> None:
         """Remove every entry in the directory: every alias, prefix and version on this `LOCATION`."""
