@@ -1,0 +1,14 @@
+{% extends "demo/base.html" %}
+{% load cache %}
+{% block content %}
+<h1>Episodes</h1>
+<p>You've seen this page <span id="views">{{ views }}</span> times (your session, on the <code>state</code> alias).</p>
+{% cache 600 episode_list %}
+<p>Episode list rendered at {{ rendered_at|floatformat:3 }} (cached for ten minutes).</p>
+<ul id="episodes" data-rendered-at="{{ rendered_at }}">
+  {% for episode in episodes %}
+  <li><a href="/episode/{{ episode.number }}">{{ episode.title }}</a></li>
+  {% endfor %}
+</ul>
+{% endcache %}
+{% endblock %}

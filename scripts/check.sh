@@ -87,13 +87,17 @@ print(f"diskcache_oxide {d.__version__} on {sys.version.split()[0]} ({build}), S
     # on 3.14 and 3.14t (they don't support 3.15).
     scripts/django-suite.sh --env "$env"
 
-    # The example app (examples/webapp), on 3.14 and 3.14t: its `example` dependency group, its type
-    # check (the repo-wide ty run excludes it), and its tests, multi-process gunicorn run included.
+    # The example apps (examples/webapp and examples/django), on 3.14 and 3.14t: the `example`
+    # dependency group, their type checks (the repo-wide ty run excludes them), and their tests,
+    # multi-process gunicorn runs included.
     if [[ "$python" == 3.14 || "$python" == 3.14t ]]; then
         uv export --quiet --locked --only-group example --no-emit-project --no-hashes --format requirements-txt \
             | uv pip install --quiet --python "$env/bin/python" -r -
         "$env/bin/ty" check --python "$env" examples/webapp
         "$env/bin/pytest" -q -p no:cacheprovider -c examples/webapp/pyproject.toml examples/webapp/tests
+        # The Django example (examples/django): Django from the `django` group, gunicorn from `example`.
+        "$env/bin/ty" check --python "$env" examples/django
+        "$env/bin/pytest" -q -p no:cacheprovider -c examples/django/pyproject.toml examples/django/tests
     fi
 done
 

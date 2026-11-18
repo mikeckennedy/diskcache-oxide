@@ -66,8 +66,9 @@ docs = [
     "ipykernel",
 ]
 
-# The example app (examples/webapp). Not a default group: scripts/check.sh installs it on 3.14 and
-# 3.14t only, to run the app's tests; dco_env and the soak never see it.
+# The example apps (examples/webapp, and gunicorn and httpx for examples/django, whose Django comes
+# from the `django` group). Not a default group: scripts/check.sh installs it on 3.14 and 3.14t only,
+# to run the apps' tests; dco_env and the soak never see it.
 example = [
     "fastapi>=0.120",
     "jinja2>=3.1",
