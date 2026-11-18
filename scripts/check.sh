@@ -101,16 +101,18 @@ print(f"diskcache_oxide {d.__version__} on {sys.version.split()[0]} ({build}), S
     fi
 done
 
-# The example app stays out of what we ship: maturin builds the wheel from python/ only, and this
-# checks the source distribution too.
-step 'sdist leaves out examples/'
+# The example apps, Django's suite harness, the tests and the benchmarks stay out of what we ship:
+# maturin builds the wheel from python/ only, and this checks the source distribution too. Top-level
+# directories only (the tarball's entries start with its own folder), so a crate's tests/ is fine.
+step 'sdist leaves out examples/, django_suite/, tests/ and bench/'
 sdist_dir="$(mktemp -d)"
 uvx --from 'maturin>=1.15,<2' maturin sdist --out "$sdist_dir" >/dev/null  # errors still show
 # Listed into a variable first, so a missing tarball or a failed tar stops the script under set -e.
 sdist_listing="$(tar tzf "$sdist_dir"/*.tar.gz)"
 rm -rf "$sdist_dir"
-if grep -q '/examples/' <<<"$sdist_listing"; then
-    echo 'examples/ ended up in the sdist' >&2
+if leaked="$(grep -E '^[^/]+/(examples|django_suite|tests|bench)/' <<<"$sdist_listing")"; then
+    echo "these ended up in the sdist:" >&2
+    echo "$leaked" >&2
     exit 1
 fi
 

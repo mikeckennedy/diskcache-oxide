@@ -1,4 +1,4 @@
-4 worker processes through `django.core.cache`, one thread each, 1,000 keys of a 1 KB str, median of 3 rounds of 3 s. Django 6.1.3, MacBook Pro (M5 Pro), AC power, not under nice, 2026-11-18. The same code as `bench/django_procs.py`, run before it was moved there. `oxide` is a plain `Cache`, `oxide-8` is `OPTIONS = {'shards': 8}`, `diskcache` is diskcache 5.6.3's backend (always 8 shards), `db` is `DatabaseCache` on SQLite (WAL), `file` is `FileBasedCache`, `locmem` is `LocMemCache` (each process's own dict, not shared).
+4 worker processes through `django.core.cache`, one thread each, 1,000 keys of a 1 KB str, median of 3 rounds of 3 s. Django 6.1.3, MacBook Pro (M5 Pro), AC power, not under nice, 2026-11-18. The same code as `bench/django_procs.py`, run before it was moved there. `oxide` is a plain `Cache`, `oxide-8` is `OPTIONS = {'shards': 8}`, `diskcache` is diskcache 5.6.3's backend (a FanoutCache of 8 shards, its default), `db` is `DatabaseCache` on SQLite (WAL), `file` is `FileBasedCache`, `locmem` is `LocMemCache` (each process's own dict, not shared).
 
 | Mix | Backend | 3.14 | 3.14 rounds | 3.14t | 3.14t rounds |
 |---|---|---|---|---|---|

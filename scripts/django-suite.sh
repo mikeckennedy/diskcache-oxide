@@ -38,6 +38,8 @@ done
 python="$env/bin/python"
 [[ -x "$python" ]] || { echo "no interpreter at $python" >&2; exit 2; }
 pyver="$("$python" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
+# For messages only: 3.14t on a free-threaded build (pyver stays numeric for the version checks).
+pylabel="$pyver$("$python" -c 'import sysconfig; print("t" if sysconfig.get_config_var("Py_GIL_DISABLED") else "")')"
 
 # The fd-heavy tests need more than macOS's default 256 over non-interactive ssh.
 ulimit -n 10240
@@ -78,7 +80,7 @@ for row in "${VERSIONS[@]}"; do
         [[ "$(printf '%s\n%s\n' "$pyver" "$newest" | sort -V | tail -1)" == "$newest" ]] || continue
     fi
     root="$(fetch "$version" "$sha")"
-    printf '\n==> Django %s on %s (%s)\n' "$version" "$pyver" "$env"
+    printf '\n==> Django %s on %s (%s)\n' "$version" "$pylabel" "$env"
     ran=$((ran + 1))
     if ! "$python" -I django_suite/run.py "$root" "$version" test oxide_suite --noinput -v 1; then
         failed+=("$version")
@@ -93,4 +95,4 @@ if (( ${#failed[@]} )); then
     echo "Django suite failed on: ${failed[*]}" >&2
     exit 1
 fi
-echo "Django suite passed ($ran line(s), Python $pyver, $env)"
+echo "Django suite passed ($ran line(s), Python $pylabel, $env)"

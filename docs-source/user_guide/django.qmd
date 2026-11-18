@@ -150,7 +150,7 @@ Writes are mixed. Storing the 50 KiB response took 36 µs, against diskcache's 3
 | 8 | 269k | 1,431k | 1,270k | 300k | 129k |
 :::
 
-A plain `Cache` stops climbing past two processes and then falls, and the writes aren't the cause: at 1,000 reads to 1 write it falls the same way (295k at 8 processes), and so it does with no writes at all. The likely cause is the lock every read takes in SQLite's shared-memory file, which processes reading one database contend for (not yet profiled across processes); it's the top item for the [free-threaded phase](performance.qmd#next-free-threaded-scaling). Shards spread the reads over 8 files, which is what `OPTIONS = {'shards': 8}` is for: with 8 worker processes it's 5.3x a plain `Cache` and 1.1x diskcache's backend, which is always sharded. The free-threaded build's process numbers are the same or up to 13% lower.
+A plain `Cache` stops climbing past two processes and then falls, and the writes aren't the cause: at 1,000 reads to 1 write it falls the same way (295k at 8 processes), and so it does with no writes at all. The likely cause is the lock every read takes in SQLite's shared-memory file, which processes reading one database contend for (not yet profiled across processes); it's the top item for the [free-threaded phase](performance.qmd#next-free-threaded-scaling). Shards spread the reads over 8 files, which is what `OPTIONS = {'shards': 8}` is for: with 8 worker processes it's 5.3x a plain `Cache` and 1.1x diskcache's backend, a `FanoutCache` of 8 shards by default. The free-threaded build's process numbers are the same or up to 13% lower.
 
 **Four worker processes, the options side by side.** A typical small deployment, gunicorn with `workers = 4`, measured on its own: each backend at 4 processes, median of 3 rounds of 3 seconds, on Python 3.14 (`bench/django_procs.py`; `bench/results/django-4procs-macbook-m5-pro.md`):
 
@@ -158,7 +158,7 @@ A plain `Cache` stops climbing past two processes and then falls, and the writes
 | Backend | 99 reads : 1 write | 1,000 reads : 1 write |
 |---|---|---|
 | diskcache-oxide, `shards=8` | **1,320k ops/s** | **1,750k ops/s** |
-| diskcache 5.6.3 (always 8 shards) | 970k | 1,165k |
+| diskcache 5.6.3 (8 shards, its default) | 970k | 1,165k |
 | diskcache-oxide, plain `Cache` | 597k | 622k |
 | `DatabaseCache` (SQLite) | 258k | 280k |
 | `FileBasedCache` | 117k | 156k |
@@ -184,8 +184,8 @@ Reading a small value inline would be about 20 times faster (3.6 times for the 1
 
 ## In tests
 
-`override_settings(CACHES=...)` works: when `CACHES` changes, the backend closes every handle it opened, so a test suite that gives each test its own temporary `LOCATION` doesn't run out of file descriptors, and a test that deletes its directory doesn't leave a handle on deleted files. To release them yourself (before deleting a directory a test made, say), call `diskcache_oxide.djangocache.close_all()`; the next call reopens. On Windows, a directory can't be deleted while a handle on it is open, so this is what makes a Django-style teardown work there.
+`override_settings(CACHES=...)` works: when `CACHES` changes, the backend closes every handle it opened, so a test suite that gives each test its own temporary `LOCATION` doesn't run out of file descriptors, and a test that deletes its directory doesn't leave a handle on deleted files. To release them yourself (before deleting a directory a test made, say), call `diskcache_oxide.djangocache.close_all()`; the next call reopens. On Windows, a directory can't be deleted while a handle on it is open, so call it there before deleting one.
 
 ## Coming from diskcache's DjangoCache
 
-Change `'BACKEND': 'diskcache.DjangoCache'` to `'BACKEND': 'diskcache_oxide.DjangoCache'`, then the settings: `SHARDS` becomes `OPTIONS['shards']` (diskcache's backend is always a `FanoutCache`, 8 shards by default; this one is a plain `Cache` unless you ask), `DATABASE_TIMEOUT` becomes `OPTIONS['timeout']`, and `MAX_ENTRIES` goes (use `size_limit`). The cache starts cold: diskcache-oxide doesn't read diskcache's files. diskcache's `read=`, `deque()`, `index()`, `cache(name)`, `memoize` and tag-index calls aren't here; its 10 ms timeout with silent retries, which wait for as long as the lock is held, is replaced by errors that raise, or `durable`. [Divergences](divergences.qmd) has the full list under D-062.
+Change `'BACKEND': 'diskcache.DjangoCache'` to `'BACKEND': 'diskcache_oxide.DjangoCache'`, then the settings: `SHARDS` becomes `OPTIONS['shards']` (diskcache's backend is always a `FanoutCache`, 8 shards by default; this one is a plain `Cache` unless you ask), `DATABASE_TIMEOUT` becomes `OPTIONS['timeout']`, and `MAX_ENTRIES` goes (use `size_limit`). The cache starts cold: diskcache-oxide doesn't read diskcache's files. Give it a new `LOCATION`: on the old one, diskcache's `000` to `007` shard folders stay, untouched and uncounted by `size_limit`, until you delete them. The calls take Django's arguments, so diskcache's extra keywords raise `TypeError`: `retry=` on any call, `read=` on `get`, `set` and `add`, `expire_time=` and `tag=` on `get` and `pop`, and `default=` on `incr`. `deque()`, `index()`, `cache(name)`, `memoize` and the tag-index calls aren't here. Any value diskcache's backend stored is stored here, but for one: an int over 4,300 digits raises `ValueError` (D-063). A `str` holding a lone surrogate raises `UnicodeEncodeError` as the whole value, as in diskcache, and is pickled when it's inside one. Finally, diskcache's 10 ms timeout with silent retries, which wait for as long as the lock is held, is replaced by errors that raise, or `durable`. [Divergences](divergences.qmd) has the full list under D-062.
