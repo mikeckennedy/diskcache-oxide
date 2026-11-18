@@ -31,6 +31,10 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.optional-dependencies]
+# The Django cache backend (diskcache_oxide.DjangoCache). Only the range scripts/django-suite.sh tests.
+django = ["django>=5.2"]
+
 [project.urls]
 Homepage = "https://mkennedy.codes/docs/diskcache-oxide/"
 Documentation = "https://mkennedy.codes/docs/diskcache-oxide/"
@@ -71,6 +75,15 @@ example = [
     "httpx>=0.28",
     "gunicorn>=23",
     "uvicorn-worker>=0.4",
+]
+
+# The Django cache backend's tests (tests/unit/test_django.py) and its type check. Not a default group:
+# scripts/check.sh installs it in all four environments; Django's own suite (scripts/django-suite.sh)
+# runs each Django line from its pinned sdist in front of this copy.
+django = [
+    "django>=5.2",
+    # Windows has no system time-zone database, and Django needs one.
+    "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
 # The diskcache-community fork, run as a second witness with --backend=community. It installs as
@@ -123,6 +136,7 @@ markers = [
 allowed-unresolved-imports = ["griffe", "great_docs.**", "psutil"]
 
 # The example app has its own dependency group; check.sh type-checks it separately, in the
-# environments where that group is installed.
+# environments where that group is installed. django_suite/ imports Django's own test modules, which
+# exist only in a Django sdist (scripts/django-suite.sh), so ty can't resolve it.
 [tool.ty.src]
-exclude = ["examples"]
+exclude = ["examples", "django_suite"]

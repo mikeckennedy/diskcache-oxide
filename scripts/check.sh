@@ -51,6 +51,10 @@ for spec in "${ENVS[@]}"; do
 
     step "build + test on Python $python ($env)"
     dco_env "$env" "$python"
+    # The `django` group (not a default one, so dco_env leaves it out): ty and tests/unit/test_django.py
+    # need Django importable, and Django's own suite below needs its dependencies.
+    uv export --quiet --locked --only-group django --no-emit-project --no-hashes --format requirements-txt \
+        | uv pip install --quiet --python "$env/bin/python" -r -
 
     # -W error also catches CPython's warning if the extension ever re-enables the GIL.
     "$env/bin/python" -W error -c '
@@ -78,6 +82,10 @@ print(f"diskcache_oxide {d.__version__} on {sys.version.split()[0]} ({build}), S
         "$env/bin/pytest" -q -p no:cacheprovider -m slow
         "$env/bin/pytest" -q -p no:cacheprovider -m slow --backend=oxide tests/conformance
     fi
+
+    # Django's own cache tests against DjangoCache, from each pinned sdist: 6.1 everywhere, 5.2 and 6.0
+    # on 3.14 and 3.14t (they don't support 3.15).
+    scripts/django-suite.sh --env "$env"
 
     # The example app (examples/webapp), on 3.14 and 3.14t: its `example` dependency group, its type
     # check (the repo-wide ty run excludes it), and its tests, multi-process gunicorn run included.
