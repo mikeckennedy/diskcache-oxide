@@ -16,7 +16,7 @@ A clean-room, pure-Rust reimplementation of [python-diskcache](https://grantjenk
 
 - Reading existing diskcache directories. We use our own on-disk format; caches start cold on cutover.
 - A `diskcache`-named shim module (it would clash with the real package).
-- diskcache's `DjangoCache` class. An oxide Django backend of its own is planned (step 2a of the order below).
+- diskcache's `DjangoCache` class. An oxide Django backend of its own replaced it (step 2a of the order below, plan 31, 0.4.6).
 - Python versions older than 3.14.
 
 ## Key decisions so far
@@ -55,7 +55,7 @@ A clean-room, pure-Rust reimplementation of [python-diskcache](https://grantjenk
 
 1. **0.1.2** ([plan 23](23-over-eviction-and-deferred-tests.md)): the over-eviction fix and the tests held behind 0.1.1's freeze, then PGO wheels on the Studio and htz, and Talk Python moves from 0.1.1 to 0.1.2.
 2. **Phase 6, all of it, before Phase 4**, starting with `memoize` and non-`str` keys: they are what a diskcache user meets first, and each group that lands is something new to release to PyPI. Its decisions (Michael, 2026-11-10) and its four releases are in [plan 24](24-phase-6-parity.md).
-2a. **A Django cache backend**, an oxide backend of its own, as its own phase right after Phase 6 (Michael, 2026-11-10: "it's going to be a big job"). diskcache's `DjangoCache` class stays out.
+2a. **A Django cache backend**, an oxide backend of its own, as its own phase right after Phase 6 (Michael, 2026-11-10: "it's going to be a big job"). diskcache's `DjangoCache` class stays out. Done in plan 31 ([plans/31-django-cache-backend.md](31-django-cache-backend.md)), released in 0.4.6.
 3. **Phase 4** (free-threaded performance). Its measurements run on the mini if it's free, otherwise on the Studio.
 4. **Phase 5** (`AsyncCache`), as speculative spikes: it ships only if it earns its keep, and if it doesn't, the reasons are written down (in its plan and in the user guide's roadmap page), so the question isn't reopened without new evidence.
 
@@ -182,6 +182,7 @@ Profile on 3.14t with the share-nothing benchmark before changing anything. **Fi
 Findings that seed Phase 4 (2026-10-28, 04-design.md section 7):
 - On 3.14t, calls through shared extension objects don't scale (a no-op `_core` call is 3× slower at 8 threads, most likely because of contended reference counts).
 - The shared `-shm` file is a secondary limit.
+- **Across processes it's the first limit (2026-11-18, plan 31's step 6 review).** With no writes at all, a plain `Cache` read by spawned processes peaks at 2 and falls: 836k ops/s at 2, 605k at 4, 296k at 8, while `FanoutCache(8)` climbs to 1.7M (`bench/read_procs.py`, MacBook Pro M5 Pro, `bench/results/read-procs-3.14.10-macbook-m5-pro.md`). The docs had blamed the write lock; they now say read side, likely the `-shm` read lock, not yet profiled across processes. Michael wants it investigated, as a spike plan after plan 31 ships: profile 8 processes reading one `Cache` on macOS and on a real Linux host, then try a per-process `-shm` lock-caching VFS shim or longer read snapshots. Talk Python runs a single worker process, so it isn't urgent there.
 - Same-process writers race on SQLite's write lock.
 - Phase 2 fixes the benchmark loop and adds an in-process write lock per database file. Phase 4 tries deferred reference counting on `Cache` instances.
 

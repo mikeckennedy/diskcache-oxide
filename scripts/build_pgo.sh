@@ -22,6 +22,9 @@ profdata=$(find "$(rustc --print sysroot)/lib/rustlib" -name llvm-profdata | hea
 
 work="$PWD/target/pgo/$(uname -s)-$(uname -m)"
 maturin() { uvx --from 'maturin>=1.15,<2' maturin "$@"; }
+mkdir -p "$work" dist
+started="$work/started"  # marks this run, so the Django check below takes only the wheels it built
+touch "$started"
 step() { printf '\n==> %s\n' "$*"; }
 
 for python in "${PYTHONS[@]}"; do
@@ -50,6 +53,14 @@ for python in "${PYTHONS[@]}"; do
     CARGO_TARGET_DIR="$work/target-use" RUSTFLAGS="-Cprofile-use=$root/merged.profdata -Cllvm-args=-pgo-warn-missing-function=false" \
         maturin build --release --quiet --interpreter "$python" --out dist 2>&1 | grep -vE '^\s*$' | tail -2
 done
+
+# Each new wheel, installed in a clean venv: no Django loaded by `import diskcache_oxide`, and the
+# Django backend working through django.core.cache with the `django` extra (plan 31, step 9).
+step 'the Django backend from each new wheel'
+built=()
+while IFS= read -r wheel; do built+=("$wheel"); done < <(find dist -maxdepth 1 -name '*.whl' -newer "$started")
+(( ${#built[@]} )) || { echo 'no new wheels in dist/' >&2; exit 1; }
+scripts/wheel_django_check.sh "${built[@]}"
 
 step 'dist/'
 command ls -la dist/*.whl

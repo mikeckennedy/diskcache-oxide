@@ -59,6 +59,22 @@ def pytest_configure(config: pytest.Config) -> None:
         raise pytest.UsageError(f'Backend {name!r} is not importable: {ex}') from ex
 
 
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    # The run's timeout (pyproject's 60 s, or -o timeout=600 in the sanitizer lanes) is a floor under
+    # every test's own timeout mark, so a slow run stretches the marked tests too. Natively no mark is
+    # below 60, so nothing changes; timeout(0), no limit at all, is left alone.
+    floor = float(config.getini('timeout') or 0)
+    if not floor:
+        return
+    for item in items:
+        mark = item.get_closest_marker('timeout')
+        if mark is None:
+            continue
+        own = mark.kwargs.get('timeout', mark.args[0] if mark.args else None)
+        if own is not None and 0 < float(own) < floor:
+            item.add_marker(pytest.mark.timeout(floor), append=False)
+
+
 #: Under --maintenance-interval, the fewest maintenance turns the pytest process itself must see, so
 #: the mode can't pass with maintenance never having run beside the tests.
 MIN_TURNS = 20

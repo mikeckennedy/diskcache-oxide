@@ -196,7 +196,9 @@ class Cache:
         serializer: `'msgpack'` (the default) or `'json'`, for values that aren't plain `str` or
             `bytes`.
         pickle: Allow pickle for values the serializer can't represent exactly. Without it, such
-            values raise `TypeError` and pickled values are never read. Once the encoder has used a
+            values raise `TypeError` (`UnicodeEncodeError` for a `str` with a lone surrogate nested
+            inside a value) and pickled values are never read. A lone surrogate in a top-level `str`
+            raises `UnicodeEncodeError` either way. Once the encoder has used a
             registration (`types`, or the global `registry`) for any part of a value, that value is
             never pickled: it is stored through the registration, or raises.
         types: A `TypeRegistry` consulted before the process-wide `diskcache_oxide.registry`, for a
@@ -420,6 +422,8 @@ class Cache:
         Raises:
             TypeError: The value can't be stored exactly without pickle, `expire` is a `bool`, or
                 `tag` isn't a valid key type.
+            UnicodeEncodeError: The value is a `str` with a lone surrogate, or holds one and the
+                cache has no pickle.
             Timeout: Another process held the write lock for longer than `timeout`.
 
         Examples:
@@ -452,6 +456,8 @@ class Cache:
 
         Raises:
             TypeError: The value can't be stored exactly without pickle, or `expire` is a `bool`.
+            UnicodeEncodeError: The value is a `str` with a lone surrogate, or holds one and the
+                cache has no pickle.
             Timeout: Another process held the write lock for longer than `timeout`.
 
         Examples:
@@ -1288,7 +1294,7 @@ class FanoutCache:
                 whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
         Raises:
-            TypeError: `key` isn't a `str`, or `retry` isn't a `bool`.
+            TypeError: `key` isn't a key type, or `retry` isn't a `bool`.
 
         Examples:
             ```python

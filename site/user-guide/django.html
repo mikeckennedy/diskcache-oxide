@@ -1,0 +1,1495 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.11.9">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="description" content="diskcache-oxide as Django’s cache: one line in CACHES, pages and sessions as two aliases, what OPTIONS takes, what durable covers, and how it shares one cache across every worker.">
+
+<title>Django cache backend – diskcache-oxide | diskcache-oxide</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../">
+<link href="../user-guide/transactions.html" rel="next">
+<link href="../user-guide/fanoutcache.html" rel="prev">
+<link href="../favicon.ico" rel="icon">
+<script src="../site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="../site_libs/quarto-html/scrollable-regions/scrollable-regions.js" type="module"></script>
+<script src="../site_libs/quarto-html/popper.min.js"></script>
+<script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-63b5708e65d6cd79cd7618c58d0c21e7.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../site_libs/bootstrap/bootstrap-9411a706d08770b9e0c434f3159337ed.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+<!-- diskcache-oxide docs: charts drawn from the markdown tables they sit beside.
+     Wrap a table in a fenced div with the dco-chart class (see user_guide/fanoutcache.qmd); the numbers live
+     only in the table, so rerunning a benchmark means editing the table and nothing else. Loaded on every page
+     through include_in_header in great-docs.yml. No dependencies. -->
+<style>
+.dco-chart{--dco-s1:#2a78d6;--dco-s2:#eb6834;--dco-s3:#1baf7a;--dco-s4:#eda100;--dco-grid:rgba(0,0,0,.09);--dco-muted:var(--bs-secondary-color,#52514e);--dco-surface:var(--bs-body-bg,#fff);position:relative;margin:1.25rem 0 1.75rem}
+body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;--dco-s4:#c98500;--dco-grid:rgba(255,255,255,.11)}
+.dco-chart .dco-title{font-weight:600;font-size:1rem;line-height:1.35;margin:0 0 .6rem}
+.dco-chart .dco-panels{display:flex;flex-wrap:wrap;gap:.75rem 1.5rem}
+.dco-chart .dco-panel{flex:1 1 280px;min-width:0}
+.dco-chart .dco-stack .dco-panel{flex-basis:100%}
+.dco-chart .dco-stack .dco-panel+.dco-panel{margin-top:.5rem}
+.dco-chart .dco-panel-title{font-size:.85rem;font-weight:600;color:var(--dco-muted);margin:0 0 .15rem}
+.dco-chart svg{width:100%;height:auto;display:block;overflow:visible;font-family:var(--bs-body-font-family,system-ui,sans-serif);color:var(--bs-body-color,#212529)}
+.dco-chart .dco-grid line{stroke:var(--dco-grid);stroke-width:1;shape-rendering:crispEdges}
+.dco-chart .dco-axis text,.dco-chart .dco-axis-title{fill:var(--dco-muted);font-size:11.5px}
+.dco-chart .dco-label{fill:var(--bs-body-color,#212529);font-size:11.5px;font-weight:600}
+.dco-chart .dco-s1{fill:var(--dco-s1);stroke:var(--dco-s1)}.dco-chart .dco-s2{fill:var(--dco-s2);stroke:var(--dco-s2)}.dco-chart .dco-s3{fill:var(--dco-s3);stroke:var(--dco-s3)}.dco-chart .dco-s4{fill:var(--dco-s4);stroke:var(--dco-s4)}
+.dco-chart .dco-line{fill:none;stroke-width:2.25;stroke-linejoin:round;stroke-linecap:round}
+.dco-chart .dco-dot{stroke:var(--dco-surface);stroke-width:2}
+.dco-chart .dco-hit{fill:transparent;cursor:crosshair}
+.dco-chart .dco-cross{stroke:var(--dco-muted);stroke-width:1;stroke-dasharray:none;opacity:0;pointer-events:none}
+.dco-chart .dco-legend{display:flex;flex-wrap:wrap;gap:.3rem 1.1rem;margin:.6rem 0 0;font-size:.85rem;color:var(--dco-muted)}
+.dco-chart .dco-swatch{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:.45em;vertical-align:-1px}
+.dco-chart .dco-swatch.dco-s1{background:var(--dco-s1)}.dco-chart .dco-swatch.dco-s2{background:var(--dco-s2)}.dco-chart .dco-swatch.dco-s3{background:var(--dco-s3)}.dco-chart .dco-swatch.dco-s4{background:var(--dco-s4)}
+.dco-chart .dco-note{font-size:.8rem;color:var(--dco-muted);margin:.45rem 0 0;line-height:1.4}
+.dco-chart details.dco-table{margin-top:.5rem}
+.dco-chart details.dco-table>summary{cursor:pointer;font-size:.82rem;color:var(--dco-muted);list-style:none;display:inline-block;padding:.15rem 0}
+.dco-chart details.dco-table>summary::-webkit-details-marker{display:none}
+.dco-chart details.dco-table>summary::before{content:"▸ ";font-size:.75em}
+.dco-chart details.dco-table[open]>summary::before{content:"▾ "}
+.dco-chart details.dco-table table{margin-top:.5rem}
+.dco-chart .dco-tip{position:absolute;z-index:5;pointer-events:none;display:none;background:var(--dco-surface);color:var(--bs-body-color,#212529);border:1px solid var(--bs-border-color,#d0d0d0);border-radius:7px;padding:.35rem .6rem;font-size:.8rem;line-height:1.45;box-shadow:0 4px 14px rgba(0,0,0,.14);white-space:nowrap}
+.dco-chart .dco-tip b{font-weight:600}
+.dco-chart .dco-tip .dco-swatch{width:9px;height:9px}
+/* entrance: bars grow from the baseline, lines draw in, labels fade. Off under reduced motion. */
+.dco-chart .dco-bar{transform-box:fill-box;transform-origin:50% 100%;transform:scaleY(0);transition:transform .7s cubic-bezier(.2,.7,.2,1)}
+.dco-chart .dco-hbar{transform-origin:0 50%;transform:scaleX(0);transition:transform .7s cubic-bezier(.2,.7,.2,1)}
+.dco-chart .dco-line{transition:stroke-dashoffset 1s cubic-bezier(.3,.6,.2,1)}
+.dco-chart .dco-dot,.dco-chart .dco-label,.dco-chart .dco-endlabel{opacity:0;transition:opacity .5s ease}
+.dco-chart.dco-in .dco-bar,.dco-chart.dco-in .dco-hbar{transform:none}
+.dco-chart.dco-in .dco-line{stroke-dashoffset:0!important}
+.dco-chart.dco-in .dco-dot,.dco-chart.dco-in .dco-label,.dco-chart.dco-in .dco-endlabel{opacity:1}
+@media (prefers-reduced-motion:reduce){.dco-chart .dco-bar,.dco-chart .dco-hbar,.dco-chart .dco-line,.dco-chart .dco-dot,.dco-chart .dco-label,.dco-chart .dco-endlabel{transition:none!important;transform:none!important;opacity:1!important;stroke-dashoffset:0!important}}
+</style>
+<script>
+(function () {
+  'use strict';
+  var NS = 'http://www.w3.org/2000/svg';
+  function svgEl(tag, attrs, parent) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+  function htmlEl(tag, cls, parent, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; if (parent) parent.appendChild(e); return e; }
+
+  var NUM = /-?\d[\d,]*(?:\.\d+)?/;
+  function parseCell(text) {
+    var main = text.split('(')[0].trim();
+    var parts = main.split('/').map(function (s) { return s.trim(); }).filter(Boolean);
+    var values = parts.map(function (p) {
+      var m = p.match(NUM); if (!m) return null;
+      var v = parseFloat(m[0].replace(/,/g, ''));
+      var rest = p.slice(m.index + m[0].length).trim();
+      if (/^M\b/.test(rest)) v *= 1e6; else if (/^k\b/i.test(rest)) v *= 1e3;
+      return v;
+    });
+    var um = main.match(/(ops\/s|µs|us|ms|%)/);
+    return { values: values, unit: um ? um[1] : null, raw: text.trim().replace(/\s+/g, ' ') };
+  }
+  function parseTable(table) {
+    var headRow = table.tHead ? table.tHead.rows[0] : table.rows[0];
+    var columns = Array.prototype.map.call(headRow.cells, function (c) { return c.textContent.trim(); });
+    var bodyRows = table.tBodies.length ? Array.prototype.slice.call(table.tBodies[0].rows) : Array.prototype.slice.call(table.rows, 1);
+    var rows = bodyRows.map(function (tr) {
+      var cells = Array.prototype.slice.call(tr.cells);
+      return { label: cells[0].textContent.trim(), cells: cells.slice(1).map(function (c) { return parseCell(c.textContent); }) };
+    });
+    var numericCols = [];
+    columns.slice(1).forEach(function (name, i) {
+      if (rows.some(function (r) { return r.cells[i] && r.cells[i].values.some(function (v) { return v != null; }); })) numericCols.push({ name: name, i: i });
+    });
+    var unit = null;
+    rows.forEach(function (r) { r.cells.forEach(function (c) { if (!unit && c.unit) unit = c.unit; }); });
+    return { columns: columns, rows: rows, numericCols: numericCols, unit: unit };
+  }
+
+  function fmt(v, unit, withUnit) {
+    if (v == null) return '';
+    var s;
+    if (unit === 'ops/s' || Math.abs(v) >= 1e4) {
+      if (Math.abs(v) >= 1e6) s = (v / 1e6).toFixed(Math.abs(v) >= 1e7 ? 1 : 2).replace(/\.?0+$/, '') + 'M';
+      else if (Math.abs(v) >= 1e3) s = Math.round(v / 1e3) + 'k';
+      else s = String(Math.round(v));
+      return withUnit && unit ? s + ' ' + unit : s;
+    }
+    if (Math.abs(v) < 10) s = v.toFixed(2).replace(/\.?0+$/, '');
+    else if (Math.abs(v) < 100) s = v.toFixed(1).replace(/\.0$/, '');
+    else s = String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return withUnit && unit ? s + ' ' + unit : s;
+  }
+  function niceStep(span, n) {
+    var raw = span / n, p = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10)), f = raw / p;
+    var m = f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10;
+    return m * p;
+  }
+  function yTicks(max) {
+    var step = niceStep(max, 4), top = Math.ceil(max / step) * step, t = [];
+    if (top - max < step * 0.15) top += step; // room for a label above the tallest mark
+    for (var v = 0; v <= top + 1e-9; v += step) t.push(+v.toFixed(10));
+    return { ticks: t, top: top };
+  }
+  function textWidth(s, px) { return s.length * px * 0.58; }
+
+  // ---- data shaping: one or more panels of {title, x, series:[{name, values, raw}]}
+  function panels(data, opts) {
+    var xLabels = opts.xLabels;
+    if (xLabels) { // each cell is a slash-separated run across xLabels; one panel per row
+      return data.rows.map(function (r) {
+        return { title: r.label, x: xLabels, series: data.numericCols.map(function (c) {
+          var cell = r.cells[c.i];
+          return { name: c.name, values: cell ? cell.values : [], raw: xLabels.map(function (_, i) { return cell && cell.values[i] != null ? fmt(cell.values[i], data.unit, true) : ''; }) };
+        }) };
+      });
+    }
+    if (opts.facet === 'columns') {
+      return data.numericCols.map(function (c) {
+        return { title: c.name, x: data.rows.map(function (r) { return r.label; }), series: [{ name: c.name, values: data.rows.map(function (r) { return r.cells[c.i].values[0]; }), raw: data.rows.map(function (r) { return r.cells[c.i].raw; }) }] };
+      });
+    }
+    return [{ title: null, x: data.rows.map(function (r) { return r.label; }), series: data.numericCols.map(function (c) {
+      return { name: c.name, values: data.rows.map(function (r) { return r.cells[c.i] ? r.cells[c.i].values[0] : null; }), raw: data.rows.map(function (r) { return r.cells[c.i] ? r.cells[c.i].raw : ''; }) };
+    }) }];
+  }
+  function seriesIndex(panel, allSeriesNames) { return panel.series.map(function (s) { return allSeriesNames.indexOf(s.name); }); }
+
+  // ---- renderers
+  function maxOf(panel) { var m = 0; panel.series.forEach(function (s) { s.values.forEach(function (v) { if (v != null && v > m) m = v; }); }); return m; }
+  function renderBars(panel, opts, colorIdx, tip) {
+    var W = opts.W, top = 18, bottom = 40, left = 0, right = 12;
+    var unit = opts.unit, maxV = opts.yMax || maxOf(panel);
+    var yt = yTicks(maxV || 1);
+    left = Math.max.apply(null, yt.ticks.map(function (t) { return textWidth(fmt(t, unit), 11.5); })) + 14;
+    if (opts.yTitle) left += 18;
+    var H = opts.H, plotW = W - left - right, plotH = H - top - bottom;
+    var svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': opts.aria });
+    var y = function (v) { return top + plotH - (v / yt.top) * plotH; };
+    var grid = svgEl('g', { class: 'dco-grid' }, svg), axis = svgEl('g', { class: 'dco-axis' }, svg);
+    yt.ticks.forEach(function (t) {
+      svgEl('line', { x1: left, x2: W - right, y1: y(t), y2: y(t) }, grid);
+      var tx = svgEl('text', { x: left - 8, y: y(t) + 4, 'text-anchor': 'end' }, axis); tx.textContent = fmt(t, unit);
+    });
+    if (opts.yTitle) { var yl = svgEl('text', { class: 'dco-axis-title', transform: 'translate(12 ' + (top + plotH / 2) + ') rotate(-90)', 'text-anchor': 'middle' }, svg); yl.textContent = opts.yTitle; }
+    var n = panel.series.length, groups = panel.x.length, band = plotW / groups, gap = 3;
+    var barW = Math.min(24, (band * 0.72 - gap * (n - 1)) / n), groupW = n * barW + (n - 1) * gap;
+    var total = n * groups, k = 0;
+    panel.x.forEach(function (label, gi) {
+      var gx = left + band * gi + (band - groupW) / 2;
+      var lx = svgEl('text', { x: left + band * gi + band / 2, y: top + plotH + 18, 'text-anchor': 'middle' }, axis); lx.textContent = label;
+      panel.series.forEach(function (s, si) {
+        var v = s.values[gi]; if (v == null) return;
+        var x = gx + si * (barW + gap), h = Math.max(0, top + plotH - y(v)), r = Math.min(4, barW / 2), yb = top + plotH;
+        var d = 'M' + x + ',' + yb + ' V' + (yb - h + r) + ' Q' + x + ',' + (yb - h) + ' ' + (x + r) + ',' + (yb - h) + ' H' + (x + barW - r) + ' Q' + (x + barW) + ',' + (yb - h) + ' ' + (x + barW) + ',' + (yb - h + r) + ' V' + yb + ' Z';
+        var bar = svgEl('path', { d: d, class: 'dco-bar dco-s' + (colorIdx[si] + 1) }, svg);
+        bar.style.transitionDelay = (k * 45) + 'ms';
+        if (total <= 12) { var lab = svgEl('text', { x: x + barW / 2, y: yb - h - 6, 'text-anchor': 'middle', class: 'dco-label' }, svg); lab.textContent = fmt(v, unit); lab.style.transitionDelay = (k * 45 + 350) + 'ms'; }
+        var hit = svgEl('rect', { x: x - gap / 2, y: top, width: barW + gap, height: plotH, class: 'dco-hit' }, svg);
+        tip.bind(hit, function () { return '<span class="dco-swatch dco-s' + (colorIdx[si] + 1) + '"></span><b>' + esc(s.name) + '</b> · ' + esc(label) + '<br>' + esc(s.raw[gi] || fmt(v, unit, true)); });
+        k++;
+      });
+    });
+    if (opts.xTitle) { var xl = svgEl('text', { class: 'dco-axis-title', x: left + plotW / 2, y: H - 4, 'text-anchor': 'middle' }, svg); xl.textContent = opts.xTitle; }
+    svgEl('line', { x1: left, x2: W - right, y1: top + plotH, y2: top + plotH, class: 'dco-baseline', stroke: 'currentColor', 'stroke-opacity': '.35' }, svg);
+    return svg;
+  }
+
+  function renderHBars(panel, opts, colorIdx, tip) {
+    var W = opts.W, right = 70, unit = opts.unit, n = panel.series.length, barH = n > 2 ? 12 : 16, gap = 2, pad = 16;
+    var left = Math.min(W * 0.38, Math.max.apply(null, panel.x.map(function (l) { return textWidth(l, 12); })) + 16);
+    var rowH = n * barH + (n - 1) * gap + pad, top = 8, bottom = 30;
+    var H = top + rowH * panel.x.length + bottom, plotW = W - left - right, maxV = opts.yMax || maxOf(panel);
+    var yt = yTicks(maxV || 1), x = function (v) { return left + (v / yt.top) * plotW; };
+    var svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': opts.aria });
+    var grid = svgEl('g', { class: 'dco-grid' }, svg), axis = svgEl('g', { class: 'dco-axis' }, svg);
+    yt.ticks.forEach(function (t) {
+      svgEl('line', { x1: x(t), x2: x(t), y1: top, y2: H - bottom }, grid);
+      var tx = svgEl('text', { x: x(t), y: H - bottom + 16, 'text-anchor': 'middle' }, axis); tx.textContent = fmt(t, unit);
+    });
+    if (opts.yTitle) { var xl = svgEl('text', { class: 'dco-axis-title', x: left + plotW / 2, y: H - 2, 'text-anchor': 'middle' }, svg); xl.textContent = opts.yTitle; }
+    var k = 0;
+    panel.x.forEach(function (label, gi) {
+      var gy = top + rowH * gi + pad / 2, groupH = n * barH + (n - 1) * gap;
+      var ly = svgEl('text', { x: left - 10, y: gy + groupH / 2 + 4, 'text-anchor': 'end' }, axis); ly.textContent = label;
+      panel.series.forEach(function (s, si) {
+        var v = s.values[gi]; if (v == null) return;
+        var yy = gy + si * (barH + gap), w = Math.max(0, x(v) - left), r = Math.min(4, barH / 2);
+        var d = 'M' + left + ',' + yy + ' H' + (left + w - r) + ' Q' + (left + w) + ',' + yy + ' ' + (left + w) + ',' + (yy + r) + ' V' + (yy + barH - r) + ' Q' + (left + w) + ',' + (yy + barH) + ' ' + (left + w - r) + ',' + (yy + barH) + ' H' + left + ' Z';
+        var bar = svgEl('path', { d: d, class: 'dco-hbar dco-s' + (colorIdx[si] + 1) }, svg);
+        bar.style.transformOrigin = left + 'px ' + (yy + barH / 2) + 'px'; bar.style.transitionDelay = (k * 40) + 'ms';
+        var lab = svgEl('text', { x: left + w + 7, y: yy + barH / 2 + 4, class: 'dco-label' }, svg); lab.textContent = fmt(v, unit, true); lab.style.transitionDelay = (k * 40 + 350) + 'ms';
+        var hit = svgEl('rect', { x: left, y: yy - gap / 2, width: plotW + right - 8, height: barH + gap, class: 'dco-hit' }, svg);
+        tip.bind(hit, function () { return '<span class="dco-swatch dco-s' + (colorIdx[si] + 1) + '"></span><b>' + esc(s.name) + '</b> · ' + esc(label) + '<br>' + esc(s.raw[gi] || fmt(v, unit, true)); });
+        k++;
+      });
+    });
+    svgEl('line', { x1: left, x2: left, y1: top, y2: H - bottom, stroke: 'currentColor', 'stroke-opacity': '.35' }, svg);
+    return svg;
+  }
+
+  function renderLines(panel, opts, colorIdx, tip) {
+    var W = opts.W, H = opts.H, top = 18, bottom = 40, unit = opts.unit, maxV = opts.yMax || maxOf(panel);
+    var yt = yTicks(maxV || 1);
+    var endLabels = panel.series.map(function (s) { return fmt(s.values[s.values.length - 1], unit); });
+    var right = Math.max.apply(null, endLabels.map(function (l) { return textWidth(l, 11.5); })) + 18;
+    var left = Math.max.apply(null, yt.ticks.map(function (t) { return textWidth(fmt(t, unit), 11.5); })) + 14; if (opts.yTitle) left += 18;
+    var plotW = W - left - right, plotH = H - top - bottom;
+    var nums = panel.x.map(function (l) { var m = String(l).match(NUM); return m ? parseFloat(m[0].replace(/,/g, '')) : NaN; });
+    var linear = nums.every(function (v) { return !isNaN(v); }) && opts.xScale !== 'band';
+    var xmin = Math.min.apply(null, nums), xmax = Math.max.apply(null, nums);
+    var xAt = function (i) { return linear ? left + ((nums[i] - xmin) / ((xmax - xmin) || 1)) * plotW : left + (plotW / Math.max(1, panel.x.length - 1)) * i; };
+    var y = function (v) { return top + plotH - (v / yt.top) * plotH; };
+    var svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': opts.aria });
+    var grid = svgEl('g', { class: 'dco-grid' }, svg), axis = svgEl('g', { class: 'dco-axis' }, svg);
+    yt.ticks.forEach(function (t) {
+      svgEl('line', { x1: left, x2: W - right, y1: y(t), y2: y(t) }, grid);
+      var tx = svgEl('text', { x: left - 8, y: y(t) + 4, 'text-anchor': 'end' }, axis); tx.textContent = fmt(t, unit);
+    });
+    panel.x.forEach(function (label, i) { var lx = svgEl('text', { x: xAt(i), y: top + plotH + 18, 'text-anchor': 'middle' }, axis); lx.textContent = label; });
+    if (opts.yTitle) { var yl = svgEl('text', { class: 'dco-axis-title', transform: 'translate(12 ' + (top + plotH / 2) + ') rotate(-90)', 'text-anchor': 'middle' }, svg); yl.textContent = opts.yTitle; }
+    if (opts.xTitle) { var xl = svgEl('text', { class: 'dco-axis-title', x: left + plotW / 2, y: H - 4, 'text-anchor': 'middle' }, svg); xl.textContent = opts.xTitle; }
+    svgEl('line', { x1: left, x2: W - right, y1: top + plotH, y2: top + plotH, stroke: 'currentColor', 'stroke-opacity': '.35' }, svg);
+    var cross = svgEl('line', { class: 'dco-cross', y1: top, y2: top + plotH }, svg);
+    // end labels, dodged so they never overlap
+    var ends = panel.series.map(function (s, si) { return { si: si, y: y(s.values[s.values.length - 1] || 0) }; }).sort(function (a, b) { return a.y - b.y; });
+    for (var i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 14) ends[i].y = ends[i - 1].y + 14;
+    var endY = {}; ends.forEach(function (e) { endY[e.si] = e.y; });
+    panel.series.forEach(function (s, si) {
+      var pts = s.values.map(function (v, i) { return v == null ? null : [xAt(i), y(v)]; }).filter(Boolean);
+      var d = pts.map(function (p, i) { return (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1); }).join(' ');
+      var path = svgEl('path', { d: d, class: 'dco-line dco-s' + (colorIdx[si] + 1) }, svg);
+      var len = path.getTotalLength ? path.getTotalLength() : 1000; path.style.strokeDasharray = len; path.style.strokeDashoffset = len;
+      pts.forEach(function (p, i) { var dot = svgEl('circle', { cx: p[0], cy: p[1], r: 4.5, class: 'dco-dot dco-s' + (colorIdx[si] + 1) }, svg); dot.style.transitionDelay = (300 + i * 120) + 'ms'; });
+      var last = pts[pts.length - 1];
+      if (last) { var el = svgEl('text', { x: W - right + 8, y: endY[si] + 4, class: 'dco-endlabel dco-label' }, svg); el.textContent = endLabels[si]; el.style.transitionDelay = '900ms'; }
+    });
+    // hover: nearest x, one row per series
+    var hit = svgEl('rect', { x: left, y: top, width: plotW, height: plotH, class: 'dco-hit' }, svg);
+    tip.bind(hit, function (ev, pt) {
+      var best = 0, bd = Infinity;
+      panel.x.forEach(function (_, i) { var dd = Math.abs(xAt(i) - pt.x); if (dd < bd) { bd = dd; best = i; } });
+      cross.setAttribute('x1', xAt(best)); cross.setAttribute('x2', xAt(best)); cross.style.opacity = 1;
+      return '<b>' + esc(String(panel.x[best])) + (opts.xTitle ? ' ' + esc(opts.xTitle.toLowerCase()) : '') + '</b><br>' + panel.series.map(function (s, si) {
+        return '<span class="dco-swatch dco-s' + (colorIdx[si] + 1) + '"></span>' + esc(s.name) + ': <b>' + esc(s.raw[best] || fmt(s.values[best], unit, true)) + '</b>';
+      }).join('<br>');
+    }, function () { cross.style.opacity = 0; });
+    return svg;
+  }
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  function makeTip(container) {
+    var tipEl = htmlEl('div', 'dco-tip', container);
+    function svgPoint(svg, ev) { var p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; var m = svg.getScreenCTM(); return m ? p.matrixTransform(m.inverse()) : { x: 0, y: 0 }; }
+    return {
+      bind: function (target, html, leave) {
+        var svg = target.ownerSVGElement;
+        function move(ev) {
+          tipEl.innerHTML = html(ev, svgPoint(svg, ev)); tipEl.style.display = 'block';
+          var cr = container.getBoundingClientRect(), x = ev.clientX - cr.left + 14, yy = ev.clientY - cr.top + 14;
+          if (x + tipEl.offsetWidth > cr.width) x = ev.clientX - cr.left - tipEl.offsetWidth - 12;
+          tipEl.style.left = x + 'px'; tipEl.style.top = yy + 'px';
+        }
+        target.addEventListener('mousemove', move);
+        target.addEventListener('mouseenter', move);
+        target.addEventListener('mouseleave', function () { tipEl.style.display = 'none'; if (leave) leave(); });
+      }
+    };
+  }
+
+  function build(container) {
+    var table = container.querySelector('table'); if (!table || container.dataset.dcoDone) return;
+    container.dataset.dcoDone = '1';
+    var data = parseTable(table); if (!data.numericCols.length) return;
+    var ds = container.dataset;
+    var opts = {
+      type: ds.type || 'bars', unit: ds.unit || data.unit, yTitle: ds.y || null, xTitle: ds.x || null, facet: ds.facet || null,
+      xLabels: ds.xLabels ? ds.xLabels.split(',').map(function (s) { return s.trim(); }) : null, xScale: ds.xScale || null,
+      aria: ds.title || 'Chart of the table below'
+    };
+    // mount: title, panels, legend, note, then the table behind a toggle
+    var frag = document.createDocumentFragment();
+    if (ds.title) htmlEl('div', 'dco-title', frag, ds.title);
+    var panelsEl = htmlEl('div', 'dco-panels', frag);
+    var tip = makeTip(container);
+    var ps = panels(data, opts);
+    var sideBySide = ps.length > 1 && opts.type !== 'hbars';
+    opts.W = sideBySide ? 330 : 640; opts.H = sideBySide ? 230 : 300;
+    if (ps.length > 1 && ds.sharedScale !== 'no') opts.yMax = Math.max.apply(null, ps.map(maxOf));
+    if (!sideBySide) panelsEl.classList.add('dco-stack');
+    var names = []; ps.forEach(function (p) { p.series.forEach(function (s) { if (names.indexOf(s.name) < 0) names.push(s.name); }); });
+    ps.forEach(function (p) {
+      var pe = htmlEl('div', 'dco-panel', panelsEl);
+      if (p.title && ps.length > 1) htmlEl('div', 'dco-panel-title', pe, p.title);
+      var ci = seriesIndex(p, names);
+      var r = opts.type === 'lines' ? renderLines : opts.type === 'hbars' ? renderHBars : renderBars;
+      pe.appendChild(r(p, opts, ci, tip));
+    });
+    if (names.length > 1 && !(opts.facet === 'columns')) {
+      var lg = htmlEl('div', 'dco-legend', frag);
+      names.forEach(function (nm, i) { var it = htmlEl('span', null, lg); htmlEl('span', 'dco-swatch dco-s' + (i + 1), it); it.appendChild(document.createTextNode(nm)); });
+    }
+    if (ds.note) htmlEl('div', 'dco-note', frag, ds.note);
+    var details = htmlEl('details', 'dco-table', frag);
+    if (ds.table === 'open') details.open = true;
+    htmlEl('summary', null, details, ds.tableLabel || 'The numbers behind the chart');
+    container.insertBefore(frag, table);
+    details.appendChild(table);
+    if ('IntersectionObserver' in window) {
+      var io = new IntersectionObserver(function (entries) { entries.forEach(function (e) { if (e.isIntersecting) { requestAnimationFrame(function () { container.classList.add('dco-in'); }); io.disconnect(); } }); }, { threshold: 0.25 });
+      io.observe(container);
+    } else container.classList.add('dco-in');
+  }
+
+  function init() { document.querySelectorAll('.dco-chart').forEach(build); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+<script async="" src="https://uma.mkennedy.codes/script.js" data-website-id="fc9b6770-3b44-4073-944e-4a4f0e79f66a"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'termshow.css'}));</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-compare.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-compare.js';s.defer=true;document.head.appendChild(s);})();</script>
+<script>document.head.appendChild(Object.assign(document.createElement('link'),{rel:'stylesheet',href:(document.querySelector('meta[name="quarto:offset"]')||{content:''}).content+'gd-lightbox-annotate.css'}));</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'gd-lightbox-annotate.js';s.defer=true;document.head.appendChild(s);})();</script>
+<meta name="gd-logo-dark" content="diskcache-oxide-logo-dark.png">
+<link rel="icon" type="image/x-icon" href="https://mkennedy.codes/docs/diskcache-oxide/favicon.ico" sizes="48x48">
+<link rel="icon" type="image/png" sizes="32x32" href="https://mkennedy.codes/docs/diskcache-oxide/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="https://mkennedy.codes/docs/diskcache-oxide/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="https://mkennedy.codes/docs/diskcache-oxide/apple-touch-icon.png">
+<script src="../theme-init.js"></script>
+
+
+  <link rel="alternate" type="text/markdown" href="django.md">
+  <link rel="canonical" href="https://mkennedy.codes/docs/diskcache-oxide/user-guide/django.html">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Django cache backend – diskcache-oxide | diskcache-oxide">
+  <meta property="og:description" content="diskcache-oxide as Django’s cache: one line in CACHES, pages and sessions as two aliases, what OPTIONS takes, what durable covers, and how it shares one cache across every worker.">
+  <meta property="og:url" content="https://mkennedy.codes/docs/diskcache-oxide/user-guide/django.html">
+  <meta property="og:site_name" content="diskcache-oxide">
+  <meta property="og:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Django cache backend – diskcache-oxide | diskcache-oxide">
+  <meta name="twitter:description" content="diskcache-oxide as Django’s cache: one line in CACHES, pages and sessions as two aliases, what OPTIONS takes, what durable covers, and how it shares one cache across every worker.">
+  <meta name="twitter:image" content="https://mkennedy.codes/docs/diskcache-oxide/assets/diskcache-oxide-slogan.jpg">
+</head>
+
+<body class="nav-sidebar floating nav-fixed quarto-light"><a id="quarto-skip-link" class="visually-hidden-focusable" href="#quarto-document-content">Skip to main content</a>
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark" aria-label="Site">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a href="../index.html" class="navbar-brand navbar-brand-logo">
+    <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo light-content">
+    <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
+    </a>
+    <a class="navbar-brand" href="../index.html">
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.6</span></span>
+    </a>
+  </div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link active" href="../user-guide/new-to-caching.html" aria-current="page"> 
+<span class="menu-text">User Guide</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../recipes/index.html"> 
+<span class="menu-text">Recipes</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../example-apps/index.html"> 
+<span class="menu-text">Example apps</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../reference/index.html"> 
+<span class="menu-text">API Reference</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="../changelog.html"> 
+<span class="menu-text">Changelog</span></a>
+  </li>  
+</ul>
+            <ul class="navbar-nav navbar-nav-scroll ms-auto">
+  <li class="nav-item">
+    <span class="nav-link">
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="18" data-forks="0"></div>
+    </span>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+</div>
+            <div id="quarto-search" class=""></div>
+      </div> <!-- /container-fluid -->
+    </nav>
+  <nav class="quarto-secondary-nav" aria-label="Toolbar">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <h1 class="quarto-secondary-nav-title no-breadcrumbs">Django cache backend</h1>
+        <a class="flex-grow-1" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto" aria-label="Section">
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" aria-controls="quarto-sidebar-section-1" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-1-label">Get started</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-1" aria-labelledby="quarto-sidebar-section-1-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/new-to-caching.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">New to caching? Start here</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/getting-started.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Getting started</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/switching-from-diskcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Switching from python-diskcache</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/errors.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Errors and what to do about them</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/troubleshooting.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Troubleshooting</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/roadmap.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Vision and roadmap</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" aria-controls="quarto-sidebar-section-2" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-2-label">Core Features</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-2" aria-labelledby="quarto-sidebar-section-2-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/serialization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Serialization</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/null-cache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">NullCache</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/caches.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Caches: named caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/django.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">Django cache backend</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Transactions</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/coordination.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Coordination: locks, semaphores and throttles</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/concurrency-and-forks.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Concurrency and forks</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/storage-and-wal.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Storage and WAL</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <button type="button" class="sidebar-item-text sidebar-item-toggle sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" aria-controls="quarto-sidebar-section-3" aria-expanded="true">
+ <span class="menu-text" id="quarto-sidebar-section-3-label">Background &amp; Reference</span><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <ul id="quarto-sidebar-section-3" aria-labelledby="quarto-sidebar-section-3-label" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/performance.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Performance</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/building-from-source.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Building from source</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/divergences.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Divergences from python-diskcache</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" aria-labelledby="toc-title" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul class="collapse">
+  <li><a href="#the-recommended-setup-pages-and-sessions-as-two-aliases" id="toc-the-recommended-setup-pages-and-sessions-as-two-aliases" class="nav-link active" data-scroll-target="#the-recommended-setup-pages-and-sessions-as-two-aliases">The recommended setup: pages and sessions as two aliases</a></li>
+  <li><a href="#settings" id="toc-settings" class="nav-link" data-scroll-target="#settings">Settings</a></li>
+  <li><a href="#errors-raise-durable-drops" id="toc-errors-raise-durable-drops" class="nav-link" data-scroll-target="#errors-raise-durable-drops">Errors raise; durable drops</a>
+  <ul class="collapse">
+  <li><a href="#sessions" id="toc-sessions" class="nav-link" data-scroll-target="#sessions">Sessions</a></li>
+  </ul></li>
+  <li><a href="#one-cache-per-directory-every-worker-sharing-it" id="toc-one-cache-per-directory-every-worker-sharing-it" class="nav-link" data-scroll-target="#one-cache-per-directory-every-worker-sharing-it">One cache per directory, every worker sharing it</a></li>
+  <li><a href="#the-calls" id="toc-the-calls" class="nav-link" data-scroll-target="#the-calls">The calls</a></li>
+  <li><a href="#performance" id="toc-performance" class="nav-link" data-scroll-target="#performance">Performance</a>
+  <ul class="collapse">
+  <li><a href="#async-reads" id="toc-async-reads" class="nav-link" data-scroll-target="#async-reads">Async reads</a></li>
+  </ul></li>
+  <li><a href="#in-tests" id="toc-in-tests" class="nav-link" data-scroll-target="#in-tests">In tests</a></li>
+  <li><a href="#coming-from-diskcaches-djangocache" id="toc-coming-from-diskcaches-djangocache" class="nav-link" data-scroll-target="#coming-from-diskcaches-djangocache">Coming from diskcache’s DjangoCache</a></li>
+  </ul>
+</nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content" tabindex="-1">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title d-none d-lg-block">Django cache backend</h1>
+</div>
+
+<div>
+  <div class="description">
+    diskcache-oxide as Django’s cache: one line in CACHES, pages and sessions as two aliases, what OPTIONS takes, what durable covers, and how it shares one cache across every worker.
+  </div>
+</div>
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p>Django’s cache framework runs on diskcache-oxide with one setting. <code>django.core.cache.cache</code>, the per-view and per-site cache, template fragment caching and the cache session engines all use it, and every worker process on the machine shares one cache on disk: <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> and <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> are atomic across processes, which Django’s file-based cache can’t promise, and there’s no server to run, unlike Redis or Memcached.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>CACHES <span class="op">=</span> {</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">'default'</span>: {</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">'BACKEND'</span>: <span class="st">'diskcache_oxide.DjangoCache'</span>,</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>        <span class="st">'LOCATION'</span>: <span class="st">'/var/lib/my-site/cache/default'</span>,</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">'TIMEOUT'</span>: <span class="dv">300</span>,</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>    },</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<p>Install it with <code>pip install 'diskcache-oxide[django]'</code>, which asks for Django 5.2 or newer. Importing <code>diskcache_oxide</code> never imports Django: the name <a href="../reference/DjangoCache.html#diskcache_oxide.DjangoCache" class="gdls-link gdls-code">DjangoCache</a> loads on first use. Use the dotted <code>BACKEND</code> string as above; <code>from diskcache_oxide import DjangoCache</code> works too, but where Django isn’t installed it fails with Python’s plain “cannot import name” instead of the install hint.</p>
+<p>The backend runs Django’s own cache tests (the <code>BaseCacheTests</code> every built-in backend passes, the middleware, template-response and i18n tests, and the cache and cached_db session tests) from each supported Django release’s source, on every supported Python. Supported: Django 5.2 (the LTS), 6.0 and 6.1, on Python 3.14 and 3.14t, and Django 6.1 on 3.15 and 3.15t (5.2 and 6.0 don’t support 3.15). On the free-threaded builds those tests run with the GIL staying off. They run Django single-threaded, though; the backend’s own tests drive it from many threads at once, but whether Django itself is safe with many threads there is Django’s question.</p>
+<section id="the-recommended-setup-pages-and-sessions-as-two-aliases" class="level1">
+<h1>The recommended setup: pages and sessions as two aliases</h1>
+<p>Most sites cache two kinds of thing. Pages, fragments and query results can be rebuilt, so a cache failure there should cost a slower page, never an error page. Sessions, rate-limit counters and job claims are state: a dropped write is a login that didn’t stick, or a limit that let everyone through. Give each its own alias and directory:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>CACHES <span class="op">=</span> {</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">'default'</span>: {</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">'BACKEND'</span>: <span class="st">'diskcache_oxide.DjangoCache'</span>,</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>        <span class="st">'LOCATION'</span>: <span class="st">'/var/lib/my-site/cache/pages'</span>,</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">'TIMEOUT'</span>: <span class="dv">600</span>,</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>        <span class="st">'OPTIONS'</span>: {<span class="st">'durable'</span>: <span class="va">True</span>, <span class="st">'size_limit'</span>: <span class="dv">2</span> <span class="op">*</span> <span class="dv">1024</span><span class="op">**</span><span class="dv">3</span>},</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    },</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">'state'</span>: {</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>        <span class="st">'BACKEND'</span>: <span class="st">'diskcache_oxide.DjangoCache'</span>,</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>        <span class="st">'LOCATION'</span>: <span class="st">'/var/lib/my-site/state/site'</span>,</span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>        <span class="st">'TIMEOUT'</span>: <span class="va">None</span>,</span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>        <span class="st">'OPTIONS'</span>: {<span class="st">'eviction_policy'</span>: <span class="st">'none'</span>},</span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>    },</span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a>SESSION_ENGINE <span class="op">=</span> <span class="st">'django.contrib.sessions.backends.cache'</span></span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>SESSION_CACHE_ALIAS <span class="op">=</span> <span class="st">'state'</span></span></code></pre></div>
+<p><code>default</code> is durable: a write that can’t get the lock in time is dropped and a read that fails is a miss (see <a href="#errors-raise-durable-drops">durable</a> below). <code>state</code> isn’t, so a write that fails raises, and it never evicts for size, so sessions aren’t pushed out by pages; it grows until entries expire, so don’t make a session for every anonymous visitor. Keep state out of the directory you’d delete on a deploy: here pages live under <code>cache/</code> and state under <code>state/</code>, as in <a href="../recipes/web-workers.html#the-recommended-setup">Sharing a cache across web workers</a>. The <a href="https://github.com/mikeckennedy/diskcache-oxide/tree/main/examples/django">example project</a> is this setup under gunicorn, and <a href="../example-apps/django.html">the Django example</a> walks through its code.</p>
+</section>
+<section id="settings" class="level1">
+<h1>Settings</h1>
+<p><code>LOCATION</code> is the cache’s directory, a <code>str</code> or a <code>Path</code>, and it’s required; use an absolute path (a relative one is resolved against the working directory, every time a backend instance is made). <code>TIMEOUT</code>, <code>KEY_PREFIX</code>, <code>VERSION</code> and <code>KEY_FUNCTION</code> are Django’s and work as in every backend.</p>
+<p><code>OPTIONS</code> takes <a href="../user-guide/getting-started.html"><code>Cache</code></a>’s keywords by their own names: <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a>, <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a>, <a href="../reference/Cache.eviction_policy.html#diskcache_oxide.Cache.eviction_policy" class="gdls-link gdls-code">eviction_policy</a>, <code>serializer</code>, <code>pickle</code>, <code>types</code>, <code>max_connections</code>, <code>sqlite_cache_size</code>, <code>wal_size_limit</code>, <code>wal_checkpoint</code>, <code>on_decode_error</code>, <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a> and <code>maintenance_interval</code>. <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> makes the alias a <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a>, which also takes <code>raise_on_mismatch</code>. Two defaults differ from <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>’s:</p>
+<ul>
+<li><strong><a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> is 1.0 s, not 60.</strong> It’s the lock wait: how long a write waits for another writer before raising <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>. gunicorn kills a worker after 30 s, so a 60 s wait would end in a killed worker, not an exception.</li>
+<li><strong><code>pickle</code> is True.</strong> Django caches any picklable object: the per-view cache stores whole <code>HttpResponse</code>s, <code>{% cache %}</code> stores <code>SafeString</code>s, and sessions and model instances are common. Values msgpack can represent (<code>str</code>, <code>bytes</code>, numbers, lists, dicts, datetimes and the rest) are still stored without pickle; only what it can’t represent falls back to it.</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">Note</span>Two timeouts
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p>Django’s <code>TIMEOUT</code> is how long an entry lives (300 s by default, <code>None</code> for forever). <code>OPTIONS['timeout']</code> is how long a write waits for the lock. diskcache’s backend called the second one <code>DATABASE_TIMEOUT</code>.</p>
+</div>
+</div>
+<p>Refused with <code>ImproperlyConfigured</code>, so a setting can’t silently mean something else:</p>
+<ul>
+<li><strong>A missing <code>LOCATION</code>, or an unknown option</strong>, named in the message.</li>
+<li><strong><code>MAX_ENTRIES</code> and <code>CULL_FREQUENCY</code></strong>, in <code>OPTIONS</code> or at the top level, in either case. diskcache-oxide bounds a cache by bytes (<a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>) and evicts <a href="../reference/Cache.cull_limit.html#diskcache_oxide.Cache.cull_limit" class="gdls-link gdls-code">cull_limit</a> entries at a time, not by an entry count. (Django’s Redis and Memcached backends ignore these silently.)</li>
+<li><strong>diskcache’s <code>SHARDS</code> and <code>DATABASE_TIMEOUT</code></strong>: use <code>OPTIONS['shards']</code> and <code>OPTIONS['timeout']</code>.</li>
+<li><strong><code>OPTIONS['timeout'] = None</code></strong>, which would be the 60 s wait; leave it out for 1.0.</li>
+<li><strong><code>clock</code></strong>, which would switch background maintenance off for the directory.</li>
+<li><strong>Two aliases on one <code>LOCATION</code> with different <code>OPTIONS</code>.</strong> They share one cache (see below), so the first one’s settings would otherwise win silently. Django’s settings (<code>TIMEOUT</code>, <code>KEY_PREFIX</code>, <code>VERSION</code>, <code>KEY_FUNCTION</code>) may differ.</li>
+<li><strong>A durable alias that the <a href="../reference/DjangoCache.cache.html#diskcache_oxide.DjangoCache.cache" class="gdls-link gdls-code">cache</a> or <code>cached_db</code> session engine uses</strong>, or a subclass of either engine or of the backend. See <a href="#sessions">sessions</a> below.</li>
+</ul>
+<p><code>pickle: False</code> is allowed but narrow: only the low-level API with plain types works. Template fragments, the per-view and per-site cache and model instances raise <code>TypeError</code>, since what they store can’t be represented without pickle. As with any Django cache, a cache that pickles must be writable only by the app: the backend creates its directory <code>0700</code>, and one you made yourself keeps the mode you gave it.</p>
+</section>
+<section id="errors-raise-durable-drops" class="level1">
+<h1>Errors raise; durable drops</h1>
+<p>By default the backend raises, as a Redis backend raises on a lost connection: a write that can’t get the lock within <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a> raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> (a <code>TimeoutError</code>), and a directory that can’t be opened raises on first use. Django’s cache also holds sessions and rate limits, where a silent drop is a bug.</p>
+<p><code>OPTIONS = {'durable': True}</code> is for a page cache that must never fail a request. Then a single-key write that can’t be done is dropped instead (<a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>, <a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a> and <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a> return False, <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> returns None as always, <a href="../reference/DjangoCache.set_many.html#diskcache_oxide.DjangoCache.set_many" class="gdls-link gdls-code">set_many</a> returns the keys it didn’t store), and a read that fails is a miss. A batch behind a held lock waits out the lock wait once, not once per key. Durable doesn’t cover everything:</p>
+<ul>
+<li><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> and <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr</a> raise Django’s <code>ValueError</code>, as for a missing key, since the engine reports an outage there as a miss.</li>
+<li><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> raises <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>.</li>
+<li>If the directory can’t be opened at all, the backend serves a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> until the next try (where every read misses, nothing is stored, and <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a> always succeeds), as the <a href="../user-guide/caches.html"><code>Caches</code> registry</a> does: after 1 s for a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>, logged as a WARNING on the <code>diskcache_oxide</code> logger, and after 10 s for any other failure to open, logged as an ERROR with the traceback. That includes a directory holding the other kind of cache (<a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a> set on a plain cache’s directory, or left out on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s), which never heals by itself, so watch for that ERROR. Bad settings still raise.</li>
+</ul>
+<p>Because <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a> succeeds on a <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> and returns False behind a held lock, code that uses <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a> as a lock or a once-only claim belongs on a plain alias. Django’s own callers are fine: <code>get_or_set</code> works either way, and sessions can’t use a durable alias.</p>
+<section id="sessions" class="level2">
+<h2 class="anchored" data-anchor-id="sessions">Sessions</h2>
+<p>A durable alias for the <a href="../reference/DjangoCache.cache.html#diskcache_oxide.DjangoCache.cache" class="gdls-link gdls-code">cache</a> or <code>cached_db</code> session engine is refused. The cache engine reads a dropped write as “that session key is taken” and tries again, up to 10,000 times; the cached_db engine never learns of a dropped cache write, so later requests read the old session from the cache. The check happens when the alias’s backend is first built: under <code>manage.py</code> that’s at startup, since Django’s system checks build every alias, and under a bare gunicorn it’s the first request that uses the alias (or startup, if the app touches the cache at import, as the example’s <code>wsgi.py</code> does).</p>
+<p>With <code>cached_db</code> sessions on a plain alias, a held write lock still costs something: reads succeed while writes wait. A <code>save()</code> gives up after the lock wait (Django only logs it), so the next request may read the previous session from the cache while the database has the new one; the next save fixes that. A logout can raise <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> after the database row is gone, and then the old cookie still loads the session from the cache: the visitor stays logged in, and a request that changes the session gets Django’s 400 (<code>SessionInterrupted</code>), until they log out again or the cache entry expires. This is how <code>cached_db</code> behaves on any cache that raises.</p>
+</section>
+</section>
+<section id="one-cache-per-directory-every-worker-sharing-it" class="level1">
+<h1>One cache per directory, every worker sharing it</h1>
+<p>Django builds a backend instance per thread, and under ASGI up to one per request. None of them owns a cache: every instance for a directory, in every thread of a process, shares one <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>, opened on its first use and kept for the life of the process, so making an instance opens nothing. Every process that opens the same directory shares the same cache on disk. Opening before or after a <code>fork()</code> (gunicorn’s <code>preload_app</code>, Celery’s prefork pool) is fine: see <a href="../user-guide/concurrency-and-forks.html">Concurrency and forks</a>.</p>
+<ul>
+<li><strong><a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> does nothing.</strong> Django calls it after every request; closing would reopen the cache on the next one. The handles live for the process, and background maintenance keeps the cache tidy.</li>
+<li><strong><a href="../reference/Cache.clear.html#diskcache_oxide.Cache.clear" class="gdls-link gdls-code">clear()</a> clears the directory</strong>: every alias, prefix and version on that <code>LOCATION</code>, as Django’s file and Redis backends do. Aliases that must clear separately need separate <code>LOCATION</code>s.</li>
+<li><strong>Never delete the directory under running workers.</strong> They would carry on in the deleted files, and a worker started later would get a new, empty cache the others never see. Use <code>cache.clear()</code>.</li>
+<li><strong>When to use <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a>.</strong> A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> suits most sites. Make an alias that several worker processes use heavily, reading or writing, a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> with <code>OPTIONS = {'shards': 8}</code>: with 8 worker processes it’s about 5x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (<a href="#performance">performance</a> below, and <a href="../user-guide/fanoutcache.html">FanoutCache</a>). Choose it before the directory is made: a directory holds one kind or the other.</li>
+</ul>
+</section>
+<section id="the-calls" class="level1">
+<h1>The calls</h1>
+<p>Every call goes through Django’s <a href="../reference/DjangoCache.make_and_validate_key.html#diskcache_oxide.DjangoCache.make_and_validate_key" class="gdls-link gdls-code">make_and_validate_key</a>, so <code>KEY_PREFIX</code>, <code>VERSION</code> and <code>KEY_FUNCTION</code> work, and Django’s <code>CacheKeyWarning</code> for keys memcached couldn’t store still appears (keys are checked in under 0.1 µs when they’re fine). A <code>KEY_FUNCTION</code> must return a <code>str</code>.</p>
+<ul>
+<li><strong><a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>, <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>, <a href="../reference/Cache.touch.html#diskcache_oxide.Cache.touch" class="gdls-link gdls-code">touch</a>, <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, <a href="../reference/DjangoCache.has_key.html#diskcache_oxide.DjangoCache.has_key" class="gdls-link gdls-code">has_key</a></strong>: one call each. A timeout of 0 or less stores nothing (and removes the key if it was there), <code>None</code> is forever. A timeout that isn’t a number (a <code>Decimal</code>, a <code>str</code>, a <code>bool</code>) raises <code>TypeError</code>.</li>
+<li><strong><a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a> and <a href="../reference/Cache.decr.html#diskcache_oxide.Cache.decr" class="gdls-link gdls-code">decr</a></strong> are atomic across threads and processes and keep the entry’s expiry. A missing key raises <code>ValueError</code>; a value that isn’t a number (an <code>int</code> or a <code>float</code>; a stored <code>bool</code> doesn’t count) raises <code>TypeError</code>.</li>
+<li><strong><a href="../reference/DjangoCache.get_many.html#diskcache_oxide.DjangoCache.get_many" class="gdls-link gdls-code">get_many</a></strong> returns a stored <code>None</code>; <strong><a href="../reference/DjangoCache.set_many.html#diskcache_oxide.DjangoCache.set_many" class="gdls-link gdls-code">set_many</a></strong> is a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> per key, so no pickling code runs while the cache’s write lock is held; <strong><a href="../reference/DjangoCache.delete_many.html#diskcache_oxide.DjangoCache.delete_many" class="gdls-link gdls-code">delete_many</a></strong> deletes up to 100 keys per transaction (per shard on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>), validating every key first.</li>
+<li><strong>The async methods</strong> (<a href="../reference/DjangoCache.aget.html#diskcache_oxide.DjangoCache.aget" class="gdls-link gdls-code">aget</a>, <a href="../reference/DjangoCache.aset.html#diskcache_oxide.DjangoCache.aset" class="gdls-link gdls-code">aset</a>, <a href="../reference/DjangoCache.aincr.html#diskcache_oxide.DjangoCache.aincr" class="gdls-link gdls-code">aincr</a> and the rest) each run their sync form in one call through asgiref’s <code>sync_to_async</code>, as Django does, so <a href="../reference/DjangoCache.aincr.html#diskcache_oxide.DjangoCache.aincr" class="gdls-link gdls-code">aincr</a> is atomic and keeps the expiry on every supported Django line (Django 5.2’s and 6.0’s own <a href="../reference/DjangoCache.aincr.html#diskcache_oxide.DjangoCache.aincr" class="gdls-link gdls-code">aincr</a> is a get and then a set). Reads hop to a thread too, though a read is faster than the hop; <a href="#async-reads">async reads</a> says why.</li>
+</ul>
+<p><code>get_or_set</code>, <code>incr_version</code>, <code>decr_version</code> and their async forms are Django’s own, built from the calls above. Beyond Django’s API: <code>tag=</code> on <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> and <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a> (and <a href="../reference/DjangoCache.aset.html#diskcache_oxide.DjangoCache.aset" class="gdls-link gdls-code">aset</a>, <a href="../reference/DjangoCache.aadd.html#diskcache_oxide.DjangoCache.aadd" class="gdls-link gdls-code">aadd</a>), then <code>evict(tag)</code> removes every entry with that tag; <code>pop(key)</code>; <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> and <a href="../reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a>; <a href="../reference/Cache.stats.html#diskcache_oxide.Cache.stats" class="gdls-link gdls-code">stats()</a>, <a href="../reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats" class="gdls-link gdls-code">maintenance_stats()</a> and <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a>; and <a href="../reference/DjangoCache.cache.html#diskcache_oxide.DjangoCache.cache" class="gdls-link gdls-code">cache</a>, the <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> or <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> underneath, whose keys are the made keys (<code>prefix:version:key</code>).</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> django.core.cache <span class="im">import</span> cache</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="ss">f'episode:</span><span class="sc">{</span>n<span class="sc">}</span><span class="ss">:html'</span>, html, timeout<span class="op">=</span><span class="dv">600</span>, tag<span class="op">=</span><span class="ss">f'episode:</span><span class="sc">{</span>n<span class="sc">}</span><span class="ss">'</span>)</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>cache.<span class="bu">set</span>(<span class="ss">f'episode:</span><span class="sc">{</span>n<span class="sc">}</span><span class="ss">:summary'</span>, summary, timeout<span class="op">=</span><span class="dv">600</span>, tag<span class="op">=</span><span class="ss">f'episode:</span><span class="sc">{</span>n<span class="sc">}</span><span class="ss">'</span>)</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>cache.evict(<span class="ss">f'episode:</span><span class="sc">{</span>n<span class="sc">}</span><span class="ss">'</span>)   <span class="co"># after an edit: both entries go</span></span></code></pre></div>
+<div class="callout callout-style-default callout-warning callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">Warning</span>A cached view that reads the session
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p><code>@cache_page</code> stores the response before <code>SessionMiddleware</code> adds <code>Vary: Cookie</code>, so a cached view that reads the session serves one visitor’s page to everyone. Add <code>@vary_on_cookie</code> to such a view, or keep the session out of it. This is Django’s behavior on every backend.</p>
+</div>
+</div>
+</section>
+<section id="performance" class="level1">
+<h1>Performance</h1>
+<p>Measured with <code>bench/django.py</code>, which reaches every backend through <code>django.core.cache.caches</code>, so each pays the same framework cost. Django 6.1.3 on Python 3.14, a MacBook Pro (M5 Pro) on AC power; only compare numbers from the same machine. Django’s own backends were given <code>MAX_ENTRIES</code> of 100,000 so none of them culls during the run. <a href="../reference/DjangoCache.html#diskcache_oxide.DjangoCache" class="gdls-link gdls-code">DjangoCache</a> adds about 0.27 µs to a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">Cache.get</a> for Django’s key making and validation.</p>
+<p><strong>Reads, one thread.</strong> p50 of a <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> that hits, in µs. The 50 KiB and 100 KiB values are what <code>cache_page</code> stores: a pickled <code>HttpResponse</code>.</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Value</th>
+<th>diskcache-oxide</th>
+<th><code>shards=8</code></th>
+<th>diskcache 5.6.3</th>
+<th><code>FileBasedCache</code></th>
+<th><code>DatabaseCache</code> (SQLite)</th>
+<th><code>LocMemCache</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Small dict</td>
+<td>1.3</td>
+<td>1.4</td>
+<td>2.7</td>
+<td>12.9</td>
+<td>10.7</td>
+<td>1.0</td>
+</tr>
+<tr class="even">
+<td>4 KiB str</td>
+<td>1.6</td>
+<td>1.6</td>
+<td>2.6</td>
+<td>15.3</td>
+<td>15.0</td>
+<td>1.0</td>
+</tr>
+<tr class="odd">
+<td>50 KiB response</td>
+<td>6.0</td>
+<td>6.0</td>
+<td>21.7</td>
+<td>49.6</td>
+<td>62.5</td>
+<td>3.1</td>
+</tr>
+<tr class="even">
+<td>100 KiB response</td>
+<td>22.2</td>
+<td>21.8</td>
+<td>23.1</td>
+<td>59.4</td>
+<td>110.4</td>
+<td>3.8</td>
+</tr>
+</tbody>
+</table>
+<p>Writes are mixed. Storing the 50 KiB response took 36 µs, against diskcache’s 323, <code>FileBasedCache</code>’s 601 and <code>DatabaseCache</code>’s 95. At 100 KiB, past the 64 KiB line where a value goes in a file of its own, it took 177 µs: still under diskcache’s 337 and <code>FileBasedCache</code>’s 1,193, but over <code>DatabaseCache</code>’s 141. <code>LocMemCache</code> is the ceiling: a dict in the process, which no other worker can see.</p>
+<p><strong>Worker processes.</strong> Each process opens the alias and runs 99 reads to 1 write over 1,000 keys holding a 1 KB <code>str</code>, in operations per second:</p>
+<div class="dco-chart" data-type="lines" data-x="Processes" data-y="operations per second" data-title="With many worker processes, shards keeps climbing" data-note="bench/django.py: 99 reads to 1 write through django.core.cache, 1 KB str values, one thread per process, Django 6.1.3, Python 3.14, MacBook Pro (M5 Pro). Higher is better. Hover for the numbers.">
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Processes</th>
+<th>diskcache-oxide</th>
+<th><code>shards=8</code></th>
+<th>diskcache 5.6.3</th>
+<th><code>DatabaseCache</code> (SQLite)</th>
+<th><code>FileBasedCache</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>514k ops/s</td>
+<td>547k</td>
+<td>341k</td>
+<td>79k</td>
+<td>43k</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>610k</td>
+<td>894k</td>
+<td>610k</td>
+<td>144k</td>
+<td>65k</td>
+</tr>
+<tr class="odd">
+<td>4</td>
+<td>607k</td>
+<td>1,397k</td>
+<td>1,013k</td>
+<td>262k</td>
+<td>115k</td>
+</tr>
+<tr class="even">
+<td>8</td>
+<td>269k</td>
+<td>1,431k</td>
+<td>1,270k</td>
+<td>300k</td>
+<td>129k</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops climbing past two processes and then falls, and the writes aren’t the cause: at 1,000 reads to 1 write it falls the same way (295k at 8 processes), and so it does with no writes at all. The likely cause is the lock every read takes in SQLite’s shared-memory file, which processes reading one database contend for (not yet profiled across processes); it’s the top item for the <a href="../user-guide/performance.html#next-free-threaded-scaling">free-threaded phase</a>. Shards spread the reads over 8 files, which is what <code>OPTIONS = {'shards': 8}</code> is for: with 8 worker processes it’s 5.3x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and 1.1x diskcache’s backend, a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> of 8 shards by default. The free-threaded build’s process numbers are the same or up to 13% lower.</p>
+<p><strong>Four worker processes, the options side by side.</strong> A typical small deployment, gunicorn with <code>workers = 4</code>, measured on its own: each backend at 4 processes, median of 3 rounds of 3 seconds, on Python 3.14 (<code>bench/django_procs.py</code>; <code>bench/results/django-4procs-macbook-m5-pro.md</code>):</p>
+<div class="dco-chart" data-type="hbars" data-y="operations per second, all 4 workers together" data-title="Four Django workers: shards=8 is the fastest shared cache" data-note="bench/django_procs.py: 4 worker processes, one thread each, through django.core.cache, 1 KB str values, Django 6.1.3, Python 3.14, MacBook Pro (M5 Pro). Higher is better. LocMemCache is left out: each worker has its own, so nothing is shared. Hover for the numbers.">
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Backend</th>
+<th>99 reads : 1 write</th>
+<th>1,000 reads : 1 write</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>diskcache-oxide, <code>shards=8</code></td>
+<td><strong>1,320k ops/s</strong></td>
+<td><strong>1,750k ops/s</strong></td>
+</tr>
+<tr class="even">
+<td>diskcache 5.6.3 (8 shards, its default)</td>
+<td>970k</td>
+<td>1,165k</td>
+</tr>
+<tr class="odd">
+<td>diskcache-oxide, plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></td>
+<td>597k</td>
+<td>622k</td>
+</tr>
+<tr class="even">
+<td><code>DatabaseCache</code> (SQLite)</td>
+<td>258k</td>
+<td>280k</td>
+</tr>
+<tr class="odd">
+<td><code>FileBasedCache</code></td>
+<td>117k</td>
+<td>156k</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>With 4 workers, <code>shards=8</code> is 2.2x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 99:1 (2.8x at 1,000:1), 1.4x diskcache’s backend (1.5x), about 5x <code>DatabaseCache</code> and 11x <code>FileBasedCache</code>. A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> already sits below diskcache’s sharded backend here, which is why a site with several workers should shard its busy alias. On Python 3.14t the numbers are within 7% of these, since each process runs one thread either way. <code>LocMemCache</code> reached about 4.1M, but that’s four private dicts: a page one worker caches is a miss in the other three.</p>
+<p>Threads in one process are the other case. With 8 threads sharing one alias on Python 3.14, a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> keeps 510k ops/s where diskcache’s backend falls to 18k. On the free-threaded build the gap closes: at 8 threads and 99:1, 676k (871k with <code>shards=8</code>) against diskcache’s 430k, and at 1,000:1 diskcache’s backend (986k) edges out a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> (823k) and matches <code>shards=8</code> (993k).</p>
+<p>Redis (Django’s <code>RedisCache</code>) was measured too, in a container on the same Mac, but its numbers aren’t shown: at over 100 µs a read, they mostly measure the port forwarding into the container’s VM rather than Redis.</p>
+<section id="async-reads" class="level2">
+<h2 class="anchored" data-anchor-id="async-reads">Async reads</h2>
+<p>Every async method, <a href="../reference/DjangoCache.aget.html#diskcache_oxide.DjangoCache.aget" class="gdls-link gdls-code">aget</a> included, runs its sync form on a thread through <code>sync_to_async</code>, as Django’s own backends do. That hop costs more than the read:</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th>Case</th>
+<th><code>await cache.aget()</code> p50 / p99.9</th>
+<th><code>cache.get()</code> inline p50 / p99.9</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Small dict</td>
+<td>58 / 191 µs</td>
+<td>2.5 / 12 µs</td>
+</tr>
+<tr class="even">
+<td>100 KiB response</td>
+<td>86 / 138 µs</td>
+<td>24 / 65 µs</td>
+</tr>
+<tr class="odd">
+<td>Small dict, beside a process writing</td>
+<td>58 / 82 µs</td>
+<td>7.2 / 20 µs</td>
+</tr>
+</tbody>
+</table>
+<p>Reading a small value inline would be about 20 times faster (3.6 times for the 100 KiB response), and the hop stays anyway, because an <code>await</code> on a coroutine that never suspends doesn’t give the event loop a turn. An inline <a href="../reference/DjangoCache.aget.html#diskcache_oxide.DjangoCache.aget" class="gdls-link gdls-code">aget</a> in a loop over a million keys would hold every other request on that worker until the loop ended, however fast each read was, and that breaks what an <code>await</code> promises. On a thread, the loop runs other work while each read happens, and a rare slow read (a cold disk, a busy moment) delays only the request that made it. Where 60 µs a read matters, call <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get()</a> directly from the async view and accept that it holds the loop for the read.</p>
+</section>
+</section>
+<section id="in-tests" class="level1">
+<h1>In tests</h1>
+<p><code>override_settings(CACHES=...)</code> works: when <code>CACHES</code> changes, the backend closes every handle it opened, so a test suite that gives each test its own temporary <code>LOCATION</code> doesn’t run out of file descriptors, and a test that deletes its directory doesn’t leave a handle on deleted files. To release them yourself (before deleting a directory a test made, say), call <code>diskcache_oxide.djangocache.close_all()</code>; the next call reopens. On Windows, a directory can’t be deleted while a handle on it is open, so call it there before deleting one.</p>
+</section>
+<section id="coming-from-diskcaches-djangocache" class="level1">
+<h1>Coming from diskcache’s DjangoCache</h1>
+<p>Change <code>'BACKEND': 'diskcache.DjangoCache'</code> to <code>'BACKEND': 'diskcache_oxide.DjangoCache'</code>, then the settings: <code>SHARDS</code> becomes <code>OPTIONS['shards']</code> (diskcache’s backend is always a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, 8 shards by default; this one is a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> unless you ask), <code>DATABASE_TIMEOUT</code> becomes <code>OPTIONS['timeout']</code>, and <code>MAX_ENTRIES</code> goes (use <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>). The cache starts cold: diskcache-oxide doesn’t read diskcache’s files. Give it a new <code>LOCATION</code>: on the old one, diskcache’s <code>000</code> to <code>007</code> shard folders stay, untouched and uncounted by <a href="../reference/Cache.size_limit.html#diskcache_oxide.Cache.size_limit" class="gdls-link gdls-code">size_limit</a>, until you delete them. The calls take Django’s arguments, so diskcache’s extra keywords raise <code>TypeError</code>: <code>retry=</code> on any call, <code>read=</code> on <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a>, <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> and <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add</a>, <code>expire_time=</code> and <code>tag=</code> on <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> and <a href="../reference/Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a>, and <code>default=</code> on <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr</a>. <code>deque()</code>, <code>index()</code>, <code>cache(name)</code>, <a href="../reference/Cache.memoize.html#diskcache_oxide.Cache.memoize" class="gdls-link gdls-code">memoize</a> and the tag-index calls aren’t here. Any value diskcache’s backend stored is stored here, but for one: an int over 4,300 digits raises <code>ValueError</code> (D-063). A <code>str</code> holding a lone surrogate raises <code>UnicodeEncodeError</code> as the whole value, as in diskcache, and is pickled when it’s inside one. Finally, diskcache’s 10 ms timeout with silent retries, which wait for as long as the lock is held, is replaced by errors that raise, or <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a>. <a href="../user-guide/divergences.html">Divergences</a> has the full list under D-062.</p>
+
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp("https:\/\/mkennedy\.codes\/docs\/diskcache-oxide\/");
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+      window.quartoDecorateExternalLinks = function (root) {
+     var links = (root || window.document).querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+          if (!link.classList.contains('no-external-icon')) {
+          }
+        }
+      }
+      };
+      window.quartoDecorateExternalLinks(window.document);
+    // Esc closes the popup (WCAG 1.4.13) and focus leaving both trigger and
+    // popup closes it (WCAG 2.4.11); tippy handles neither for interactive popups.
+    const hideOnEscAndFocusOut = {
+      name: 'hideOnEscAndFocusOut',
+      defaultValue: true,
+      fn(instance) {
+        const dismiss = () => {
+          // A show scheduled by the trigger delay would otherwise reopen it
+          instance.clearDelayTimeouts();
+          instance.hide();
+        };
+        const onKeyDown = (event) => {
+          if (event.key !== 'Escape') {
+            return;
+          }
+          // Keep Esc from also reaching page handlers (e.g. reveal.js overview),
+          // except an open reveal.js slide menu, which Esc should close too.
+          // The menu handles keys only when its keyboard option is on.
+          const menuHandlesEsc = window.Reveal?.getPlugin?.('menu')?.isOpen() &&
+            window.Reveal.getConfig().menu?.keyboard !== false;
+          if (!menuHandlesEsc) {
+            event.stopPropagation();
+          }
+          if (instance.popper.contains(window.document.activeElement)) {
+            // Disabled while refocusing so the focus trigger does not reopen it
+            instance.disable();
+            instance.reference.focus();
+            instance.enable();
+          }
+          dismiss();
+        };
+        const onFocusOut = (event) => {
+          const target = event.relatedTarget;
+          if (target && !instance.reference.contains(target) &&
+              !instance.popper.contains(target)) {
+            dismiss();
+          }
+        };
+        // On the trigger too: a click trigger (code-annotations: select) has no
+        // blur handling. Attached for the instance's lifetime so leaving the
+        // trigger also cancels a show still pending on the trigger delay.
+        instance.reference.addEventListener('focusout', onFocusOut);
+        return {
+          onShow() {
+            window.document.addEventListener('keydown', onKeyDown, true);
+            instance.popper.addEventListener('focusout', onFocusOut);
+          },
+          onHide() {
+            window.document.removeEventListener('keydown', onKeyDown, true);
+            instance.popper.removeEventListener('focusout', onFocusOut);
+          },
+          onDestroy() {
+            instance.reference.removeEventListener('focusout', onFocusOut);
+          },
+        };
+      },
+    };
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+        plugins: [hideOnEscAndFocusOut],
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          // Each band is positioned against its own containing block, which is
+          // not the offsetParent of the lines, so place it from client rects.
+          const placeBand = (band, firstEl, lastEl, codeBlock) => {
+            const container = band.offsetParent;
+            if (container === null) {
+              return;
+            }
+            const containerRect = container.getBoundingClientRect();
+            // Reveal.js scales slides with a transform, so convert client
+            // pixels back to the CSS pixels of the container.
+            const scale = containerRect.height / container.offsetHeight || 1;
+            const firstRect = firstEl.getBoundingClientRect();
+            const lastRect = lastEl.getBoundingClientRect();
+            const top = (firstRect.top - containerRect.top) / scale - container.clientTop + container.scrollTop;
+            const height = (lastRect.bottom - firstRect.top) / scale;
+            band.style.top = top - 2 + "px";
+            band.style.height = height + 4 + "px";
+            if (codeBlock) {
+              // Without the copy button wrapper, the containing block is wider
+              // than the code block, so span the code block explicitly.
+              const blockRect = codeBlock.getBoundingClientRect();
+              band.style.left = (blockRect.left - containerRect.left) / scale - container.clientLeft + container.scrollLeft + "px";
+              band.style.width = blockRect.width / scale + "px";
+            }
+          };
+          if (lineIds.length > 0) {
+            const el = window.document.getElementById(lineIds[0]);
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const parent = el.parentElement.parentElement;
+            // cook up a div (if necessary) and position it
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            placeBand(div, el, lastEl, parent.closest("div.sourceCode") || parent);
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            placeBand(gutterDiv, el, lastEl);
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+  <script type="application/javascript">
+  window.quartoScrollableRegionsLabels = {"code":"Scrollable code","output":"Scrollable output"};
+  </script>
+<nav class="page-navigation" aria-label="Page">
+  <div class="nav-page nav-page-previous">
+      <a href="../user-guide/fanoutcache.html" class="pagination-link" aria-label="FanoutCache: sharded caches">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">FanoutCache: sharded caches</span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="../user-guide/transactions.html" class="pagination-link" aria-label="Transactions">
+        <span class="nav-page-text">Transactions</span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav>
+</div> <!-- /content -->
+<footer class="footer">
+  <div class="nav-footer">
+<div class="nav-footer-center">
+<p>Developed by <a href="https://mkennedy.codes"><strong>Michael&nbsp;Kennedy</strong></a>.<br>Site created with <strong>Great&nbsp;Docs</strong>.</p>
+</div>
+</div>
+</footer>
+<script src="../github-widget.js"></script>
+<script src="../copy-page.js"></script>
+<script src="../sidebar-wrap.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'sidebar-float.js';document.body.appendChild(s);})();</script>
+<script src="../sidebar-filter.js"></script>
+<script src="../dark-mode-toggle.js"></script>
+<script src="../back-to-top.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'on-this-page.js';document.body.appendChild(s);})();</script>
+<script src="../keyboard-nav.js"></script>
+<script src="../copy-code.js"></script>
+<script src="../details.js"></script>
+<script src="../mermaid-renderer.js"></script>
+<script src="../tooltips.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'color-swatch.js';document.body.appendChild(s);})();</script>
+<script src="../responsive-tables.js"></script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'video-embed.js';document.body.appendChild(s);})();</script>
+<script>(function(){var s=document.createElement('script');var m=document.querySelector('meta[name="quarto:offset"]');s.src=(m?m.content:'')+'termshow.js';document.body.appendChild(s);})();</script>
+<script src="../navbar-widgets.js"></script>
+
+
+
+
+</body></html>

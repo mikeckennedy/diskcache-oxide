@@ -479,7 +479,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-16">v0.3.5</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.6</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -496,6 +496,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="../example-apps/index.html"> 
+<span class="menu-text">Example apps</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -507,7 +511,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="7" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="18" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -606,6 +610,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/django.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Django cache backend</span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -804,6 +814,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li>Or store a plain structure instead: a dict from a model’s <code>model_dump()</code>, and rebuild the object on the way out.</li>
 <li>If you really need arbitrary objects, open a separate cache for them with <code>Cache('/var/cache/my-app-objects', pickle=True)</code>. Don’t turn <code>pickle=True</code> on for a cache that other code shares just to make the error go away: every reader of that directory then runs <code>pickle.loads</code> on whatever is written there. See <a href="../user-guide/serialization.html">Serialization</a>.</li>
 </ol>
+<p>A <code>str</code> holding a lone surrogate (<code>'\ud800'</code>, which can arrive from a JSON body or <code>surrogateescape</code> decoding) can’t be stored as UTF-8. Nested inside a value it raises <code>UnicodeEncodeError</code> without pickle and is pickled with it, as diskcache does; as a top-level value it raises either way, as it does in diskcache.</p>
 <p>A registered type that still raises here is one whose <code>encode</code> function raised, or returned something the codec can’t store, or a dataclass with a field it can’t store. That raises even on a cache with <code>pickle=True</code>: a registered type is never pickled.</p>
 </section>
 <section id="typeerror-for-keys-and-booleans" class="level1">
@@ -1024,13 +1035,13 @@ CorruptValueError: ...</code></pre>
 <span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">'handlers'</span>: {<span class="st">'console'</span>: {<span class="st">'class'</span>: <span class="st">'logging.StreamHandler'</span>, <span class="st">'formatter'</span>: <span class="st">'plain'</span>}},</span>
 <span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">'loggers'</span>: {<span class="st">'diskcache_oxide'</span>: {<span class="st">'level'</span>: <span class="st">'INFO'</span>, <span class="st">'handlers'</span>: [<span class="st">'console'</span>], <span class="st">'propagate'</span>: <span class="va">False</span>}},</span>
 <span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div>
-<p>With gunicorn, put the same dictionary in <code>logconfig_dict</code> in <code>gunicorn.conf.py</code> so the workers’ logging and the library’s go to one place. Records carry extra fields (the format-redirect warning has <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a>, <code>using</code>, <code>found</code> and <code>found_in</code>; a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s shard-count warning <code>stored_shards</code> and <code>requested_shards</code>, and a registry’s shard-count error <code>cache</code>, <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a>, <code>stored_shards</code> and <code>registered_shards</code>), which a structured formatter or Sentry picks up as attributes.</p>
+<p>With gunicorn, put the same dictionary in <code>logconfig_dict</code> in <code>gunicorn.conf.py</code> so the workers’ logging and the library’s go to one place. Records carry extra fields (the format-redirect warning has <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a>, <code>using</code>, <code>found</code> and <code>found_in</code>; a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>’s shard-count warning <code>stored_shards</code> and <code>requested_shards</code>, and a registry’s shard-count error <a href="../reference/DjangoCache.cache.html#diskcache_oxide.DjangoCache.cache" class="gdls-link gdls-code">cache</a>, <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a>, <code>stored_shards</code> and <code>registered_shards</code>), which a structured formatter or Sentry picks up as attributes.</p>
 <ul>
 <li><strong><code>on_decode_error='miss'</code></strong> logs a warning for each stored version it couldn’t read, once per cache handle, and deletes the row if no build could read it.</li>
 <li><strong><code>durable=True</code></strong> counts every swallowed failure in one of three groups and logs each group’s first failure at once, then at most once a minute per cache handle, with counts by operation since its last line (<code>get: 1204, set: 37</code>). Busy (a <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>) logs at <code>WARNING</code>, failing (a full disk, an I/O error, a damaged database) at <code>ERROR</code>, and lost invalidations (any failed <a href="../reference/Cache.delete.html#diskcache_oxide.Cache.delete" class="gdls-link gdls-code">delete</a>, whose entry can now be served stale) at <code>ERROR</code>. An outage that ends within the minute shows only its first failure until the next line, so each line says more may follow. <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> logs what’s left.</li>
 <li><strong><a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a></strong> logs <code>could not open cache 'pages' at /var/cache/my-app/pages; using a NullCache, retrying in 10 s</code> at <code>ERROR</code> with the traceback when a cache can’t open. When the open merely timed out, it logs <code>cache 'pages' at /var/cache/my-app/pages is busy; using a NullCache, retrying in 1 s: ...</code> at <code>WARNING</code>, without a traceback, and retries after at most 1 s. Both are logged only when no <code>on_open_error=</code> is set; pass one to send them to Sentry instead.</li>
 <li><strong><code>FanoutCache(directory, shards=n)</code></strong> logs <code>FanoutCache at /var/cache/my-app/rate_limits has 8 shards but shards=16 was asked for; using the 8 it has. ...</code> at <code>WARNING</code>, once per process per folder and pair of counts, when the folder has another count than <a href="../reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards" class="gdls-link gdls-code">shards</a>. Its record carries <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a>, <code>stored_shards</code> and <code>requested_shards</code>. Pass <code>raise_on_mismatch=True</code> to raise <a href="../reference/LayoutMismatchError.html#diskcache_oxide.LayoutMismatchError" class="gdls-link gdls-code">LayoutMismatchError</a> instead.</li>
-<li><strong><a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a></strong> also logs <code>cache 'rate_limits' at /var/cache/my-app/rate_limits has 8 shards but is registered with shards=16; using the 8 on disk. To apply shards=16, delete /var/cache/my-app/rate_limits while no process has it open</code> at <code>WARNING</code> each time it opens a sharded cache whose folder has another count than the registration, and once per process <code>a FanoutCache is registered with a shard count its folder does not have</code> at <code>ERROR</code>, a constant message with the details in the record’s <code>cache</code>, <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a>, <code>stored_shards</code> and <code>registered_shards</code> attributes, so an error tracker groups every worker’s report into one issue. The cache works throughout; this one doesn’t go through <code>on_open_error</code>, since the open succeeded.</li>
+<li><strong><a href="../reference/Caches.html#diskcache_oxide.Caches" class="gdls-link gdls-code">Caches</a></strong> also logs <code>cache 'rate_limits' at /var/cache/my-app/rate_limits has 8 shards but is registered with shards=16; using the 8 on disk. To apply shards=16, delete /var/cache/my-app/rate_limits while no process has it open</code> at <code>WARNING</code> each time it opens a sharded cache whose folder has another count than the registration, and once per process <code>a FanoutCache is registered with a shard count its folder does not have</code> at <code>ERROR</code>, a constant message with the details in the record’s <a href="../reference/DjangoCache.cache.html#diskcache_oxide.DjangoCache.cache" class="gdls-link gdls-code">cache</a>, <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a>, <code>stored_shards</code> and <code>registered_shards</code> attributes, so an error tracker groups every worker’s report into one issue. The cache works throughout; this one doesn’t go through <code>on_open_error</code>, since the open succeeded.</li>
 <li><strong>Background maintenance</strong> never raises into your code. When a turn fails (an error, or work found without getting the write lock for 3 intervals running), the next single-key call on that cache logs <code>background maintenance failed on the cache at /var/cache/my-app/pages: ...</code> at <code>WARNING</code>, with <a href="../reference/Cache.directory.html#diskcache_oxide.Cache.directory" class="gdls-link gdls-code">directory</a> in the record. It’s logged once per streak of failures, so a cache nobody calls never logs it, and a later successful turn ends the streak. <code>cache.maintenance_stats()</code> has the rest: <code>failures</code> counts every failure, not just the logged ones, and <code>last_error</code> holds the most recent failure’s message.</li>
 </ul>
 </section>

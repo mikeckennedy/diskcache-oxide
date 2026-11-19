@@ -1,7 +1,7 @@
 ---
 name: diskcache-oxide
 description: >-
-  Use diskcache-oxide, a shared, durable disk cache for Python with a Rust engine, SQLite storage and python-diskcache's API, built for many threads, many worker processes and free-threaded CPython. Use when adding or configuring diskcache_oxide in an app (Cache, FanoutCache, NullCache, Caches), switching code from diskcache, choosing between Cache and FanoutCache or between raising, missing and switching caching off, writing tests around a cache, or when code raises Timeout, TransactionBusy, UnsafeValueError, CorruptValueError, LayoutMismatchError, FormatMismatchError, or "can't be stored without pickle".
+  Use diskcache-oxide, a shared, durable disk cache for Python with a Rust engine, SQLite storage and python-diskcache's API, built for many threads, many worker processes and free-threaded CPython. Use when adding or configuring diskcache_oxide in an app (Cache, FanoutCache, NullCache, Caches), configuring Django's cache on it (DjangoCache), switching code from diskcache, choosing between Cache and FanoutCache or between raising, missing and switching caching off, writing tests around a cache, or when code raises Timeout, TransactionBusy, UnsafeValueError, CorruptValueError, LayoutMismatchError, FormatMismatchError, or "can't be stored without pickle".
 license: MIT
 compatibility: Requires CPython 3.14 or 3.15 (GIL or free-threaded) on macOS, Linux or Windows (x86_64). SQLite is bundled; no runtime dependencies.
 ---
@@ -41,9 +41,30 @@ coordination = Cache('/var/lib/my-app/state/coordination', timeout=3.0, eviction
 coordination.add('job:nightly', 1, expire=3600)  # exactly one worker wins
 ```
 
-Plain caches by default. A `FanoutCache` for one cache that many writers share (several worker processes, many threads on free-threaded Python, or a write-heavy load): up to 4× faster, for about 10 MiB more memory per process.
+Plain caches by default. A `FanoutCache` for one cache that several worker processes use heavily, reading or writing (a plain `Cache` slows past two or three processes even when they only read), many threads on free-threaded Python, or a write-heavy load: up to 4× faster (about 6× with 8 processes only reading), for about 10 MiB more memory per process. One worker process doesn't need it.
 
 In tests: `Cache(tmp_path / 'cache')` per test, `NullCache()` where caching must not interfere, and `Cache(tmp_path, clock=fake_clock)` to test expiry without sleeping. If tests patch `time.time`, pass `clock=lambda: time.time()`, since the cache reads the clock natively. A `clock=` handle gets no background maintenance, and a nonzero `maintenance_interval` with it raises `ValueError`; a cache's first turn comes at least one interval (5 minutes by default) after it opens, so short tests never see it.
+
+Django: `'BACKEND': 'diskcache_oxide.DjangoCache'` (`pip install 'diskcache-oxide[django]'`; Django 5.2, 6.0, 6.1). Two aliases, as for any app: pages and fragments on a durable one, sessions and counters on a plain, never-evicting one, in separate directories. `OPTIONS` takes `Cache`'s keyword names (`shards` makes it a `FanoutCache`); its defaults are a 1.0 s lock wait (`OPTIONS['timeout']`, not Django's `TIMEOUT`, which is the entry lifetime) and `pickle=True`. `MAX_ENTRIES`, `CULL_FREQUENCY`, diskcache's `SHARDS` and `DATABASE_TIMEOUT`, and a durable alias for the cache or cached_db session engine raise `ImproperlyConfigured`. Errors raise unless `durable`; `incr` raises `ValueError` and `clear()` `Timeout` even on a durable alias. Every instance shares one handle per directory per process; `close()` does nothing; in tests `override_settings(CACHES=...)` closes the handles, or call `diskcache_oxide.djangocache.close_all()`. A `cache_page` view that reads the session needs `@vary_on_cookie`.
+
+```python
+CACHES = {
+    'default': {
+        'BACKEND': 'diskcache_oxide.DjangoCache',
+        'LOCATION': '/var/lib/my-site/cache/pages',
+        'TIMEOUT': 600,
+        'OPTIONS': {'durable': True, 'size_limit': 2 * 1024**3},
+    },
+    'state': {
+        'BACKEND': 'diskcache_oxide.DjangoCache',
+        'LOCATION': '/var/lib/my-site/state/site',
+        'TIMEOUT': None,
+        'OPTIONS': {'eviction_policy': 'none'},
+    },
+}
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+SESSION_CACHE_ALIAS = 'state'
+```
 
 ## Rules
 
@@ -63,7 +84,7 @@ In tests: `Cache(tmp_path / 'cache')` per test, `NullCache()` where caching must
 - `NullCache(invalidate=real)` forwards only removals (`delete`, `pop`, `clear`, `evict`, `iterkeys`) to the real cache. An overwriting `set` or a version-bump `incr` is dropped while caching is off, so invalidate by deleting. The queue calls are never forwarded. A `NullCache` never encodes values, so it accepts a value a real cache refuses with `TypeError`: don't test value types only against a `NullCache`.
 - On a `NullCache`, `push()` returns a key and stores nothing (the job is lost), `pull()`/`peek()` return the default, a memoized function runs every call, and `get(k, tag=True)` is `(default, None)`. Keep queues, claims and locks on a cache that's never switched off.
 - `Caches`: register every cache at startup, before handing any out. `caches[name]` reads a plain cache and `caches.fanout(name)` one registered with `shards=` (the other way is a `TypeError`). An unregistered name is a `KeyError` from both; `caches.get(name, default=None)` returns the plain cache or `default` instead (a registered cache that can't open is still a `NullCache`, never `default`). Passing `shards=` at all, even `shards=None`, registers a `FanoutCache`. A registered `shards=n` applies only to a new folder: an existing folder keeps its own count, and the registry logs a WARNING (and one ERROR per process) instead of failing; to change the count, delete the folder with every worker stopped. `disable()`/`enable()` change later lookups only. `@caches[name].memoize()` binds at import to whatever the lookup returned (a `NullCache` if the open failed, forever); look the cache up per call if that matters. Registry `stats()` gives `CacheStats` (count, volume, `error`, and `maintenance`, the cache's `maintenance_stats()` or None if it couldn't be read); hit/miss counts are `caches[name].stats()`. Locks, claims, sessions and queues are plain `Cache(...)`s opened directly, never registered: a registry hands out a `NullCache` when one can't open.
-- `FanoutCache` is for a cache many writers share: several worker processes, many threads on free-threaded Python, or a write-heavy load. It costs about 10 MiB more memory per process than a plain `Cache`. `shards` is keyword-only (`FanoutCache(path, 4)` is `timeout=4`), the count is recorded and permanent for the directory (a different `shards=` keeps the stored count with a `WARNING`, or raises `LayoutMismatchError` with `raise_on_mismatch=True`), a plain `Cache` and a `FanoutCache` refuse each other's directories, `max_connections` and `size_limit` are totals (at least `shards` connections and `shards` MiB).
+- `FanoutCache` is for a cache several worker processes use heavily (reads too), many threads on free-threaded Python, or a write-heavy load. It costs about 10 MiB more memory per process than a plain `Cache`. `shards` is keyword-only (`FanoutCache(path, 4)` is `timeout=4`), the count is recorded and permanent for the directory (a different `shards=` keeps the stored count with a `WARNING`, or raises `LayoutMismatchError` with `raise_on_mismatch=True`), a plain `Cache` and a `FanoutCache` refuse each other's directories, `max_connections` and `size_limit` are totals (at least `shards` connections and `shards` MiB).
 - Cache directories must be on a local disk. SQLite's WAL mode is required: an open where SQLite declines WAL (some FUSE mounts) raises `RuntimeError` naming the journal mode, but NFS, SMB, EFS and Azure Files usually accept WAL and then corrupt, which can't be detected, so never use them (or a Kubernetes ReadWriteMany volume). New directories are created `0700` on Unix (on Windows they inherit the parent's permissions). A directory is a cache or a parent of caches, never both: never nest a cache inside another cache's directory.
 - After a big fill or `clear()`, call `cache.checkpoint()` so the write-ahead log is truncated; `close()` does it for a large log; `wal_checkpoint='auto'` is the opt-in for long-running writers. Background maintenance also checkpoints a log grown past half of `wal_size_limit`, every `maintenance_interval`, as far as readers in other processes let it (it never waits for them). Explicit `expire()`, `cull()`, `clear()` and `checkpoint()` calls are for when you want it done now, each with its own `timeout=`.
 - `@cache.memoize(name=None, typed=False, expire=None, tag=None, ignore=())` caches a function's results, with diskcache's key shape (`f.__cache_key__(*args, **kwargs)` gives it, for `cache.delete(...)`). Call it with parentheses. `ignore` is the fifth positional argument (after `tag`), so pass it by name. Every argument not in `ignore` must be a key type, or the call raises before the function runs; put connections and clients in `ignore`. `expire=0` never stores; `None` results are cached; `async def` is refused. On a `NullCache` it runs every call.
@@ -96,6 +117,7 @@ In tests: `Cache(tmp_path / 'cache')` per test, `NullCache()` where caching must
 | A work queue shared by worker processes | `push(value, prefix='jobs')` / `pull(prefix='jobs')` on a `Cache(dir, eviction_policy='none')` (not a `FanoutCache`) |
 | Tests of expiry without sleeping; tests that patch `time.time` | `Cache(tmp_path, clock=fake)`; `clock=lambda: time.time()` |
 | A huge `-wal` file after a write burst | `cache.checkpoint()`, or `Cache(..., wal_checkpoint='auto')` |
+| Django's cache framework (`django.core.cache`, `cache_page`, `{% cache %}`, cache sessions) | `'BACKEND': 'diskcache_oxide.DjangoCache'`: durable alias for pages, plain one for sessions |
 | Type a function that accepts any cache | `CacheLike`; `TransactionalCacheLike` if it calls `transact()`; `ShardedCacheLike` for `transact(key=)` |
 
 ## API
@@ -110,6 +132,7 @@ In tests: `Cache(tmp_path / 'cache')` per test, `NullCache()` where caching must
 - `register_type(cls, *, name, encode=None, decode=None)`, `unregister_type(cls) -> bool`, `registered_types() -> dict[str, type]`, on the process-wide `registry: TypeRegistry`; `TypeRegistry()` with the same `register`/`unregister`/`registered` for one cache's `types=`. Own built-in types can't be registered (`ValueError`); one of `encode`/`decode` alone, a non-dataclass with neither, or a dataclass with an `InitVar` is `TypeError`.
 - Exceptions: `Timeout(TimeoutError)`, `TransactionBusy(Timeout)`, `TransactionAborted(RuntimeError)`, `UnsafeValueError(TypeError)`, `CorruptValueError(ValueError)`, `CorruptKeyError(CorruptValueError)` (iteration met a stored key it can't read), `ForeignValueError(CorruptValueError)`, `FormatMismatchError(RuntimeError)`, `LayoutMismatchError(FormatMismatchError, ValueError)`.
 - Warnings from `check()`: `UnknownFileWarning`, `EmptyDirWarning`. Sentinels: `ENOVAL`, `UNKNOWN`. Types: `Key` (the key union), `Memoized`, `Memoizer`, `CacheStats`, `MaintenanceStats` (a `TypedDict`: `interval`, `turns`, `removed`, `failures`, `last_error`). Recipes: `Lock`, `RLock`, `BoundedSemaphore`, `Averager`, `throttle`, `barrier`, `memoize_stampede`.
+- `DjangoCache(location, params)`, Django's backend class, loaded lazily (not in `__all__`): Django's API plus `tag=` on `set`/`add`, `evict(tag)`, `pop(key, default=None, version=None)`, `expire()`, `cull()`, `stats()`, `maintenance_stats()`, `check(fix=False)`, and `cache` (the `Cache` underneath; its keys are `prefix:version:key`). `diskcache_oxide.djangocache.close_all()`.
 - `sqlite_version()`, `sqlite_compile_options()`, `BUNDLED_SQLITE_VERSION`, `__version__`. Logging goes to the `diskcache_oxide` logger. There is no CLI and no environment variable to configure.
 
 ## Reading an error

@@ -11,6 +11,8 @@ survives restarts. The entry points:
   write often.
 - `NullCache()`: caching switched off, with the same API, so call sites don't change.
 - `Caches(base_dir)`: a registry of named caches, each opened on first use.
+- `DjangoCache`: a Django cache backend, `'BACKEND': 'diskcache_oxide.DjangoCache'`. Loaded on
+  first use, so importing this package never imports Django.
 - `CacheLike`, `TransactionalCacheLike`, `ShardedCacheLike`: protocols for code that accepts any of
   them.
 - `Lock`, `RLock`, `BoundedSemaphore`, `throttle`, `barrier`, `Averager`, `memoize_stampede`: the
@@ -41,7 +43,7 @@ under. `NullCache`, the protocols and `Caches` are pure Python.
 """
 
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from diskcache_oxide._constants import ENOVAL, UNKNOWN
 from diskcache_oxide._core import (
@@ -69,6 +71,28 @@ from diskcache_oxide.caches import Caches, CacheStats
 from diskcache_oxide.null import NullCache
 from diskcache_oxide.protocol import CacheLike, ShardedCacheLike, TransactionalCacheLike
 from diskcache_oxide.recipes import Averager, BoundedSemaphore, Lock, RLock, barrier, memoize_stampede, throttle
+
+if TYPE_CHECKING:
+    from diskcache_oxide.djangocache import DjangoCache as DjangoCache
+
+
+def __getattr__(name: str) -> Any:
+    # `DjangoCache` is loaded on first use, so `import diskcache_oxide` never imports Django. It's not
+    # in `__all__`: there, `import *` and `hasattr` would raise wherever Django isn't installed.
+    if name == 'DjangoCache':
+        try:
+            import django  # noqa: F401
+        except ModuleNotFoundError as error:
+            if error.name != 'django':
+                raise  # Django is installed but broken: that's the real error
+            raise AttributeError(
+                "diskcache_oxide.DjangoCache needs Django, which isn't installed: pip install 'diskcache-oxide[django]'"
+            ) from error
+        from diskcache_oxide.djangocache import DjangoCache  # any other import error is a real one
+
+        globals()['DjangoCache'] = DjangoCache
+        return DjangoCache
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
 def register_type[T](

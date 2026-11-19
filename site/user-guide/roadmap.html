@@ -444,7 +444,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-16">v0.3.5</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.6</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -461,6 +461,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="../example-apps/index.html"> 
+<span class="menu-text">Example apps</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -472,7 +476,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="7" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="18" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -575,6 +579,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
+  <a href="../user-guide/django.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Django cache backend</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
   <a href="../user-guide/transactions.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">Transactions</span></a>
   </div>
@@ -651,6 +661,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#done-upgrades-across-a-format-change-0.3.5" id="toc-done-upgrades-across-a-format-change-0.3.5" class="nav-link" data-scroll-target="#done-upgrades-across-a-format-change-0.3.5">Done: upgrades across a format change (0.3.5)</a></li>
   <li><a href="#done-expiry-thats-exact-for-counts-and-listings-0.3.5" id="toc-done-expiry-thats-exact-for-counts-and-listings-0.3.5" class="nav-link" data-scroll-target="#done-expiry-thats-exact-for-counts-and-listings-0.3.5">Done: expiry that’s exact for counts and listings (0.3.5)</a></li>
   <li><a href="#done-background-maintenance-0.3.5" id="toc-done-background-maintenance-0.3.5" class="nav-link" data-scroll-target="#done-background-maintenance-0.3.5">Done: background maintenance (0.3.5)</a></li>
+  <li><a href="#done-a-django-cache-backend-0.4.6" id="toc-done-a-django-cache-backend-0.4.6" class="nav-link" data-scroll-target="#done-a-django-cache-backend-0.4.6">Done: a Django cache backend (0.4.6)</a></li>
   <li><a href="#next" id="toc-next" class="nav-link" data-scroll-target="#next">Next</a></li>
   <li><a href="#decided-against-and-why" id="toc-decided-against-and-why" class="nav-link" data-scroll-target="#decided-against-and-why">Decided against, and why</a></li>
   </ul></li>
@@ -697,7 +708,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="stage-2-the-complete-local-caching-toolkit-in-progress" class="level2">
 <h2 class="anchored" data-anchor-id="stage-2-the-complete-local-caching-toolkit-in-progress">Stage 2: the complete local caching toolkit (in progress)</h2>
-<p>The things a modern Python stack needs that diskcache never had. Sharding that doesn’t lock every shard for a transaction and coordination recipes that hold across every process are already in. Still to come are a Django cache backend, threads that scale on free-threaded Python, and an async API.</p>
+<p>The things a modern Python stack needs that diskcache never had. Sharding that doesn’t lock every shard for a transaction and coordination recipes that hold across every process are already in. So is a <a href="../user-guide/django.html">Django cache backend</a>. Still to come are threads that scale on free-threaded Python, and an async API.</p>
 </section>
 <section id="stage-3-a-cache-server" class="level2">
 <h2 class="anchored" data-anchor-id="stage-3-a-cache-server">Stage 3: a cache server</h2>
@@ -785,11 +796,14 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <h2 class="anchored" data-anchor-id="done-background-maintenance-0.3.5">Done: background maintenance (0.3.5)</h2>
 <p>A cache looks after itself, with no <a href="../reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> to schedule. One small Rust thread per process frees expired entries’ space, trims a cache left over its size limit, keeps the write-ahead log small and clears stray temporary files, for every open cache, every 5 minutes by default (<code>maintenance_interval</code>). The caches take turns across the interval, the processes sharing a cache take turns so eight workers don’t all do the same work, a cache with nothing to do is written only once an hour, to coordinate them (<code>maintenance_interval=0</code> for none), and the thread holds the write lock only for short chunks and stops for every <code>os.fork()</code>. See <a href="../user-guide/storage-and-wal.html#background-maintenance">Background maintenance</a>.</p>
 </section>
+<section id="done-a-django-cache-backend-0.4.6" class="level2">
+<h2 class="anchored" data-anchor-id="done-a-django-cache-backend-0.4.6">Done: a Django cache backend (0.4.6)</h2>
+<p><code>'BACKEND': 'diskcache_oxide.DjangoCache'</code> runs Django’s cache framework (the low-level API, the per-view and per-site cache, template fragments and the cache session engines) on diskcache-oxide, every worker sharing one cache on disk, with <a href="../reference/Cache.add.html#diskcache_oxide.Cache.add" class="gdls-link gdls-code">add()</a> and <a href="../reference/Cache.incr.html#diskcache_oxide.Cache.incr" class="gdls-link gdls-code">incr()</a> atomic across processes. It passes Django’s own cache tests from the source of Django 5.2, 6.0 and 6.1, on every Python each supports. See <a href="../user-guide/django.html">Django cache backend</a>.</p>
+</section>
 <section id="next" class="level2">
 <h2 class="anchored" data-anchor-id="next">Next</h2>
 <p>In roughly this order:</p>
 <ul>
-<li><strong>Django cache backend</strong>: A diskcache-oxide backend for Django’s cache framework, tested against Django’s own cache test suite. It’s a big job, so it gets a phase of its own.</li>
 <li><strong>Free-threaded performance</strong>: Make throughput scale with threads on 3.14t and 3.15t. Today a cached read spends about 60% of its time in one system call SQLite makes for its shared-memory lock, and that’s the first target.</li>
 <li><strong><code>AsyncCache</code></strong>: An async API for asyncio frameworks that can’t slow down the sync one, including <code>transact_async()</code>. It starts as an experiment and ships only if it earns its place; if it doesn’t, this page will say why.</li>
 <li><strong>Network server</strong>: Stage 3, above. Speculative, and a separate product if it happens.</li>
@@ -820,7 +834,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <ul>
 <li>Reading existing diskcache directories. diskcache-oxide uses its own on-disk format, so caches start cold when you switch.</li>
 <li>A module named <code>diskcache</code> (it would collide with the real package).</li>
-<li>diskcache’s own <code>DjangoCache</code> class. A Django backend of diskcache-oxide’s own is planned, above.</li>
+<li>diskcache’s own <a href="../reference/DjangoCache.html#diskcache_oxide.DjangoCache" class="gdls-link gdls-code">DjangoCache</a> class, ported. diskcache-oxide has a <a href="../user-guide/django.html">Django backend</a> of its own instead, above.</li>
 <li>Python older than 3.14.</li>
 </ul>
 

@@ -51,6 +51,10 @@ for spec in "${ENVS[@]}"; do
 
     step "build + test on Python $python ($env)"
     dco_env "$env" "$python"
+    # The `django` group (not a default one, so dco_env leaves it out): ty and tests/unit/test_django.py
+    # need Django importable, and Django's own suite below needs its dependencies.
+    uv export --quiet --locked --only-group django --no-emit-project --no-hashes --format requirements-txt \
+        | uv pip install --quiet --python "$env/bin/python" -r -
 
     # -W error also catches CPython's warning if the extension ever re-enables the GIL.
     "$env/bin/python" -W error -c '
@@ -79,26 +83,36 @@ print(f"diskcache_oxide {d.__version__} on {sys.version.split()[0]} ({build}), S
         "$env/bin/pytest" -q -p no:cacheprovider -m slow --backend=oxide tests/conformance
     fi
 
-    # The example app (examples/webapp), on 3.14 and 3.14t: its `example` dependency group, its type
-    # check (the repo-wide ty run excludes it), and its tests, multi-process gunicorn run included.
+    # Django's own cache tests against DjangoCache, from each pinned sdist: 6.1 everywhere, 5.2 and 6.0
+    # on 3.14 and 3.14t (they don't support 3.15).
+    scripts/django-suite.sh --env "$env"
+
+    # The example apps (examples/webapp and examples/django), on 3.14 and 3.14t: the `example`
+    # dependency group, their type checks (the repo-wide ty run excludes them), and their tests,
+    # multi-process gunicorn runs included.
     if [[ "$python" == 3.14 || "$python" == 3.14t ]]; then
         uv export --quiet --locked --only-group example --no-emit-project --no-hashes --format requirements-txt \
             | uv pip install --quiet --python "$env/bin/python" -r -
         "$env/bin/ty" check --python "$env" examples/webapp
         "$env/bin/pytest" -q -p no:cacheprovider -c examples/webapp/pyproject.toml examples/webapp/tests
+        # The Django example (examples/django): Django from the `django` group, gunicorn from `example`.
+        "$env/bin/ty" check --python "$env" examples/django
+        "$env/bin/pytest" -q -p no:cacheprovider -c examples/django/pyproject.toml examples/django/tests
     fi
 done
 
-# The example app stays out of what we ship: maturin builds the wheel from python/ only, and this
-# checks the source distribution too.
-step 'sdist leaves out examples/'
+# The example apps, Django's suite harness, the tests and the benchmarks stay out of what we ship:
+# maturin builds the wheel from python/ only, and this checks the source distribution too. Top-level
+# directories only (the tarball's entries start with its own folder), so a crate's tests/ is fine.
+step 'sdist leaves out examples/, django_suite/, tests/ and bench/'
 sdist_dir="$(mktemp -d)"
 uvx --from 'maturin>=1.15,<2' maturin sdist --out "$sdist_dir" >/dev/null  # errors still show
 # Listed into a variable first, so a missing tarball or a failed tar stops the script under set -e.
 sdist_listing="$(tar tzf "$sdist_dir"/*.tar.gz)"
 rm -rf "$sdist_dir"
-if grep -q '/examples/' <<<"$sdist_listing"; then
-    echo 'examples/ ended up in the sdist' >&2
+if leaked="$(grep -E '^[^/]+/(examples|django_suite|tests|bench)/' <<<"$sdist_listing")"; then
+    echo "these ended up in the sdist:" >&2
+    echo "$leaked" >&2
     exit 1
 fi
 

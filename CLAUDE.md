@@ -32,6 +32,7 @@ bash -c 'source scripts/uv_env.sh && dco_env venv 3.14'        # a new or refres
 bash -c 'source scripts/uv_env.sh && dco_env .venv-ft 3.14t'
 uv pip install --python venv/bin/python -e .                     # rebuild the extension after a Rust change
 uv pip install --python venv/bin/python --group docs             # the docs tooling (Great Docs, ipykernel)
+uv pip install --python venv/bin/python --group django           # Django: ty and tests/unit/test_django.py need it (check.sh installs it itself)
 ```
 
 `uv pip install -e .` rebuilds the extension when any `.rs`, `Cargo.toml`, `Cargo.lock` or `.cargo/config.toml` changes (`tool.uv.cache-keys`); add `--reinstall-package diskcache-oxide` to force it. The Rust toolchain is pinned in `rust-toolchain.toml` and tracks the latest stable; `rust-version` in `Cargo.toml` moves with it. No older MSRV, so use new std APIs freely. Quarto must be on `PATH` for docs; `cargo-deny` and the pinned nightly (for Miri) are separate installs.

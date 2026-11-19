@@ -1,0 +1,6 @@
+{% extends "demo/base.html" %}
+{% block title %}{{ episode.title }}{% endblock %}
+{% block content %}
+<h1>{{ episode.title }}</h1>
+<p id="rendered" data-rendered-at="{{ rendered_at }}">Episode {{ episode.number }}, rendered at {{ rendered_at|floatformat:3 }} and served from the cache for 60 seconds.</p>
+{% endblock %}

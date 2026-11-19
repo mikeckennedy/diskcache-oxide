@@ -479,7 +479,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-16">v0.3.5</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.6</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -496,6 +496,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="../example-apps/index.html"> 
+<span class="menu-text">Example apps</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -507,7 +511,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="7" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="18" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -606,6 +610,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/django.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Django cache backend</span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -786,7 +796,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><strong>Nothing is imported by name.</strong> A registered value is stored as <code>{"$t:bson.ObjectId": "..."}</code>, and a reader looks that name up in its own registry. A process that hasn’t registered it gets <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>, and the row stays for one that has. That is the whole difference from pickle.</li>
 <li><strong>The name is yours.</strong> Rename or move the class and the stored rows still read, because the tag is the name you chose, not the class’s path.</li>
 <li><strong>Lookup is by exact type.</strong> A subclass of a registered class is its own registration. The codec’s own types (<code>str</code>, <code>dict</code>, <code>datetime</code> and the rest) can’t be registered, since their wire form is a contract across versions; their subclasses can, which is how a namedtuple or a <code>str</code> subclass gets in.</li>
-<li><strong>A registered type is never pickled</strong>, even on a cache with <code>pickle=True</code>. Once the encoder has used a registration for any part of a value, that value is stored through it or <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> raises: if its <code>encode</code> raises, or returns something the codec can’t store. You registered it to stay off pickle, and a silent fallback would hide the bug.</li>
+<li><strong>A registered type is never pickled</strong>, even on a cache with <code>pickle=True</code>. Once the encoder has used a registration for any part of a value, that value is stored through it or <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> raises: if its <code>encode</code> raises, or returns something the codec can’t store. You registered it to stay off pickle, and a silent fallback would hide the bug. The encoder reads a value in order, so on a cache with <code>pickle=True</code>, <code>[Registered(), Unstorable()]</code> raises while <code>[Unstorable(), Registered()]</code> is pickled whole, since the second list fails on its first item, before any registration is used. A lone surrogate in a nested <code>str</code> counts as unstorable here, as diskcache stores it by pickling.</li>
 <li><strong>Last registration wins</strong>, by class and by name, so a module that a dev server reloads can register its new class object again.</li>
 <li><strong>A decode function’s errors are classified as a pickle hook’s would be.</strong> A <a href="../reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> or <code>OSError</code> raises with the row kept (a miss under <code>durable=True</code>). An error about the row, such as a <code>TypeError</code> from a dataclass row written before a field was removed, becomes <a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> with yours as <code>__cause__</code>, and <code>on_decode_error='miss'</code> deletes that row so the writer replaces it. Decode runs while the cache holds a connection, as unpickling does, so a slow <code>decode</code> delays forks and checkpoints for as long as it runs; one that re-enters the cache is fine.</li>
 </ul>

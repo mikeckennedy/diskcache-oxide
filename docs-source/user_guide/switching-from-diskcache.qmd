@@ -80,9 +80,10 @@ Most of these are fixes. Each one has a conformance test, or an entry in [Diverg
 | `len()` and iteration | Count and list expired entries until something removes their rows | Leave them out the moment they expire (D-060) |
 | Between calls | Nothing happens: expired rows, an over-limit cache and stray files wait for a call, so apps schedule `expire()` | Background maintenance looks after every open cache, every 5 minutes by default; nothing to schedule (D-061) |
 | Locks, semaphores, `throttle`, `barrier`, `Averager`, `memoize_stampede` | Supported | Supported, with differences; see [Coordination](coordination.qmd) |
-| `Deque`, `Index`, `DjangoCache`, `disk=`, `read=` | Supported | Not available |
+| `DjangoCache` | `diskcache.DjangoCache`: always a `FanoutCache` (8 shards by default), writes retrying a 10 ms lock wait silently | `diskcache_oxide.DjangoCache`, a plain `Cache` unless `OPTIONS['shards']`, errors that raise unless `durable` (D-062); see [Django cache backend](django.qmd) |
+| `Deque`, `Index`, `disk=`, `read=` | Supported | Not available |
 
-`DjangoCache`: keep Django's cache on diskcache until diskcache-oxide's Django backend ships (it's next on the [roadmap](roadmap.qmd#next)), and use diskcache-oxide directly for everything else.
+`DjangoCache`: change `'BACKEND'` to `'diskcache_oxide.DjangoCache'`, `SHARDS` to `OPTIONS['shards']` and `DATABASE_TIMEOUT` to `OPTIONS['timeout']`, and drop `MAX_ENTRIES` for `size_limit`. [Django cache backend](django.qmd#coming-from-diskcaches-djangocache) has the rest.
 
 ### Settings passed as keywords
 

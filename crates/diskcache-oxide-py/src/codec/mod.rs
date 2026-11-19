@@ -23,7 +23,9 @@ use std::cell::RefCell;
 use std::fmt;
 use std::io::Write;
 
-use pyo3::exceptions::{PyException, PyMemoryError, PyOSError, PyRecursionError, PyTypeError, PyValueError};
+use pyo3::exceptions::{
+    PyException, PyMemoryError, PyOSError, PyRecursionError, PyTypeError, PyUnicodeEncodeError, PyValueError,
+};
 use pyo3::prelude::*;
 use pyo3::sync::critical_section::with_critical_section;
 use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
@@ -178,8 +180,11 @@ impl Codec {
     }
 
     /// Encodes `value` for storage. Raises `TypeError` for a value the serializer can't represent,
-    /// unless `pickle` is true, in which case that value is pickled instead. A value that reached a
-    /// registered type is never pickled: whatever it raises, raises.
+    /// and `UnicodeEncodeError` for a lone surrogate nested inside one, unless `pickle` is true, in
+    /// which case that value is pickled instead (pickle keeps surrogates, as diskcache does). A value
+    /// that reached a registered type is never pickled: whatever it raises, raises. A lone
+    /// surrogate in a top-level `str` always raises, as it does in diskcache, whose SQLite binding
+    /// refuses it.
     pub fn encode<'py>(&self, py: Python<'py>, value: &Bound<'py, PyAny>) -> PyResult<Encoded<'py>> {
         if let Ok(s) = value.cast_exact::<PyString>() {
             s.to_str()?; // Lone surrogates can't be stored as UTF-8: raise now, not at bind time.
@@ -204,7 +209,11 @@ impl Codec {
         let reg = self.snapshot(py)?;
         match serialize(py, value, self.serializer, &reg) {
             Ok(bytes) => Ok(Encoded { mode: self.serializer.mode(), payload: Payload::Bytes(bytes) }),
-            Err(e) if self.pickle && !reg.had_hit() && e.is_instance_of::<PyTypeError>(py) => {
+            Err(e)
+                if self.pickle
+                    && !reg.had_hit()
+                    && (e.is_instance_of::<PyTypeError>(py) || e.is_instance_of::<PyUnicodeEncodeError>(py)) =>
+            {
                 let dumped = common::types(py)?.pickle_dumps.bind(py).call1((value, PICKLE_PROTOCOL))?;
                 Ok(Encoded { mode: Mode::Pickle, payload: Payload::Bytes(dumped.cast_into::<PyBytes>()?) })
             }

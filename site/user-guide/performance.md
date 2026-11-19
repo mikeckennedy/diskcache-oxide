@@ -66,11 +66,11 @@ Two oversubscribed cases measure slower than before the SQLite mutex spin and th
 
 # Next: free-threaded scaling
 
-Profiling a cached [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The free-threaded phase on the [roadmap](roadmap.md), after the Django backend, goes after it, along with:
+Profiling a cached [get](../reference/Cache.get.md#diskcache_oxide.Cache.get) shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the `-shm` file, under a process-wide mutex. It's the biggest single cost on every read, and it's also what keeps free-threaded throughput from scaling. The free-threaded phase, next on the [roadmap](roadmap.md#next), goes after it, along with:
 
 - a per-process lock-caching layer under SQLite, or longer-lived read snapshots;
 - thread-affine connections;
 - cheaper reference counting on shared [Cache](../reference/Cache.md#diskcache_oxide.Cache) objects in free-threaded builds;
-- making threads that share one handle scale. [`FanoutCache`](fanoutcache.md) is built: it removes the multi-process write-lock ceiling and lifts this read ceiling part of the way (1.7x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) at 8 threads on 3.14t with hot keys, about 10% on GIL builds), and the shared per-handle path is still being worked on.
+- making threads that share one handle scale. [`FanoutCache`](fanoutcache.md) is built: it removes the multi-process ceiling (a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) falls past two processes even when they only read, which points at this same lock; not yet profiled across processes) and lifts this read ceiling part of the way (1.7x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) at 8 threads on 3.14t with hot keys, about 10% on GIL builds), and the shared per-handle path is still being worked on.
 
 Past that, the [network server](roadmap.md) can go further still: as the only owner of its files, it can use SQLite's exclusive locking mode, which keeps that lock in ordinary memory. In a 2026-10-28 measurement with Python's own `sqlite3` module, reads dropped from 1.18 µs to 0.69 µs (a different harness from the gate above, so compare the two figures with each other, not with the gate's 0.84 µs).

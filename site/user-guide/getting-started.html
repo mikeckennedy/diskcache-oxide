@@ -479,7 +479,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-16">v0.3.5</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.6</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -496,6 +496,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="../example-apps/index.html"> 
+<span class="menu-text">Example apps</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -507,7 +511,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="7" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="18" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -606,6 +610,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/django.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Django cache backend</span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -945,7 +955,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="more-than-one-process-writing" class="level1">
 <h1>More than one process writing</h1>
-<p>A single <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> has one write lock per directory. Reads never wait for it, but every write does, so eight worker processes that all bump counters are eight writers lining up for one lock. Start with plain caches anyway: most apps mostly read, a plain cache uses less memory (one connection pool, not one per shard), and its writes take about 20 µs. If one cache that many processes write to (counters, rate limits) does show the lines, open it as a <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a>: it spreads the keys over several databases, each with its own lock, and in the repository’s benchmark it holds its rate at 8 processes where a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> falls to about 40% of its one-process rate.</p>
+<p>A single <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> is one database file. Every write in every process queues on its one write lock, and reads, though they never wait for that lock, take a lock of their own in SQLite’s shared-memory file that processes contend for. So past two or three worker processes a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> gets slower, even if they only read. Start with plain caches anyway: a single worker process (a GIL build’s threads, or one async worker) doesn’t hit this, a plain cache uses less memory (one connection pool, not one per shard), and its writes take about 20 µs. If one cache that several worker processes use heavily does show it, open it as a <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a>: it spreads the keys over several databases, and in the repository’s benchmark it holds its rate at 8 processes where a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> falls to about 40% of its one-process rate.</p>
 </section>
 <section id="shutting-down" class="level1">
 <h1>Shutting down</h1>

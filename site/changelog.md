@@ -3,6 +3,35 @@
 This changelog is generated automatically from [GitHub Releases](https://github.com/mikeckennedy/diskcache-oxide/releases).
 
 
+# v0.4.6
+
+*2026-11-19* · [GitHub](https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.4.6)
+
+No format change: caches made by 0.3.5 open as they are.
+
+**A Django cache backend.** `'BACKEND': 'diskcache_oxide.DjangoCache'` runs Django's cache framework on diskcache-oxide: the low-level API, the per-view and per-site cache, template fragments and the cache session engines, with every worker process sharing one cache on disk and [add()](reference/Cache.add.html#diskcache_oxide.Cache.add) and [incr()](reference/Cache.incr.html#diskcache_oxide.Cache.incr) atomic across processes. It passes Django's own cache tests (`BaseCacheTests`, the middleware, template-response and i18n tests, and the cache and cached_db session tests) from the source of Django 5.2, 6.0 and 6.1, on Python 3.14 and 3.14t, and 6.1 on 3.15 and 3.15t. `OPTIONS` takes [Cache](reference/Cache.html#diskcache_oxide.Cache)'s keywords by their own names, and [shards](reference/FanoutCache.shards.html#diskcache_oxide.FanoutCache.shards) makes the alias a [FanoutCache](reference/FanoutCache.html#diskcache_oxide.FanoutCache). Its defaults differ from [Cache](reference/Cache.html#diskcache_oxide.Cache)'s where Django needs them to: a 1.0 s lock wait, and `pickle=True`, since Django caches responses, `SafeString`s and model instances. Errors raise unless `OPTIONS['durable']` is set; a durable alias for the cache or cached_db session engine is refused. See the new Django cache backend page.
+
+
+### Added
+
+- [diskcache_oxide.DjangoCache](reference/DjangoCache.html#diskcache_oxide.DjangoCache), loaded on first use, so `import diskcache_oxide` still never imports Django. Beyond Django's API it has `tag=` on [set](reference/Cache.set.html#diskcache_oxide.Cache.set) and [add](reference/Cache.add.html#diskcache_oxide.Cache.add), `evict(tag)`, [pop](reference/Cache.pop.html#diskcache_oxide.Cache.pop), [expire()](reference/Cache.expire.html#diskcache_oxide.Cache.expire), [cull()](reference/Cache.cull.html#diskcache_oxide.Cache.cull), [stats()](reference/Cache.stats.html#diskcache_oxide.Cache.stats), [maintenance_stats()](reference/Cache.maintenance_stats.html#diskcache_oxide.Cache.maintenance_stats), [check()](reference/Cache.check.html#diskcache_oxide.Cache.check) and [cache](reference/DjangoCache.cache.html#diskcache_oxide.DjangoCache.cache), the [Cache](reference/Cache.html#diskcache_oxide.Cache) underneath; `diskcache_oxide.djangocache.close_all()` releases every handle it opened (it runs by itself when `override_settings` changes `CACHES`).
+- The `django` extra, `pip install 'diskcache-oxide[django]'`, which asks for Django 5.2 or newer.
+- `examples/django/`, a Django project on two aliases (pages durable, sessions and counters plain) under gunicorn, with its tests.
+
+
+### Fixed
+
+- A value holding a lone surrogate inside it, such as `{'q': '\ud800'}` (one can arrive in a JSON body and end up in a session), is now pickled under `pickle=True`, as diskcache stores it, instead of raising `UnicodeEncodeError` at [set](reference/Cache.set.html#diskcache_oxide.Cache.set). Without pickle it still raises, and a lone surrogate in a top-level `str` still raises either way, as it does in diskcache. Values the serializer could already store are written exactly as before.
+
+
+### Documentation
+
+- An "Example apps" section: walkthroughs of the FastAPI example (`examples/webapp`) and the Django example (`examples/django`), file by file.
+- The Django page has measured numbers: reads, writes, worker processes and threads against diskcache's backend and Django's own `FileBasedCache`, `DatabaseCache` and `LocMemCache` (`bench/django.py`), and why [aget](reference/DjangoCache.aget.html#diskcache_oxide.DjangoCache.aget) hops to a thread though the read is faster than the hop.
+- Corrected: a plain [Cache](reference/Cache.html#diskcache_oxide.Cache) slowing past two or three worker processes isn't the write lock. It happens with no writes at all (`bench/read_procs.py`: 836k ops/s at 2 processes, 296k at 8), most likely SQLite's shared-memory read lock. [FanoutCache](reference/FanoutCache.html#diskcache_oxide.FanoutCache) is now recommended for a cache several worker processes use heavily, reading or writing, not only one they write to; one worker process doesn't need it.
+- A lone surrogate and an int past Python's 4,300-digit limit are documented: the first falls back to pickle inside a value, the second always raises (D-063).
+
+
 # v0.3.5
 
 *2026-11-16* · [GitHub](https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.3.5)

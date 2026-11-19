@@ -55,6 +55,9 @@ stored under `key` stays, and can be served stale.
 `TypeError`  
 The value can't be stored exactly without pickle, [expire](Cache.expire.md#diskcache_oxide.Cache.expire) is a `bool`, or `tag` isn't a valid key type.
 
+`UnicodeEncodeError`  
+The value is a `str` with a lone surrogate, or holds one and the cache has no pickle.
+
 `Timeout`  
 Another process held the write lock for longer than [timeout](Cache.timeout.md#diskcache_oxide.Cache.timeout).
 

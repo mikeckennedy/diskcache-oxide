@@ -4,6 +4,29 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-11-19
+
+No format change: caches made by 0.3.5 open as they are.
+
+**A Django cache backend.** `'BACKEND': 'diskcache_oxide.DjangoCache'` runs Django's cache framework on diskcache-oxide: the low-level API, the per-view and per-site cache, template fragments and the cache session engines, with every worker process sharing one cache on disk and `add()` and `incr()` atomic across processes. It passes Django's own cache tests (`BaseCacheTests`, the middleware, template-response and i18n tests, and the cache and cached_db session tests) from the source of Django 5.2, 6.0 and 6.1, on Python 3.14 and 3.14t, and 6.1 on 3.15 and 3.15t. `OPTIONS` takes `Cache`'s keywords by their own names, and `shards` makes the alias a `FanoutCache`. Its defaults differ from `Cache`'s where Django needs them to: a 1.0 s lock wait, and `pickle=True`, since Django caches responses, `SafeString`s and model instances. Errors raise unless `OPTIONS['durable']` is set; a durable alias for the cache or cached_db session engine is refused. See the new Django cache backend page.
+
+### Added
+
+- `diskcache_oxide.DjangoCache`, loaded on first use, so `import diskcache_oxide` still never imports Django. Beyond Django's API it has `tag=` on `set` and `add`, `evict(tag)`, `pop`, `expire()`, `cull()`, `stats()`, `maintenance_stats()`, `check()` and `cache`, the `Cache` underneath; `diskcache_oxide.djangocache.close_all()` releases every handle it opened (it runs by itself when `override_settings` changes `CACHES`).
+- The `django` extra, `pip install 'diskcache-oxide[django]'`, which asks for Django 5.2 or newer.
+- `examples/django/`, a Django project on two aliases (pages durable, sessions and counters plain) under gunicorn, with its tests.
+
+### Fixed
+
+- A value holding a lone surrogate inside it, such as `{'q': '\ud800'}` (one can arrive in a JSON body and end up in a session), is now pickled under `pickle=True`, as diskcache stores it, instead of raising `UnicodeEncodeError` at `set`. Without pickle it still raises, and a lone surrogate in a top-level `str` still raises either way, as it does in diskcache. Values the serializer could already store are written exactly as before.
+
+### Documentation
+
+- An "Example apps" section: walkthroughs of the FastAPI example (`examples/webapp`) and the Django example (`examples/django`), file by file.
+- The Django page has measured numbers: reads, writes, worker processes and threads against diskcache's backend and Django's own `FileBasedCache`, `DatabaseCache` and `LocMemCache` (`bench/django.py`), and why `aget` hops to a thread though the read is faster than the hop.
+- Corrected: a plain `Cache` slowing past two or three worker processes isn't the write lock. It happens with no writes at all (`bench/read_procs.py`: 836k ops/s at 2 processes, 296k at 8), most likely SQLite's shared-memory read lock. `FanoutCache` is now recommended for a cache several worker processes use heavily, reading or writing, not only one they write to; one worker process doesn't need it.
+- A lone surrogate and an int past Python's 4,300-digit limit are documented: the first falls back to pickle inside a value, the second always raises (D-063).
+
 ## [0.3.5] - 2026-11-16
 
 **Upgrades across a format change no longer fail.** A cache directory that holds a cache in another on-disk format (made by an older release, or by a newer one before a rollback) now opens a new, empty cache in its subdirectory `diskcache-oxide-format-N`, N being this release's format (3), instead of raising `FormatMismatchError`, and logs a warning on the `diskcache_oxide` logger once per process. Of the other format's cache, only its format is read, and its contents are never changed (if that read is the last connection to close on it, SQLite may checkpoint its write-ahead log into the database file, which changes no data). Once the subdirectory exists, every later open uses it. A `FanoutCache` moves as a whole. This release keeps format 3, so caches made by 0.2.3 open where they are, warm; a cache still at format 2 (0.1.2) opens `diskcache-oxide-format-3` beside it. See "Upgrading across a format change" in the recipes.
@@ -104,7 +127,8 @@ The first release: diskcache's `Cache` API on a Rust engine and SQLite storage, 
 
 Development before this release, including the `0.1.0.dev` builds (`0.1.0.dev1` was yanked from PyPI), is in the git history. A `0.1.0` and a `0.1.1` were built and verified but never published: new tests found two bugs just before the first upload and a third (a size-limited cache evicting entries it had room for) just before the second, each fixed first, so `0.1.2` is the first release on PyPI. `0.1.1` ran in production at Talk Python in the meantime. The `0.0.1` on PyPI is a name placeholder with no code.
 
-[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.3.5...v0.4.6
 [0.3.5]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.2.3...v0.3.5
 [0.2.3]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.1.2...v0.2.3
 [0.1.2]: https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.1.2

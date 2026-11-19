@@ -55,3 +55,16 @@ unixOpen unixRandomness randomnessPid
 # an earlier run had 6 and 0, and the first 4 and 2.
 walIndexWriteHdr walIndexTryHdr shm
 walIndexWriteHdr walTryBeginRead shm
+
+# The read marks again, from a WAL restart: walRestartHdr (sqlite3.c 69117-69118, `aReadMark[1] = 0`
+# and the loop setting aReadMark[2..] to READMARK_NOT_USED, plain stores) runs when a writer finds the
+# WAL fully backfilled and starts it over (walRestartLog) or a TRUNCATE checkpoint resets it
+# (walCheckpoint), both holding the exclusive -shm file locks on read slots 1..N, while walTryBeginRead's loop (70137, `AtomicLoad(pInfo->aReadMark+i)`)
+# scans the marks with no lock, by design: it then takes the chosen slot's shared lock and re-checks
+# the mark and the header, retrying if either moved, and it can't hold a slot the writer has locked.
+# TSan can't see the file locks, and the stores are plain where the same function's nBackfill reset
+# is an AtomicStore. Seen in lane D's Linux run (Ubuntu 26.04 aarch64, clang-23, Python 3.14t,
+# 2026-11-18, abe199f, plan 31): 2 reports (one per store line) in each of two runs within the lane,
+# once background maintenance and the soak-like suites checkpoint the WAL fully and writers restart
+# it beside readers. Michael's decision; reported to SQLite's forum.
+walTryBeginRead walRestartHdr shm

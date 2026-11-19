@@ -444,7 +444,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-16">v0.3.5</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.6</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -461,6 +461,10 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <span class="menu-text">Recipes</span></a>
   </li>  
   <li class="nav-item">
+    <a class="nav-link" href="../example-apps/index.html"> 
+<span class="menu-text">Example apps</span></a>
+  </li>  
+  <li class="nav-item">
     <a class="nav-link" href="../reference/index.html"> 
 <span class="menu-text">API Reference</span></a>
   </li>  
@@ -472,7 +476,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="7" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="18" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -571,6 +575,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <div class="sidebar-item-container"> 
   <a href="../user-guide/fanoutcache.html" class="sidebar-item-text sidebar-link">
  <span class="menu-text">FanoutCache: sharded caches</span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../user-guide/django.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Django cache backend</span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -775,12 +785,12 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </section>
 <section id="next-free-threaded-scaling" class="level1">
 <h1>Next: free-threaded scaling</h1>
-<p>Profiling a cached <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the <code>-shm</code> file, under a process-wide mutex. It’s the biggest single cost on every read, and it’s also what keeps free-threaded throughput from scaling. The free-threaded phase on the <a href="../user-guide/roadmap.html">roadmap</a>, after the Django backend, goes after it, along with:</p>
+<p>Profiling a cached <a href="../reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> shows that about 60% of its time is one system call: SQLite taking its shared-memory read lock on the <code>-shm</code> file, under a process-wide mutex. It’s the biggest single cost on every read, and it’s also what keeps free-threaded throughput from scaling. The free-threaded phase, next on the <a href="../user-guide/roadmap.html#next">roadmap</a>, goes after it, along with:</p>
 <ul>
 <li>a per-process lock-caching layer under SQLite, or longer-lived read snapshots;</li>
 <li>thread-affine connections;</li>
 <li>cheaper reference counting on shared <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> objects in free-threaded builds;</li>
-<li>making threads that share one handle scale. <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> is built: it removes the multi-process write-lock ceiling and lifts this read ceiling part of the way (1.7x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 8 threads on 3.14t with hot keys, about 10% on GIL builds), and the shared per-handle path is still being worked on.</li>
+<li>making threads that share one handle scale. <a href="../user-guide/fanoutcache.html"><code>FanoutCache</code></a> is built: it removes the multi-process ceiling (a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> falls past two processes even when they only read, which points at this same lock; not yet profiled across processes) and lifts this read ceiling part of the way (1.7x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 8 threads on 3.14t with hot keys, about 10% on GIL builds), and the shared per-handle path is still being worked on.</li>
 </ul>
 <p>Past that, the <a href="../user-guide/roadmap.html">network server</a> can go further still: as the only owner of its files, it can use SQLite’s exclusive locking mode, which keeps that lock in ordinary memory. In a 2026-10-28 measurement with Python’s own <code>sqlite3</code> module, reads dropped from 1.18 µs to 0.69 µs (a different harness from the gate above, so compare the two figures with each other, not with the gate’s 0.84 µs).</p>
 

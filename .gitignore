@@ -265,3 +265,6 @@ soak.out
 
 # LLVM coverage and instrumentation output.
 *.profraw
+
+# Django sdists fetched by scripts/django-suite.sh
+.django-src/

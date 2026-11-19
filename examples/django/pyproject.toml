@@ -1,0 +1,14 @@
+# The Django example's own test settings. It isn't a package to publish: its dependencies are Django
+# and gunicorn (the repository's `django` and `example` dependency groups, for scripts/check.sh). Run
+# its tests from the repository root:
+#   venv/bin/pytest -c examples/django/pyproject.toml examples/django/tests
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+timeout = 120
+timeout_method = "signal"
+markers = [
+    "processes: starts gunicorn with four workers as real processes (Unix only)",
+]
