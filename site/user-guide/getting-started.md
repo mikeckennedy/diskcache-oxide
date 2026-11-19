@@ -121,7 +121,7 @@ for key in cache.iterkeys(prefix='user:'):
     print(key)
 ```
 
-[iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) yields keys in sorted order (`reverse=True` for descending), and with `prefix=` it's an indexed range scan: 400,000 keys scan in about 10 ms, against about 25 seconds for diskcache. Iterating the cache itself (`for key in cache`) yields keys in insertion order, and `reversed(cache)` newest first.
+[iterkeys()](../reference/Cache.iterkeys.md#diskcache_oxide.Cache.iterkeys) yields keys in sorted order (`reverse=True` for descending), and with `prefix=` it's an indexed range scan: 400,000 keys scan in about 10 ms. Iterating the cache itself (`for key in cache`) yields keys in insertion order, and `reversed(cache)` newest first.
 
 
 # Size limits and eviction

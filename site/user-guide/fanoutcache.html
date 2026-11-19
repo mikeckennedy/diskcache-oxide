@@ -118,8 +118,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
      only in the table, so rerunning a benchmark means editing the table and nothing else. Loaded on every page
      through include_in_header in great-docs.yml. No dependencies. -->
 <style>
-.dco-chart{--dco-s1:#2a78d6;--dco-s2:#eb6834;--dco-s3:#1baf7a;--dco-s4:#eda100;--dco-grid:rgba(0,0,0,.09);--dco-muted:var(--bs-secondary-color,#52514e);--dco-surface:var(--bs-body-bg,#fff);position:relative;margin:1.25rem 0 1.75rem}
-body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;--dco-s4:#c98500;--dco-grid:rgba(255,255,255,.11)}
+.dco-chart{--dco-s1:#2a78d6;--dco-s2:#eb6834;--dco-s3:#1baf7a;--dco-s4:#eda100;--dco-s5:#8b5cf6;--dco-grid:rgba(0,0,0,.09);--dco-muted:var(--bs-secondary-color,#52514e);--dco-surface:var(--bs-body-bg,#fff);position:relative;margin:1.25rem 0 1.75rem}
+body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;--dco-s4:#c98500;--dco-s5:#9d7bf7;--dco-grid:rgba(255,255,255,.11)}
 .dco-chart .dco-title{font-weight:600;font-size:1rem;line-height:1.35;margin:0 0 .6rem}
 .dco-chart .dco-panels{display:flex;flex-wrap:wrap;gap:.75rem 1.5rem}
 .dco-chart .dco-panel{flex:1 1 280px;min-width:0}
@@ -130,14 +130,14 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 .dco-chart .dco-grid line{stroke:var(--dco-grid);stroke-width:1;shape-rendering:crispEdges}
 .dco-chart .dco-axis text,.dco-chart .dco-axis-title{fill:var(--dco-muted);font-size:11.5px}
 .dco-chart .dco-label{fill:var(--bs-body-color,#212529);font-size:11.5px;font-weight:600}
-.dco-chart .dco-s1{fill:var(--dco-s1);stroke:var(--dco-s1)}.dco-chart .dco-s2{fill:var(--dco-s2);stroke:var(--dco-s2)}.dco-chart .dco-s3{fill:var(--dco-s3);stroke:var(--dco-s3)}.dco-chart .dco-s4{fill:var(--dco-s4);stroke:var(--dco-s4)}
+.dco-chart .dco-s1{fill:var(--dco-s1);stroke:var(--dco-s1)}.dco-chart .dco-s2{fill:var(--dco-s2);stroke:var(--dco-s2)}.dco-chart .dco-s3{fill:var(--dco-s3);stroke:var(--dco-s3)}.dco-chart .dco-s4{fill:var(--dco-s4);stroke:var(--dco-s4)}.dco-chart .dco-s5{fill:var(--dco-s5);stroke:var(--dco-s5)}
 .dco-chart .dco-line{fill:none;stroke-width:2.25;stroke-linejoin:round;stroke-linecap:round}
 .dco-chart .dco-dot{stroke:var(--dco-surface);stroke-width:2}
 .dco-chart .dco-hit{fill:transparent;cursor:crosshair}
 .dco-chart .dco-cross{stroke:var(--dco-muted);stroke-width:1;stroke-dasharray:none;opacity:0;pointer-events:none}
 .dco-chart .dco-legend{display:flex;flex-wrap:wrap;gap:.3rem 1.1rem;margin:.6rem 0 0;font-size:.85rem;color:var(--dco-muted)}
 .dco-chart .dco-swatch{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:.45em;vertical-align:-1px}
-.dco-chart .dco-swatch.dco-s1{background:var(--dco-s1)}.dco-chart .dco-swatch.dco-s2{background:var(--dco-s2)}.dco-chart .dco-swatch.dco-s3{background:var(--dco-s3)}.dco-chart .dco-swatch.dco-s4{background:var(--dco-s4)}
+.dco-chart .dco-swatch.dco-s1{background:var(--dco-s1)}.dco-chart .dco-swatch.dco-s2{background:var(--dco-s2)}.dco-chart .dco-swatch.dco-s3{background:var(--dco-s3)}.dco-chart .dco-swatch.dco-s4{background:var(--dco-s4)}.dco-chart .dco-swatch.dco-s5{background:var(--dco-s5)}
 .dco-chart .dco-note{font-size:.8rem;color:var(--dco-muted);margin:.45rem 0 0;line-height:1.4}
 .dco-chart details.dco-table{margin-top:.5rem}
 .dco-chart details.dco-table>summary{cursor:pointer;font-size:.82rem;color:var(--dco-muted);list-style:none;display:inline-block;padding:.15rem 0}
@@ -511,7 +511,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="18" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="19" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -744,7 +744,6 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <th>Processes</th>
 <th>Plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></th>
 <th><code>FanoutCache(shards=8)</code></th>
-<th>diskcache <code>FanoutCache(8)</code></th>
 </tr>
 </thead>
 <tbody>
@@ -752,25 +751,22 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>1</td>
 <td>375k ops/s</td>
 <td>428k</td>
-<td>320k</td>
 </tr>
 <tr class="even">
 <td>4</td>
 <td>519k</td>
 <td>1,004k</td>
-<td>729k</td>
 </tr>
 <tr class="odd">
 <td>8</td>
 <td>261k</td>
 <td>1,094k</td>
-<td>950k</td>
 </tr>
 </tbody>
 </table>
 </div>
 <ul>
-<li><strong>It removes the one-file ceiling.</strong> A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops climbing past a few processes and then falls. The writes aren’t what does it: with no writes at all it falls the same way, from 836k ops/s at 2 processes to 296k at 8, while a <code>FanoutCache(8)</code> climbs to 1,741k and diskcache’s to 1,684k (<code>bench/read_procs.py</code> on a MacBook Pro, M5 Pro, Python 3.14; <code>bench/results/read-procs-3.14.10-macbook-m5-pro.md</code>). The likely cause is the lock every read takes in SQLite’s shared-memory file, which the processes contend for; it hasn’t been profiled across processes yet, and it’s the top item for the <a href="../user-guide/performance.html#next-free-threaded-scaling">free-threaded phase</a>. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> keeps climbing: 4.2x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 8 processes, and 1.15x diskcache’s own <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>. A pre-forking server (gunicorn, uvicorn workers) with a worker per core is this case.</li>
+<li><strong>It removes the one-file ceiling.</strong> A plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> stops climbing past a few processes and then falls. The writes aren’t what does it: with no writes at all it falls the same way, from 836k ops/s at 2 processes to 296k at 8, while a <code>FanoutCache(8)</code> climbs to 1,741k (<code>bench/read_procs.py</code> on a MacBook Pro, M5 Pro, Python 3.14; <code>bench/results/read-procs-3.14.10-macbook-m5-pro.md</code>). The likely cause is the lock every read takes in SQLite’s shared-memory file, which the processes contend for; it hasn’t been profiled across processes yet, and it’s the top item for the <a href="../user-guide/performance.html#next-free-threaded-scaling">free-threaded phase</a>. A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> keeps climbing: 4.2x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> at 8 processes. A pre-forking server (gunicorn, uvicorn workers) with a worker per core is this case.</li>
 <li><strong>Writes make the gap wider.</strong> At 90 reads to 10 writes with 8 processes, a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> gets 138k ops/s and a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> 431k (3.1x); at 50:50, 38k against 116k.</li>
 </ul>
 <p><strong>Several threads in one process.</strong> Threads share one handle, with hot keys (a few keys read far more than the rest, as a real site’s pages are):</p>
@@ -810,7 +806,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </table>
 <ul>
 <li><strong>On free-threaded Python, a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> lets threads scale.</strong> At 8 threads it’s 1.7x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> with hot keys and 2.0x with keys spread evenly (663k against 338k), and 2.2x at 90:10 (275k against 127k). The free-threaded thread runs were the noisiest here, spreading up to 13% between rounds.</li>
-<li><strong>On GIL builds, threads are flat for every cache,</strong> as the GIL says they must be, and a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> is 12-16% ahead at every thread count. diskcache, by comparison, falls from 310-360k at one thread to about 20k at 8.</li>
+<li><strong>On GIL builds, threads are flat for every cache,</strong> as the GIL says they must be, and a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> is 12-16% ahead at every thread count.</li>
 </ul>
 <p><strong>Large values.</strong> A <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> keeps the slowest writes of large values far shorter: with 64 KiB values and one thread, the p99.9 of a <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> (over 1,000 or more per round) is 2.8-4.4 ms on a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and 0.07-0.12 ms on a <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>, on 3.14 and 3.14t, with keys spread evenly or hot. Each shard’s database and write-ahead log are smaller, so a checkpoint has less to copy (sizing group in the same results).</p>
 <p><strong>What it costs.</strong> Each shard has its own SQLite connections and page caches, so a process holds more memory. Growth of each process’s own (private) memory over its baseline, with 99:1 and 1 KB values (macOS <code>phys_footprint</code>; RSS would also count file pages mapped into memory, which are shared and reclaimable):</p>
@@ -820,7 +816,6 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <th>Case</th>
 <th>Plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></th>
 <th><code>FanoutCache(shards=8)</code></th>
-<th>diskcache <code>FanoutCache(8)</code></th>
 </tr>
 </thead>
 <tbody>
@@ -828,24 +823,21 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>1 thread, 3.14</td>
 <td>2.6 MiB</td>
 <td>11.8 MiB</td>
-<td>15.0 MiB</td>
 </tr>
 <tr class="even">
 <td>1 thread, 3.14t</td>
 <td>3.9 MiB</td>
 <td>14.1 MiB</td>
-<td>15.1 MiB</td>
 </tr>
 <tr class="odd">
 <td>8 threads, 3.14t</td>
 <td>20.3 MiB</td>
 <td>30.0 MiB</td>
-<td>42.5 MiB</td>
 </tr>
 </tbody>
 </table>
 <ul>
-<li><strong>About 10 MiB more per process than a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></strong>, so about 80 MiB across 8 workers, and less than diskcache’s own <a href="../reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a>. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> thread holds 1. Where memory matters more than the last bit of speed, pass <code>sqlite_cache_size=64</code> to give each a 256 KiB page cache instead. Across 1 KB to 64 KiB values and a realistic mix of sizes, for threads and worker processes, it cut the extra private memory by about two thirds (one thread or process: 4.4-4.9 MiB against 12.0-12.6) and cost 0-5% in almost every case, with no loss of stability. The exception is many threads on free-threaded Python with small values: 8 threads with 1 KB values ran about 15% slower (558k ops/s against 663k), still 1.6x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. The default stays at 256 pages for that reason (<code>bench/results/fanout-sizing2-3.14.10-studio.txt</code> and <code>fanout-sizing2-3.14.10t-studio.txt</code>, and the page-cache group in <code>fanout-3.14.10t-studio.txt</code>; see <a href="#choosing-shards-and-max_connections">Choosing <code>shards</code> and <code>max_connections</code></a>).</li>
+<li><strong>About 10 MiB more per process than a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a></strong>, so about 80 MiB across 8 workers. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> thread holds 1. Where memory matters more than the last bit of speed, pass <code>sqlite_cache_size=64</code> to give each a 256 KiB page cache instead. Across 1 KB to 64 KiB values and a realistic mix of sizes, for threads and worker processes, it cut the extra private memory by about two thirds (one thread or process: 4.4-4.9 MiB against 12.0-12.6) and cost 0-5% in almost every case, with no loss of stability. The exception is many threads on free-threaded Python with small values: 8 threads with 1 KB values ran about 15% slower (558k ops/s against 663k), still 1.6x a plain <a href="../reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a>. The default stays at 256 pages for that reason (<code>bench/results/fanout-sizing2-3.14.10-studio.txt</code> and <code>fanout-sizing2-3.14.10t-studio.txt</code>, and the page-cache group in <code>fanout-3.14.10t-studio.txt</code>; see <a href="#choosing-shards-and-max_connections">Choosing <code>shards</code> and <code>max_connections</code></a>).</li>
 <li><strong>More files.</strong> Each shard is a database, a write-ahead log and a shared-memory file, and the process holds descriptors for them (below).</li>
 <li><strong>Less for a single process with few writes.</strong> A read-mostly cache in one process on a GIL build gains about 10% for that memory and those files.</li>
 </ul>

@@ -22,14 +22,14 @@ The numbers below come from the benchmark in the repository (`bench/fanout.py`, 
 **Several processes.** Each worker process opens the cache and does 99 reads to 1 write, on Python 3.14:
 
 
-| Processes | Plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) | `FanoutCache(shards=8)` | diskcache `FanoutCache(8)` |
-|----|----|----|----|
-| 1 | 375k ops/s | 428k | 320k |
-| 4 | 519k | 1,004k | 729k |
-| 8 | 261k | 1,094k | 950k |
+| Processes | Plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) | `FanoutCache(shards=8)` |
+|----|----|----|
+| 1 | 375k ops/s | 428k |
+| 4 | 519k | 1,004k |
+| 8 | 261k | 1,094k |
 
 
-- **It removes the one-file ceiling.** A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) stops climbing past a few processes and then falls. The writes aren't what does it: with no writes at all it falls the same way, from 836k ops/s at 2 processes to 296k at 8, while a `FanoutCache(8)` climbs to 1,741k and diskcache's to 1,684k (`bench/read_procs.py` on a MacBook Pro, M5 Pro, Python 3.14; `bench/results/read-procs-3.14.10-macbook-m5-pro.md`). The likely cause is the lock every read takes in SQLite's shared-memory file, which the processes contend for; it hasn't been profiled across processes yet, and it's the top item for the [free-threaded phase](performance.md#next-free-threaded-scaling). A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) keeps climbing: 4.2x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) at 8 processes, and 1.15x diskcache's own [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache). A pre-forking server (gunicorn, uvicorn workers) with a worker per core is this case.
+- **It removes the one-file ceiling.** A plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) stops climbing past a few processes and then falls. The writes aren't what does it: with no writes at all it falls the same way, from 836k ops/s at 2 processes to 296k at 8, while a `FanoutCache(8)` climbs to 1,741k (`bench/read_procs.py` on a MacBook Pro, M5 Pro, Python 3.14; `bench/results/read-procs-3.14.10-macbook-m5-pro.md`). The likely cause is the lock every read takes in SQLite's shared-memory file, which the processes contend for; it hasn't been profiled across processes yet, and it's the top item for the [free-threaded phase](performance.md#next-free-threaded-scaling). A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) keeps climbing: 4.2x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) at 8 processes. A pre-forking server (gunicorn, uvicorn workers) with a worker per core is this case.
 - **Writes make the gap wider.** At 90 reads to 10 writes with 8 processes, a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) gets 138k ops/s and a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) 431k (3.1x); at 50:50, 38k against 116k.
 
 **Several threads in one process.** Threads share one handle, with hot keys (a few keys read far more than the rest, as a real site's pages are):
@@ -41,19 +41,19 @@ The numbers below come from the benchmark in the repository (`bench/fanout.py`, 
 | 8 | 503k | 858k | 498k | 560k |
 
 - **On free-threaded Python, a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) lets threads scale.** At 8 threads it's 1.7x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) with hot keys and 2.0x with keys spread evenly (663k against 338k), and 2.2x at 90:10 (275k against 127k). The free-threaded thread runs were the noisiest here, spreading up to 13% between rounds.
-- **On GIL builds, threads are flat for every cache,** as the GIL says they must be, and a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) is 12-16% ahead at every thread count. diskcache, by comparison, falls from 310-360k at one thread to about 20k at 8.
+- **On GIL builds, threads are flat for every cache,** as the GIL says they must be, and a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) is 12-16% ahead at every thread count.
 
 **Large values.** A [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache) keeps the slowest writes of large values far shorter: with 64 KiB values and one thread, the p99.9 of a [set](../reference/Cache.set.md#diskcache_oxide.Cache.set) (over 1,000 or more per round) is 2.8-4.4 ms on a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) and 0.07-0.12 ms on a [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache), on 3.14 and 3.14t, with keys spread evenly or hot. Each shard's database and write-ahead log are smaller, so a checkpoint has less to copy (sizing group in the same results).
 
 **What it costs.** Each shard has its own SQLite connections and page caches, so a process holds more memory. Growth of each process's own (private) memory over its baseline, with 99:1 and 1 KB values (macOS `phys_footprint`; RSS would also count file pages mapped into memory, which are shared and reclaimable):
 
-| Case | Plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) | `FanoutCache(shards=8)` | diskcache `FanoutCache(8)` |
-|----|----|----|----|
-| 1 thread, 3.14 | 2.6 MiB | 11.8 MiB | 15.0 MiB |
-| 1 thread, 3.14t | 3.9 MiB | 14.1 MiB | 15.1 MiB |
-| 8 threads, 3.14t | 20.3 MiB | 30.0 MiB | 42.5 MiB |
+| Case | Plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) | `FanoutCache(shards=8)` |
+|----|----|----|
+| 1 thread, 3.14 | 2.6 MiB | 11.8 MiB |
+| 1 thread, 3.14t | 3.9 MiB | 14.1 MiB |
+| 8 threads, 3.14t | 20.3 MiB | 30.0 MiB |
 
-- **About 10 MiB more per process than a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache)**, so about 80 MiB across 8 workers, and less than diskcache's own [FanoutCache](../reference/FanoutCache.md#diskcache_oxide.FanoutCache). Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) thread holds 1. Where memory matters more than the last bit of speed, pass `sqlite_cache_size=64` to give each a 256 KiB page cache instead. Across 1 KB to 64 KiB values and a realistic mix of sizes, for threads and worker processes, it cut the extra private memory by about two thirds (one thread or process: 4.4-4.9 MiB against 12.0-12.6) and cost 0-5% in almost every case, with no loss of stability. The exception is many threads on free-threaded Python with small values: 8 threads with 1 KB values ran about 15% slower (558k ops/s against 663k), still 1.6x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache). The default stays at 256 pages for that reason (`bench/results/fanout-sizing2-3.14.10-studio.txt` and `fanout-sizing2-3.14.10t-studio.txt`, and the page-cache group in `fanout-3.14.10t-studio.txt`; see [Choosing `shards` and `max_connections`](#choosing-shards-and-max_connections)).
+- **About 10 MiB more per process than a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache)**, so about 80 MiB across 8 workers. Most of it is page cache: by default each connection gets a 1 MiB page cache, and a thread that touches every shard of 8 holds 8 of them where a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache) thread holds 1. Where memory matters more than the last bit of speed, pass `sqlite_cache_size=64` to give each a 256 KiB page cache instead. Across 1 KB to 64 KiB values and a realistic mix of sizes, for threads and worker processes, it cut the extra private memory by about two thirds (one thread or process: 4.4-4.9 MiB against 12.0-12.6) and cost 0-5% in almost every case, with no loss of stability. The exception is many threads on free-threaded Python with small values: 8 threads with 1 KB values ran about 15% slower (558k ops/s against 663k), still 1.6x a plain [Cache](../reference/Cache.md#diskcache_oxide.Cache). The default stays at 256 pages for that reason (`bench/results/fanout-sizing2-3.14.10-studio.txt` and `fanout-sizing2-3.14.10t-studio.txt`, and the page-cache group in `fanout-3.14.10t-studio.txt`; see [Choosing `shards` and `max_connections`](#choosing-shards-and-max_connections)).
 - **More files.** Each shard is a database, a write-ahead log and a shared-memory file, and the process holds descriptors for them (below).
 - **Less for a single process with few writes.** A read-mostly cache in one process on a GIL build gains about 10% for that memory and those files.
 
