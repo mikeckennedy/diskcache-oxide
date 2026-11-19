@@ -4,6 +4,8 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-11-19
+
 No format change: caches made by 0.3.5 open as they are.
 
 **A Django cache backend.** `'BACKEND': 'diskcache_oxide.DjangoCache'` runs Django's cache framework on diskcache-oxide: the low-level API, the per-view and per-site cache, template fragments and the cache session engines, with every worker process sharing one cache on disk and `add()` and `incr()` atomic across processes. It passes Django's own cache tests (`BaseCacheTests`, the middleware, template-response and i18n tests, and the cache and cached_db session tests) from the source of Django 5.2, 6.0 and 6.1, on Python 3.14 and 3.14t, and 6.1 on 3.15 and 3.15t. `OPTIONS` takes `Cache`'s keywords by their own names, and `shards` makes the alias a `FanoutCache`. Its defaults differ from `Cache`'s where Django needs them to: a 1.0 s lock wait, and `pickle=True`, since Django caches responses, `SafeString`s and model instances. Errors raise unless `OPTIONS['durable']` is set; a durable alias for the cache or cached_db session engine is refused. See the new Django cache backend page.
@@ -125,7 +127,8 @@ The first release: diskcache's `Cache` API on a Rust engine and SQLite storage, 
 
 Development before this release, including the `0.1.0.dev` builds (`0.1.0.dev1` was yanked from PyPI), is in the git history. A `0.1.0` and a `0.1.1` were built and verified but never published: new tests found two bugs just before the first upload and a third (a size-limited cache evicting entries it had room for) just before the second, each fixed first, so `0.1.2` is the first release on PyPI. `0.1.1` ran in production at Talk Python in the meantime. The `0.0.1` on PyPI is a name placeholder with no code.
 
-[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.3.5...v0.4.6
 [0.3.5]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.2.3...v0.3.5
 [0.2.3]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.1.2...v0.2.3
 [0.1.2]: https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.1.2
