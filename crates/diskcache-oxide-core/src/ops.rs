@@ -291,13 +291,9 @@ impl Store {
         }
         // A writer keeps replacing the value faster than this reader can open it (D-016): take the
         // row under the write lock, opening its file or copying an inline value, and read or decode
-        // with the lock released. Skipped in a child that can't write this database (D-020): it
-        // reports a miss instead. Inside this thread's own held transaction nothing else can replace
+        // with the lock released. Inside this thread's own held transaction nothing else can replace
         // the file, so it isn't reached there; if it were, in a doomed one, the write would give
         // `TransactionAborted`.
-        if self.check_writable().is_err() {
-            return Ok(Read::Miss);
-        }
         #[cfg(test)]
         run_hook(&BEFORE_FALLBACK, self);
         let locked = self
@@ -2368,34 +2364,6 @@ mod tests {
         assert!(matches!(inside.value, VersionDelete::Skipped));
         assert_eq!(get(&s, "k", NOW).unwrap().0, b"v", "the row is still there");
         assert!(matches!(delete_nowait(&s, v), VersionDelete::Removed), "and goes from outside");
-    }
-
-    #[test]
-    fn a_reader_that_keeps_losing_to_overwrites_in_an_unwritable_child_misses() {
-        // D-020: in a child forked inside a transaction on this file the locked fallback can't take
-        // the write lock, so after its optimistic reads it reports a miss instead.
-        let tmp = TempDir::new("ops-d016-poisoned");
-        let s = store(tmp.path(), Requested::default());
-        set_big(&s, MODE_BYTES, 0);
-        let calls = std::rc::Rc::new(std::cell::Cell::new(0_u8));
-        let poisoned = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let (counted, poison) = (calls.clone(), poisoned.clone());
-        let optimistic = Hook::install(&BEFORE_OPTIMISTIC_READ, move |s| {
-            counted.set(counted.get() + 1);
-            set_big(s, MODE_BYTES, counted.get());
-            if usize::from(counted.get()) == spill::OPTIMISTIC_ATTEMPTS {
-                *poison.borrow_mut() = Some(s.poison_for_test());
-            }
-        });
-        let fallback = Hook::install(&BEFORE_FALLBACK, |_| panic!("an unwritable child must not take the lock"));
-        let got = get(&s, "k", NOW);
-        drop((optimistic, fallback));
-        assert_eq!(usize::from(calls.get()), spill::OPTIMISTIC_ATTEMPTS, "every optimistic read lost");
-        assert!(got.is_none(), "a miss, not a read under the lock");
-        assert!(matches!(s.check_writable(), Err(Error::Unwritable)));
-        drop(poisoned.borrow_mut().take());
-        let last = u8::try_from(spill::OPTIMISTIC_ATTEMPTS).unwrap();
-        assert_eq!(get(&s, "k", NOW).unwrap().0, vec![last; spill::THRESHOLD], "writable again, it reads");
     }
 
     /// Makes the next `n` commits on this thread fail busy; returns how many were left unconsumed.

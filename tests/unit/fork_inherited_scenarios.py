@@ -34,12 +34,14 @@ if hasattr(os, 'register_at_fork'):
 
 import subprocess  # noqa: E402
 import sys  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
 import traceback  # noqa: E402
 import warnings  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Optional  # noqa: E402
 
-from diskcache_oxide import Cache, FanoutCache, register_type, unregister_type  # noqa: E402
+from diskcache_oxide import Cache, FanoutCache, _core, register_type, unregister_type  # noqa: E402
 
 from tests.proctitle import set_title  # noqa: E402
 from tests.unit.fork_scenarios import (  # noqa: E402
@@ -148,6 +150,11 @@ def untouched(directory: Path, extra: Optional[dict[str, object]] = None) -> lis
         findings = fresh.check()
     failures = [] if got == want else [f'a fresh handle found {got}, expected {want}']
     return [*failures, *[f'check found {finding}' for finding in findings]]
+
+
+def untouched_but_for(directory: Path, extra: dict[str, object]) -> list[str]:
+    """`untouched`, for a scenario with no third process: nothing wrote `new`."""
+    return untouched(directory, {'new': None, **extra})
 
 
 def later_before_hook_uses_the_cache(directory: Path) -> list[str]:
@@ -362,6 +369,140 @@ def early_child_hook_inside_an_operation(directory: Path) -> list[str]:
     return failures + untouched(directory)
 
 
+def holders() -> int:
+    """How many fork-gate levels are held in this process (the test hook `_gate_stats`)."""
+    return _core._gate_stats()['holders']
+
+
+def a_child_with_no_stranded_level(cache: Cache, hold: object, directory: Path, other: Path) -> None:
+    """What the child of a fork that landed mid-end must find (plan 32, bug B): the transaction's gate
+    level, stranded on a thread the child doesn't have, counts for nothing."""
+    assert holders() == 0, f'{holders()} gate levels are held in a child that holds none'
+    assert 'Ending' in repr(hold), repr(hold)
+    # At once: no waiting out the timeout for an end that can never finish here.
+    fails_fast('leaving the inherited transaction', lambda: hold.__exit__(None, None, None))  # ty: ignore[unresolved-attribute]
+    fails_fast('leaving it again', lambda: hold.__exit__(None, None, None))  # ty: ignore[unresolved-attribute]
+    assert holders() == 0
+    # Another cache waits for locks as in any process, not as if inside a transaction.
+    with Cache(other, timeout=TIMEOUT) as elsewhere:
+        start = time.monotonic()
+        assert elsewhere.set('child', 1) is True
+        assert time.monotonic() - start < 1.0
+    # A fork from another thread of the child doesn't wait for the stranded level.
+    codes: list[Optional[int]] = []
+    forker = threading.Thread(target=lambda: codes.append(wait(fork(lambda: None))), daemon=True)
+    forker.start()
+    forker.join(TIMEOUT)
+    assert not forker.is_alive(), 'os.fork() from another thread hung on a level nothing can release'
+    assert codes == [0], codes
+    refuses_everything(cache, directory)()
+
+
+def end_on_another_thread_behind_the_fork(directory: Path) -> list[str]:
+    """Thread B leaves the main thread's `with cache.transact():` block while the main thread is
+    forking: B has taken the transaction and waits to get into the gate behind that fork. In the
+    child B doesn't exist. Before plan 32 the level it was ending stayed counted there for good: a
+    later `os.fork()` from another thread hung, and the main thread's `__exit__` waited out its
+    timeout. A before-fork hook that sleeps holds the fork open while B gets there."""
+    other = directory.parent / f'{directory.name}-other'
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    hold = cache.transact()
+    hold.__enter__()
+    cache.set('in-hold', 1)
+    in_hook = threading.Event()
+    ended: list[object] = []
+
+    def hook() -> None:
+        in_hook.set()
+        time.sleep(0.4)  # The fork is claimed and not yet done: B's exit waits behind it.
+
+    def ender() -> None:
+        in_hook.wait(TIMEOUT)
+        try:
+            hold.__exit__(None, None, None)
+            ended.append('committed')
+        except BaseException as ex:
+            ended.append(ex)
+
+    thread = threading.Thread(target=ender)
+    thread.start()
+    LATE_BEFORE.append(hook)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        pid = fork(lambda: a_child_with_no_stranded_level(cache, hold, directory, other))
+    LATE_BEFORE.clear()
+    code = wait(pid)
+    thread.join(TIMEOUT * 2)
+    failures = []
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if ended != ['committed']:
+        failures.append(f"the other thread's exit in the parent: {ended}")
+    if holders() != 0:
+        failures.append(f'the parent is left with {holders()} gate levels')
+    cache.close()
+    return failures + untouched_but_for(directory, {'in-hold': 1})
+
+
+def end_on_another_thread_while_the_owner_is_inside_a_call(directory: Path) -> list[str]:
+    """The other window: the owner is inside one of the transaction's own calls (a decoder running
+    inside `get()`), so thread B's commit sleeps, with no gate level, until that call hands the
+    connection back. The owner forks from the decoder meanwhile. The child returns from the `get`
+    and finds no stranded level; in the parent B commits once the call returns."""
+    other = directory.parent / f'{directory.name}-other'
+    register_type(ForkOnDecode, name='tests.ForkOnDecode', encode=lambda v: v.n, decode=fork_on_decode)
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    cache.set('forker', ForkOnDecode(7))
+    hold = cache.transact()
+    hold.__enter__()
+    cache.set('in-hold', 1)
+    ended: list[object] = []
+    pids: list[int] = []
+
+    def ender() -> None:
+        try:
+            hold.__exit__(None, None, None)
+            ended.append('committed')
+        except BaseException as ex:
+            ended.append(ex)
+
+    thread = threading.Thread(target=ender)
+
+    def hook() -> None:
+        thread.start()
+        time.sleep(0.3)  # B has taken the transaction and is asleep waiting for this call.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            pids.append(os.fork())
+
+    ForkOnDecode.hook = hook
+    got = cache.get('forker')
+    if pids[0] == 0:
+        code = 0
+        try:
+            assert isinstance(got, ForkOnDecode) and got.n == 7, got
+            a_child_with_no_stranded_level(cache, hold, directory, other)
+        except BaseException:
+            traceback.print_exc()
+            code = 1
+        finally:
+            os._exit(code)
+    code = wait(pids[0])
+    thread.join(TIMEOUT * 2)
+    unregister_type(ForkOnDecode)
+    failures = []
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if ended != ['committed']:
+        failures.append(f"the other thread's exit in the parent: {ended}")
+    if holders() != 0:
+        failures.append(f'the parent is left with {holders()} gate levels')
+    cache.close()
+    return failures + untouched_but_for(directory, {'in-hold': 1})
+
+
 def fanout_with_one_shard_held(directory: Path) -> list[str]:
     """`os.fork()` inside `fanout.transact(key=...)`: one shard's connection is inherited. In the
     child that shard's keys raise, keys on every other shard work and persist, a call that covers
@@ -435,6 +576,8 @@ SCENARIOS = {
     'child-returns-from-the-inherited-get': child_returns_from_the_inherited_get,
     'early-child-hook-inside-an-operation': early_child_hook_inside_an_operation,
     'fanout-with-one-shard-held': fanout_with_one_shard_held,
+    'end-on-another-thread-behind-the-fork': end_on_another_thread_behind_the_fork,
+    'end-on-another-thread-while-the-owner-is-inside-a-call': end_on_another_thread_while_the_owner_is_inside_a_call,
 }
 
 
@@ -444,6 +587,8 @@ def main() -> int:
     from tests.maintenance import apply_from_env
 
     apply_from_env()
+    # Forking with threads running is the point of two of these scenarios.
+    warnings.filterwarnings('ignore', r'This process .* is multi-threaded', DeprecationWarning)
     failures = SCENARIOS[name](directory)
     for failure in failures:
         print(failure, file=sys.stderr)

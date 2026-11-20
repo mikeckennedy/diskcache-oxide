@@ -146,8 +146,7 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
             Some(code) => os_error(code, message),
             None => PyOSError::new_err(message),
         },
-        Error::Unwritable
-        | Error::Unusable
+        Error::Unusable
         | Error::ForkPoisoned
         | Error::NestedTransaction
         | Error::InsideTransaction(_)

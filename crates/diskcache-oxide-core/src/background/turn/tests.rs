@@ -396,7 +396,7 @@ fn no_turn_on_a_retired_or_poisoned_store_or_behind_a_fork() {
     let _forks = one_global_fork_at_a_time();
     let tmp = TempDir::new("turn-none-at-all");
     let store = open(tmp.path());
-    let poisoned = store.poison_for_test();
+    let poisoned = store.unusable_for_test();
     assert!(store.maintenance_turn(tasks(&[Task::Expire]), NOW, INTERVAL).is_none());
     drop(poisoned);
     gate::begin_fork();

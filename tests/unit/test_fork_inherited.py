@@ -29,6 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
         'child-returns-from-the-inherited-get',
         'early-child-hook-inside-an-operation',
         'fanout-with-one-shard-held',
+        'end-on-another-thread-behind-the-fork',
+        'end-on-another-thread-while-the-owner-is-inside-a-call',
     ],
 )
 def test_fork_scenario(scenario: str, tmp_path: Path) -> None:

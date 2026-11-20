@@ -99,13 +99,17 @@ static DEFERRED_ENDS: TakeAllStack<HeldTransaction> = TakeAllStack::new();
 /// returns early on a store whose `pinned_active` is clear, but a gate entry and a slot-mutex lock
 /// per held store it's asked about.
 ///
-/// Known limitation: in a child forked while transactions were open, the inherited count can stay
-/// above zero for good. `HeldTransaction::end`'s inherited branch leaves the slot `Lent` with
-/// `pinned_active` set by design, a parent thread's `Here` slot is never ended in the child, and
-/// `Store` has no `Drop` that would clear it. Such a child just takes the slow path: speed only,
-/// never correctness, since it can never read zero while it holds a transaction of its own. (A count
-/// scoped to the fork generation would fix it.)
+/// Scoped to the process generation: a forked child starts from zero ([`reset_held_in_child`]),
+/// whatever its parent had open, and a transaction it inherited never changes the count again
+/// (`set_pinned_active` compares generations). The inherited slots stay as they are, `pinned_active`
+/// set, on databases the child can't use anyway.
 static HELD_STORES: AtomicUsize = AtomicUsize::new(0);
+
+/// The after-fork hook in the child: no transaction of this process is open yet. Call it only while
+/// the calling thread is the only one.
+pub(crate) fn reset_held_in_child() {
+    HELD_STORES.store(0, Ordering::Relaxed);
+}
 
 /// Counts `HeldTransaction::abandon` calls, so a test can tell that path ran.
 #[cfg(test)]
@@ -199,6 +203,9 @@ pub struct Store {
     /// no-hold path to one relaxed load.
     pinned: Mutex<PinnedSlot>,
     pinned_active: AtomicBool,
+    /// The process generation `pinned_active` was last set in, so a transaction inherited across
+    /// `fork()` never takes itself off the child's [`HELD_STORES`]. Written with the slot mutex held.
+    pinned_generation: AtomicU64,
     /// What the database's stamp says it is, checked by `open::prepare` when the store was created.
     /// A handle that joins a live store skips `prepare`, so [`Store::join`] compares against this.
     role: Role,
@@ -256,7 +263,7 @@ impl BackgroundTurn<'_> {
         let store = self.store;
         debug_assert_eq!(GATE.own_depth(), 0, "a background turn holds no gate level");
         let changed = {
-            if crate::poison::check_writable(store.file_id).is_err() || GATE.own_depth() > 0 {
+            if crate::poison::check_usable(store.file_id).is_err() || GATE.own_depth() > 0 {
                 return None;
             }
             let _token = store.write_lock.try_lock()?;
@@ -623,8 +630,7 @@ impl Store {
             // connection is on another file only if something outside replaced the path twice around
             // the open; a file replaced once fails the checks below.
             let before = file_id_at(&db_path);
-            // Under the level, so a child's after-fork scan has run (plan 32).
-            check_usable_at(&db_path)?;
+            check_usable_at(&db_path)?; // Under the level: a child's after-fork scan has run.
             let mut conn = open::connect(&options.directory, options.timeout)?;
             let generation = gate::generation();
             let conn_file = file_id_at(&db_path).filter(|opened| before.is_none_or(|b| b == *opened));
@@ -683,8 +689,7 @@ impl Store {
         if !conn_on_file {
             // The file was replaced while it was opened: `prepare_creating` checked the old one's
             // role and format, and its connection would serve the old file's rows.
-            drop(stores);
-            drop((conn, pin));
+            drop((stores, conn, pin)); // In that order, then the level they closed under.
             drop(gate);
             let replaced = std::io::Error::other("the database file was replaced while it was being opened");
             return Err(Error::Io { path: db_path, source: replaced });
@@ -715,6 +720,7 @@ impl Store {
             eviction_policy: AtomicI64::new(limits.eviction_policy.code()),
             pinned: Mutex::new(PinnedSlot::Empty),
             pinned_active: AtomicBool::new(false),
+            pinned_generation: AtomicU64::new(0),
             // `prepare` just checked the stamp against it.
             role: options.role,
         });
@@ -1372,7 +1378,7 @@ impl Store {
     ) -> Result<T> {
         // 0. In a child forked inside a transaction on this file, writes can never succeed (D-020):
         // fail before waiting on anything.
-        crate::poison::check_writable(self.file_id)?;
+        crate::poison::check_usable(self.file_id)?;
         // A thread holding a write transaction writes inside it, on its pinned connection, in a
         // savepoint: an operation that fails partway (a cull error after the row was stored) must
         // leave nothing behind in a transaction that may still commit.
@@ -1580,7 +1586,7 @@ impl Store {
     /// job, after a large `clear()`). Inside the calling thread's own held transaction, or a nested
     /// operation, it returns `Ok(false)` without trying (its own open transaction keeps the WAL busy).
     pub fn checkpoint(&self, timeout: Duration) -> Result<bool> {
-        crate::poison::check_writable(self.file_id)?;
+        crate::poison::check_usable(self.file_id)?;
         let start = Instant::now();
         self.checkpoint_rounds(start, lockwait::deadline_after(start, timeout))
     }
@@ -1589,7 +1595,7 @@ impl Store {
     /// a whole call over every shard of a `FanoutCache`. Past it, it still makes one round, as a
     /// `checkpoint` whose timeout ran out does.
     pub fn checkpoint_until(&self, deadline: Instant) -> Result<bool> {
-        crate::poison::check_writable(self.file_id)?;
+        crate::poison::check_usable(self.file_id)?;
         self.checkpoint_rounds(Instant::now(), deadline)
     }
 
@@ -1645,10 +1651,9 @@ impl Store {
         }
     }
 
-    /// Whether a fork poisoned this database for good in this process (D-020): no write can succeed,
-    /// and if it's unusable, no read either.
+    /// Whether a fork left this database unusable in this process, for good (D-020).
     pub(crate) fn is_poisoned(&self) -> bool {
-        crate::poison::check_writable(self.file_id).is_err()
+        crate::poison::check_usable(self.file_id).is_err()
     }
 
     /// What background maintenance keeps between turns.
@@ -1678,7 +1683,7 @@ impl Store {
     /// one doesn't. `maintenance_stats()` reports the background's work.
     pub(crate) fn background_checkpoint(&self, turn: &BackgroundTurn<'_>) -> Option<crate::wal::Outcome> {
         use crate::wal::Outcome;
-        if self.is_retired() || self.wal.in_backoff() || crate::poison::check_writable(self.file_id).is_err() {
+        if self.is_retired() || self.wal.in_backoff() || crate::poison::check_usable(self.file_id).is_err() {
             return None;
         }
         let trim = crate::wal::journal_size_limit(self.wal_size_limit.load(Ordering::Relaxed));
@@ -1848,14 +1853,9 @@ impl Store {
         &self.stats
     }
 
-    /// Fails in a process a fork left unable to write this file (D-020): [`Error::Unusable`] if it
-    /// can't use the file at all, else [`Error::Unwritable`].
-    pub fn check_writable(&self) -> Result<()> {
-        crate::poison::check_writable(self.file_id)
-    }
-
     /// Fails with [`Error::Unusable`] in a process forked while a connection to this file was open
-    /// (plan 32, D-020), for a call that would otherwise answer without touching the database.
+    /// (plan 32, D-020): for a write to fail at once rather than wait for a lock, and for a call
+    /// that would otherwise answer without touching the database.
     pub fn check_usable(&self) -> Result<()> {
         crate::poison::check_usable(self.file_id)
     }
@@ -1867,18 +1867,11 @@ impl Store {
         crate::poison::unusable_for_test(self.file_id)
     }
 
-    /// Tests only: makes this store's database unwritable here, as in a child forked inside a
-    /// transaction on it, until the guard is dropped.
-    #[cfg(test)]
-    pub(crate) fn poison_for_test(&self) -> crate::poison::HoldGuard<'static> {
-        crate::poison::poison_for_test(self.file_id)
-    }
-
     /// Runs `write` in a write transaction only if that needs no waiting at all: the write lock is
     /// free, no fork is pending, and SQLite's lock is free too (no busy wait). Returns `None` if it
     /// didn't run, or ran into a lock. For opportunistic cleanup that must never block a read (D-013).
     pub fn write_nowait<T>(&self, write: impl FnOnce(&RowWriter<'_>) -> Result<T>) -> Option<Result<T>> {
-        if crate::poison::check_writable(self.file_id).is_err() || GATE.own_depth() > 0 {
+        if crate::poison::check_usable(self.file_id).is_err() || GATE.own_depth() > 0 {
             return None;
         }
         let _token = self.write_lock.try_lock()?;
@@ -1969,13 +1962,19 @@ impl Store {
     }
 
     /// Sets `pinned_active`, keeping [`HELD_STORES`] in step. Called with the slot mutex held.
+    ///
+    /// A transaction set active in an earlier generation was inherited across `fork()`: the child's
+    /// count was reset to zero without it ([`reset_held_in_child`]), so clearing it changes nothing.
     fn set_pinned_active(&self, active: bool) {
-        if self.pinned_active.swap(active, Ordering::Release) != active {
-            if active {
-                HELD_STORES.fetch_add(1, Ordering::Relaxed);
-            } else {
-                HELD_STORES.fetch_sub(1, Ordering::Relaxed);
-            }
+        let current = gate::generation();
+        if self.pinned_active.swap(active, Ordering::Release) == active {
+            return;
+        }
+        if active {
+            self.pinned_generation.store(current, Ordering::Relaxed);
+            HELD_STORES.fetch_add(1, Ordering::Relaxed);
+        } else if self.pinned_generation.load(Ordering::Relaxed) == current {
+            HELD_STORES.fetch_sub(1, Ordering::Relaxed);
         }
     }
 
@@ -2004,7 +2003,7 @@ impl Store {
     /// it. It holds the write lock, a gate level and a pooled connection, and registers the file
     /// for D-020 poisoning: a child forked meanwhile can never write it.
     pub fn begin_hold(self: &Arc<Self>, timeout: Duration) -> Result<HeldTransaction> {
-        crate::poison::check_writable(self.file_id)?;
+        crate::poison::check_usable(self.file_id)?;
         // Refused only to a thread with no level, which proves it isn't nested: see `on_pinned`.
         if let Some(gate) = GATE.try_enter_shared() {
             let pinned = self.pinned.lock().unwrap_or_else(PoisonError::into_inner);
@@ -2079,7 +2078,7 @@ impl Store {
     fn lease<'s, 'g>(&'s self, gate: &'g SharedGuard<'g>, timeout: Duration) -> Result<Lease<'s, 'g>> {
         // The one place every read and write gets its connection, and under a level, so in a child
         // the after-fork scan has run: never a connection on a file this process inherited one to
-        // (plan 32). The earlier `check_writable` calls only fail sooner.
+        // (plan 32). The checks a write makes before it waits for a lock only fail sooner.
         crate::poison::check_usable(self.file_id)?;
         let mut pooled = self.pool.checkout(gate, || open::connect(&self.directory, timeout))?;
         // New connections, and older ones after a handle asked for more, get the store's settings.
@@ -2359,6 +2358,10 @@ impl HeldTransaction {
             None => (Ok(()), Vec::new()),
         };
         drop(gate);
+        // From here to `share.take()` nothing may detach from the interpreter (no `run_blocking`,
+        // no Python call): on another thread than the owner's, a fork that landed in between would
+        // leave the child a share nothing can drop. The gate makes such a share inert anyway
+        // (plan 32, `Gate::reset_in_child`); keeping this stretch attached keeps it unreachable.
         self.store.write_lock.release_raw(write_word);
         self.hold.take();
         self.share.take();
@@ -2404,6 +2407,8 @@ impl HeldTransaction {
     /// the transaction whenever it can enter the gate (it no longer holds a level of its own, so
     /// behind another thread's fork they wait like anyone's), and roll back with it.
     fn park(mut parked: Self) {
+        // First, and before anything that detaches (the drain below does): see the note at the
+        // tail of `end`.
         drop(parked.share.take());
         GATE.defer(|| DEFERRED_ENDS.push(parked), || gate::run_blocking(&drain_deferred_releases));
     }

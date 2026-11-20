@@ -7,7 +7,7 @@
 //! no user code.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, TryLockError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -25,7 +25,7 @@ use diskcache_oxide_core::schema::{DEFAULT_SIZE_LIMIT, EvictionPolicy, FORMAT_VE
 use diskcache_oxide_core::store::{
     DEFAULT_CACHE_PAGES, DEFAULT_MAX_CONNECTIONS, DEFAULT_WAL_SIZE_LIMIT, HeldTransaction, OpenOptions, Store,
 };
-use diskcache_oxide_core::{Error, ValueRef, lockwait, spill};
+use diskcache_oxide_core::{Error, ValueRef, gate, lockwait, spill};
 use pyo3::PyTraverseError;
 use pyo3::exceptions::{
     PyException, PyKeyError, PyMemoryError, PyOSError, PyOverflowError, PyRecursionError, PyRuntimeError,
@@ -1286,7 +1286,7 @@ impl HandleConfig {
     ) -> PyResult<Py<PyAny>> {
         let now = self.now(py)?;
         // In a child that can't write (D-020) a read could report a miss; a pop fails.
-        let ready = handle.run(self.timeout, |timeout| handle.store.check_writable().map(|()| timeout));
+        let ready = handle.run(self.timeout, |timeout| handle.store.check_usable().map(|()| timeout));
         let popped = match self.attempt(py, &handle.store, Op::Pop, now, ready)? {
             Some(timeout) => self.pop_value(py, handle, key, now, timeout, wants.tag)?,
             None => None,
@@ -1521,7 +1521,7 @@ impl HandleConfig {
     ) -> PyResult<Py<PyAny>> {
         let now = self.now(py)?;
         // In a child that can't write (D-020) a read could see an item; a pull fails.
-        let ready = handle.run(self.timeout, |timeout| handle.store.check_writable().map(|()| timeout));
+        let ready = handle.run(self.timeout, |timeout| handle.store.check_usable().map(|()| timeout));
         let found = match self.attempt(py, &handle.store, Op::Pull, now, ready)? {
             Some(timeout) => self.pull_item(py, handle, range, side, now, timeout, wants.tag)?,
             None => None,
@@ -2263,6 +2263,9 @@ pub(crate) struct Transaction {
     state: Mutex<TxState>,
     /// Notified when `Ending` becomes `Done`.
     ended: Condvar,
+    /// While the state is `Ending`: the process generation the end began in, plus one (0 otherwise).
+    /// Read without the mutex, see [`Transaction::end_lost_to_fork`].
+    ending_in: AtomicU64,
 }
 
 impl Transaction {
@@ -2276,7 +2279,16 @@ impl Transaction {
     }
 
     fn with(cache: TxCache, retry: bool) -> Self {
-        Self { cache, retry, state: Mutex::new(TxState::Ready), ended: Condvar::new() }
+        Self { cache, retry, state: Mutex::new(TxState::Ready), ended: Condvar::new(), ending_in: AtomicU64::new(0) }
+    }
+
+    /// Whether this process was forked while another thread was ending this transaction: that
+    /// thread doesn't exist here, so the end never finishes, the state stays `Ending`, and the
+    /// state mutex may have been inherited locked (`wait_for_end` holds it detached). So this is
+    /// checked before the mutex is touched, and the transaction is then the parent's alone (D-020).
+    fn end_lost_to_fork(&self) -> bool {
+        let ending_in = self.ending_in.load(Ordering::Acquire);
+        ending_in != 0 && ending_in != gate::generation().wrapping_add(1)
     }
 
     fn lock_state(&self) -> std::sync::MutexGuard<'_, TxState> {
@@ -2336,11 +2348,11 @@ impl Transaction {
     }
 
     fn __repr__(&self) -> String {
+        // Never the mutex in a child that may have inherited it locked.
+        let state = if self.end_lost_to_fork() { TxState::Ending.name() } else { self.lock_state().name() };
         match &self.cache {
-            TxCache::Plain(_) => format!("<diskcache_oxide.Transaction {}>", self.lock_state().name()),
-            TxCache::Shard(_, shard) => {
-                format!("<diskcache_oxide.Transaction {} on shard {shard}>", self.lock_state().name())
-            }
+            TxCache::Plain(_) => format!("<diskcache_oxide.Transaction {state}>"),
+            TxCache::Shard(_, shard) => format!("<diskcache_oxide.Transaction {state} on shard {shard}>"),
         }
     }
 
@@ -2379,6 +2391,10 @@ impl Transaction {
         _traceback: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         let commit = exc_type.is_none();
+        if self.end_lost_to_fork() {
+            // At once, rather than waiting out the timeout for an end that can't finish here.
+            return Err(to_py_err(Error::ForkPoisoned));
+        }
         let mut state = self.lock_state();
         let taken = match &*state {
             TxState::Ready => return Err(PyRuntimeError::new_err("this transaction was never entered")),
@@ -2411,13 +2427,20 @@ impl Transaction {
                 *state = TxState::Done { committed: true };
                 return Ok(false);
             }
-            TxState::Held(_) => std::mem::replace(&mut *state, TxState::Ending),
+            TxState::Held(_) => {
+                self.ending_in.store(gate::generation().wrapping_add(1), Ordering::Release);
+                std::mem::replace(&mut *state, TxState::Ending)
+            }
         };
         drop(state);
         let TxState::Held(held) = taken else { unreachable!("only `Held` is taken") };
         // Outside the mutex: a commit may wait (detached) for the owner's operation.
         let result = held.finish(commit);
-        *self.lock_state() = TxState::Done { committed: commit && result.is_ok() };
+        {
+            let mut state = self.lock_state();
+            *state = TxState::Done { committed: commit && result.is_ok() };
+            self.ending_in.store(0, Ordering::Release);
+        }
         self.ended.notify_all();
         result.map_err(to_py_err)?;
         Ok(false)

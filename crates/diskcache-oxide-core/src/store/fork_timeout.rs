@@ -1454,7 +1454,7 @@ fn an_unusable_store_refuses_reads_writes_holds_and_opens_and_other_stores_work(
     let write = |s: &Store| s.write(T, |_, _| Ok(()));
     let unusable = store.unusable_for_test();
     assert!(matches!(rows(&store), Err(Error::Unusable)), "a read");
-    assert!(matches!(write(&store), Err(Error::Unusable)), "a write: the stronger error, not Unwritable");
+    assert!(matches!(write(&store), Err(Error::Unusable)), "a write");
     assert!(store.write_nowait(|_| Ok(())).is_none(), "an opportunistic write is skipped");
     assert!(matches!(store.begin_hold(T), Err(Error::Unusable)), "a transaction");
     assert!(matches!(store.checkpoint(T), Err(Error::Unusable)), "a checkpoint");

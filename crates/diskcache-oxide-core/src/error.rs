@@ -90,11 +90,6 @@ pub enum Error {
     #[error("this transaction was inherited across fork() and can't be used in the child")]
     ForkPoisoned,
 
-    /// A write in a child forked while its parent thread held a transaction on this database
-    /// (D-020). The inherited SQLite lock table means it could never succeed, so it fails at once.
-    #[error("this database can't be written in a process forked inside a transaction")]
-    Unwritable,
-
     /// Any use of a database this process inherited an open connection to (plan 32, D-020): it was
     /// forked inside a transaction on it, or from a hook running inside a call on it. SQLite's
     /// inherited lock record would let it run with no kernel locks, reading stale data and losing
@@ -229,9 +224,7 @@ impl Error {
         match self {
             Self::Timeout { .. }
             | Self::DiskFull { .. }
-            | Self::SqliteIo { .. }
-            | Self::Unwritable
-            | Self::ForkPoisoned => true,
+            | Self::SqliteIo { .. } => true,
             Self::Io { .. } | Self::Sqlite(_) => !self.is_out_of_memory(),
             // Only an open reports the first four, and the constructor always raises. The rest are
             // bugs in the caller, or would break its transaction's atomicity.
@@ -253,9 +246,10 @@ impl Error {
             | Self::NoTransaction
             | Self::EndInsideOperation
             | Self::TransactionAborted
-            // Not an outage that may pass: it lasts for the life of the process, and a worker
-            // silently running without its cache forever is what it exists to prevent (plan 32).
+            // Not outages that may pass: both last for the life of the process, and a worker
+            // silently running without its cache forever is what they exist to prevent (plan 32).
             | Self::Unusable
+            | Self::ForkPoisoned
             // Damage, not an outage: never answered as a miss.
             | Self::CorruptKey(_)
             | Self::InsideTransaction(_) => false,
@@ -315,8 +309,6 @@ mod tests {
             sqlite(ffi::SQLITE_CANTOPEN),
             sqlite(ffi::SQLITE_CORRUPT),
             sqlite(ffi::SQLITE_NOTADB),
-            Error::Unwritable,
-            Error::ForkPoisoned,
         ];
         for error in &operational {
             assert!(error.is_operational(), "{error:?}");
@@ -332,6 +324,7 @@ mod tests {
             Error::StoredShardsRefuseSettings { stored: 8, requested: 4, reason: "x".into() },
             Error::NotWal { mode: "delete".into() },
             Error::Unusable,
+            Error::ForkPoisoned,
             Error::Closed,
             Error::KeyMissing,
             Error::NotNumeric,
