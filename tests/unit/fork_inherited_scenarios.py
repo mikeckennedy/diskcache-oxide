@@ -292,6 +292,80 @@ def fork_inside_a_nested_transaction(directory: Path) -> list[str]:
     return failures + untouched(directory, {'in-hold': 1})
 
 
+def fork_while_entering_a_transaction(directory: Path) -> list[str]:
+    """Another thread is blocked in `tx.__enter__()` (`TxState::Entering`) while the owner thread
+    holds an outer transaction and forks. In the child—both in an early after_in_child hook and
+    afterwards—`repr(tx)` must not hang, `tx.__enter__()` must raise RuntimeError, and `tx.__exit__`
+    must fail fast with ForkedInsideTransactionError."""
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    outer = cache.transact()
+    outer.__enter__()
+    cache.set('in-hold', 1)
+    entering = cache.transact()
+    worker_errors: list[BaseException] = []
+
+    def enter_and_exit() -> None:
+        try:
+            entering.__enter__()
+            entering.__exit__(None, None, None)
+        except BaseException as exc:  # noqa: BLE001
+            worker_errors.append(exc)
+
+    waiter = threading.Thread(target=enter_and_exit)
+    waiter.start()
+    deadline = time.monotonic() + TIMEOUT
+    while 'Entering' not in repr(entering):
+        if time.monotonic() >= deadline:
+            outer.__exit__(None, None, None)
+            waiter.join(timeout=TIMEOUT)
+            cache.close()
+            return [f'worker never reached Entering state: {repr(entering)}']
+        time.sleep(0.005)
+
+    in_hook: list[str] = []
+
+    def early() -> None:
+        assert repr(entering) == '<diskcache_oxide.Transaction Entering>', repr(entering)
+        fails_fast('exiting Entering tx in early hook', lambda: entering.__exit__(None, None, None))
+        in_hook.append('ok')
+
+    def fork_behind_an_early_hook(child: Body) -> int:
+        EARLY_CHILD.append(early)
+        try:
+            return fork(child)
+        finally:
+            EARLY_CHILD.clear()
+
+    def first() -> None:
+        assert in_hook == ['ok'], in_hook
+        assert repr(entering) == '<diskcache_oxide.Transaction Entering>', repr(entering)
+        try:
+            entering.__enter__()
+        except RuntimeError as exc:
+            assert 'entered only once' in str(exc), str(exc)
+        else:
+            raise AssertionError('re-entering an Entering tx in child unexpectedly succeeded')
+        fails_fast('exiting Entering tx', lambda: entering.__exit__(None, None, None))
+        fails_fast('exiting Entering tx with exception', lambda: entering.__exit__(ValueError, ValueError('x'), None))
+        fails_fast('leaving outer tx', lambda: outer.__exit__(None, None, None))
+        refuses_everything(cache, directory)()
+
+    def close() -> None:
+        outer.__exit__(None, None, None)
+        waiter.join(timeout=TIMEOUT)
+        cache.close()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        failures = across_a_parent_close(
+            directory, fork_behind_an_early_hook, first, refuses_everything(cache, directory), close
+        )
+    if worker_errors:
+        failures.append(f'parent entering worker raised: {worker_errors!r}')
+    return failures + untouched(directory, {'in-hold': 1})
+
+
 def fork_from_a_hook_inside_get(directory: Path) -> list[str]:
     """`os.fork()` from a decoder running inside `get()`, whose connection is leased across the
     fork. Nothing poisoned that child before plan 32: its sets returned True and were lost. Now it
@@ -811,6 +885,7 @@ SCENARIOS = {
     'later-before-hook-opens-a-cache': later_before_hook_opens_a_cache,
     'fork-inside-a-transaction': fork_inside_a_transaction,
     'fork-inside-a-nested-transaction': fork_inside_a_nested_transaction,
+    'fork-while-entering-a-transaction': fork_while_entering_a_transaction,
     'fork-from-a-hook-inside-get': fork_from_a_hook_inside_get,
     'child-returns-from-the-inherited-get': child_returns_from_the_inherited_get,
     'early-child-hook-inside-an-operation': early_child_hook_inside_an_operation,
