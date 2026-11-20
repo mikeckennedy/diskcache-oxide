@@ -216,6 +216,8 @@ class Caches[N: str = str]:
         self._fanout: set[N] = set()
         # name -> (retry after this monotonic time, the NullCache handed out until then).
         self._failed: dict[N, tuple[float, NullCache]] = {}
+        # The process `_failed` was recorded in: a forked child starts without its parent's entries.
+        self.failures_pid = os.getpid()
 
     def __repr__(self) -> str:
         """Shows the base directory and the registered names."""
@@ -382,13 +384,20 @@ class Caches[N: str = str]:
 
     def _resolve(self, name: N) -> CacheLike:
         self._spec(name)
+        pid = os.getpid()
+        if self.failures_pid != pid:
+            # A forked child: a failed open in the parent says nothing about this process, and its
+            # NullCache must not be served here for the rest of the parent's retry window. A child
+            # that can't use the cache raises instead, from its first lookup on.
+            self._failed.clear()
+            self.failures_pid = pid
         failed = self._failed.get(name)
         if failed is not None and self._monotonic() < failed[0]:
             return failed[1]
         try:
             real = self._open(name)
         except ForkedInsideTransactionError:
-            # And no NullCache inherited from a failed open in the parent: this child raises every time.
+            # No retry can help this child, so nothing is recorded: it raises every time.
             self._failed.pop(name, None)
             raise
         except _OPEN_ERRORS as exc:

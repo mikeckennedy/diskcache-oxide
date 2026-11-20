@@ -317,13 +317,16 @@ impl Store {
         self.read(timeout, |conn| page(conn, timeout, order, range, cursor, size, now))
     }
 
-    /// The next `store_seq` to be handed out: every row stored before now has a smaller one.
+    /// The next `store_seq` to be handed out: every row stored before now has a smaller one. A
+    /// damaged `state.next_seq` is left out, so `clear()` and `evict` still run on such a cache.
     pub(crate) fn seq_snapshot(&self, timeout: Duration) -> Result<i64> {
         self.read(timeout, |conn| {
             conn.prepare_cached(concat!(
                 "SELECT MAX(",
                 crate::rows::max_store_seq!(),
-                " + 1, next_seq) FROM state WHERE only = 1"
+                " + 1, ",
+                crate::rows::sound_next_seq!(),
+                ") FROM state WHERE only = 1"
             ))
             .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
             .map_err(|e| Error::from_sqlite(e, timeout))

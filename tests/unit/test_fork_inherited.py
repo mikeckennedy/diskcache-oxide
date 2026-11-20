@@ -31,6 +31,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
         'fanout-with-one-shard-held',
         'end-on-another-thread-behind-the-fork',
         'end-on-another-thread-while-the-owner-is-inside-a-call',
+        'early-child-hook-on-a-transaction-being-ended',
+        'rolled-back-on-another-thread-before-the-fork',
     ],
 )
 def test_fork_scenario(scenario: str, tmp_path: Path) -> None:

@@ -218,6 +218,10 @@ impl FanoutCache {
 
     /// As `Cache.remove_old_formats`, for this cache's root directory (plan 26).
     fn remove_old_formats(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        // It removes files from the root: not in a child a fork left unable to use a shard.
+        for handle in &self.shards {
+            handle.store.check_usable().map_err(to_py_err)?;
+        }
         super::remove_old_formats(py, &self.config)
     }
 

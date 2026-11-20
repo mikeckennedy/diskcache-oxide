@@ -99,11 +99,14 @@ WRONG_TYPES = [
     ('mode', "'two'", 'text'),
     ('store_seq', "x'00'", 'blob'),
     ('store_seq', '9223372036854775807', 'an integer too large to be one'),
+    ('store_seq', '4611686018427387903', 'an integer too large to be one'),  # The last one: nothing can follow it.
+    ('size', '-9223372036854775807', 'an integer no size can be'),
+    ('size', '9223372036854775807', 'an integer no size can be'),
     ('expire_time', "'soon'", 'text'),
 ]
 
 
-@pytest.mark.parametrize(('column', 'value', 'kind'), WRONG_TYPES, ids=[c for c, _, _ in WRONG_TYPES])
+@pytest.mark.parametrize(('column', 'value', 'kind'), WRONG_TYPES, ids=[f'{c}={v}' for c, v, _ in WRONG_TYPES])
 def test_check_reports_a_wrong_typed_column_and_fix_removes_the_row(
     tmp_path: Path, column: str, value: str, kind: str
 ) -> None:
@@ -167,3 +170,53 @@ def test_a_damaged_store_seq_gives_no_other_key_a_repeated_number(tmp_path: Path
         cache.check(fix=True)
         assert cache.check() == []
         assert cache.get('d') == 1 and len(cache) == 1
+
+
+DAMAGED_STATE = [
+    ('next_seq', "'abc'", 'text'),
+    ('next_seq', '1500.5', 'real'),
+    ('next_seq', '4611686018427387904', 'an integer too large to be one'),
+    ('size', '9.3e18', 'real'),
+    ('count', "x'00'", 'blob'),
+]
+
+
+@pytest.mark.parametrize(('column', 'value', 'kind'), DAMAGED_STATE, ids=[f'{c}={v}' for c, v, _ in DAMAGED_STATE])
+def test_check_reports_a_damaged_total_or_next_number_and_fix_repairs_it(
+    tmp_path: Path, column: str, value: str, kind: str
+) -> None:
+    # Gemini's review of plan 32, M3 and M4: `check` raised on a total of another type, said nothing
+    # of a damaged next sequence number (every write then fails), and repaired neither.
+    directory = tmp_path / 'c'
+    with Cache(directory) as cache:
+        cache.set('k', BIG)
+        cache.set('n', 1)
+    sql(directory, f'UPDATE state SET {column} = {value}')
+    with Cache(directory) as cache:
+        assert cache.get('n') == 1, 'reads go on'
+        if column == 'next_seq':
+            # Loudly, and never with a number another row has, or one that isn't an integer.
+            with pytest.raises(OSError):
+                cache.set('new', 1)
+            with pytest.raises(OSError):
+                cache.incr('n')
+            assert cache.get('n') == 1
+        text = [str(w.message) for w in cache.check()]
+        assert text == [f'damaged cache state: its {column} is stored as {kind}'], text
+        cache.check(fix=True)
+        assert cache.check() == []
+        assert cache.set('new', 1) is True and cache.incr('n') == 2
+        assert len(cache) == 3 and cache.volume() > len(BIG)
+        assert cache.clear() == 3
+
+
+def test_clear_still_empties_a_cache_whose_next_number_is_damaged(tmp_path: Path) -> None:
+    directory = tmp_path / 'c'
+    with Cache(directory) as cache:
+        cache.set('k', BIG)
+        cache.set('a', 'inline', tag='t')
+    sql(directory, "UPDATE state SET next_seq = 'abc'")
+    with Cache(directory) as cache:
+        assert cache.evict('t') == 1
+        assert cache.clear() == 1
+        assert len(cache) == 0

@@ -82,6 +82,15 @@ pub enum Finding {
         actual: i64,
         fixed: bool,
     },
+    /// A column of the one `state` row that doesn't hold what the schema stores there (damage):
+    /// `count`, `size` or `next_seq`, holding a `found` (`typeof()`'s word for it, or
+    /// `rows::SEQ_OUT_OF_RANGE`). With `fix`, the totals are recounted and the next sequence number
+    /// is set past every row's.
+    BadState {
+        column: &'static str,
+        found: String,
+        fixed: bool,
+    },
 }
 
 impl Store {
@@ -146,11 +155,15 @@ impl Store {
         loop {
             let rows: Vec<(i64, [String; 5])> = self.read(timeout, |conn| {
                 conn.prepare_cached(&format!(
-                    "SELECT id, typeof(mode), typeof(size),
-                            CASE WHEN typeof(store_seq) = 'integer' AND store_seq >= 4611686018427387904
+                    "SELECT id, typeof(mode),
+                            CASE WHEN typeof(size) = 'integer' AND (size < 0 OR size > {})
+                                 THEN '{}' ELSE typeof(size) END,
+                            CASE WHEN typeof(store_seq) = 'integer' AND store_seq >= 4611686018427387903
                                  THEN '{}' ELSE typeof(store_seq) END,
                             typeof(expire_time), typeof(filename)
                      FROM cache WHERE id > ?1 AND {} ORDER BY id LIMIT ?2",
+                    crate::rows::MAX_SIZE,
+                    crate::rows::SIZE_OUT_OF_RANGE,
                     crate::rows::SEQ_OUT_OF_RANGE,
                     crate::rows::WRONG_TYPE
                 ))
@@ -190,28 +203,24 @@ impl Store {
         // The cursor is the name's bytes as stored, and each name is read as bytes: a TEXT value
         // needn't be valid UTF-8 (a flipped bit in a name keeps the column's type), and reading one
         // as a `String` would end the check with an error on the damage it's here to find.
-        let mut after: Vec<u8> = Vec::new();
+        //
+        // The cursor is the name and the row's `id`, which is how the index orders its entries: by
+        // name alone, rows sharing a name (damage: no two rows are given one) would be skipped
+        // past a page's end. It starts before the empty name, which is damage too and text all the same.
+        let mut after: (Vec<u8>, i64) = (Vec::new(), i64::MIN);
         loop {
             let rows: Vec<(i64, i64, Vec<u8>, i64)> = self.read(timeout, |conn| {
-                conn.prepare_cached(
-                    // Only rows whose columns hold what the schema says: the others are step 0's,
-                    // and a `filename` of another type would sort after every text one and come
-                    // back on every page.
-                    "SELECT id, store_seq, filename, size FROM cache
-                     WHERE filename IS NOT NULL AND filename > ?1 AND typeof(filename) = 'text'
-                       AND typeof(size) = 'integer' AND typeof(store_seq) = 'integer'
-                     ORDER BY filename LIMIT ?2",
-                )
-                .and_then(|mut stmt| {
-                    stmt.query_map((TextBytes(&after), PAGE), |r| {
-                        Ok((r.get(0)?, r.get(1)?, r.get_ref(2)?.as_bytes()?.to_vec(), r.get(3)?))
-                    })?
-                    .collect()
-                })
-                .map_err(sqlite)
+                conn.prepare_cached(CHECK_ROWS_SQL)
+                    .and_then(|mut stmt| {
+                        stmt.query_map((TextBytes(&after.0), after.1, PAGE), |r| {
+                            Ok((r.get(0)?, r.get(1)?, r.get_ref(2)?.as_bytes()?.to_vec(), r.get(3)?))
+                        })?
+                        .collect()
+                    })
+                    .map_err(sqlite)
             })?;
-            let Some((_, _, last, _)) = rows.last() else { return Ok(()) };
-            after.clone_from(last);
+            let Some((last_id, _, last, _)) = rows.last() else { return Ok(()) };
+            after = (last.clone(), *last_id);
             for (id, store_seq, name, size) in rows {
                 // Lossy: a name that isn't UTF-8 becomes one that can't be a value path (below).
                 let name = String::from_utf8_lossy(&name).into_owned();
@@ -365,48 +374,89 @@ impl Store {
         })
     }
 
+    /// The last step: the one `state` row against the table. Its own columns are read by type
+    /// first, so a damaged one is a finding here and not an error (an overflowed total is a REAL,
+    /// which no typed read takes). `next_seq` is damaged when it isn't an integer below 2^62: every
+    /// write fails on such a floor, so `fix` sets it past every row's number.
     fn check_totals(&self, fix: bool, timeout: Duration, found: &mut Vec<Finding>) -> Result<()> {
+        type Totals = (Option<i64>, String, Option<i64>, String, String, i64, i64);
         let sqlite = |e| Error::from_sqlite(e, timeout);
         // One statement, so one snapshot: two reads outside a transaction could each see a different
         // commit, and a write landing between them would look like drift.
-        let (count, size, rows, sum): (i64, i64, i64, i64) = self.read(timeout, |conn| {
+        let (count, count_kind, size, size_kind, seq_kind, rows, sum): Totals = self.read(timeout, |conn| {
             conn.query_row(
-                // A size that isn't an integer counts as 0, as it does when its row is removed
-                // (`rows::lenient_size`); summed as it is, it would make the total a REAL.
-                "SELECT count, size, (SELECT COUNT(*) FROM cache),
-                        (SELECT COALESCE(SUM(CASE typeof(size) WHEN 'integer' THEN size ELSE 0 END), 0) FROM cache)
-                 FROM state WHERE only = 1",
+                // A size that isn't one counts as 0, as it does when its row is removed
+                // (`rows::lenient_size`); summed as it is, it would make the total a REAL, or overflow.
+                &format!(
+                    "SELECT CASE WHEN typeof(count) = 'integer' THEN count END, typeof(count),
+                            CASE WHEN typeof(size) = 'integer' THEN size END, typeof(size),
+                            CASE WHEN typeof(next_seq) = 'integer' AND next_seq >= 4611686018427387904
+                                 THEN '{}' ELSE typeof(next_seq) END,
+                            (SELECT COUNT(*) FROM cache),
+                            (SELECT COALESCE(SUM({}), 0) FROM cache)
+                     FROM state WHERE only = 1",
+                    crate::rows::SEQ_OUT_OF_RANGE,
+                    crate::rows::sound_size!()
+                ),
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
             )
             .map_err(sqlite)
         })?;
-        if (count, size) == (rows, sum) {
+        let mut problems = Vec::new();
+        match count {
+            Some(count) if count == rows => {}
+            Some(stored) => problems.push(Finding::Count { stored, actual: rows, fixed: fix }),
+            None => problems.push(Finding::BadState { column: "count", found: count_kind, fixed: fix }),
+        }
+        match size {
+            Some(size) if size == sum => {}
+            Some(stored) => problems.push(Finding::Size { stored, actual: sum, fixed: fix }),
+            None => problems.push(Finding::BadState { column: "size", found: size_kind, fixed: fix }),
+        }
+        if seq_kind != "integer" {
+            problems.push(Finding::BadState { column: "next_seq", found: seq_kind, fixed: fix });
+        }
+        if problems.is_empty() {
             return Ok(());
         }
         if fix {
             self.write(timeout, |_, tx| {
                 tx.execute(
-                    "UPDATE state SET
-                         count = (SELECT COUNT(*) FROM cache),
-                         size = (SELECT COALESCE(SUM(CASE typeof(size) WHEN 'integer' THEN size ELSE 0 END), 0)
-                                 FROM cache)
-                     WHERE only = 1",
+                    concat!(
+                        "UPDATE state SET
+                             count = (SELECT COUNT(*) FROM cache),
+                             size = (SELECT COALESCE(SUM(",
+                        crate::rows::sound_size!(),
+                        "), 0) FROM cache),
+                             next_seq = CASE WHEN typeof(next_seq) = 'integer' AND next_seq < 4611686018427387904
+                                             THEN next_seq ELSE ",
+                        crate::rows::max_store_seq!(),
+                        " + 1 END
+                         WHERE only = 1"
+                    ),
                     [],
                 )
                 .map(drop)
                 .map_err(sqlite)
             })?;
         }
-        if count != rows {
-            merge(found, Finding::Count { stored: count, actual: rows, fixed: fix });
-        }
-        if size != sum {
-            merge(found, Finding::Size { stored: size, actual: sum, fixed: fix });
+        for problem in problems {
+            merge(found, problem);
         }
         Ok(())
     }
 }
+
+/// A page of [`Store::check_rows`]: spilled rows after the cursor `(filename, id)`, in the order of
+/// the partial index over `filename` (whose entries end in the rowid), so nothing is sorted.
+///
+/// Only rows whose columns hold what the schema says: the others are step 0's, and a `filename` of
+/// another type would sort after every text one and come back on every page.
+const CHECK_ROWS_SQL: &str = "SELECT id, store_seq, filename, size FROM cache
+     WHERE filename IS NOT NULL AND (filename, id) > (?1, ?2) AND typeof(filename) = 'text'
+       AND typeof(size) = 'integer' AND size BETWEEN 0 AND 281474976710656 AND typeof(store_seq) = 'integer'
+     ORDER BY filename, id LIMIT ?3";
 
 /// A cursor over `filename`, bound as the TEXT bytes it was read as (see `check_rows`).
 struct TextBytes<'a>(&'a [u8]);
@@ -452,7 +502,8 @@ fn is_fixed(finding: &Finding) -> bool {
         | Finding::BadColumn { fixed, .. }
         | Finding::UnknownFile { fixed, .. }
         | Finding::Count { fixed, .. }
-        | Finding::Size { fixed, .. } => *fixed,
+        | Finding::Size { fixed, .. }
+        | Finding::BadState { fixed, .. } => *fixed,
         Finding::Integrity(_) => false,
     }
 }
@@ -465,7 +516,8 @@ fn set_fixed(finding: &mut Finding, value: bool) {
         | Finding::BadColumn { fixed, .. }
         | Finding::UnknownFile { fixed, .. }
         | Finding::Count { fixed, .. }
-        | Finding::Size { fixed, .. } => *fixed = value,
+        | Finding::Size { fixed, .. }
+        | Finding::BadState { fixed, .. } => *fixed = value,
         Finding::Integrity(_) => {}
     }
 }
@@ -794,6 +846,13 @@ mod tests {
             ("store_seq", "x'00'", "blob"),
             ("store_seq", "9223372036854775807", crate::rows::SEQ_OUT_OF_RANGE),
             ("store_seq", "4611686018427387904", crate::rows::SEQ_OUT_OF_RANGE),
+            // The last number below the ceiling: no write can follow it.
+            ("store_seq", "4611686018427387903", crate::rows::SEQ_OUT_OF_RANGE),
+            // Sizes that would overflow `state.size` into a REAL, or `check`'s own SUM, if counted.
+            ("size", "-1", crate::rows::SIZE_OUT_OF_RANGE),
+            ("size", "-9223372036854775807", crate::rows::SIZE_OUT_OF_RANGE),
+            ("size", "-9223372036854775807 - 1", crate::rows::SIZE_OUT_OF_RANGE),
+            ("size", "9223372036854775807", crate::rows::SIZE_OUT_OF_RANGE),
             ("expire_time", "'soon'", "text"),
         ];
         for (column, value, kind) in cases {
@@ -885,5 +944,178 @@ mod tests {
             .unwrap();
         assert!(!removed, "a healthy row was deleted by its id");
         assert!(read_of(&s, "k").unwrap());
+    }
+
+    /// Gemini's review of plan 32, M4: an inline row is never visited by name, and a size at the top
+    /// of the range, summed with any other, overflowed `check`'s own SUM into an error.
+    #[test]
+    fn an_inline_row_with_a_size_out_of_range_is_reported_and_fixed_not_summed() {
+        let tmp = TempDir::new("check-inline-size-range");
+        let s = store(tmp.path());
+        put_big(&s, "k");
+        s.set(T, "a", Value::Bytes { mode: MODE_BYTES, data: b"inline" }, None, NOW).unwrap();
+        raw(&s, "UPDATE cache SET size = 9223372036854775807 WHERE filename IS NULL");
+        let found = run(&s, false);
+        assert!(
+            found.iter().any(|f| matches!(f, Finding::BadColumn { column: "size", fixed: false, .. })),
+            "{found:?}"
+        );
+        run(&s, true);
+        assert_eq!(len(&s), 1);
+        assert_eq!(run(&s, false), Vec::new());
+        assert!(s.volume(T).is_ok());
+    }
+
+    /// M4: a `state` column of another type (an overflowed total is a REAL) is a finding, not an
+    /// error on every later call, and `fix` recounts it.
+    #[test]
+    fn a_damaged_total_is_reported_and_recounted_never_raised() {
+        for (column, value, kind) in [
+            ("size", "9.3e18", "real"),
+            ("size", "'big'", "text"),
+            ("count", "x'00'", "blob"),
+            ("count", "1.5", "real"),
+        ] {
+            let tmp = TempDir::new("check-bad-state");
+            let s = store(tmp.path());
+            put_big(&s, "k");
+            raw(&s, &format!("UPDATE state SET {column} = {value}"));
+            let expected = Finding::BadState { column, found: kind.to_owned(), fixed: false };
+            assert_eq!(run(&s, false), vec![expected], "{column} = {value}");
+            let fixed = run(&s, true);
+            assert_eq!(fixed, vec![Finding::BadState { column, found: kind.to_owned(), fixed: true }]);
+            assert_eq!(run(&s, false), Vec::new(), "{column} = {value}: clean afterwards");
+            assert_eq!((len(&s), s.volume(T).is_ok()), (1, true), "{column} = {value}");
+        }
+    }
+
+    /// M3: a damaged `state.next_seq` fails every write (never a repeated or a REAL number), still
+    /// lets `clear()` run, and `check(fix=True)` sets it past every row's number.
+    #[test]
+    fn a_damaged_next_seq_fails_writes_is_reported_and_fix_repairs_it() {
+        use crate::ops::Number;
+        let cases = [
+            ("'abc'", "text"),
+            ("x'00'", "blob"),
+            ("1500.5", "real"),
+            ("1e300", "real"),
+            ("4611686018427387904", crate::rows::SEQ_OUT_OF_RANGE),
+            ("9223372036854775807", crate::rows::SEQ_OUT_OF_RANGE),
+        ];
+        let seq_of = |s: &Store, key: &str| -> (String, i64) {
+            s.read(T, |c| {
+                c.query_row("SELECT typeof(store_seq), store_seq FROM cache WHERE key = ?1", [key], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .map_err(|e| Error::from_sqlite(e, T))
+            })
+            .unwrap()
+        };
+        for (value, kind) in cases {
+            let tmp = TempDir::new("check-bad-next-seq");
+            let s = store(tmp.path());
+            s.set(T, "a", Value::Bytes { mode: MODE_BYTES, data: b"inline" }, None, NOW).unwrap();
+            assert_eq!(s.incr(T, "n", Number::Int(1), Some(Number::Int(0)), NOW).unwrap(), Number::Int(1));
+            let before = seq_of(&s, "n");
+            raw(&s, &format!("UPDATE state SET next_seq = {value}"));
+
+            // The in-place update of a stored number reads nothing back: it must fail in SQL.
+            assert!(s.incr(T, "n", Number::Int(1), Some(Number::Int(0)), NOW).is_err(), "{value}: incr ran");
+            assert_eq!(seq_of(&s, "n"), before, "{value}: the row's number changed");
+            assert!(s.set(T, "b", Value::Bytes { mode: MODE_BYTES, data: b"x" }, None, NOW).is_err(), "{value}");
+            assert!(read_of(&s, "a").unwrap(), "{value}: reads go on");
+
+            let expected = Finding::BadState { column: "next_seq", found: kind.to_owned(), fixed: false };
+            assert_eq!(run(&s, false), vec![expected], "{value}");
+            run(&s, true);
+            assert_eq!(run(&s, false), Vec::new(), "{value}: clean afterwards");
+            s.set(T, "b", Value::Bytes { mode: MODE_BYTES, data: b"x" }, None, NOW).unwrap();
+            let (b_kind, b) = seq_of(&s, "b");
+            assert!(b_kind == "integer" && b > before.1, "{value}: the next number is {b_kind} {b}");
+            assert_eq!(s.incr(T, "n", Number::Int(1), Some(Number::Int(0)), NOW).unwrap(), Number::Int(2));
+        }
+        // And without the repair, `clear()` still removes every row.
+        for (value, _) in cases {
+            let tmp = TempDir::new("check-bad-next-seq-clear");
+            let s = store(tmp.path());
+            put_big(&s, "k");
+            s.set(T, "a", Value::Bytes { mode: MODE_BYTES, data: b"inline" }, None, NOW).unwrap();
+            raw(&s, &format!("UPDATE state SET next_seq = {value}"));
+            assert_eq!(s.clear(T).unwrap(), 2, "{value}");
+            assert_eq!(len(&s), 0, "{value}");
+        }
+    }
+
+    /// M3: the last number below the ceiling. Deleting its row raises the floor to the ceiling, where
+    /// every write fails; `check` says so, and `fix` brings the floor back down.
+    #[test]
+    fn a_row_at_the_last_store_seq_never_leaves_the_cache_unwritable_after_fix() {
+        let top = "4611686018427387903";
+        let set = |s: &Store, key: &str| s.set(T, key, Value::Bytes { mode: MODE_BYTES, data: b"x" }, None, NOW);
+        // Removed by fix itself, as a damaged row.
+        let (_tmp, s, _) = damaged("check-top-seq", "store_seq", top);
+        assert!(set(&s, "b").is_err(), "no number is left after the top one");
+        run(&s, true);
+        assert_eq!(run(&s, false), Vec::new());
+        set(&s, "b").unwrap();
+        // Removed by an ordinary delete first: only the floor is left damaged.
+        let (_tmp, s, _) = damaged("check-top-seq-deleted", "store_seq", top);
+        assert!(s.delete(T, "k", NOW).unwrap());
+        assert!(set(&s, "b").is_err());
+        let found = run(&s, false);
+        assert!(found.iter().any(|f| matches!(f, Finding::BadState { column: "next_seq", .. })), "{found:?}");
+        run(&s, true);
+        assert_eq!(run(&s, false), Vec::new());
+        set(&s, "b").unwrap();
+    }
+
+    /// M4: the empty name is text, so only the pass by name can find it, and it sorts first.
+    #[test]
+    fn check_reports_an_empty_filename_and_fix_removes_its_row() {
+        let (_tmp, s, _) = damaged("check-empty-name", "filename", "''");
+        let found = run(&s, false);
+        assert!(found.contains(&Finding::BadFilename { name: String::new(), fixed: false }), "{found:?}");
+        let fixed = run(&s, true);
+        assert!(fixed.contains(&Finding::BadFilename { name: String::new(), fixed: true }), "{fixed:?}");
+        assert_eq!(len(&s), 1);
+    }
+
+    /// M4: rows sharing one name (damage) run past a page's end. Paged by name alone, the next
+    /// page began after the name and skipped the rest of them.
+    #[test]
+    fn rows_sharing_a_filename_are_all_visited_across_a_page_boundary() {
+        let tmp = TempDir::new("check-shared-name");
+        let s = store(tmp.path());
+        let file = put_big(&s, "k");
+        let size = i64::try_from(std::fs::metadata(&file).unwrap().len()).unwrap();
+        let extra = PAGE + 40;
+        for n in 0..extra {
+            s.set(T, format!("i{n}").as_str(), Value::Bytes { mode: MODE_BYTES, data: b"inline" }, None, NOW).unwrap();
+        }
+        // Every row names k's file with its true size, except the last, far past the first page.
+        raw(
+            &s,
+            &format!(
+                "UPDATE cache SET filename = (SELECT filename FROM cache WHERE key = 'k'), size = {size};
+                 UPDATE cache SET size = {size} + 1 WHERE id = (SELECT MAX(id) FROM cache)"
+            ),
+        );
+        let found = run(&s, false);
+        assert!(found.iter().any(|f| matches!(f, Finding::WrongSize { fixed: false, .. })), "{found:?}");
+    }
+
+    #[test]
+    fn the_pass_by_name_reads_the_filename_index_in_order_without_a_sort() {
+        let tmp = TempDir::new("check-rows-plan");
+        let s = store(tmp.path());
+        let plan: Vec<String> = s
+            .read(T, |c| {
+                c.prepare(&format!("EXPLAIN QUERY PLAN {CHECK_ROWS_SQL}"))
+                    .and_then(|mut stmt| stmt.query_map((TextBytes(b""), i64::MIN, PAGE), |r| r.get(3))?.collect())
+                    .map_err(|e| Error::from_sqlite(e, T))
+            })
+            .unwrap();
+        assert!(plan.iter().any(|line| line.contains("USING INDEX cache_filename")), "{plan:?}");
+        assert!(!plan.iter().any(|line| line.contains("TEMP B-TREE")), "{plan:?}");
     }
 }

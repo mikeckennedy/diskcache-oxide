@@ -701,9 +701,10 @@ class Cache:
         directory, that no entry names and that is over an hour old (`unknown file: ...`, an
         `UnknownFileWarning`; a younger one may be a writer's in flight); an entry with a column of
         the wrong SQLite type, as a damaged page leaves it (`damaged row N: its COLUMN is stored as
-        TYPE`); and stored totals that don't match the rows. Empty value folders aren't reported:
-        they're normal on an open cache. Runs in short steps, so writers and forks aren't held up,
-        apart from `integrity_check` and `VACUUM`.
+        TYPE`); a stored total or next sequence number that is damaged the same way (`damaged cache
+        state: its COLUMN is stored as TYPE`); and stored totals that don't match the rows. Empty
+        value folders aren't reported: they're normal on an open cache. Runs in short steps, so
+        writers and forks aren't held up, apart from `integrity_check` and `VACUUM`.
 
         Args:
             fix: Also repair: remove an entry whose file is missing or the wrong size, or with a
@@ -1559,9 +1560,10 @@ class FanoutCache:
         directory, that no entry names and that is over an hour old (`unknown file: ...`, an
         `UnknownFileWarning`; a younger one may be a writer's in flight); an entry with a column of
         the wrong SQLite type, as a damaged page leaves it (`damaged row N: its COLUMN is stored as
-        TYPE`); and stored totals that don't match the rows. Empty value folders aren't reported:
-        they're normal on an open cache. Runs in short steps, so writers and forks aren't held up,
-        apart from `integrity_check` and `VACUUM`.
+        TYPE`); a stored total or next sequence number that is damaged the same way (`damaged cache
+        state: its COLUMN is stored as TYPE`); and stored totals that don't match the rows. Empty
+        value folders aren't reported: they're normal on an open cache. Runs in short steps, so
+        writers and forks aren't held up, apart from `integrity_check` and `VACUUM`.
 
         Args:
             fix: Also repair: remove an entry whose file is missing or the wrong size, or with a

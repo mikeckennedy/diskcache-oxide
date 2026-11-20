@@ -385,9 +385,10 @@ of SQLite's `integrity_check`; a spilled entry whose value file is missing or th
 directory, that no entry names and that is over an hour old (`unknown file: ...`, an
 `UnknownFileWarning`; a younger one may be a writer's in flight); an entry with a column of
 the wrong SQLite type, as a damaged page leaves it (`damaged row N: its COLUMN is stored as
-TYPE`); and stored totals that don't match the rows. Empty value folders aren't reported:
-they're normal on an open cache. Runs in short steps, so writers and forks aren't held up,
-apart from `integrity_check` and `VACUUM`.
+TYPE`); a stored total or next sequence number that is damaged the same way (`damaged cache
+state: its COLUMN is stored as TYPE`); and stored totals that don't match the rows. Empty
+value folders aren't reported: they're normal on an open cache. Runs in short steps, so
+writers and forks aren't held up, apart from `integrity_check` and `VACUUM`.
 
 Args:
     fix: Also repair: remove an entry whose file is missing or the wrong size, or with a
@@ -1209,9 +1210,10 @@ of SQLite's `integrity_check`; a spilled entry whose value file is missing or th
 directory, that no entry names and that is over an hour old (`unknown file: ...`, an
 `UnknownFileWarning`; a younger one may be a writer's in flight); an entry with a column of
 the wrong SQLite type, as a damaged page leaves it (`damaged row N: its COLUMN is stored as
-TYPE`); and stored totals that don't match the rows. Empty value folders aren't reported:
-they're normal on an open cache. Runs in short steps, so writers and forks aren't held up,
-apart from `integrity_check` and `VACUUM`.
+TYPE`); a stored total or next sequence number that is damaged the same way (`damaged cache
+state: its COLUMN is stored as TYPE`); and stored totals that don't match the rows. Empty
+value folders aren't reported: they're normal on an open cache. Runs in short steps, so
+writers and forks aren't held up, apart from `integrity_check` and `VACUUM`.
 
 Args:
     fix: Also repair: remove an entry whose file is missing or the wrong size, or with a
@@ -1875,11 +1877,11 @@ validate_key(self, key: 'str') -> 'None'
 
 Warn (`CacheKeyWarning`) about a key memcached couldn't store, as every Django backend does.
 
-get_backend_timeout(self, timeout: 'Any' = <object object at 0x1139f65e0>) -> 'Optional[float]'
+get_backend_timeout(self, timeout: 'Any' = <object object at 0x113ba26d0>) -> 'Optional[float]'
 
 Seconds from now, or None for forever. Zero or less means "don't store it", as in Django.
 
-add(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1139f65e0>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+add(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113ba26d0>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
 
 Django's `add`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
 
@@ -1887,11 +1889,11 @@ get(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) ->
 
 The value, or `default` on a miss (a stored None is returned as None).
 
-set(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1139f65e0>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+set(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113ba26d0>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
 
 Django's `set`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
 
-touch(self, key: 'Any', timeout: 'Any' = <object object at 0x1139f65e0>, version: 'Optional[int]' = None) -> 'bool'
+touch(self, key: 'Any', timeout: 'Any' = <object object at 0x113ba26d0>, version: 'Optional[int]' = None) -> 'bool'
 
 Give the key a new timeout. Returns whether it was there.
 
@@ -1919,7 +1921,7 @@ get_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]'
 
 The keys that are there, with their values; a stored None is returned.
 
-set_many(self, data: 'Any', timeout: 'Any' = <object object at 0x1139f65e0>, version: 'Optional[int]' = None) -> 'list[Any]'
+set_many(self, data: 'Any', timeout: 'Any' = <object object at 0x113ba26d0>, version: 'Optional[int]' = None) -> 'list[Any]'
 
 A `set` per key, not one transaction: a value's pickling can run arbitrary code (load a
 session, run a query), which mustn't run holding the cache's write lock. Returns the keys
@@ -1979,7 +1981,7 @@ check(self, fix: 'bool' = False) -> 'list[Any]'
 
 Check the cache's consistency, returning the problems as warnings; see `Cache.check`.
 
-aadd(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1139f65e0>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+aadd(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113ba26d0>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
 
 `add`, run in one `sync_to_async` call.
 
@@ -1987,11 +1989,11 @@ aget(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) -
 
 `get`, run in one `sync_to_async` call.
 
-aset(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1139f65e0>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+aset(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113ba26d0>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
 
 `set`, run in one `sync_to_async` call.
 
-atouch(self, key: 'Any', timeout: 'Any' = <object object at 0x1139f65e0>, version: 'Optional[int]' = None) -> 'bool'
+atouch(self, key: 'Any', timeout: 'Any' = <object object at 0x113ba26d0>, version: 'Optional[int]' = None) -> 'bool'
 
 `touch`, run in one `sync_to_async` call.
 
@@ -2015,7 +2017,7 @@ aget_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]
 
 `get_many`, run in one `sync_to_async` call.
 
-aset_many(self, data: 'Any', timeout: 'Any' = <object object at 0x1139f65e0>, version: 'Optional[int]' = None) -> 'list[Any]'
+aset_many(self, data: 'Any', timeout: 'Any' = <object object at 0x113ba26d0>, version: 'Optional[int]' = None) -> 'list[Any]'
 
 `set_many`, run in one `sync_to_async` call.
 
@@ -3392,7 +3394,7 @@ SQLite refused write-ahead logging, which diskcache-oxide requires for readers a
 
 ## `UnknownFileWarning` and `EmptyDirWarning`
 
-`check()` returns what it found as a list of `warnings.WarningMessage` and issues nothing through `warnings`, so these never show up as warnings on their own. A file in the cache directory or a value folder that no entry names, and that's over an hour old, is reported as `unknown file: ...` with the category `UnknownFileWarning`; `check(fix=True)` removes it when it's in a value folder, under the write lock, so it waits for any open transaction (whose uncommitted entry may be the one that names the file) and raises `Timeout` if that transaction outlasts the timeout. An entry with a damaged column is reported as `damaged row N: its COLUMN is stored as TYPE`, and removed by `check(fix=True)`. Until then, an entry with a damaged file name, or a damaged size on a value stored in a file, reads as a miss; one with a damaged `mode`, `expire_time` or `store_seq` can raise `OSError` from calls on that key, and from `pull`, `peek` or `peekitem` when it's the entry they reach. A `store_seq` of 2^62 or more is reported as `an integer too large to be one`. `EmptyDirWarning` is diskcache's warning for an empty folder. It's exported so code that imports it keeps working, but `check()` never reports one: empty value folders are normal on an open cache, and `check(fix=True)` sweeps them.
+`check()` returns what it found as a list of `warnings.WarningMessage` and issues nothing through `warnings`, so these never show up as warnings on their own. A file in the cache directory or a value folder that no entry names, and that's over an hour old, is reported as `unknown file: ...` with the category `UnknownFileWarning`; `check(fix=True)` removes it when it's in a value folder, under the write lock, so it waits for any open transaction (whose uncommitted entry may be the one that names the file) and raises `Timeout` if that transaction outlasts the timeout. An entry with a damaged column is reported as `damaged row N: its COLUMN is stored as TYPE`, and removed by `check(fix=True)`. Until then, an entry with a damaged file name, or a damaged size on a value stored in a file, reads as a miss; one with a damaged `mode`, `expire_time` or `store_seq` can raise `OSError` from calls on that key, and from `pull`, `peek` or `peekitem` when it's the entry they reach. A `store_seq` of 2^62 - 1 or more is reported as `an integer too large to be one`, and a `size` below 0 or above 2^48 as `an integer no size can be`. Damage to the cache's own bookkeeping row is reported as `damaged cache state: its COLUMN is stored as TYPE`: a stored total (`count`, `size`) of the wrong type, which `check(fix=True)` recounts, or a damaged next sequence number (`next_seq`), which makes every write raise `OSError` until `check(fix=True)` sets it past every entry's. `EmptyDirWarning` is diskcache's warning for an empty folder. It's exported so code that imports it keeps working, but `check()` never reports one: empty value folders are normal on an open cache, and `check(fix=True)` sweeps them.
 
 ## `KeyError`
 

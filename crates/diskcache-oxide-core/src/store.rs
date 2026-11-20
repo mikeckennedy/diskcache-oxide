@@ -1038,6 +1038,9 @@ impl Store {
         claim: impl FnOnce() -> bool,
     ) -> Result<()> {
         let gate = enter_until(deadline)?;
+        // Before the claim: a handle closed in a child that can't use this file stays closed, and
+        // no pin is opened on the file (plan 32). Under the level, so the after-fork scan has run.
+        crate::poison::check_usable(self.file_id)?;
         if !claim() {
             return Ok(());
         }
@@ -1102,7 +1105,8 @@ impl Store {
     /// pending fork waiting. Skipped for a `FanoutCache`'s shards, whose closes would otherwise take one
     /// budget each: background maintenance sweeps them instead, a shard per turn (plan 28). Never fails.
     pub(crate) fn sweep_value_dirs(&self, min_age: Duration) {
-        if self.role != Role::Plain || GATE.own_depth() > 0 {
+        // Nor in a child that can't use this file: the directory is the parent's to tidy (plan 32).
+        if self.role != Role::Plain || GATE.own_depth() > 0 || self.is_poisoned() {
             return;
         }
         let deadline = lockwait::deadline_after(Instant::now(), spill::SWEEP_BUDGET);
@@ -1872,8 +1876,11 @@ impl Store {
 
     /// Fails with [`Error::Unusable`] in a process forked while a connection to this file was open
     /// (plan 32, D-020): for a write to fail at once rather than wait for a lock, and for a call
-    /// that would otherwise answer without touching the database.
+    /// that would otherwise answer without touching the database. Needs no gate level: in a child
+    /// whose after-fork hook hasn't run yet (another library's hook got there first), it runs the
+    /// child-side reset before answering.
     pub fn check_usable(&self) -> Result<()> {
+        gate::catch_up_in_child();
         crate::poison::check_usable(self.file_id)
     }
 

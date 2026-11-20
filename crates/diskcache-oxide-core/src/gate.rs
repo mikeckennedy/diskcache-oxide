@@ -209,6 +209,18 @@ pub fn generation() -> u64 {
     GENERATION.load(Ordering::Acquire)
 }
 
+/// Runs the child-side reset now if the calling thread is the forking thread in the forked child
+/// and its after-fork hook hasn't run yet: another library's `after_in_child` hook, registered
+/// before ours, is using a cache. A gate entry does the same (`enter_child_early`); this is for a
+/// caller that reads [`generation`] or asks whether a file is usable without entering the gate
+/// (`stats()`, a transaction's exit), which would otherwise see the parent's answers. One
+/// thread-local read anywhere else.
+pub fn catch_up_in_child() {
+    if GLOBAL_THREAD.try_with(|t| t.forking.get()).unwrap_or(false) {
+        enter_child_early();
+    }
+}
+
 /// A reentrant shared/exclusive gate whose exclusive side survives `fork()`. See the module docs.
 #[derive(Debug)]
 pub struct Gate {

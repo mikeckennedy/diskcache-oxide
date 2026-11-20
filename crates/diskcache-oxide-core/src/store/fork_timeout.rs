@@ -1564,3 +1564,33 @@ fn vacuum_gives_its_checkpoint_what_is_left_of_the_one_budget() {
     assert!(took < budget + Duration::from_millis(250), "the checkpoint got a budget of its own: {took:?}");
     store.release_handle();
 }
+
+/// Gemini's review of plan 32, M1: a handle closed in a process that can't use the file stays
+/// closed. It used to be claimed first, with a new pin opened on the file, and only then refused.
+#[test]
+fn a_closed_handle_on_an_unusable_store_stays_closed_and_opens_no_pin() {
+    let tmp = TempDir::new("unusable-reopen");
+    let store = open_store(tmp.path());
+    put(&store, "k");
+    let empty = tmp.path().join("ab");
+    std::fs::create_dir(&empty).unwrap();
+    let unusable = store.unusable_for_test();
+    store.release_handle();
+    assert!(store.is_retired());
+    assert!(empty.exists(), "the release swept the parent's directory");
+    store.sweep_value_dirs(Duration::ZERO);
+    assert!(empty.exists(), "a sweep ran on a cache this process can't use");
+    let claimed = std::cell::Cell::new(false);
+    let joined = store.add_handle_until(Instant::now() + T, crate::background::Maintenance::OFF, || {
+        claimed.set(true);
+        true
+    });
+    assert!(matches!(joined, Err(Error::Unusable)), "{joined:?}");
+    assert!(!claimed.get(), "the handle was marked open");
+    assert!(store.is_retired() && store.settled_handles() == 0, "the store was revived");
+    drop(unusable);
+    store.add_handle_until(Instant::now() + T, crate::background::Maintenance::OFF, || true).unwrap();
+    store.sweep_value_dirs(Duration::ZERO);
+    assert!(!empty.exists());
+    store.release_handle();
+}

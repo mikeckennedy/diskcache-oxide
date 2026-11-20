@@ -69,12 +69,48 @@ pub(crate) use max_store_seq;
 /// The ceiling has to fail the write: a number at or above it is left out of the next maximum, so
 /// handing one out would hand the same one out again to every write after it, silently. Counting
 /// can't get there (2^62 writes), so this is for damage: a `store_seq` just under the ceiling, or a
-/// `next_seq` at or above it, or of another type (text sorts above the ceiling in the scalar `MIN`).
+/// `next_seq` at or above it.
+///
+/// A `next_seq` that isn't an integer fails the write the same way. A REAL below the ceiling would
+/// otherwise come through the scalar `MAX` as the number itself, and `incr` on a stored number
+/// (which reads nothing back) would write it into the row. `check(fix=True)` repairs the floor.
+/// `$floor` is evaluated twice, so pass a column, not a subquery.
 macro_rules! next_store_seq {
     ($floor:literal) => {
-        concat!("NULLIF(MIN(MAX(", max_store_seq!(), " + 1, ", $floor, "), 4611686018427387904), 4611686018427387904)")
+        concat!(
+            "CASE WHEN typeof(",
+            $floor,
+            ") = 'integer' THEN NULLIF(MIN(MAX(",
+            max_store_seq!(),
+            " + 1, ",
+            $floor,
+            "), 4611686018427387904), 4611686018427387904) END"
+        )
     };
 }
+
+/// The SQL for `state.next_seq` as a bound: the floor itself when it's sound (an integer below the
+/// ceiling), 0 when it's damaged, so what reads it for a bound (`clear()`, `evict`) still runs.
+macro_rules! sound_next_seq {
+    () => {
+        "CASE WHEN typeof(next_seq) = 'integer' AND next_seq < 4611686018427387904 THEN next_seq ELSE 0 END"
+    };
+}
+pub(crate) use sound_next_seq;
+
+/// The largest `size` a row may have: 2^48 bytes (256 TiB). No value file is that large, so a size
+/// above it, or below 0, is damage: `check()` reports it (`WRONG_TYPE`), and it counts as 0 toward
+/// the totals ([`lenient_size`], `sound_size!`). Summed as it is, one such size would overflow
+/// `state.size` into a REAL, or `check`'s own `SUM` into an error.
+pub(crate) const MAX_SIZE: i64 = 1 << 48;
+
+/// The SQL for a row's `size` as the totals count it: see [`MAX_SIZE`].
+macro_rules! sound_size {
+    () => {
+        "CASE WHEN typeof(size) = 'integer' AND size BETWEEN 0 AND 281474976710656 THEN size ELSE 0 END"
+    };
+}
+pub(crate) use sound_size;
 
 /// One past the largest `store_seq` a row may have: 2^62. No cache counts that far, so a number at or
 /// above it is damage, which `check()` reports (`WRONG_TYPE`) and the numbering leaves out.
@@ -83,9 +119,9 @@ const SEQ_CEILING: i64 = 1 << 62;
 
 /// The in-place update of a number's row (see [`RowWriter::update_number_in_place`]).
 pub(crate) const UPDATE_NUMBER_SQL: &str = concat!(
-    "UPDATE cache SET mode = ?1, value = ?2, store_time = ?3, store_seq = ",
-    next_store_seq!("(SELECT next_seq FROM state WHERE only = 1)"),
-    " WHERE id = ?4"
+    "UPDATE cache SET mode = ?1, value = ?2, store_time = ?3, store_seq = (SELECT ",
+    next_store_seq!("next_seq"),
+    " FROM state WHERE only = 1) WHERE id = ?4"
 );
 
 /// An entry's tag: a key value (D-052), in its own type so it can't be passed where a key belongs.
@@ -139,14 +175,26 @@ pub struct RowWriter<'t> {
 /// reports as a damaged row, and what `check(fix=True)` deletes.
 ///
 /// A `store_seq` at or above 2^62 counts too, whatever its type: no cache counts that far, the
-/// numbering leaves such a row out (`max_store_seq!`), and no `clear()` bound reaches it.
+/// numbering leaves such a row out (`max_store_seq!`), and no `clear()` bound reaches it. So does
+/// the last number below it, 2^62 - 1: no number is left to follow it, so every write fails while
+/// the row is there. And a `size` outside 0 to [`MAX_SIZE`].
+///
+/// The numbering still hands 2^62 - 1 out, to a write that follows a row at 2^62 - 2 or a floor at
+/// 2^62 - 1: both are damage already, at one value in 2^62. That last row then reads as damaged, and
+/// `check(fix=True)` removes it. Refusing the number instead would move the same edge one down and
+/// leave a cache no write and no repair could get past.
 pub(crate) const WRONG_TYPE: &str = "(typeof(mode) != 'integer' OR typeof(size) != 'integer' \
-     OR typeof(store_seq) != 'integer' OR store_seq >= 4611686018427387904 \
+     OR size < 0 OR size > 281474976710656 \
+     OR typeof(store_seq) != 'integer' OR store_seq >= 4611686018427387903 \
      OR typeof(expire_time) NOT IN ('real', 'integer', 'null') \
      OR typeof(filename) NOT IN ('text', 'null'))";
 
-/// What `check()` reports a `store_seq` as when it's an integer at or above 2^62, in place of its type.
+/// What `check()` reports a `store_seq` or `next_seq` as when it's an integer too large to be one
+/// (2^62 - 1 or more for a row, 2^62 or more for the floor), in place of its type.
 pub(crate) const SEQ_OUT_OF_RANGE: &str = "an integer too large to be one";
+
+/// What `check()` reports a `size` as when it's an integer outside 0 to [`MAX_SIZE`].
+pub(crate) const SIZE_OUT_OF_RANGE: &str = "an integer no size can be";
 
 /// What a `filename` column that isn't TEXT reads as: a name no value file can have
 /// (`spill::value_path` refuses it), so every caller's existing path for a damaged name runs. A read
@@ -164,11 +212,12 @@ pub(crate) fn lenient_filename(value: ValueRef<'_>) -> Option<String> {
     }
 }
 
-/// A row's `size` column for the cache's totals: 0 when it isn't an integer, so a damaged size
-/// never reaches `state.size`. `check` counts it the same way.
+/// A row's `size` column for the cache's totals: 0 when it isn't an integer, or is one no size can
+/// be (negative, or above [`MAX_SIZE`]), so a damaged size never reaches `state.size`. `check`
+/// counts it the same way (`sound_size!`).
 pub(crate) fn lenient_size(value: ValueRef<'_>) -> i64 {
     match value {
-        ValueRef::Integer(size) => size,
+        ValueRef::Integer(size) if (0..=MAX_SIZE).contains(&size) => size,
         _ => 0,
     }
 }
@@ -621,6 +670,11 @@ mod tests {
             assert_eq!(lenient_size(damaged), 0, "{damaged:?}: nothing for the totals");
             assert_eq!(file_size(damaged), -1, "{damaged:?}: a size no file has");
         }
+        // An integer no size can be: negated or summed, it would overflow the totals.
+        assert_eq!(lenient_size(ValueRef::Integer(MAX_SIZE)), MAX_SIZE);
+        for damaged in [-1, i64::MIN, -i64::MAX, MAX_SIZE + 1, i64::MAX] {
+            assert_eq!(lenient_size(ValueRef::Integer(damaged)), 0, "{damaged}");
+        }
     }
 
     /// Every `store_seq` in the table that is an integer, in order.
@@ -688,6 +742,11 @@ mod tests {
             format!("UPDATE state SET next_seq = {SEQ_CEILING}"),
             "UPDATE state SET next_seq = 9223372036854775807".to_owned(),
             "UPDATE state SET next_seq = 'abc'".to_owned(),
+            // A REAL below the ceiling came through the scalar MAX as itself, and the in-place
+            // update, which reads nothing back, stored it in the row (Gemini's review, M3).
+            "UPDATE state SET next_seq = 1500.5".to_owned(),
+            "UPDATE state SET next_seq = 1e300".to_owned(),
+            "UPDATE state SET next_seq = x'00'".to_owned(),
         ] {
             let tmp = TempDir::new("rows-seq-ceiling");
             let mut conn = new_db(&tmp);

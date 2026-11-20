@@ -2360,7 +2360,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L695-L722" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L695-L723" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Cache</span><span class="op">.</span><span class="sig-name">check</span>(
@@ -2369,7 +2369,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 )</span></code></pre></div>
 </div>
 <div class="doc-text">
-<p>Reports, as a list of <code>warnings.WarningMessage</code> (nothing is issued through <code>warnings</code>): lines of SQLite’s <code>integrity_check</code>; a spilled entry whose value file is missing or the wrong size (<code>file not found: ...</code>, <code>wrong file size: ...</code>); a file in a value folder, or the cache directory, that no entry names and that is over an hour old (<code>unknown file: ...</code>, an <a href="UnknownFileWarning.html#diskcache_oxide.UnknownFileWarning" class="gdls-link gdls-code">UnknownFileWarning</a>; a younger one may be a writer’s in flight); an entry with a column of the wrong SQLite type, as a damaged page leaves it (<code>damaged row N: its COLUMN is stored as TYPE</code>); and stored totals that don’t match the rows. Empty value folders aren’t reported: they’re normal on an open cache. Runs in short steps, so writers and forks aren’t held up, apart from <code>integrity_check</code> and <code>VACUUM</code>.</p>
+<p>Reports, as a list of <code>warnings.WarningMessage</code> (nothing is issued through <code>warnings</code>): lines of SQLite’s <code>integrity_check</code>; a spilled entry whose value file is missing or the wrong size (<code>file not found: ...</code>, <code>wrong file size: ...</code>); a file in a value folder, or the cache directory, that no entry names and that is over an hour old (<code>unknown file: ...</code>, an <a href="UnknownFileWarning.html#diskcache_oxide.UnknownFileWarning" class="gdls-link gdls-code">UnknownFileWarning</a>; a younger one may be a writer’s in flight); an entry with a column of the wrong SQLite type, as a damaged page leaves it (<code>damaged row N: its COLUMN is stored as TYPE</code>); a stored total or next sequence number that is damaged the same way (<code>damaged cache state: its COLUMN is stored as TYPE</code>); and stored totals that don’t match the rows. Empty value folders aren’t reported: they’re normal on an open cache. Runs in short steps, so writers and forks aren’t held up, apart from <code>integrity_check</code> and <code>VACUUM</code>.</p>
 </div>
 <section id="parameters" class="level2 doc-parameters">
 <h2 class="doc-parameters">Parameters</h2>

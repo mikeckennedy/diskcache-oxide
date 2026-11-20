@@ -523,6 +523,142 @@ def end_on_another_thread_while_the_owner_is_inside_a_call(directory: Path) -> l
     return failures + untouched_but_for(directory, {'in-hold': 1})
 
 
+def early_child_hook_on_a_transaction_being_ended(directory: Path) -> list[str]:
+    """As `end-on-another-thread-behind-the-fork`, with another library's `after_in_child` hook
+    running before diskcache-oxide's and touching the transaction and `stats()`, neither of which
+    enters the gate (Gemini's review of plan 32, H1). Before the fix they saw the parent's
+    generation there: `__exit__` waited out the timeout for the parent's thread and raised
+    `Timeout`, an exit with an exception returned False, and `stats()` answered."""
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    hold = cache.transact()
+    hold.__enter__()
+    cache.set('in-hold', 1)
+    in_before = threading.Event()
+    ended: list[object] = []
+    in_child: list[str] = []
+
+    def before() -> None:
+        in_before.set()
+        wait_until_ending(hold)
+
+    def ender() -> None:
+        in_before.wait(TIMEOUT)
+        try:
+            hold.__exit__(None, None, None)
+            ended.append('committed')
+        except BaseException as ex:
+            ended.append(ex)
+
+    def early() -> None:
+        try:
+            # The exit first: it must bring the child up to date itself, not ride on `stats()` having.
+            fails_fast('leaving the transaction in the early hook', lambda: hold.__exit__(None, None, None))
+            unusable('stats in the early hook', cache.stats)
+            unusable('stats with a reset in the early hook', lambda: cache.stats(reset=True))
+            fails_fast('leaving it on an exception', lambda: hold.__exit__(ValueError, ValueError(), None))
+            try:
+                hold.__enter__()
+            except RuntimeError as ex:
+                assert 'only once' in str(ex), ex
+            else:
+                raise AssertionError('the inherited transaction was entered again')
+            assert 'Transaction' in repr(hold)
+            in_child.append('ok')
+        except BaseException:
+            in_child.append(traceback.format_exc())
+
+    def child() -> None:
+        assert in_child == ['ok'], in_child
+        refuses_everything(cache, directory)()
+
+    thread = threading.Thread(target=ender)
+    thread.start()
+    LATE_BEFORE.append(before)
+    EARLY_CHILD.append(early)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        pid = fork(child)
+    LATE_BEFORE.clear()
+    EARLY_CHILD.clear()
+    code = wait(pid)
+    thread.join(TIMEOUT * 2)
+    failures = []
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if ended != ['committed']:
+        failures.append(f"the other thread's exit in the parent: {ended}")
+    cache.close()
+    return failures + untouched_but_for(directory, {'in-hold': 1})
+
+
+def rolled_back_on_another_thread_before_the_fork(directory: Path) -> list[str]:
+    """Thread B rolls the transaction back while its owner is inside one of its calls (a decoder
+    inside `get()`): a rollback doesn't wait for the call, so B is done, and gone, before the owner
+    forks from that decoder. The connection is still lent to the call, so the child can't use the
+    cache, and leaving the inherited `with` block must say so (Gemini's review of plan 32, H1). It
+    raised `TransactionAborted` there, or returned False on an exception, as if the parent's
+    rollback were the child's news."""
+    register_type(ForkOnDecode, name='tests.ForkOnDecode', encode=lambda v: v.n, decode=fork_on_decode)
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    cache.set('forker', ForkOnDecode(7))
+    hold = cache.transact()
+    hold.__enter__()
+    cache.set('in-hold', 1)
+    ended: list[object] = []
+    pids: list[int] = []
+
+    def ender() -> None:
+        try:
+            ended.append(hold.__exit__(ValueError, ValueError('rolled back'), None))
+        except BaseException as ex:
+            ended.append(ex)
+
+    def hook() -> None:
+        thread = threading.Thread(target=ender)
+        thread.start()
+        thread.join(TIMEOUT)
+        assert not thread.is_alive(), 'a rollback from another thread waited for the call'
+        assert 'Done(rolled back)' in repr(hold), repr(hold)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            pids.append(os.fork())
+
+    ForkOnDecode.hook = hook
+    got = cache.get('forker')
+    if pids[0] == 0:
+        code = 0
+        try:
+            assert isinstance(got, ForkOnDecode) and got.n == 7, got
+            fails_fast('leaving the inherited transaction', lambda: hold.__exit__(None, None, None))
+            fails_fast('leaving it on an exception', lambda: hold.__exit__(ValueError, ValueError(), None))
+            refuses_everything(cache, directory)()
+        except BaseException:
+            traceback.print_exc()
+            code = 1
+        finally:
+            os._exit(code)
+    code = wait(pids[0])
+    unregister_type(ForkOnDecode)
+    failures = []
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    if ended != [False]:
+        failures.append(f"the other thread's rollback in the parent: {ended}")
+    # The parent's own exit is unchanged: its transaction was rolled back by the other thread.
+    try:
+        hold.__exit__(None, None, None)
+        failures.append("the owner's exit in the parent reported a commit")
+    except RuntimeError as ex:
+        if type(ex).__name__ != 'TransactionAborted':
+            failures.append(f"the owner's exit in the parent: {type(ex).__name__}: {ex}")
+    if holders() != 0:
+        failures.append(f'the parent is left with {holders()} gate levels')
+    cache.close()
+    return failures + untouched_but_for(directory, {})
+
+
 def fanout_with_one_shard_held(directory: Path) -> list[str]:
     """`os.fork()` inside `fanout.transact(key=...)`: one shard's connection is inherited. In the
     child that shard's keys raise, keys on every other shard work and persist, a call that covers
@@ -540,7 +676,27 @@ def fanout_with_one_shard_held(directory: Path) -> list[str]:
         unusable('set on the held shard', lambda: cache.set(held_key, 'child'))
         unusable('delete on the held shard', lambda: cache.delete(held_key))
 
+    in_hook: list[str] = []
+
+    def early() -> None:
+        # Another library's `after_in_child` hook, before ours: a call over every shard is refused
+        # before it touches one. `clear()` here used to empty the shards ahead of the held one.
+        try:
+            for name, call in {'clear': cache.clear, 'stats': cache.stats, 'len': lambda: len(cache)}.items():
+                unusable(f'{name} in an early hook', call)
+            in_hook.append('ok')
+        except BaseException:
+            in_hook.append(traceback.format_exc())
+
+    def fork_behind_an_early_hook(child: Body) -> int:
+        EARLY_CHILD.append(early)
+        try:
+            return fork(child)
+        finally:
+            EARLY_CHILD.clear()
+
     def first() -> None:
+        assert in_hook == ['ok'], in_hook
         held_shard_refuses()
         fails_fast('leaving the inherited transaction', lambda: hold.__exit__(None, None, None))
         held_shard_refuses()
@@ -558,13 +714,23 @@ def fanout_with_one_shard_held(directory: Path) -> list[str]:
             'check': cache.check,
             'checkpoint': cache.checkpoint,
             'evict': lambda: cache.evict('tag'),
+            'evict of no tag': lambda: cache.evict(None),
+            'remove_old_formats': cache.remove_old_formats,
             'reset': lambda: cache.reset('cull_limit'),
             'iterkeys': lambda: list(cache.iterkeys()),
             'reversed': lambda: list(reversed(cache)),
             'a fresh FanoutCache': lambda: FanoutCache(directory, shards=4, timeout=TIMEOUT),
+            # With limits: it used to write them to the shards ahead of the held one, then raise.
+            'a fresh FanoutCache with limits': lambda: FanoutCache(
+                directory, shards=4, timeout=TIMEOUT, cull_limit=3, eviction_policy='none'
+            ),
         }
         for name, call in whole.items():
             unusable(name, call)
+        assert cache.cull_limit == 10 and cache.eviction_policy == 'least-recently-stored', (
+            cache.cull_limit,
+            cache.eviction_policy,
+        )
 
     def second() -> None:
         held_shard_refuses()
@@ -579,9 +745,11 @@ def fanout_with_one_shard_held(directory: Path) -> list[str]:
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', RuntimeWarning)
-        failures = across_a_parent_close(directory, fork, first, second, close, fanout=True)
+        failures = across_a_parent_close(directory, fork_behind_an_early_hook, first, second, close, fanout=True)
     with FanoutCache(directory, shards=4, timeout=TIMEOUT) as fresh:
         got = (fresh.get(held_key), [fresh.get(key) for key in free_keys], fresh.get('new'), fresh.check())
+        if (fresh.cull_limit, fresh.eviction_policy) != (10, 'least-recently-stored'):
+            failures.append(f"the child's refused open changed the limits: {fresh.cull_limit}, {fresh.eviction_policy}")
     want = ('in-hold', ['child-late'] * len(free_keys), 'visible', [])
     if got != want:
         failures.append(f'a fresh handle found (held, free, new, check) = {got}, expected {want}')
@@ -598,6 +766,8 @@ SCENARIOS = {
     'fanout-with-one-shard-held': fanout_with_one_shard_held,
     'end-on-another-thread-behind-the-fork': end_on_another_thread_behind_the_fork,
     'end-on-another-thread-while-the-owner-is-inside-a-call': end_on_another_thread_while_the_owner_is_inside_a_call,
+    'early-child-hook-on-a-transaction-being-ended': early_child_hook_on_a_transaction_being_ended,
+    'rolled-back-on-another-thread-before-the-fork': rolled_back_on_another_thread_before_the_fork,
 }
 
 

@@ -72,13 +72,16 @@ def test_a_child_forked_inside_a_transaction_gets_the_error_not_a_null_cache(tmp
     # D-020, plan 32: that child can never use the cache, so even a durable alias's first open there
     # raises, where any other failed open serves a NullCache and retries.
     out = run_python(f"""
-        import os, warnings
+        import os, time, warnings
         from django.conf import settings
         settings.configure()
-        from diskcache_oxide import Cache, ForkedInsideTransactionError
+        from diskcache_oxide import Cache, ForkedInsideTransactionError, NullCache, djangocache
         from diskcache_oxide.djangocache import DjangoCache
 
         cache = Cache({str(tmp_path)!r})
+        # A failed open in the parent, its retry window still running at the fork: a durable alias
+        # in the child must not be served that NullCache (Gemini's review of plan 32, M2).
+        djangocache.unavailable[{str(tmp_path)!r}] = (time.monotonic() + 600, NullCache())
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             with cache.transact():
@@ -99,6 +102,7 @@ def test_a_child_forked_inside_a_transaction_gets_the_error_not_a_null_cache(tmp
                         os._exit(code)
                 _, status = os.waitpid(pid, 0)
         assert os.waitstatus_to_exitcode(status) == 0, status
+        djangocache.unavailable.clear()
         backend = DjangoCache({str(tmp_path)!r}, {{'OPTIONS': {{'durable': {durable}}}}})
         assert backend.set('parent', 1) is None and backend.get('parent') == 1
         print('ok')

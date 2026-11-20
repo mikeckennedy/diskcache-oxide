@@ -157,6 +157,11 @@ def d020(directory: Path) -> list[str]:
     registry: Caches[str] = Caches(directory.parent, on_open_error=lambda name, error: reported.append((name, error)))
     registry.register('held', directory=directory, timeout=TIMEOUT)
     registry.register('elsewhere', directory=other, timeout=TIMEOUT)
+    # A failed open in the parent, its retry window still running at the fork: the child must not
+    # be served that NullCache for the rest of the window (Gemini's review of plan 32, M2).
+    from diskcache_oxide import NullCache
+
+    registry._failed['held'] = (time.monotonic() + 600, NullCache())
 
     # A healthy cache whose values' decode hooks read the held one (the architect's step 8 review).
     from diskcache_oxide import register_type, unregister_type
@@ -187,6 +192,12 @@ def d020(directory: Path) -> list[str]:
         unusable('grandchild, a write through the inherited Cache', lambda: cache.set('grandchild', 1))
         with Cache(other, timeout=TIMEOUT) as elsewhere:
             assert elsewhere.set('grandchild', 1) is True and elsewhere.get('grandchild') == 1
+        # A closed handle stays closed: a call on it used to reopen it, with a new connection on the
+        # file, before raising (Gemini's review of plan 32, M1).
+        cache.close()
+        for _ in range(2):
+            unusable('grandchild, a read through the closed Cache', lambda: cache.get('before'))
+        unusable('grandchild, stats on the closed Cache', cache.stats)
 
     def child() -> None:
         unusable('write inside the inherited transaction', lambda: cache.set('child', 1))
@@ -213,6 +224,9 @@ def d020(directory: Path) -> list[str]:
             'expire': cache.expire,
             'cull': cache.cull,
             'clear': cache.clear,
+            'evict': lambda: cache.evict('tag'),
+            'evict of no tag': lambda: cache.evict(None),
+            'remove_old_formats': cache.remove_old_formats,
             'check': cache.check,
             'checkpoint': cache.checkpoint,
             'transact': lambda: cache.transact().__enter__(),

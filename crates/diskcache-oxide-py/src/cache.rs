@@ -325,6 +325,8 @@ impl Cache {
 
     /// Removes the caches an older diskcache-oxide format left in this cache's directory (plan 26).
     fn remove_old_formats(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        // It removes files from the directory: not in a child a fork left unable to use the cache.
+        self.handle.store.check_usable().map_err(to_py_err)?;
         remove_old_formats(py, &self.config)
     }
 
@@ -669,7 +671,11 @@ impl Cache {
         retry: bool,
     ) -> PyResult<u64> {
         let timeout = self.config.call_timeout(timeout)?;
-        let Some(encoded) = codec::key::encode_tag(Some(tag))? else { return Ok(0) };
+        let Some(encoded) = codec::key::encode_tag(Some(tag))? else {
+            // Nothing to remove, but a cache a fork made unusable still says so (plan 32).
+            self.handle.store.check_usable().map_err(to_py_err)?;
+            return Ok(0);
+        };
         let tag = encoded.key();
         if retry {
             return self
@@ -2106,6 +2112,9 @@ pub(crate) fn findings_to_warnings(
             Finding::Size { stored, actual, .. } => {
                 (format!("Settings.size != SUM(Cache.size); {stored} != {actual}"), &user)
             }
+            Finding::BadState { column, found, .. } => {
+                (format!("damaged cache state: its {column} is stored as {found}"), &user)
+            }
         };
         let message = category.call1((text,))?;
         out.append(message_type.call1((message, category, "diskcache_oxide", 0))?)?;
@@ -2266,9 +2275,9 @@ pub(crate) struct Transaction {
     state: Mutex<TxState>,
     /// Notified when `Ending` becomes `Done`.
     ended: Condvar,
-    /// While the state is `Ending`: the process generation the end began in, plus one (0 otherwise).
-    /// Read without the mutex, see [`Transaction::end_lost_to_fork`].
-    ending_in: AtomicU64,
+    /// The process generation `__enter__` began in, plus one (0 until then), and never cleared:
+    /// the transaction is single use. Read without the mutex, see [`Transaction::crossed_a_fork`].
+    entered_in: AtomicU64,
 }
 
 impl Transaction {
@@ -2282,20 +2291,40 @@ impl Transaction {
     }
 
     fn with(cache: TxCache, retry: bool) -> Self {
-        Self { cache, retry, state: Mutex::new(TxState::Ready), ended: Condvar::new(), ending_in: AtomicU64::new(0) }
+        Self { cache, retry, state: Mutex::new(TxState::Ready), ended: Condvar::new(), entered_in: AtomicU64::new(0) }
     }
 
-    /// Whether this process was forked while another thread was ending this transaction: that
-    /// thread doesn't exist here, so the end never finishes, the state stays `Ending`, and the
-    /// state mutex may have been inherited locked (`wait_for_end` holds it detached). So this is
-    /// checked before the mutex is touched, and the transaction is then the parent's alone (D-020).
-    fn end_lost_to_fork(&self) -> bool {
-        let ending_in = self.ending_in.load(Ordering::Acquire);
-        ending_in != 0 && ending_in != gate::generation().wrapping_add(1)
+    /// Whether this process was forked after the transaction was entered: it is then the parent's
+    /// (D-020). Another thread may have been ending it at the fork, or waiting for that end, and
+    /// neither exists here: the end never finishes, and the state mutex may have been inherited
+    /// locked (`wait_for_end` holds it detached, also for a moment after the end is done). So this
+    /// is checked before the mutex is touched, and the mutex is then only ever tried
+    /// ([`Transaction::state_after_fork`]). In a child whose after-fork hook hasn't run yet
+    /// (another library's got there first) the generation is brought up to date first.
+    fn crossed_a_fork(&self) -> bool {
+        let entered_in = self.entered_in.load(Ordering::Acquire);
+        if entered_in == 0 {
+            return false;
+        }
+        gate::catch_up_in_child();
+        entered_in != gate::generation().wrapping_add(1)
     }
 
     fn lock_state(&self) -> std::sync::MutexGuard<'_, TxState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The state in a process forked after the transaction was entered, without waiting: `None` if
+    /// the mutex is locked, which there means a thread of the parent's held it at the fork. Two of
+    /// the child's own threads on one inherited transaction can meet here too; the loser then reads
+    /// it as lost to the fork, which is the answer for every such transaction but one fully ended
+    /// before the fork on a cache the child can still use.
+    fn state_after_fork(&self) -> Option<std::sync::MutexGuard<'_, TxState>> {
+        match self.state.try_lock() {
+            Ok(state) => Some(state),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        }
     }
 
     /// Begins the transaction, or joins the one this thread already holds on the store. Never
@@ -2351,8 +2380,12 @@ impl Transaction {
     }
 
     fn __repr__(&self) -> String {
-        // Never the mutex in a child that may have inherited it locked.
-        let state = if self.end_lost_to_fork() { TxState::Ending.name() } else { self.lock_state().name() };
+        // Never a wait for the mutex in a child that may have inherited it locked.
+        let state = if self.crossed_a_fork() {
+            self.state_after_fork().map_or(TxState::Ending.name(), |state| state.name())
+        } else {
+            self.lock_state().name()
+        };
         match &self.cache {
             TxCache::Plain(_) => format!("<diskcache_oxide.Transaction {state}>"),
             TxCache::Shard(_, shard) => format!("<diskcache_oxide.Transaction {state} on shard {shard}>"),
@@ -2360,14 +2393,17 @@ impl Transaction {
     }
 
     fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        if self.end_lost_to_fork() {
+        if self.crossed_a_fork() {
             // Never the mutex in a child that may have inherited it locked; it was entered, in the parent.
             return Err(PyRuntimeError::new_err("a transaction can be entered only once"));
         }
         {
             let mut state = self.lock_state();
             match *state {
-                TxState::Ready => *state = TxState::Entering,
+                TxState::Ready => {
+                    self.entered_in.store(gate::generation().wrapping_add(1), Ordering::Release);
+                    *state = TxState::Entering;
+                }
                 TxState::Entering => {
                     return Err(PyRuntimeError::new_err("this transaction is already being entered on another thread"));
                 }
@@ -2384,6 +2420,7 @@ impl Transaction {
             }
             Err(error) => {
                 *state = TxState::Ready;
+                self.entered_in.store(0, Ordering::Release);
                 Err(error)
             }
         }
@@ -2398,11 +2435,18 @@ impl Transaction {
         _traceback: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         let commit = exc_type.is_none();
-        if self.end_lost_to_fork() {
-            // At once, rather than waiting out the timeout for an end that can't finish here.
+        // Entered in the parent, and this is a child: the mutex is tried, never waited for, and what
+        // another thread was doing to the transaction at the fork is lost, at once rather than
+        // after the timeout (an end that can't finish here, an entry that can't either).
+        let crossed = self.crossed_a_fork();
+        let mut state = if crossed {
+            self.state_after_fork().ok_or_else(|| to_py_err(Error::ForkPoisoned))?
+        } else {
+            self.lock_state()
+        };
+        if crossed && matches!(*state, TxState::Entering | TxState::Ending) {
             return Err(to_py_err(Error::ForkPoisoned));
         }
-        let mut state = self.lock_state();
         let taken = match &*state {
             TxState::Ready => return Err(PyRuntimeError::new_err("this transaction was never entered")),
             TxState::Entering => {
@@ -2410,6 +2454,12 @@ impl Transaction {
             }
             // A second exit, or the owner's exit after another thread ended it.
             TxState::Done { committed } => {
+                // Ended in the parent before the fork, by another thread, with its connection still
+                // out (parked, or lent to the call that forked): the child can't use the cache, and
+                // leaving the inherited block says so, whatever the parent's end came to (D-020).
+                if crossed {
+                    self.cache.handle().store.check_usable().map_err(to_py_err)?;
+                }
                 if commit && !*committed {
                     return Err(not_committed());
                 }
@@ -2434,10 +2484,7 @@ impl Transaction {
                 *state = TxState::Done { committed: true };
                 return Ok(false);
             }
-            TxState::Held(_) => {
-                self.ending_in.store(gate::generation().wrapping_add(1), Ordering::Release);
-                std::mem::replace(&mut *state, TxState::Ending)
-            }
+            TxState::Held(_) => std::mem::replace(&mut *state, TxState::Ending),
         };
         drop(state);
         let TxState::Held(held) = taken else { unreachable!("only `Held` is taken") };
@@ -2446,7 +2493,6 @@ impl Transaction {
         {
             let mut state = self.lock_state();
             *state = TxState::Done { committed: commit && result.is_ok() };
-            self.ending_in.store(0, Ordering::Release);
         }
         self.ended.notify_all();
         result.map_err(to_py_err)?;
