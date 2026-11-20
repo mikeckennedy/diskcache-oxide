@@ -98,6 +98,7 @@ WRONG_TYPES = [
     ('size', "'big'", 'text'),
     ('mode', "'two'", 'text'),
     ('store_seq', "x'00'", 'blob'),
+    ('store_seq', '9223372036854775807', 'an integer too large to be one'),
     ('expire_time', "'soon'", 'text'),
 ]
 
@@ -127,11 +128,20 @@ def test_check_reports_a_filename_that_isnt_utf8_and_fix_removes_the_row(tmp_pat
         assert len(cache) == 1 and cache.check() == []
 
 
-DAMAGED_SEQS = ["'abc'", "x'00'", '1e300', '1500.5', '9223372036854775807']
+# A damaged `store_seq`, and whether `clear()` reaches that row: only one that still compares below
+# the bound, a REAL inside the range.
+DAMAGED_SEQS = [
+    ("'abc'", 4),
+    ("x'00'", 4),
+    ('1e300', 4),
+    ('1500.5', 5),
+    ('9223372036854775807', 4),
+    ('4611686018427387904', 4),
+]
 
 
-@pytest.mark.parametrize('value', DAMAGED_SEQS)
-def test_a_damaged_store_seq_disturbs_no_other_key(tmp_path: Path, value: str) -> None:
+@pytest.mark.parametrize(('value', 'cleared'), DAMAGED_SEQS, ids=[value for value, _ in DAMAGED_SEQS])
+def test_a_damaged_store_seq_gives_no_other_key_a_repeated_number(tmp_path: Path, value: str, cleared: int) -> None:
     """Plan 32, step 8. One row's damaged `store_seq` used to decide every later sequence number: text or
     a BLOB gave each later write the same one, so `clear()` returned 0 and left rows behind, and a large
     REAL made every `set` on any key raise."""
@@ -149,11 +159,11 @@ def test_a_damaged_store_seq_disturbs_no_other_key(tmp_path: Path, value: str) -
         assert cache.expire() == 0
         assert cache.cull() == 0
         assert cache.set('a', 'again') is True, 'an overwrite'
-        # The entries stored before it started all go: 'a', 'b', 'c' and 'n'. The damaged row goes
-        # too when its number still compares below the bound (a REAL in the integer range).
-        assert cache.clear() in (4, 5)
+        # The entries stored before it started all go: 'a', 'b', 'c' and 'n'.
+        assert cache.clear() == cleared
         assert [key for key in ('a', 'b', 'c', 'n') if key in cache] == []
         assert cache.set('d', 1) is True
+        assert len(cache) == 1 + (5 - cleared), 'the damaged row is left for check, where clear() could not reach it'
         cache.check(fix=True)
         assert cache.check() == []
-        assert cache.get('d') == 1
+        assert cache.get('d') == 1 and len(cache) == 1

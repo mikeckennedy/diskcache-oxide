@@ -388,6 +388,8 @@ class Caches[N: str = str]:
         try:
             real = self._open(name)
         except ForkedInsideTransactionError:
+            # And no NullCache inherited from a failed open in the parent: this child raises every time.
+            self._failed.pop(name, None)
             raise
         except _OPEN_ERRORS as exc:
             null = NullCache()

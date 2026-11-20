@@ -146,8 +146,12 @@ impl Store {
         loop {
             let rows: Vec<(i64, [String; 5])> = self.read(timeout, |conn| {
                 conn.prepare_cached(&format!(
-                    "SELECT id, typeof(mode), typeof(size), typeof(store_seq), typeof(expire_time), typeof(filename)
+                    "SELECT id, typeof(mode), typeof(size),
+                            CASE WHEN typeof(store_seq) = 'integer' AND store_seq >= 4611686018427387904
+                                 THEN '{}' ELSE typeof(store_seq) END,
+                            typeof(expire_time), typeof(filename)
                      FROM cache WHERE id > ?1 AND {} ORDER BY id LIMIT ?2",
+                    crate::rows::SEQ_OUT_OF_RANGE,
                     crate::rows::WRONG_TYPE
                 ))
                 .and_then(|mut stmt| {
@@ -788,6 +792,8 @@ mod tests {
             ("size", "1.5", "real"),
             ("mode", "'two'", "text"),
             ("store_seq", "x'00'", "blob"),
+            ("store_seq", "9223372036854775807", crate::rows::SEQ_OUT_OF_RANGE),
+            ("store_seq", "4611686018427387904", crate::rows::SEQ_OUT_OF_RANGE),
             ("expire_time", "'soon'", "text"),
         ];
         for (column, value, kind) in cases {

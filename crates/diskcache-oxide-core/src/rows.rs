@@ -11,7 +11,7 @@
 //! the count or size changes, which keeps a plain `set` to the same WAL pages as diskcache's.
 //!
 //! The maximum is taken over sound numbers only (`max_store_seq!`): a row whose `store_seq` is
-//! damaged (text, a BLOB, a REAL or the largest integer, as a bad page leaves it) would otherwise be
+//! damaged (text, a BLOB, or a number at or above 2^62, as a bad page leaves it) would otherwise be
 //! the maximum, and every later write would get the same number, or one that isn't an integer.
 
 use std::time::Duration;
@@ -49,26 +49,43 @@ impl ToSql for Stored<'_> {
 /// The SQL for the largest sound `store_seq` in the table, or 0 for none: an expression every
 /// statement that hands out or bounds a sequence number shares.
 ///
-/// In SQLite's order text and BLOBs sort above every number, so the range leaves them out, along
-/// with a REAL too large for an integer and `i64::MAX` itself, whose `+ 1` is a REAL. A REAL inside
-/// the range is cut to the integer below it, and the next number is still above it. Without this a
-/// row with a damaged `store_seq` made `MAX(store_seq) + 1` come out as 1 for every later write
-/// (text or a BLOB), or as a REAL that the next statement couldn't read (plan 32, step 8). The
+/// Sound means a number below 2^62 (`SEQ_CEILING`). In SQLite's order text and BLOBs sort above every
+/// number, so the range leaves them out, along with any number at or above the ceiling; a REAL
+/// inside the range is cut to the integer below it, and the next number is still above it. Without
+/// this a row with a damaged `store_seq` made `MAX(store_seq) + 1` come out as 1 for every later
+/// write (text or a BLOB), or as a REAL that the next statement couldn't read (plan 32, step 8). The
 /// range is one seek on the `cache_store_seq` index, as the bare `MAX` was.
 macro_rules! max_store_seq {
     () => {
-        "COALESCE(CAST((SELECT MAX(store_seq) FROM cache WHERE store_seq < 9223372036854775807) AS INTEGER), 0)"
+        "COALESCE(CAST((SELECT MAX(store_seq) FROM cache WHERE store_seq < 4611686018427387904) AS INTEGER), 0)"
     };
 }
 pub(crate) use max_store_seq;
 
+/// The SQL for the `store_seq` a write takes: one past the largest sound number, or the floor
+/// `$floor` (an expression for `state.next_seq`) if that's higher. NULL, which the column's
+/// `NOT NULL` refuses, when that would reach the ceiling.
+///
+/// The ceiling has to fail the write: a number at or above it is left out of the next maximum, so
+/// handing one out would hand the same one out again to every write after it, silently. Counting
+/// can't get there (2^62 writes), so this is for damage: a `store_seq` just under the ceiling, or a
+/// `next_seq` at or above it, or of another type (text sorts above the ceiling in the scalar `MIN`).
+macro_rules! next_store_seq {
+    ($floor:literal) => {
+        concat!("NULLIF(MIN(MAX(", max_store_seq!(), " + 1, ", $floor, "), 4611686018427387904), 4611686018427387904)")
+    };
+}
+
+/// One past the largest `store_seq` a row may have: 2^62. No cache counts that far, so a number at or
+/// above it is damage, which `check()` reports (`WRONG_TYPE`) and the numbering leaves out.
+#[cfg(test)]
+const SEQ_CEILING: i64 = 1 << 62;
+
 /// The in-place update of a number's row (see [`RowWriter::update_number_in_place`]).
 pub(crate) const UPDATE_NUMBER_SQL: &str = concat!(
-    "UPDATE cache SET mode = ?1, value = ?2, store_time = ?3,
-         store_seq = MAX(",
-    max_store_seq!(),
-    " + 1, (SELECT next_seq FROM state WHERE only = 1))
-     WHERE id = ?4"
+    "UPDATE cache SET mode = ?1, value = ?2, store_time = ?3, store_seq = ",
+    next_store_seq!("(SELECT next_seq FROM state WHERE only = 1)"),
+    " WHERE id = ?4"
 );
 
 /// An entry's tag: a key value (D-052), in its own type so it can't be passed where a key belongs.
@@ -120,9 +137,16 @@ pub struct RowWriter<'t> {
 
 /// The SQL test for a row with a column of a type the schema never stores there: what `check()`
 /// reports as a damaged row, and what `check(fix=True)` deletes.
+///
+/// A `store_seq` at or above 2^62 counts too, whatever its type: no cache counts that far, the
+/// numbering leaves such a row out (`max_store_seq!`), and no `clear()` bound reaches it.
 pub(crate) const WRONG_TYPE: &str = "(typeof(mode) != 'integer' OR typeof(size) != 'integer' \
-     OR typeof(store_seq) != 'integer' OR typeof(expire_time) NOT IN ('real', 'integer', 'null') \
+     OR typeof(store_seq) != 'integer' OR store_seq >= 4611686018427387904 \
+     OR typeof(expire_time) NOT IN ('real', 'integer', 'null') \
      OR typeof(filename) NOT IN ('text', 'null'))";
+
+/// What `check()` reports a `store_seq` as when it's an integer at or above 2^62, in place of its type.
+pub(crate) const SEQ_OUT_OF_RANGE: &str = "an integer too large to be one";
 
 /// What a `filename` column that isn't TEXT reads as: a name no value file can have
 /// (`spill::value_path` refuses it), so every caller's existing path for a damaged name runs. A read
@@ -200,9 +224,9 @@ impl<'t> RowWriter<'t> {
                 "INSERT INTO cache (key_type, key, mode, value, filename, size, store_time, expire_time, tag_type, tag,
                                     store_seq)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                         (SELECT MAX(",
-                max_store_seq!(),
-                " + 1, next_seq) FROM state WHERE only = 1))
+                         (SELECT ",
+                next_store_seq!("next_seq"),
+                " FROM state WHERE only = 1))
                  ON CONFLICT (key_type, key) DO UPDATE SET
                      mode = excluded.mode, value = excluded.value, filename = excluded.filename,
                      size = excluded.size, store_time = excluded.store_time,
@@ -612,14 +636,16 @@ mod tests {
     /// failed to read.
     #[test]
     fn a_damaged_store_seq_is_left_out_of_the_next_number() {
-        for damage in ["'abc'", "x'0102'", "1e300", "9223372036854775807", "9223372036854775808.0"] {
+        for damage in
+            ["'abc'", "x'0102'", "1e300", "9223372036854775807", "9223372036854775808.0", "4611686018427387904"]
+        {
             let tmp = TempDir::new("rows-damaged-seq");
             let mut conn = new_db(&tmp);
             for key in ["a", "b", "c"] {
                 write(&mut conn, |w| w.upsert(&row(key, b"1")).unwrap());
             }
             conn.execute(&format!("UPDATE cache SET store_seq = {damage} WHERE key = 'b'"), []).unwrap();
-            let highest = *sound_seqs(&conn).iter().filter(|seq| **seq < i64::MAX).max().unwrap();
+            let highest = *sound_seqs(&conn).iter().filter(|seq| **seq < SEQ_CEILING).max().unwrap();
 
             // New rows, an overwrite and a number updated in place each take a number of their own.
             let (d, _) = write(&mut conn, |w| w.upsert(&row("d", b"1")).unwrap());
@@ -650,6 +676,34 @@ mod tests {
         conn.execute("UPDATE cache SET store_seq = 1500.5 WHERE key = 'a'", []).unwrap();
         let (b, _) = write(&mut conn, |w| w.upsert(&row("b", b"1")).unwrap());
         assert_eq!(b, 1501);
+    }
+
+    /// The ceiling is never handed out: a number there is left out of the next maximum, so every
+    /// write after it would take the same one. The write fails instead, on the column's NOT NULL.
+    #[test]
+    fn a_store_seq_or_floor_at_the_ceiling_fails_the_write_rather_than_repeat() {
+        let top = SEQ_CEILING - 1;
+        for damage in [
+            format!("UPDATE cache SET store_seq = {top} WHERE key = 'a'"),
+            format!("UPDATE state SET next_seq = {SEQ_CEILING}"),
+            "UPDATE state SET next_seq = 9223372036854775807".to_owned(),
+            "UPDATE state SET next_seq = 'abc'".to_owned(),
+        ] {
+            let tmp = TempDir::new("rows-seq-ceiling");
+            let mut conn = new_db(&tmp);
+            write(&mut conn, |w| w.upsert(&row("a", b"1")).unwrap());
+            let (b, _) = write(&mut conn, |w| w.upsert(&row("b", b"1")).unwrap());
+            conn.execute(&damage, []).unwrap();
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
+            let refused = RowWriter::new(&tx, T).upsert(&row("c", b"1"));
+            assert!(refused.is_err(), "{damage}: a write took {refused:?}");
+            let id: i64 = tx.query_row("SELECT id FROM cache WHERE key = 'b'", [], |r| r.get(0)).unwrap();
+            assert!(tx.execute(UPDATE_NUMBER_SQL, (6, 7, 1.0, id)).is_err(), "{damage}: an in-place update ran");
+            drop(tx);
+            let unchanged: i64 =
+                conn.query_row("SELECT store_seq FROM cache WHERE key = 'b'", [], |r| r.get(0)).unwrap();
+            assert_eq!(unchanged, b, "{damage}");
+        }
     }
 
     /// The range keeps the lookup to one seek on the `store_seq` index: its cost doesn't grow with

@@ -2583,9 +2583,14 @@ enum Failure {
 }
 
 fn classify(py: Python<'_>, mode: i64, e: &PyErr) -> Failure {
-    if !e.is_instance_of::<PyException>(py) || e.is_instance_of::<crate::UnsafeValueError>(py) {
-        // KeyboardInterrupt and friends; and a pickle on a pickle=False handle, a configuration
-        // bug that a miss would hide on every read.
+    if !e.is_instance_of::<PyException>(py)
+        || e.is_instance_of::<crate::UnsafeValueError>(py)
+        || e.is_instance_of::<crate::ForkedInsideTransactionError>(py)
+    {
+        // KeyboardInterrupt and friends; a pickle on a pickle=False handle, a configuration bug
+        // that a miss would hide on every read; and a hook that called a cache this process can't
+        // use after a fork (D-020), which says nothing about this row's bytes: deleting the row
+        // for it would empty a healthy cache one read at a time.
         Failure::Passthrough
     } else if e.is_instance_of::<crate::ForeignValueError>(py) {
         Failure::Foreign

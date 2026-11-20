@@ -78,6 +78,32 @@ def fails_fast(what: str, call: Callable[[], object]) -> None:
 
 UNUSABLE = "can't be used in this process"
 
+# The cache the two decode hooks below read: one this process may not be able to use.
+HELD: list[Cache] = []
+
+
+class ReadsHeldOnDecode:
+    """A registered type whose `decode` reads another cache."""
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+
+def decode_reading_held(n: int) -> ReadsHeldOnDecode:
+    HELD[0].get('before')
+    return ReadsHeldOnDecode(n)
+
+
+class ReadsHeldOnUnpickle:
+    """A pickled value whose `__setstate__` reads another cache."""
+
+    def __init__(self) -> None:
+        self.n = 1
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        HELD[0].get('before')
+        self.__dict__.update(state)
+
 
 def unusable(what: str, call: Callable[[], object]) -> None:
     """`call()` raises the "unusable after fork" error, `ForkedInsideTransactionError`, a RuntimeError
@@ -132,6 +158,29 @@ def d020(directory: Path) -> list[str]:
     registry.register('held', directory=directory, timeout=TIMEOUT)
     registry.register('elsewhere', directory=other, timeout=TIMEOUT)
 
+    # A healthy cache whose values' decode hooks read the held one (the architect's step 8 review).
+    from diskcache_oxide import register_type, unregister_type
+
+    hooks = directory.parent / f'{directory.name}-hooks'
+    HELD.append(cache)
+    register_type(ReadsHeldOnDecode, name='tests.ReadsHeldOnDecode', encode=lambda v: v.n, decode=decode_reading_held)
+    with Cache(hooks, timeout=TIMEOUT, pickle=True) as hooked:
+        hooked.set('typed', ReadsHeldOnDecode(7))
+        hooked.set('pickled', ReadsHeldOnUnpickle())
+
+    def hooks_raise_and_keep_their_rows() -> None:
+        """A hook that reads the unusable cache says nothing about its own row's bytes: the error
+        passes through as itself, and the row stays, whatever `on_decode_error` says. Read as an
+        unreadable value, every such read deleted a good row from a cache other processes share."""
+        for policy in ('raise', 'miss'):
+            with Cache(hooks, timeout=TIMEOUT, pickle=True, on_decode_error=policy) as hooked:
+                for key in ('typed', 'pickled'):
+                    unusable(
+                        f'a {key} value whose hook reads the held cache, on_decode_error={policy}',
+                        lambda: hooked.get(key),
+                    )
+                    assert key in hooked, f'the {key} row was deleted for an error that was not about it'
+
     def grandchild() -> None:
         unusable('grandchild, a fresh Cache', lambda: Cache(directory, timeout=TIMEOUT))
         unusable('grandchild, a read through the inherited Cache', lambda: cache.get('before'))
@@ -177,6 +226,7 @@ def d020(directory: Path) -> list[str]:
             unusable(name, call)
         assert reported == [], f'on_open_error ran for an error no retry can help: {reported}'
         assert registry['elsewhere'].set('registry', 1) is True, 'another cache in the same registry works'
+        hooks_raise_and_keep_their_rows()
         with Cache(other, timeout=TIMEOUT) as elsewhere:
             assert elsewhere.set('child', 1) is True and elsewhere.get('child') == 1
         code = wait(fork(grandchild))
@@ -192,6 +242,12 @@ def d020(directory: Path) -> list[str]:
     failures = []
     if code != 0:
         failures.append(f'child exit code {code}')
+    with Cache(hooks, timeout=TIMEOUT, pickle=True) as hooked:
+        typed, pickled = hooked.get('typed'), hooked.get('pickled')
+        if not (isinstance(typed, ReadsHeldOnDecode) and typed.n == 7 and isinstance(pickled, ReadsHeldOnUnpickle)):
+            failures.append(f'the parent lost a value whose hook failed in the child: {typed!r}, {pickled!r}')
+    unregister_type(ReadsHeldOnDecode)
+    HELD.clear()
     if not any(issubclass(w.category, RuntimeWarning) for w in caught):
         failures.append('the parent got no RuntimeWarning for forking inside its transaction')
     if cache.get('in-hold') != 1:

@@ -569,6 +569,9 @@ class DjangoCache(BaseCache):
         try:
             new = (FanoutCache if self.sharded else Cache)(self.directory, **self.options)
         except ForkedInsideTransactionError:
+            # And no NullCache inherited from a failed open in the parent, nor the retry window this
+            # call just set: this child raises every time.
+            unavailable.pop(self.directory, None)
             raise
         except OPEN_ERRORS as error:
             if not durable:

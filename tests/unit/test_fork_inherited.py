@@ -57,3 +57,17 @@ def test_the_child_logs_one_warning_naming_the_cache_it_cant_use(tmp_path: Path)
     warned = [line for line in proc.stderr.splitlines() if 'this process was forked while a connection' in line]
     assert len(warned) == 1, proc.stderr
     assert str(tmp_path / 'c') in warned[0] and 'RuntimeError' in warned[0]
+
+
+def test_the_error_class_is_public_a_runtime_error_and_pickles() -> None:
+    import pickle
+
+    from diskcache_oxide import ForkedInsideTransactionError
+
+    assert ForkedInsideTransactionError.__module__ == 'diskcache_oxide'
+    assert [c.__name__ for c in ForkedInsideTransactionError.__mro__[:2]] == [
+        'ForkedInsideTransactionError',
+        'RuntimeError',
+    ]
+    copy = pickle.loads(pickle.dumps(ForkedInsideTransactionError('x')))
+    assert type(copy) is ForkedInsideTransactionError and copy.args == ('x',)
