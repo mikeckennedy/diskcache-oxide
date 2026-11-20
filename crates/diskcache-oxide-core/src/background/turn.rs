@@ -267,7 +267,7 @@ impl Store {
         match self.background_checkpoint(turn) {
             Some(Outcome::Failed(error)) => Step::Failed(error),
             Some(Outcome::ForkPending) => Step::Cut(Stop::Refused),
-            // Busy backs off on its own (`record_outcome`); the next tick tries again.
+            // Busy is left for the next tick; nothing here arms the request path's backoff.
             None | Some(Outcome::Done | Outcome::Busy | Outcome::NoSlot) => Step::Done,
         }
     }

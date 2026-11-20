@@ -470,6 +470,27 @@ fn the_checkpoint_never_copies_under_the_write_lock() {
 }
 
 #[test]
+fn a_passive_checkpoint_that_found_the_lock_taken_is_busy_not_all_copied() {
+    use crate::wal::Outcome;
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("turn-checkpoint-busy");
+    let (store, wal) = grown_wal(tmp.path(), DEFAULT_MAX_CONNECTIONS);
+    let turn = store.begin_background_turn().unwrap();
+    // What PASSIVE answers while another connection holds the checkpoint lock. Only another
+    // process can hold it against this one, so the row is put in by hand; the two frame counts are
+    // equal, and reading them alone sent the turn on to TRUNCATE under the write lock.
+    crate::store::PASSIVE_ROW.with(|row| row.set(Some((1, -1, -1))));
+    assert!(matches!(store.background_checkpoint(&turn), Some(Outcome::Busy)), "it went on to TRUNCATE");
+    assert!(wal_size(&wal) > 0, "the WAL was reset by a TRUNCATE under the write lock");
+    assert!(!store.wal_in_backoff_for_tests());
+    // With the lock free again, the next turn finishes the job.
+    assert!(matches!(store.background_checkpoint(&turn), Some(Outcome::Done)));
+    assert_eq!(wal_size(&wal), 0);
+    drop(turn);
+    store.release_handle();
+}
+
+#[test]
 fn a_one_connection_store_never_checkpoints_in_the_background() {
     use crate::wal::Outcome;
     let _forks = one_global_fork_at_a_time();

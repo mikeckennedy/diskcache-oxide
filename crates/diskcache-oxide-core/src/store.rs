@@ -111,6 +111,13 @@ pub(crate) fn reset_held_in_child() {
     HELD_STORES.store(0, Ordering::Relaxed);
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests only: the row the next background PASSIVE checkpoint on this thread reports, in place
+    /// of SQLite's (it still runs), since only another process can hold the checkpoint lock.
+    pub(crate) static PASSIVE_ROW: Cell<Option<(i64, i64, i64)>> = const { Cell::new(None) };
+}
+
 /// Counts `HeldTransaction::abandon` calls, so a test can tell that path ran.
 #[cfg(test)]
 static ABANDONS: AtomicUsize = AtomicUsize::new(0);
@@ -1701,11 +1708,17 @@ impl Store {
             })
             .map_err(|e| Error::from_sqlite(e, Duration::ZERO))
         });
+        #[cfg(test)]
+        let passive = match PASSIVE_ROW.with(Cell::take) {
+            Some(row) => passive.map(|done| done.map(|_| row)),
+            None => passive,
+        };
         let outcome = match passive {
             None => refused(),
             Some(Err(error)) => Outcome::Failed(error),
-            // Frames left that a reader's snapshot still pins: the copy waits for a later turn.
-            Some(Ok((_, log, copied))) if log != copied => Outcome::Busy,
+            // Frames left that a reader's snapshot still pins, or another connection is
+            // checkpointing: the copy waits for a later turn, never for a TRUNCATE under the lock.
+            Some(Ok((busy, log, copied))) if !crate::wal::passive_copied_everything(busy, log, copied) => Outcome::Busy,
             Some(Ok(_)) if self.write_waiters() > 0 || self.is_retired() => return None,
             Some(Ok(_)) => match self.write_lock.try_lock() {
                 None => Outcome::Busy,
