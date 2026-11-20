@@ -255,7 +255,7 @@ impl<'t> RowWriter<'t> {
         self.finish_delete(removed)
     }
 
-    /// Deletes the row `id` if it still has a column of the wrong type ([`WRONG_TYPE`]): for
+    /// Deletes the row `id` if it still has a column of the wrong type (`WRONG_TYPE`): for
     /// `check(fix=True)`. By `id` alone, since its `store_seq` may be the damaged column, and asked
     /// again here, inside the delete: an overwrite keeps a row's `id`, so one that came between the
     /// check's look and this write has made the row a healthy one, which must stay.
