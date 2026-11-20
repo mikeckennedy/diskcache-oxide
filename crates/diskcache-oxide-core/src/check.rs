@@ -1,8 +1,9 @@
 //! `check(fix)`: the database and the value files against each other (plan 24, release 2).
 //!
-//! Chunked and mostly lock-free, in the style of `clear()` (D-011): no step holds the write lock or
-//! a gate level across a scan, so writers and forks aren't stalled. Only `PRAGMA integrity_check`
-//! and, with `fix`, `VACUUM` are long single steps.
+//! Chunked and mostly lock-free, in the style of `clear()` (D-011): no step holds the write lock
+//! across a scan, so writers aren't stalled. The long single steps are `PRAGMA integrity_check`,
+//! the two reads that visit every row (step 0 on a cache with nothing damaged, and the totals),
+//! which hold a connection and a gate level for one pass over the table, and, with `fix`, `VACUUM`.
 //!
 //! 0. **Column types:** a row whose `mode`, `size`, `store_seq`, `expire_time` or `filename` holds a
 //!    value of the wrong SQLite type (a damaged page, or a hand that edited the file) is reported,
@@ -144,14 +145,11 @@ impl Store {
         let mut after = 0_i64;
         loop {
             let rows: Vec<(i64, [String; 5])> = self.read(timeout, |conn| {
-                conn.prepare_cached(
+                conn.prepare_cached(&format!(
                     "SELECT id, typeof(mode), typeof(size), typeof(store_seq), typeof(expire_time), typeof(filename)
-                     FROM cache
-                     WHERE id > ?1 AND (typeof(mode) != 'integer' OR typeof(size) != 'integer'
-                         OR typeof(store_seq) != 'integer' OR typeof(expire_time) NOT IN ('real', 'integer', 'null')
-                         OR typeof(filename) NOT IN ('text', 'null'))
-                     ORDER BY id LIMIT ?2",
-                )
+                     FROM cache WHERE id > ?1 AND {} ORDER BY id LIMIT ?2",
+                    crate::rows::WRONG_TYPE
+                ))
                 .and_then(|mut stmt| {
                     stmt.query_map((after, PAGE), |r| {
                         Ok((r.get(0)?, [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?]))
@@ -165,9 +163,13 @@ impl Store {
             for (id, kinds) in rows {
                 let fixed = fix
                     && self.write_files(timeout, crate::store::LockPriority::Normal, |writer, _| {
-                        let removed = writer.delete_id(id)?;
+                        let removed = writer.delete_damaged(id)?;
                         Ok(crate::store::Changed::removing(removed.is_some(), removed))
                     })?;
+                if fix && !fixed {
+                    // Deleted or overwritten since the page was read: no longer a damaged row.
+                    continue;
+                }
                 for ((column, allowed), kind) in COLUMNS.into_iter().zip(kinds) {
                     if !allowed.contains(&kind.as_str()) {
                         merge(found, Finding::BadColumn { id, column, found: kind, fixed });
@@ -181,9 +183,12 @@ impl Store {
         let sqlite = |e| Error::from_sqlite(e, timeout);
         // Paged on the partial index over spilled rows, by name, so a cache of mostly inline values
         // reads only its spilled rows (paging by `id` would scan every row to fill a page).
-        let mut after = String::new();
+        // The cursor is the name's bytes as stored, and each name is read as bytes: a TEXT value
+        // needn't be valid UTF-8 (a flipped bit in a name keeps the column's type), and reading one
+        // as a `String` would end the check with an error on the damage it's here to find.
+        let mut after: Vec<u8> = Vec::new();
         loop {
-            let rows: Vec<(i64, i64, String, i64)> = self.read(timeout, |conn| {
+            let rows: Vec<(i64, i64, Vec<u8>, i64)> = self.read(timeout, |conn| {
                 conn.prepare_cached(
                     // Only rows whose columns hold what the schema says: the others are step 0's,
                     // and a `filename` of another type would sort after every text one and come
@@ -194,13 +199,18 @@ impl Store {
                      ORDER BY filename LIMIT ?2",
                 )
                 .and_then(|mut stmt| {
-                    stmt.query_map((&after, PAGE), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect()
+                    stmt.query_map((TextBytes(&after), PAGE), |r| {
+                        Ok((r.get(0)?, r.get(1)?, r.get_ref(2)?.as_bytes()?.to_vec(), r.get(3)?))
+                    })?
+                    .collect()
                 })
                 .map_err(sqlite)
             })?;
             let Some((_, _, last, _)) = rows.last() else { return Ok(()) };
             after.clone_from(last);
             for (id, store_seq, name, size) in rows {
+                // Lossy: a name that isn't UTF-8 becomes one that can't be a value path (below).
+                let name = String::from_utf8_lossy(&name).into_owned();
                 let version = Version::new(id, store_seq);
                 let problem = match spill::value_path(self.directory(), &name) {
                     None => Some(Finding::BadFilename { name, fixed: false }),
@@ -373,9 +383,10 @@ impl Store {
         if fix {
             self.write(timeout, |_, tx| {
                 tx.execute(
-                    "UPDATE state SET count = (SELECT COUNT(*) FROM cache),
-                                       size = (SELECT COALESCE(SUM(CASE typeof(size) WHEN 'integer' THEN size ELSE 0 END), 0)
-                                               FROM cache)
+                    "UPDATE state SET
+                         count = (SELECT COUNT(*) FROM cache),
+                         size = (SELECT COALESCE(SUM(CASE typeof(size) WHEN 'integer' THEN size ELSE 0 END), 0)
+                                 FROM cache)
                      WHERE only = 1",
                     [],
                 )
@@ -390,6 +401,15 @@ impl Store {
             merge(found, Finding::Size { stored: size, actual: sum, fixed: fix });
         }
         Ok(())
+    }
+}
+
+/// A cursor over `filename`, bound as the TEXT bytes it was read as (see `check_rows`).
+struct TextBytes<'a>(&'a [u8]);
+
+impl rusqlite::ToSql for TextBytes<'_> {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Text(self.0)))
     }
 }
 
@@ -690,8 +710,14 @@ mod tests {
 
     /// A `filename` and a `size` of each wrong type the column can hold. (A number put in
     /// `filename` is stored as text by the column's affinity: a name `spill` never writes.)
-    const BAD_FILE_COLUMNS: [(&str, &str); 4] =
-        [("filename", "x'fffe'"), ("filename", "42"), ("size", "'big'"), ("size", "1.5")];
+    const BAD_FILE_COLUMNS: [(&str, &str); 5] = [
+        ("filename", "x'fffe'"),
+        ("filename", "42"),
+        // TEXT that isn't UTF-8, as a flipped bit inside a name leaves it.
+        ("filename", "CAST(x'fffe' AS TEXT)"),
+        ("size", "'big'"),
+        ("size", "1.5"),
+    ];
 
     /// The totals agree with the rows, unless a damaged `size` was in play: what that row really
     /// weighed is lost, so `state.size` stays off by it until `fix` recomputes it.
@@ -742,7 +768,15 @@ mod tests {
                 .unwrap();
             let big = vec![1u8; usize::try_from(crate::schema::MIN_SIZE_LIMIT).unwrap()];
             s.set(T, "fills", Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
-            assert!(!read_of(&s, "k").unwrap(), "{column} = {value}: the damaged row, the oldest, was evicted");
+            let left: i64 = s
+                .read(T, |c| {
+                    c.query_row("SELECT COUNT(*) FROM cache WHERE filename IS NOT NULL AND key != 'fills'", [], |r| {
+                        r.get(0)
+                    })
+                    .map_err(|e| Error::from_sqlite(e, T))
+                })
+                .unwrap();
+            assert_eq!(left, 0, "{column} = {value}: the damaged row, the oldest, wasn't evicted");
         }
     }
 
@@ -783,8 +817,10 @@ mod tests {
             assert_eq!(len(&s), 1, "{column} = {value}: the damaged row is gone, the other stays");
             assert!(read_of(&s, "a").unwrap());
             assert!(!read_of(&s, "k").unwrap());
-            // Its value file went with it (as its row's, or as an old file no row names).
-            let _ = file;
+            // A row with a good name takes its value file with it. One whose name was the damage
+            // leaves the file, which nothing names now: a later `check(fix=True)` removes it once
+            // it's over an hour old, and until then it's too young to report.
+            assert_eq!(file.exists(), column == "filename", "{column} = {value}");
             assert_eq!(run(&s, false), Vec::new(), "{column} = {value}: clean afterwards");
         }
     }
@@ -810,5 +846,38 @@ mod tests {
         // Deleting what's left brings the totals to zero: nothing was miscounted on the way.
         assert_eq!(s.clear(T).unwrap(), 1);
         assert_eq!((len(&s), s.volume(T).is_ok()), (0, true));
+    }
+
+    #[test]
+    fn check_reports_a_text_filename_that_isnt_utf8_and_fix_removes_its_row() {
+        let (_tmp, s, _) = damaged("check-bad-utf8", "filename", "CAST(x'fffe' AS TEXT)");
+        let found = run(&s, false);
+        assert!(found.iter().any(|f| matches!(f, Finding::BadFilename { fixed: false, .. })), "{found:?}");
+        assert_eq!(run(&s, false), found, "paged past it both times");
+        let fixed = run(&s, true);
+        assert!(fixed.iter().any(|f| matches!(f, Finding::BadFilename { fixed: true, .. })), "{fixed:?}");
+        assert_eq!(len(&s), 1);
+        assert_eq!(run(&s, false), Vec::new());
+    }
+
+    #[test]
+    fn fix_leaves_a_row_that_was_overwritten_since_the_check_saw_it_damaged() {
+        // An overwrite keeps the row's id, so a delete by id alone would take the healthy new value.
+        let (_tmp, s, _) = damaged("check-healed", "size", "'big'");
+        let id: i64 = s
+            .read(T, |c| {
+                c.query_row("SELECT id FROM cache WHERE typeof(size) != 'integer'", [], |r| r.get(0))
+                    .map_err(|e| Error::from_sqlite(e, T))
+            })
+            .unwrap();
+        s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: b"healthy" }, None, NOW).unwrap();
+        let removed = s
+            .write_files(T, crate::store::LockPriority::Normal, |writer, _| {
+                let removed = writer.delete_damaged(id)?;
+                Ok(crate::store::Changed::removing(removed.is_some(), removed))
+            })
+            .unwrap();
+        assert!(!removed, "a healthy row was deleted by its id");
+        assert!(read_of(&s, "k").unwrap());
     }
 }

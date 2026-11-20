@@ -12,8 +12,7 @@
 
 use std::time::Duration;
 
-use rusqlite::types::ValueRef;
-use rusqlite::types::{ToSqlOutput, Value};
+use rusqlite::types::{ToSqlOutput, Value, ValueRef};
 use rusqlite::{Connection, OptionalExtension, ToSql};
 
 use crate::key::Key;
@@ -95,6 +94,12 @@ pub struct RowWriter<'t> {
     tx: &'t Connection,
     timeout: Duration,
 }
+
+/// The SQL test for a row with a column of a type the schema never stores there: what `check()`
+/// reports as a damaged row, and what `check(fix=True)` deletes.
+pub(crate) const WRONG_TYPE: &str = "(typeof(mode) != 'integer' OR typeof(size) != 'integer' \
+     OR typeof(store_seq) != 'integer' OR typeof(expire_time) NOT IN ('real', 'integer', 'null') \
+     OR typeof(filename) NOT IN ('text', 'null'))";
 
 /// What a `filename` column that isn't TEXT reads as: a name no value file can have
 /// (`spill::value_path` refuses it), so every caller's existing path for a damaged name runs. A read
@@ -250,13 +255,15 @@ impl<'t> RowWriter<'t> {
         self.finish_delete(removed)
     }
 
-    /// Deletes the row `id`, whatever is in it: for `check(fix=True)` on a row with a damaged
-    /// column, whose `store_seq` may be the damaged one.
-    pub fn delete_id(&self, id: i64) -> Result<Option<Removed>> {
+    /// Deletes the row `id` if it still has a column of the wrong type ([`WRONG_TYPE`]): for
+    /// `check(fix=True)`. By `id` alone, since its `store_seq` may be the damaged column, and asked
+    /// again here, inside the delete: an overwrite keeps a row's `id`, so one that came between the
+    /// check's look and this write has made the row a healthy one, which must stay.
+    pub fn delete_damaged(&self, id: i64) -> Result<Option<Removed>> {
         self.raise_seq_floor()?;
         let removed = self
             .tx
-            .prepare_cached("DELETE FROM cache WHERE id = ?1 RETURNING size, filename")
+            .prepare_cached(&format!("DELETE FROM cache WHERE id = ?1 AND {WRONG_TYPE} RETURNING size, filename"))
             .and_then(|mut stmt| stmt.query_row([id], size_and_file).optional())
             .map_err(|e| self.sqlite(e))?;
         self.finish_delete(removed)

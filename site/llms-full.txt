@@ -1866,11 +1866,11 @@ validate_key(self, key: 'str') -> 'None'
 
 Warn (`CacheKeyWarning`) about a key memcached couldn't store, as every Django backend does.
 
-get_backend_timeout(self, timeout: 'Any' = <object object at 0x113f7e570>) -> 'Optional[float]'
+get_backend_timeout(self, timeout: 'Any' = <object object at 0x1122ee570>) -> 'Optional[float]'
 
 Seconds from now, or None for forever. Zero or less means "don't store it", as in Django.
 
-add(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+add(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
 
 Django's `add`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
 
@@ -1878,11 +1878,11 @@ get(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) ->
 
 The value, or `default` on a miss (a stored None is returned as None).
 
-set(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+set(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
 
 Django's `set`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
 
-touch(self, key: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None) -> 'bool'
+touch(self, key: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None) -> 'bool'
 
 Give the key a new timeout. Returns whether it was there.
 
@@ -1910,7 +1910,7 @@ get_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]'
 
 The keys that are there, with their values; a stored None is returned.
 
-set_many(self, data: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None) -> 'list[Any]'
+set_many(self, data: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None) -> 'list[Any]'
 
 A `set` per key, not one transaction: a value's pickling can run arbitrary code (load a
 session, run a query), which mustn't run holding the cache's write lock. Returns the keys
@@ -1970,7 +1970,7 @@ check(self, fix: 'bool' = False) -> 'list[Any]'
 
 Check the cache's consistency, returning the problems as warnings; see `Cache.check`.
 
-aadd(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+aadd(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
 
 `add`, run in one `sync_to_async` call.
 
@@ -1978,11 +1978,11 @@ aget(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) -
 
 `get`, run in one `sync_to_async` call.
 
-aset(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+aset(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
 
 `set`, run in one `sync_to_async` call.
 
-atouch(self, key: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None) -> 'bool'
+atouch(self, key: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None) -> 'bool'
 
 `touch`, run in one `sync_to_async` call.
 
@@ -2006,7 +2006,7 @@ aget_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]
 
 `get_many`, run in one `sync_to_async` call.
 
-aset_many(self, data: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None) -> 'list[Any]'
+aset_many(self, data: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None) -> 'list[Any]'
 
 `set_many`, run in one `sync_to_async` call.
 
@@ -3710,7 +3710,7 @@ reg.register(ObjectId, name='bson.ObjectId', encode=lambda o: o.binary, decode=O
 cache = Cache('/var/cache/my-app-binary-ids', types=reg)
 ```
 
-Give a class its own name in that registry. If it uses a name the global registry has for a different class, a value of the global class can't be stored through that cache: it would be written under the shared name and read back as the other class, so `set()` raises `TypeError` and names both.
+Give a class its own name in that registry. If it uses a name the global registry has for a different class, a value of the global class can't be stored through that cache: it would be written under the shared name and read back as the other class, so `set()` raises `TypeError` and names both. Reading has no such check: a row another handle stored under that name is decoded by whatever this handle's registry has for it.
 
 Two processes with different registrations on one directory write rows the other can't read, the same way two processes with different `serializer=` settings would. Register at import time, the same way everywhere.
 

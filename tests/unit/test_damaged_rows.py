@@ -36,7 +36,13 @@ def damaged(directory: Path, column: str, value: str) -> Cache:
     return Cache(directory)
 
 
-FILE_COLUMNS = [('filename', "x'fffe'"), ('filename', '42'), ('size', "'big'"), ('size', '1.5')]
+FILE_COLUMNS = [
+    ('filename', "x'fffe'"),
+    ('filename', '42'),
+    ('filename', "CAST(x'fffe' AS TEXT)"),  # Text that isn't UTF-8, as a flipped bit in a name leaves it.
+    ('size', "'big'"),
+    ('size', '1.5'),
+]
 ids = [f'{column}={value}' for column, value in FILE_COLUMNS]
 
 
@@ -47,10 +53,18 @@ def test_a_damaged_filename_or_size_is_a_miss(tmp_path: Path, column: str, value
         assert 'k' not in cache
         with pytest.raises(KeyError):
             cache['k']
-        assert cache.pop('k', 'default') == 'default'
         assert cache.get('a') == 'inline'
         assert cache.delete('k') is False, 'the miss removed the damaged row'
         assert len(cache) == 1
+
+
+@pytest.mark.parametrize(('column', 'value'), FILE_COLUMNS, ids=ids)
+def test_a_pop_of_a_damaged_row_is_a_miss_and_removes_it(tmp_path: Path, column: str, value: str) -> None:
+    # Its own cache: pop reads the row under the write lock, another path than get's.
+    with damaged(tmp_path / 'c', column, value) as cache:
+        assert cache.pop('k', 'default') == 'default'
+        assert sorted(str(key) for key in cache) == ['a']
+        assert cache.check() == [] or column == 'size', 'only a damaged size leaves the size total off'
 
 
 @pytest.mark.parametrize(('column', 'value'), FILE_COLUMNS, ids=ids)
@@ -103,3 +117,11 @@ def test_check_reports_a_wrong_typed_column_and_fix_removes_the_row(
         assert cache.check() == []
         files = [p for p in (tmp_path / 'c').rglob('*.val')]
         assert column == 'filename' or files == [], 'a row removed by fix takes its value file with it'
+
+
+def test_check_reports_a_filename_that_isnt_utf8_and_fix_removes_the_row(tmp_path: Path) -> None:
+    with damaged(tmp_path / 'c', 'filename', "CAST(x'fffe' AS TEXT)") as cache:
+        text = [str(w.message) for w in cache.check()]
+        assert any('damaged file name in a row' in line for line in text), text
+        cache.check(fix=True)
+        assert len(cache) == 1 and cache.check() == []
