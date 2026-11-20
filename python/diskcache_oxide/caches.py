@@ -86,7 +86,7 @@ _FANOUT_SETTINGS = _public_settings(FanoutCache)
 # subdirectory can't help, plan 26: another format opens `diskcache-oxide-format-N` instead) and its
 # subclass `LayoutMismatchError` (a directory that holds another kind of cache, a moved shard directory, or
 # settings that fit the registered shard count but not the stored one), the not-WAL error, and a
-# child forked mid-transaction that can't write the file (D-020): a NullCache is right for all. A
+# child forked while a connection to the cache was open, which can't use it (D-020, plan 32). A
 # different shard count alone is not an error here: the stored count is used (plan 15).
 _OPEN_ERRORS = (OSError, RuntimeError)
 

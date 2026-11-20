@@ -253,7 +253,7 @@ impl BackgroundTurn<'_> {
     /// write lock free, a free slot, no fork pending, a live store, and SQLite's lock free too. The
     /// value files `write` returns in its [`Changed`] are unlinked after the commit, with every lock
     /// let go, as [`Store::write_files`] does. None means it didn't run, or ran into a lock (a busy
-    /// `COMMIT` included); a store poisoned by a fork (D-020) can't be written and is skipped too.
+    /// `COMMIT` included); a store a fork left unusable (D-020) is skipped too.
     /// Other failures come back as errors. No WAL check follows, unlike `write_unpinned`: the turn's
     /// own checkpoint task runs after its deletes, and SQLite's auto-checkpoint still runs on commit.
     pub(crate) fn write_files<T>(
@@ -1376,7 +1376,7 @@ impl Store {
         priority: LockPriority,
         mut write: impl FnMut(&RowWriter<'_>, &Connection) -> Result<Changed<T>>,
     ) -> Result<T> {
-        // 0. In a child forked inside a transaction on this file, writes can never succeed (D-020):
+        // 0. In a child that inherited a connection to this file, nothing on it can succeed (D-020):
         // fail before waiting on anything.
         crate::poison::check_usable(self.file_id)?;
         // A thread holding a write transaction writes inside it, on its pinned connection, in a
@@ -2001,7 +2001,7 @@ impl Store {
     /// Starts a write transaction that stays open across calls until [`HeldTransaction::finish`]
     /// (or drop, which rolls back). The calling thread's reads and writes on this store run inside
     /// it. It holds the write lock, a gate level and a pooled connection, and registers the file
-    /// for D-020 poisoning: a child forked meanwhile can never write it.
+    /// for D-020 poisoning: a child forked meanwhile can never use it.
     pub fn begin_hold(self: &Arc<Self>, timeout: Duration) -> Result<HeldTransaction> {
         crate::poison::check_usable(self.file_id)?;
         // Refused only to a thread with no level, which proves it isn't nested: see `on_pinned`.

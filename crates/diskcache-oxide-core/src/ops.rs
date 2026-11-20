@@ -336,7 +336,7 @@ impl Store {
     /// Deletes exactly `version` (nothing newer, D-013) and its value file, if that needs no waiting
     /// at all: not for the write lock, a connection slot, or another process's lock. Skipped while
     /// this thread holds a write transaction on any cache or is inside any cache operation (gate
-    /// depth > 0: the gate is process-wide), in a child that can't write this file, and while a fork
+    /// depth > 0: the gate is process-wide), in a child that can't use this file, and while a fork
     /// is pending. An error is reported as a skip.
     pub fn delete_version_nowait(&self, version: Version) -> VersionDelete {
         match self.write_nowait(|writer| writer.delete_version(version.id, version.store_seq)) {

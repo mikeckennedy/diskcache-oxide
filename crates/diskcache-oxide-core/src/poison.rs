@@ -29,7 +29,7 @@
 //!   level the fork waits for, so a child never sees a half-written entry;
 //! - a hold is removed with one atomic store, from any thread;
 //! - the unusable set is only added to in the child's after-fork hook, while the forking thread is
-//!   the only one, and is only ever added to (tests aside: `poison_for_test`'s entry goes when its
+//!   the only one, and is only ever added to (tests aside: `unusable_for_test`'s entry goes when its
 //!   guard drops).
 
 use std::sync::OnceLock;

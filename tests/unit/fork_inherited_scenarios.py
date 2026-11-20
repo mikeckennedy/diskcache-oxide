@@ -398,12 +398,22 @@ def a_child_with_no_stranded_level(cache: Cache, hold: object, directory: Path, 
     refuses_everything(cache, directory)()
 
 
+def wait_until_ending(hold: object) -> None:
+    """Returns once another thread has taken `hold` to end it and is waiting: `Ending` shows only
+    after that thread released the interpreter (the GIL build), and the fork itself waits for it to
+    (the free-threaded build's stop-the-world). So the fork that follows lands inside the end."""
+    deadline = time.monotonic() + TIMEOUT
+    while 'Ending' not in repr(hold):
+        assert time.monotonic() < deadline, f'the other thread never began the end: {hold!r}'
+        time.sleep(0.001)
+
+
 def end_on_another_thread_behind_the_fork(directory: Path) -> list[str]:
     """Thread B leaves the main thread's `with cache.transact():` block while the main thread is
     forking: B has taken the transaction and waits to get into the gate behind that fork. In the
     child B doesn't exist. Before plan 32 the level it was ending stayed counted there for good: a
     later `os.fork()` from another thread hung, and the main thread's `__exit__` waited out its
-    timeout. A before-fork hook that sleeps holds the fork open while B gets there."""
+    timeout. A before-fork hook holds the fork open until B is there."""
     other = directory.parent / f'{directory.name}-other'
     cache = Cache(directory, timeout=TIMEOUT)
     cache.set('before', 'parent')
@@ -415,7 +425,7 @@ def end_on_another_thread_behind_the_fork(directory: Path) -> list[str]:
 
     def hook() -> None:
         in_hook.set()
-        time.sleep(0.4)  # The fork is claimed and not yet done: B's exit waits behind it.
+        wait_until_ending(hold)  # The fork is claimed and not yet done: B's exit waits behind it.
 
     def ender() -> None:
         in_hook.wait(TIMEOUT)
@@ -446,10 +456,12 @@ def end_on_another_thread_behind_the_fork(directory: Path) -> list[str]:
 
 
 def end_on_another_thread_while_the_owner_is_inside_a_call(directory: Path) -> list[str]:
-    """The other window: the owner is inside one of the transaction's own calls (a decoder running
-    inside `get()`), so thread B's commit sleeps, with no gate level, until that call hands the
-    connection back. The owner forks from the decoder meanwhile. The child returns from the `get`
-    and finds no stranded level; in the parent B commits once the call returns."""
+    """The other way in: the owner is inside one of the transaction's own calls (a decoder running
+    inside `get()`), so thread B's commit polls, with no gate level, for that call to hand the
+    connection back. The owner forks from the decoder meanwhile; B is in that poll when the fork is
+    claimed, and waiting behind the fork by the time it lands. The child, whose connection slot is
+    lent to a call it is still inside, returns from the `get` and finds no stranded level; in the
+    parent B commits once the call returns."""
     other = directory.parent / f'{directory.name}-other'
     register_type(ForkOnDecode, name='tests.ForkOnDecode', encode=lambda v: v.n, decode=fork_on_decode)
     cache = Cache(directory, timeout=TIMEOUT)
@@ -472,7 +484,7 @@ def end_on_another_thread_while_the_owner_is_inside_a_call(directory: Path) -> l
 
     def hook() -> None:
         thread.start()
-        time.sleep(0.3)  # B has taken the transaction and is asleep waiting for this call.
+        wait_until_ending(hold)  # B has taken the transaction and is waiting for this call.
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             pids.append(os.fork())

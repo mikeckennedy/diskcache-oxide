@@ -409,6 +409,10 @@ fn model_a_share_on_a_thread_the_child_doesnt_have_counts_for_nothing() {
                 fork.end_child();
                 assert_eq!((gate.holders(), gate.parked()), (0, 0), "a share nothing can drop is still counted");
                 assert_eq!(gate.own_depth(), 0, "the forking thread still counts an inherited share as its own");
+                // Its next share, on the `Owner` it had before the fork, counts from zero.
+                let fresh = gate.enter_shared_blocking().into_held();
+                assert_eq!((gate.holders(), gate.own_depth()), (1, 1));
+                drop(fresh);
             })
         };
         let ender = {
@@ -425,7 +429,8 @@ fn model_a_share_on_a_thread_the_child_doesnt_have_counts_for_nothing() {
                     }
                     None => GAVE_UP.hit(),
                 }
-                // Frozen here for good, as the child sees it: the share is never dropped.
+                // Frozen here for good, as the child sees it: the share is never dropped. That leaks
+                // its `Arc<Owner>` once per execution, as the real child does: a few bytes each.
                 std::mem::forget(share);
                 frozen_tx.send(()).unwrap();
             })
@@ -433,15 +438,8 @@ fn model_a_share_on_a_thread_the_child_doesnt_have_counts_for_nothing() {
         for t in [owner, ender] {
             t.join().unwrap();
         }
-        // In the child: a fork from another thread isn't held up, and a new share counts from zero.
-        thread::spawn(move || {
-            gate.begin_fork().end_parent();
-            let fresh = gate.enter_shared_blocking().into_held();
-            assert_eq!((gate.holders(), gate.own_depth()), (1, 1));
-            drop(fresh);
-        })
-        .join()
-        .unwrap();
+        // In the child: a fork from another thread isn't held up.
+        thread::spawn(move || gate.begin_fork().end_parent()).join().unwrap();
         assert_idle(gate);
     });
     GAVE_UP.assert_reached("an end that gave up behind its owner's fork");

@@ -1285,7 +1285,7 @@ impl HandleConfig {
         wants: Wants,
     ) -> PyResult<Py<PyAny>> {
         let now = self.now(py)?;
-        // In a child that can't write (D-020) a read could report a miss; a pop fails.
+        // In a child that can't use this cache (D-020), fail before the read rather than at its lease.
         let ready = handle.run(self.timeout, |timeout| handle.store.check_usable().map(|()| timeout));
         let popped = match self.attempt(py, &handle.store, Op::Pop, now, ready)? {
             Some(timeout) => self.pop_value(py, handle, key, now, timeout, wants.tag)?,
@@ -1520,7 +1520,7 @@ impl HandleConfig {
         wants: Wants,
     ) -> PyResult<Py<PyAny>> {
         let now = self.now(py)?;
-        // In a child that can't write (D-020) a read could see an item; a pull fails.
+        // In a child that can't use this cache (D-020), fail before the read rather than at its lease.
         let ready = handle.run(self.timeout, |timeout| handle.store.check_usable().map(|()| timeout));
         let found = match self.attempt(py, &handle.store, Op::Pull, now, ready)? {
             Some(timeout) => self.pull_item(py, handle, range, side, now, timeout, wants.tag)?,
@@ -2357,6 +2357,10 @@ impl Transaction {
     }
 
     fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if self.end_lost_to_fork() {
+            // Never the mutex in a child that may have inherited it locked; it was entered, in the parent.
+            return Err(PyRuntimeError::new_err("a transaction can be entered only once"));
+        }
         {
             let mut state = self.lock_state();
             match *state {
