@@ -2317,8 +2317,14 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </nav>
 <div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
 <!-- margin-sidebar -->
-    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar zindex-bottom">
-        
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" aria-labelledby="toc-title" class="toc-active">
+    <h3 id="toc-title">On this page</h3>
+   
+  <ul class="collapse">
+  <li><a href="#raises" id="toc-raises" class="nav-link active" data-scroll-target="#raises">Raises</a></li>
+  </ul>
+</nav>
     </div>
 <!-- main -->
 <main class="content" id="quarto-document-content" tabindex="-1">
@@ -2347,7 +2353,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1577-L1586" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L1581-L1593" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">FanoutCache</span><span class="op">.</span><span class="sig-name">stats</span>(
@@ -2358,8 +2364,19 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <div class="doc-text">
 <p>Returns the counts as they were, then resets them if <a href="Cache.reset.html#diskcache_oxide.Cache.reset" class="gdls-link gdls-code">reset</a>, then turns counting on or off with <a href="Caches.enable.html#diskcache_oxide.Caches.enable" class="gdls-link gdls-code">enable</a> (off by default). Counted per process and in memory, never in the database, so a read never writes: other processes’ lookups aren’t included, the counts start from zero when the process (or a forked child) starts, and every handle on one directory in a process shares them. <code>in</code>, <a href="Cache.pop.html#diskcache_oxide.Cache.pop" class="gdls-link gdls-code">pop</a> and iteration don’t count; a durable outage answered as a miss counts as nothing. A <a href="FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> sums its shards.</p>
 </div>
+<section id="raises" class="level2 doc-raises">
+<h2 class="doc-raises">Raises</h2>
+<div class="doc-definition-items">
+<dl>
+<dt><code> <span class="doc-parameter-annotation">RuntimeError</span></code></dt>
+<dd>
+This process is a child that a fork left unable to use this cache (D-020).
+</dd>
+</dl>
+</div>
 
 
+</section>
 
 </main>
 <hr style="padding: 0; margin: 0;">

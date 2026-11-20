@@ -78,7 +78,8 @@ Args:
         give `default + delta`. It's reported on the `diskcache_oxide` logger, at most once a
         minute per kind of failure. Bugs still raise (`TypeError`, `ValueError`,
         `UnsafeValueError`), as do `MemoryError` and `KeyboardInterrupt`, a `RecursionError` from
-        encoding a value too deep for this thread's stack, the constructor, admin
+        encoding a value too deep for this thread's stack, the `RuntimeError` of a child that a fork
+        left unable to use the cache, the constructor, admin
         calls (`len`, `volume`, `clear`, `expire`, `cull`, `checkpoint`, iteration) and anything
         inside a transaction held on this cache. This isn't durability in the database sense:
         this option can drop writes, and a dropped `set`, `delete`, `pop` or `incr` means stale
@@ -390,7 +391,7 @@ apart from `integrity_check` and `VACUUM`.
 
 Args:
     fix: Also repair: remove an entry whose file is missing or the wrong size, or with a
-        damaged column (it reads as a miss anyway), remove unknown files in value folders
+        damaged column (it reads as a miss, or raises), remove unknown files in value folders
         (never elsewhere; each under the write lock, so it waits for an open transaction, whose
         uncommitted entry may be the one naming the file), sweep empty value folders, correct
         the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
@@ -424,6 +425,9 @@ a read never writes: other processes' lookups aren't included, the counts start 
 when the process (or a forked child) starts, and every handle on one directory in a process
 shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
 counts as nothing. A `FanoutCache` sums its shards.
+
+Raises:
+    RuntimeError: This process is a child that a fork left unable to use this cache (D-020).
 
 durable
 
@@ -1210,7 +1214,7 @@ apart from `integrity_check` and `VACUUM`.
 
 Args:
     fix: Also repair: remove an entry whose file is missing or the wrong size, or with a
-        damaged column (it reads as a miss anyway), remove unknown files in value folders
+        damaged column (it reads as a miss, or raises), remove unknown files in value folders
         (never elsewhere; each under the write lock, so it waits for an open transaction, whose
         uncommitted entry may be the one naming the file), sweep empty value folders, correct
         the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
@@ -1244,6 +1248,9 @@ a read never writes: other processes' lookups aren't included, the counts start 
 when the process (or a forked child) starts, and every handle on one directory in a process
 shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
 counts as nothing. A `FanoutCache` sums its shards.
+
+Raises:
+    RuntimeError: This process is a child that a fork left unable to use this cache (D-020).
 
 durable
 
@@ -1866,11 +1873,11 @@ validate_key(self, key: 'str') -> 'None'
 
 Warn (`CacheKeyWarning`) about a key memcached couldn't store, as every Django backend does.
 
-get_backend_timeout(self, timeout: 'Any' = <object object at 0x1122ee570>) -> 'Optional[float]'
+get_backend_timeout(self, timeout: 'Any' = <object object at 0x11280e570>) -> 'Optional[float]'
 
 Seconds from now, or None for forever. Zero or less means "don't store it", as in Django.
 
-add(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+add(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11280e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
 
 Django's `add`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
 
@@ -1878,11 +1885,11 @@ get(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) ->
 
 The value, or `default` on a miss (a stored None is returned as None).
 
-set(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+set(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11280e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
 
 Django's `set`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
 
-touch(self, key: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None) -> 'bool'
+touch(self, key: 'Any', timeout: 'Any' = <object object at 0x11280e570>, version: 'Optional[int]' = None) -> 'bool'
 
 Give the key a new timeout. Returns whether it was there.
 
@@ -1910,7 +1917,7 @@ get_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]'
 
 The keys that are there, with their values; a stored None is returned.
 
-set_many(self, data: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None) -> 'list[Any]'
+set_many(self, data: 'Any', timeout: 'Any' = <object object at 0x11280e570>, version: 'Optional[int]' = None) -> 'list[Any]'
 
 A `set` per key, not one transaction: a value's pickling can run arbitrary code (load a
 session, run a query), which mustn't run holding the cache's write lock. Returns the keys
@@ -1970,7 +1977,7 @@ check(self, fix: 'bool' = False) -> 'list[Any]'
 
 Check the cache's consistency, returning the problems as warnings; see `Cache.check`.
 
-aadd(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+aadd(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11280e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
 
 `add`, run in one `sync_to_async` call.
 
@@ -1978,11 +1985,11 @@ aget(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) -
 
 `get`, run in one `sync_to_async` call.
 
-aset(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+aset(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11280e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
 
 `set`, run in one `sync_to_async` call.
 
-atouch(self, key: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None) -> 'bool'
+atouch(self, key: 'Any', timeout: 'Any' = <object object at 0x11280e570>, version: 'Optional[int]' = None) -> 'bool'
 
 `touch`, run in one `sync_to_async` call.
 
@@ -2006,7 +2013,7 @@ aget_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]
 
 `get_many`, run in one `sync_to_async` call.
 
-aset_many(self, data: 'Any', timeout: 'Any' = <object object at 0x1122ee570>, version: 'Optional[int]' = None) -> 'list[Any]'
+aset_many(self, data: 'Any', timeout: 'Any' = <object object at 0x11280e570>, version: 'Optional[int]' = None) -> 'list[Any]'
 
 `set_many`, run in one `sync_to_async` call.
 
@@ -3253,7 +3260,7 @@ Either way nothing in the block was kept. Treat it as you would the original fai
 RuntimeError: this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver
 ```
 
-This process is the child of a fork that happened while the forking thread had a connection to this cache open: inside its own `transact()` block, or from code running inside a cache call, such as a pickle hook or a registered type's `decode`. The parent is fine, and its transaction carries on and commits. In the child, every call on that cache raises this, reads included, for as long as the process lives, on a `durable=True` handle too. Other caches work, and `close()` still does.
+This process is the child of a fork that happened while the forking thread had a connection to this cache open: inside its own `transact()` block, or from code running inside a cache call while that call had its connection out, such as a pickle hook or a registered type's `decode` reading a small value. It also happens to the child of a plain `os.fork()` on one thread while another thread, inside its own transaction, was waiting to fork too. The parent is fine, and its transaction carries on and commits. In the child, every call on that cache raises this, reads included, for as long as the process lives, on a `durable=True` handle too. Other caches work, and `close()` still does.
 
 It's raised because the alternative is silent: a child like that holds none of the locks SQLite thinks it holds, so its reads could go stale and its writes could vanish. Don't fork from inside a transaction or a cache call: start worker processes before the block, or after it, or use the `spawn` or `forkserver` start method. See [Forking from inside your own transaction](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction).
 
@@ -3374,7 +3381,7 @@ SQLite refused write-ahead logging, which diskcache-oxide requires for readers a
 
 ## `UnknownFileWarning` and `EmptyDirWarning`
 
-`check()` returns what it found as a list of `warnings.WarningMessage` and issues nothing through `warnings`, so these never show up as warnings on their own. A file in the cache directory or a value folder that no entry names, and that's over an hour old, is reported as `unknown file: ...` with the category `UnknownFileWarning`; `check(fix=True)` removes it when it's in a value folder, under the write lock, so it waits for any open transaction (whose uncommitted entry may be the one that names the file) and raises `Timeout` if that transaction outlasts the timeout. An entry with a damaged column is reported as `damaged row N: its COLUMN is stored as TYPE`, and removed by `check(fix=True)`; until then it reads as a miss. `EmptyDirWarning` is diskcache's warning for an empty folder. It's exported so code that imports it keeps working, but `check()` never reports one: empty value folders are normal on an open cache, and `check(fix=True)` sweeps them.
+`check()` returns what it found as a list of `warnings.WarningMessage` and issues nothing through `warnings`, so these never show up as warnings on their own. A file in the cache directory or a value folder that no entry names, and that's over an hour old, is reported as `unknown file: ...` with the category `UnknownFileWarning`; `check(fix=True)` removes it when it's in a value folder, under the write lock, so it waits for any open transaction (whose uncommitted entry may be the one that names the file) and raises `Timeout` if that transaction outlasts the timeout. An entry with a damaged column is reported as `damaged row N: its COLUMN is stored as TYPE`, and removed by `check(fix=True)`. Until then, an entry with a damaged file name, or a damaged size on a value stored in a file, reads as a miss; one with a damaged `mode`, `expire_time` or `store_seq` can raise `OSError` from calls on that key. `EmptyDirWarning` is diskcache's warning for an empty folder. It's exported so code that imports it keeps working, but `check()` never reports one: empty value folders are normal on an open cache, and `check(fix=True)` sweeps them.
 
 ## `KeyError`
 
@@ -4729,7 +4736,7 @@ The result: whatever other threads were doing at the moment of the fork, the chi
 
 Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process's last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.
 
-The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds, or an operation it forked from inside, such as from a callback. The child leaves those file descriptors open by design, and treats that cache as unusable (see below). Another library's before-fork hook that reads or writes a cache is fine: the connection it used is closed when it's given back, not kept for the child to inherit.
+The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds, or an operation it forked from inside, such as from a callback. One more case: when two threads call `os.fork()` at the same moment and the second is inside its own transaction, the first fork doesn't wait for it (it would wait forever), so the first thread's child inherits the second thread's connection. The child leaves those file descriptors open by design, and treats that cache as unusable (see below). Another library's before-fork hook that reads or writes a cache is fine: the connection it used is closed when it's given back, not kept for the child to inherit.
 
 ### The maintenance thread
 
@@ -4763,7 +4770,7 @@ RuntimeError: this cache can't be used in this process: it was forked while a co
 
 Leaving the inherited `with` block raises `RuntimeError` too, and nothing commits. The parent's block carries on and commits as usual, and the parent gets a `RuntimeWarning` for forking inside it. The child logs one warning on the `diskcache_oxide` logger naming the directories it can't use. `close()` still works there, so cleanup code runs, and every other cache is unaffected. A `durable=True` handle raises as well: this never passes, and a worker quietly running without its cache for good is worse than an error. A clear error at the call site beats a mysterious 60-second hang in a fresh worker, and beats a write that silently vanishes.
 
-The same holds for a fork from code that runs inside a cache call: a pickle hook, or a registered type's `decode`, that calls `os.fork()` or starts a `multiprocessing` worker with the fork start method. That call's connection is open at the fork, so its child can't use that cache.
+The same holds for a fork from code that runs inside a cache call: a pickle hook, or a registered type's `decode`, that calls `os.fork()` or starts a `multiprocessing` worker with the fork start method. When that call's connection is open at the fork, its child can't use that cache. That's the case for a `decode` of a value kept in the database itself, and for anything inside a transaction; a hook that runs before the call takes a connection, or after it gave it back (encoding for `set`, decoding a large value stored in a file), leaves the child a working cache. Don't rely on which one you have: don't fork there.
 
 On a `FanoutCache` only the shard involved is refused. Keys on the other shards work in the child, and a call that covers every shard (`len`, `clear`, `check`, iteration) raises before it touches any.
 
@@ -5340,7 +5347,7 @@ When a process forks while another of its threads is in a write transaction, dis
 
 ### D-020: forking inside your own transaction
 
-CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide the child can't use that cache at all: every call on it raises `RuntimeError` immediately, reads included, and the parent gets a `RuntimeWarning`. The same goes for a fork from code running inside a cache call, such as a pickle hook. A child like that would otherwise run without the locks SQLite thinks it holds, reading stale data and losing its writes; [Concurrency and forks](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction) has the details.
+CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide the child can't use that cache at all: every call on it raises `RuntimeError` immediately, reads included, and the parent gets a `RuntimeWarning`. The same goes for a fork from code running inside a cache call that has its connection out, such as a pickle hook reading a small value. A child like that would otherwise run without the locks SQLite thinks it holds, reading stale data and losing its writes; [Concurrency and forks](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction) has the details.
 
 ## Transactions
 

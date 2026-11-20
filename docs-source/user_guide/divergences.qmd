@@ -121,7 +121,7 @@ When a process forks while another of its threads is in a write transaction, dis
 
 ### D-020: forking inside your own transaction
 
-CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide the child can't use that cache at all: every call on it raises `RuntimeError` immediately, reads included, and the parent gets a `RuntimeWarning`. The same goes for a fork from code running inside a cache call, such as a pickle hook. A child like that would otherwise run without the locks SQLite thinks it holds, reading stale data and losing its writes; [Concurrency and forks](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction) has the details.
+CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide the child can't use that cache at all: every call on it raises `RuntimeError` immediately, reads included, and the parent gets a `RuntimeWarning`. The same goes for a fork from code running inside a cache call that has its connection out, such as a pickle hook reading a small value. A child like that would otherwise run without the locks SQLite thinks it holds, reading stale data and losing its writes; [Concurrency and forks](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction) has the details.
 
 ## Transactions
 

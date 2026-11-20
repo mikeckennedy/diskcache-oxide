@@ -2354,7 +2354,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L686-L713" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/_core.pyi#L687-L714" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">Cache</span><span class="op">.</span><span class="sig-name">check</span>(
@@ -2371,7 +2371,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <dl>
 <dt><code><span class="doc-parameter-name">fix</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">bool</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="va">False</span></span></code></dt>
 <dd>
-<p>Also repair: remove an entry whose file is missing or the wrong size, or with a damaged column (it reads as a miss anyway), remove unknown files in value folders (never elsewhere; each under the write lock, so it waits for an open transaction, whose uncommitted entry may be the one naming the file), sweep empty value folders, correct the totals, then <code>VACUUM</code> and checkpoint. <code>VACUUM</code> writes the whole database through the write-ahead log and needs a temporary copy of it in <code>SQLITE_TMPDIR</code>, <code>TMPDIR</code> or <code>/tmp</code>; forks and writers wait for it.</p>
+<p>Also repair: remove an entry whose file is missing or the wrong size, or with a damaged column (it reads as a miss, or raises), remove unknown files in value folders (never elsewhere; each under the write lock, so it waits for an open transaction, whose uncommitted entry may be the one naming the file), sweep empty value folders, correct the totals, then <code>VACUUM</code> and checkpoint. <code>VACUUM</code> writes the whole database through the write-ahead log and needs a temporary copy of it in <code>SQLITE_TMPDIR</code>, <code>TMPDIR</code> or <code>/tmp</code>; forks and writers wait for it.</p>
 </dd>
 <dt><code><span class="doc-parameter-name">retry</span><span class="doc-parameter-annotation-sep">:</span> <span class="doc-parameter-annotation">bool</span> <span class="doc-parameter-default-sep op">=</span> <span class="doc-parameter-default"><span class="va">False</span></span></code></dt>
 <dd>

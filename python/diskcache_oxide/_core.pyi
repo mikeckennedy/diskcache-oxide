@@ -237,7 +237,8 @@ class Cache:
             give `default + delta`. It's reported on the `diskcache_oxide` logger, at most once a
             minute per kind of failure. Bugs still raise (`TypeError`, `ValueError`,
             `UnsafeValueError`), as do `MemoryError` and `KeyboardInterrupt`, a `RecursionError` from
-            encoding a value too deep for this thread's stack, the constructor, admin
+            encoding a value too deep for this thread's stack, the `RuntimeError` of a child that a fork
+            left unable to use the cache, the constructor, admin
             calls (`len`, `volume`, `clear`, `expire`, `cull`, `checkpoint`, iteration) and anything
             inside a transaction held on this cache. This isn't durability in the database sense:
             this option can drop writes, and a dropped `set`, `delete`, `pop` or `incr` means stale
@@ -698,7 +699,7 @@ class Cache:
 
         Args:
             fix: Also repair: remove an entry whose file is missing or the wrong size, or with a
-                damaged column (it reads as a miss anyway), remove unknown files in value folders
+                damaged column (it reads as a miss, or raises), remove unknown files in value folders
                 (never elsewhere; each under the write lock, so it waits for an open transaction, whose
                 uncommitted entry may be the one naming the file), sweep empty value folders, correct
                 the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
@@ -729,6 +730,9 @@ class Cache:
         when the process (or a forked child) starts, and every handle on one directory in a process
         shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
         counts as nothing. A `FanoutCache` sums its shards.
+
+        Raises:
+            RuntimeError: This process is a child that a fork left unable to use this cache (D-020).
         """
     @property
     def durable(self) -> bool:
@@ -1552,7 +1556,7 @@ class FanoutCache:
 
         Args:
             fix: Also repair: remove an entry whose file is missing or the wrong size, or with a
-                damaged column (it reads as a miss anyway), remove unknown files in value folders
+                damaged column (it reads as a miss, or raises), remove unknown files in value folders
                 (never elsewhere; each under the write lock, so it waits for an open transaction, whose
                 uncommitted entry may be the one naming the file), sweep empty value folders, correct
                 the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
@@ -1583,6 +1587,9 @@ class FanoutCache:
         when the process (or a forked child) starts, and every handle on one directory in a process
         shares them. `in`, `pop` and iteration don't count; a durable outage answered as a miss
         counts as nothing. A `FanoutCache` sums its shards.
+
+        Raises:
+            RuntimeError: This process is a child that a fork left unable to use this cache (D-020).
         """
     @property
     def durable(self) -> bool:
@@ -1733,7 +1740,9 @@ class Transaction[C]:
         Raises:
             TransactionAborted: With no exception, the transaction didn't commit: another thread
                 or an earlier exit ended it, or it was rolled back after an error inside it.
-            RuntimeError: It was never entered, or is still being entered on another thread.
+            RuntimeError: It was never entered, or is still being entered on another thread. Or this
+                process is a child forked while the transaction was open: it was inherited across
+                `fork()`, and nothing commits here.
             Timeout: The commit couldn't run within `timeout`; it rolled back. Or another thread's
                 end was still running after `timeout`, and whether it committed is unknown.
         """
