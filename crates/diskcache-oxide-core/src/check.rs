@@ -242,12 +242,47 @@ impl Store {
             if std::fs::symlink_metadata(&path).is_err() {
                 continue;
             }
-            // Windows: another program holding the file for a moment is waited out (plan 25, R-M7).
-            let fixed =
-                fix && crate::os_error::retry_sharing_violations_detached(|| std::fs::remove_file(&path)).is_ok();
+            let fixed = if fix {
+                match self.remove_unnamed(&path, &relative, timeout)? {
+                    Orphan::Named => continue,
+                    Orphan::Removed => true,
+                    Orphan::Kept => false,
+                }
+            } else {
+                false
+            };
             merge(found, Finding::UnknownFile { path, fixed });
         }
         Ok(())
+    }
+
+    /// Removes a value file no committed row names, unless an uncommitted one does.
+    ///
+    /// A transaction held open for over an hour has written such a file: old, and named only by a
+    /// row nobody else can see yet. Unlinking it would let that transaction commit a row with no
+    /// file. So the unlink runs inside a write transaction of its own: with SQLite's write lock held
+    /// no other connection has an uncommitted row, and asking again whether a row names the file
+    /// gives the final answer. A transaction held elsewhere makes this wait, and fail with
+    /// [`Error::Timeout`] at `timeout`, as the `VACUUM` that follows would.
+    ///
+    /// The lock is taken per file, not for the scan. [`Store::write`] may run its closure more than
+    /// once (a busy commit), so a file already gone counts as removed.
+    fn remove_unnamed(&self, path: &Path, relative: &str, timeout: Duration) -> Result<Orphan> {
+        self.write(timeout, |_, conn| {
+            let named = conn
+                .prepare_cached("SELECT 1 FROM cache WHERE filename = ?1")
+                .and_then(|mut stmt| stmt.exists([relative]))
+                .map_err(|e| Error::from_sqlite(e, timeout))?;
+            if named {
+                return Ok(Orphan::Named);
+            }
+            // Windows: another program holding the file for a moment is waited out (plan 25, R-M7).
+            Ok(match crate::os_error::retry_sharing_violations_detached(|| std::fs::remove_file(path)) {
+                Ok(()) => Orphan::Removed,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Orphan::Removed,
+                Err(_) => Orphan::Kept,
+            })
+        })
     }
 
     fn check_totals(&self, fix: bool, timeout: Duration, found: &mut Vec<Finding>) -> Result<()> {
@@ -285,6 +320,15 @@ impl Store {
         }
         Ok(())
     }
+}
+
+/// What [`Store::remove_unnamed`] did with a file no committed row named.
+enum Orphan {
+    /// A row names it after all: one committed since the look, or a transaction's that just ended.
+    Named,
+    Removed,
+    /// It couldn't be removed.
+    Kept,
 }
 
 /// Adds `new` to `found` unless the same problem is there already (a retried round finding it again),
@@ -511,5 +555,46 @@ mod tests {
         let held = s.begin_hold(T).unwrap();
         assert!(matches!(s.check(false, T, &mut Vec::new()), Err(Error::InsideTransaction(_))));
         held.finish(false).unwrap();
+    }
+
+    /// Plan 32, D3. A transaction held open for over an hour has written a value file that only its
+    /// own uncommitted row names. `check(fix=True)` used to unlink it as an orphan, and the commit
+    /// then landed a row with no file.
+    #[test]
+    fn fix_waits_for_a_held_transaction_before_it_removes_a_file_no_committed_row_names() {
+        let tmp = TempDir::new("check-held-orphan");
+        let s = store(tmp.path());
+        let committed = put_big(&s, "k");
+        // The file the held transaction wrote: beside the committed one, same size, two hours old.
+        let name = committed.file_name().unwrap().to_str().unwrap();
+        let (stem, extension) = name.split_once('.').unwrap();
+        let last = if stem.ends_with('0') { '1' } else { '0' };
+        let held = committed.with_file_name(format!("{}{last}.{extension}", &stem[..stem.len() - 1]));
+        std::fs::copy(&committed, &held).unwrap();
+        age(&held, Duration::from_secs(7_200));
+        let relative = format!(
+            "{}/{}",
+            held.parent().unwrap().file_name().unwrap().to_str().unwrap(),
+            held.file_name().unwrap().to_str().unwrap()
+        );
+        assert!(spill::value_path(s.directory(), &relative).is_some(), "not a value file's name: {relative}");
+        // Another connection's open transaction points the row at it, uncommitted.
+        let other = crate::open::connect(tmp.path(), T).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE").unwrap();
+        other.execute("UPDATE cache SET filename = ?1", [&relative]).unwrap();
+
+        let short = Duration::from_millis(200);
+        let mut found = Vec::new();
+        let waited = s.check(true, short, &mut found);
+        assert!(matches!(waited, Err(Error::Timeout { .. })), "{waited:?} {found:?}");
+        assert!(held.exists(), "the held transaction's file was removed under it");
+
+        other.execute_batch("COMMIT").unwrap();
+        let found = run(&s, true);
+        assert!(held.exists(), "a file a committed row names was removed");
+        assert!(!found.iter().any(|f| matches!(f, Finding::UnknownFile { path, .. } if *path == held)), "{found:?}");
+        // The row reads its value from the file the transaction wrote.
+        assert_eq!(len(&s), 1);
+        assert!(run(&s, false).iter().all(|f| !matches!(f, Finding::MissingFile { .. })));
     }
 }
