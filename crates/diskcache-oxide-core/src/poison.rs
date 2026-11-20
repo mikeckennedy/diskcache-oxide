@@ -1,4 +1,5 @@
-//! The D-020 poison registry: which databases this process can never write, keyed by inode.
+//! The D-020 poison registry: which databases this process can never write, or never use at all,
+//! keyed by inode.
 //!
 //! A thread that holds a write transaction across calls (a *hold*) records the database's
 //! [`FileId`] here for as long as the transaction is open. When the process forks, the child copies
@@ -11,6 +12,17 @@
 //! The check is by inode, not by store, because SQLite's lock table is per inode: a fresh store on
 //! the same file in the child is poisoned too. A grandchild inherits the poisoned set and adds the
 //! holds live when it was forked.
+//!
+//! # Unusable
+//!
+//! A second, stronger level (plan 32): a database this process inherited an *open connection* to
+//! can't be used here at all, reads included. SQLite's lock record for the file, inherited with the
+//! connection, says the process holds locks the kernel never gave the child, so a new connection
+//! takes none: once the parent closes, its reads go stale and its writes are lost, with no error.
+//! The child's after-fork hook marks every such file (from the pool scan, and every live hold),
+//! and [`check_usable`] fails with [`Error::Unusable`] wherever a connection
+//! would be opened or leased. Every unusable file is unwritable too, and [`check_writable`] reports
+//! the stronger error.
 //!
 //! # Across `fork()`
 //!
@@ -46,11 +58,47 @@ pub fn begin_hold(gate: &SharedGuard<'_>, id: FileId) -> HoldGuard<'static> {
     REGISTRY.begin_hold(gate, id)
 }
 
-/// Fails with [`Error::Unwritable`] if this process was forked while some thread held a write
-/// transaction on `id` (or descends from one that was). One relaxed load in a process that wasn't.
+/// Fails if this process can never write `id`: with [`Error::Unusable`] if it can't use the file at
+/// all (see [`check_usable`]), else with [`Error::Unwritable`] if it was forked while some thread
+/// held a write transaction on it (or descends from one that was). One relaxed load in a process
+/// that was never poisoned.
 #[inline]
 pub fn check_writable(id: FileId) -> Result<()> {
     REGISTRY.check_writable(id)
+}
+
+/// Fails with [`Error::Unusable`] if this process was forked while a connection to `id` was open
+/// (or descends from one that was): see the module docs. One relaxed load in a process that wasn't.
+///
+/// Only a check made under a gate level is final: in a child, the first gate entry is what runs
+/// the after-fork scan when another library's `after_in_child` hook gets there before ours.
+#[inline]
+pub fn check_usable(id: FileId) -> Result<()> {
+    REGISTRY.check_usable(id)
+}
+
+/// The after-fork hook in the child: `id` had a connection open at the fork. Call it only while
+/// the calling thread is the only one in the process.
+pub(crate) fn mark_unusable(id: FileId) {
+    REGISTRY.mark_unusable(id);
+}
+
+/// The after-fork hook in the child, when it can't tell which files had a connection open (the pool
+/// registry was inherited locked): no database is usable in this process.
+pub(crate) fn mark_all_unusable() {
+    REGISTRY.mark_all_unusable();
+}
+
+/// Whether a file was marked unusable since the last call, for the hook's one log line.
+pub fn take_newly_unusable() -> bool {
+    REGISTRY.newly_unusable.swap(false, Ordering::AcqRel)
+}
+
+/// Whether no database is usable in this process: the after-fork scan couldn't tell which files
+/// had a connection open.
+#[must_use]
+pub fn all_unusable() -> bool {
+    REGISTRY.all_unusable.load(Ordering::Acquire)
 }
 
 /// The after-fork hook in the child: poisons every database a hold was live on at the fork. Call
@@ -64,6 +112,15 @@ pub(crate) fn poison_live_holds() {
 #[cfg(test)]
 pub(crate) fn poison_for_test(id: FileId) -> HoldGuard<'static> {
     let slot = REGISTRY.poisoned.insert(id);
+    REGISTRY.any_poisoned.store(true, Ordering::Release);
+    HoldGuard { slot }
+}
+
+/// Tests only: makes `id` unusable, as in a child that inherited an open connection to it, until the
+/// returned guard is dropped.
+#[cfg(test)]
+pub(crate) fn unusable_for_test(id: FileId) -> HoldGuard<'static> {
+    let slot = REGISTRY.unusable.insert(id);
     REGISTRY.any_poisoned.store(true, Ordering::Release);
     HoldGuard { slot }
 }
@@ -86,13 +143,27 @@ impl Drop for HoldGuard<'_> {
 pub(crate) struct Registry {
     live: IdList,
     poisoned: IdList,
-    /// Set once `poisoned` has an entry. Only ever set, in a child before it has other threads.
+    /// The files an open connection was inherited to. Every live hold's file is in both sets.
+    unusable: IdList,
+    /// Set once `poisoned` or `unusable` has an entry, or `all_unusable` is set. Only ever set, in a
+    /// child before it has other threads.
     any_poisoned: AtomicBool,
+    /// Every file is unusable. Only ever set, like `any_poisoned`, and before it.
+    all_unusable: AtomicBool,
+    /// Something was marked unusable and the hook hasn't logged it yet.
+    newly_unusable: AtomicBool,
 }
 
 impl Registry {
     pub(crate) const fn new() -> Self {
-        Self { live: IdList::new(), poisoned: IdList::new(), any_poisoned: AtomicBool::new(false) }
+        Self {
+            live: IdList::new(),
+            poisoned: IdList::new(),
+            unusable: IdList::new(),
+            any_poisoned: AtomicBool::new(false),
+            all_unusable: AtomicBool::new(false),
+            newly_unusable: AtomicBool::new(false),
+        }
     }
 
     pub(crate) fn begin_hold(&self, _gate: &SharedGuard<'_>, id: FileId) -> HoldGuard<'_> {
@@ -103,10 +174,45 @@ impl Registry {
     pub(crate) fn check_writable(&self, id: FileId) -> Result<()> {
         // Relaxed: the flag is only set in a child before it starts other threads, and spawning a
         // thread synchronizes with it.
-        if self.any_poisoned.load(Ordering::Relaxed) && self.poisoned.contains(id) {
-            return Err(Error::Unwritable);
+        if self.any_poisoned.load(Ordering::Relaxed) {
+            self.check_usable_cold(id)?;
+            if self.poisoned.contains(id) {
+                return Err(Error::Unwritable);
+            }
         }
         Ok(())
+    }
+
+    #[inline]
+    pub(crate) fn check_usable(&self, id: FileId) -> Result<()> {
+        // Relaxed, as in `check_writable`.
+        if self.any_poisoned.load(Ordering::Relaxed) {
+            return self.check_usable_cold(id);
+        }
+        Ok(())
+    }
+
+    #[cold]
+    fn check_usable_cold(&self, id: FileId) -> Result<()> {
+        if self.all_unusable.load(Ordering::Relaxed) || self.unusable.contains(id) {
+            return Err(Error::Unusable);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn mark_unusable(&self, id: FileId) {
+        if !self.unusable.contains(id) {
+            let _ = self.unusable.insert(id);
+            self.newly_unusable.store(true, Ordering::Release);
+        }
+        self.any_poisoned.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn mark_all_unusable(&self) {
+        if !self.all_unusable.swap(true, Ordering::AcqRel) {
+            self.newly_unusable.store(true, Ordering::Release);
+        }
+        self.any_poisoned.store(true, Ordering::Release);
     }
 
     pub(crate) fn poison_live_holds(&self) {
@@ -115,6 +221,9 @@ impl Registry {
             if !self.poisoned.contains(id) {
                 let _ = self.poisoned.insert(id);
             }
+            // A hold keeps its connection open, so the file is unusable too. Marked here as well as
+            // by the pool scan, so it never depends on a mutex the child may have inherited locked.
+            self.mark_unusable(id);
             added = true;
         });
         if added {
@@ -265,13 +374,19 @@ mod tests {
 
         // The child's after-fork hook, without forking.
         registry.poison_live_holds();
-        assert!(matches!(registry.check_writable(A), Err(Error::Unwritable)));
+        assert!(
+            matches!(registry.check_writable(A), Err(Error::Unusable)),
+            "a hold's file is unusable, the stronger error"
+        );
+        assert!(matches!(registry.check_usable(A), Err(Error::Unusable)));
         assert!(registry.check_writable(B).is_ok(), "other files stay writable");
+        assert!(registry.check_usable(B).is_ok());
         assert!(registry.check_writable(C).is_ok(), "same inode, other device: another file");
 
         // Ending the inherited hold in the child doesn't make the file writable again.
         drop(hold);
-        assert!(matches!(registry.check_writable(A), Err(Error::Unwritable)));
+        assert!(matches!(registry.check_writable(A), Err(Error::Unusable)));
+        assert!(matches!(registry.check_usable(A), Err(Error::Unusable)));
     }
 
     #[test]
@@ -293,14 +408,52 @@ mod tests {
         drop(a);
         let b = registry.begin_hold(&gate, B);
         registry.poison_live_holds(); // grandchild, forked while the child held B
-        assert!(matches!(registry.check_writable(A), Err(Error::Unwritable)));
-        assert!(matches!(registry.check_writable(B), Err(Error::Unwritable)));
+        assert!(matches!(registry.check_writable(A), Err(Error::Unusable)));
+        assert!(matches!(registry.check_writable(B), Err(Error::Unusable)));
         // Repeated forks don't duplicate entries.
         registry.poison_live_holds();
         let mut poisoned = Vec::new();
         registry.poisoned.for_each(|id| poisoned.push(id));
         poisoned.sort_unstable();
         assert_eq!(poisoned, vec![A, B]);
+        let mut unusable = Vec::new();
+        registry.unusable.for_each(|id| unusable.push(id));
+        unusable.sort_unstable();
+        assert_eq!(unusable, vec![A, B], "nor in the unusable set");
         drop(b);
+    }
+
+    #[test]
+    fn a_file_marked_unusable_fails_both_checks_and_others_pass() {
+        let registry = Registry::new();
+        assert!(registry.check_usable(A).is_ok());
+        registry.mark_unusable(A);
+        assert!(matches!(registry.check_usable(A), Err(Error::Unusable)));
+        assert!(matches!(registry.check_writable(A), Err(Error::Unusable)), "unusable is unwritable too");
+        assert!(registry.check_usable(B).is_ok());
+        assert!(registry.check_writable(B).is_ok());
+        assert!(registry.check_usable(C).is_ok(), "same inode, other device: another file");
+        assert!(registry.newly_unusable.swap(false, Ordering::AcqRel), "flagged once for the log line");
+        registry.mark_unusable(A);
+        assert!(!registry.newly_unusable.load(Ordering::Acquire), "marking it again is not news");
+    }
+
+    #[test]
+    fn an_unwritable_file_that_is_not_unusable_still_reports_unwritable() {
+        let registry = Registry::new();
+        let _ = registry.poisoned.insert(A);
+        registry.any_poisoned.store(true, Ordering::Release);
+        assert!(matches!(registry.check_writable(A), Err(Error::Unwritable)));
+        assert!(registry.check_usable(A).is_ok());
+    }
+
+    #[test]
+    fn all_unusable_fails_every_file() {
+        let registry = Registry::new();
+        registry.mark_all_unusable();
+        for id in [A, B, C] {
+            assert!(matches!(registry.check_usable(id), Err(Error::Unusable)));
+            assert!(matches!(registry.check_writable(id), Err(Error::Unusable)));
+        }
     }
 }

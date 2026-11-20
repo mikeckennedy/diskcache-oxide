@@ -147,6 +147,7 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
             None => PyOSError::new_err(message),
         },
         Error::Unwritable
+        | Error::Unusable
         | Error::ForkPoisoned
         | Error::NestedTransaction
         | Error::InsideTransaction(_)
@@ -239,7 +240,35 @@ fn _after_fork_in_parent(py: Python<'_>) {
 #[pyfunction]
 fn _after_fork_in_child(py: Python<'_>) {
     gate::end_fork_child();
+    warn_unusable(py);
     drain_deferred_releases(py);
+}
+
+/// One warning on the `diskcache_oxide` logger, in a child the fork left unable to use a cache: it
+/// inherited an open connection to it (plan 32, D-020). Logged here, not where the scan runs, which
+/// can be inside a gate entry with the interpreter released.
+fn warn_unusable(py: Python<'_>) {
+    if !diskcache_oxide_core::poison::take_newly_unusable() {
+        return;
+    }
+    let which = if diskcache_oxide_core::poison::all_unusable() {
+        "any cache".to_owned()
+    } else {
+        let directories: Vec<String> = store::unusable_directories().iter().map(|d| d.display().to_string()).collect();
+        if directories.is_empty() { "a cache".to_owned() } else { directories.join(", ") }
+    };
+    // Never raised into the fork: a logging failure is dropped.
+    let _ = cache::logger(py).and_then(|log| {
+        log.call_method1(
+            "warning",
+            (
+                "this process was forked while a connection to a cache was open (inside a transaction, or from a \
+                 hook running inside a cache call), so it can't use %s: every call on it raises RuntimeError. Fork \
+                 outside the transaction, or start the process with spawn or forkserver.",
+                which,
+            ),
+        )
+    });
 }
 
 /// Releases the handles closed behind the fork that just ended. One atomic load unless there are

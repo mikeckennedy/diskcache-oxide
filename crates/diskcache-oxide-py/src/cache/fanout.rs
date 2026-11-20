@@ -247,12 +247,17 @@ impl FanoutCache {
 
     /// As `Cache.stats`, summed over the shards; `enable` and `reset` apply to every shard.
     #[pyo3(signature = (enable = true, reset = false))]
-    fn stats(&self, enable: bool, reset: bool) -> (u64, u64) {
+    fn stats(&self, enable: bool, reset: bool) -> PyResult<(u64, u64)> {
+        // A call over every shard: it raises if a fork made one unusable (plan 32), before any
+        // shard's counters are reset.
+        for handle in &self.shards {
+            handle.store.check_usable().map_err(to_py_err)?;
+        }
         // In memory: it touches no database, so it's fine inside a `transact(key=)`, as on `Cache`.
-        self.shards.iter().fold((0, 0), |(hits, misses), handle| {
+        Ok(self.shards.iter().fold((0, 0), |(hits, misses), handle| {
             let (h, m) = handle.store.stats().take(enable, reset);
             (hits + h, misses + m)
-        })
+        }))
     }
 
     /// As `Cache.reset`, over every shard under one `timeout`. A `size_limit` is a total, split
@@ -800,8 +805,15 @@ impl FanoutCache {
     /// `routed`'s check: one relaxed load while no transaction is open anywhere in the process.
     /// Callers check their arguments first and read the clock after, so a bad argument is still a
     /// `TypeError` and a refused call never calls a user's clock.
+    ///
+    /// It also refuses, before any shard is touched, in a process a fork left unable to use one of
+    /// the shards (plan 32, decision 6): a `clear()` that emptied seven shards and then raised on the
+    /// eighth would be worse than one that did nothing. One relaxed load per shard otherwise.
     #[inline]
     fn refuse_fan_out(&self, call: &str) -> PyResult<()> {
+        for handle in &self.shards {
+            handle.store.check_usable().map_err(to_py_err)?;
+        }
         if Store::any_held_in_process() { self.refuse_fan_out_slow(call) } else { Ok(()) }
     }
 

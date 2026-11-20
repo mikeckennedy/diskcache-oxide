@@ -331,8 +331,11 @@ impl Cache {
     /// `(hits, misses)` of `get` and `cache[key]` in this process, as they were; then resets them
     /// with `reset`, and turns counting on or off with `enable`, as diskcache's `stats()`.
     #[pyo3(signature = (enable = true, reset = false))]
-    fn stats(&self, enable: bool, reset: bool) -> (u64, u64) {
-        self.handle.store.stats().take(enable, reset)
+    fn stats(&self, enable: bool, reset: bool) -> PyResult<(u64, u64)> {
+        // In memory, but counts of calls that can only raise mean nothing: a cache a fork made
+        // unusable says so here too (plan 32, decision 5).
+        self.handle.store.check_usable().map_err(to_py_err)?;
+        Ok(self.handle.store.stats().take(enable, reset))
     }
 
     /// Reads `size_limit`, `cull_limit` or `eviction_policy` as stored now, or with `value` persists

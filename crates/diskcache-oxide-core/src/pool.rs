@@ -14,6 +14,13 @@
 //! kernel lock of its own. A child that inherited such a record would run with no locks at all, and
 //! once the parent closed, another process's last close could delete the WAL under it.
 //!
+//! Three things get a connection past that close: a held transaction, a lease live at the fork (a
+//! fork from a hook running inside an operation), and a fork whose before-hook never ran. So the
+//! child's after-fork hook scans every pool (`poison_inherited`) and marks the file of any that
+//! still has a connection as unusable in this process ([`crate::poison`], plan 32). And a
+//! connection given back on the forking thread between its hooks (another library's before-fork
+//! hook that uses the cache) is closed rather than kept idle, so it leaves nothing behind.
+//!
 //! # Locking
 //!
 //! The pool's mutex is only ever taken by a thread that holds the fork [gate] in shared
@@ -28,6 +35,7 @@ use rusqlite::Connection;
 
 use crate::Result;
 use crate::gate::{self, GATE, SharedGuard};
+use crate::poison::FileId;
 
 /// A connection checked out of a [`Pool`], tagged with the process generation it was opened in.
 #[derive(Debug)]
@@ -85,6 +93,9 @@ struct PoolState {
 
 #[derive(Debug)]
 struct PoolShared {
+    /// The database file the pool's connections are on. Outside the mutex, so the child's scan can
+    /// read it for a pool whose mutex it inherited locked.
+    file: FileId,
     state: Mutex<PoolState>,
 }
 
@@ -150,6 +161,55 @@ pub(crate) fn close_idle_all() {
     }
 }
 
+/// The after-fork hook in the child: marks as unusable every database file a pool still has a
+/// connection on, idle or checked out, whatever generation the pool is in. Each is a connection
+/// inherited open, with SQLite's lock record for its file (see the module docs). Call it after the
+/// generation bump and before anything in the child uses a pool, while the calling thread is the
+/// only one.
+///
+/// It never calls `reset_if_stale`, which would forget the connections and erase the evidence, and
+/// it never waits: when the before-fork hook didn't run, nothing quiesced the pools, so the registry
+/// or a pool's mutex may have been inherited locked by a thread the child doesn't have. A pool it
+/// can't lock is marked by its file; a registry it can't lock makes every file unusable. That only
+/// keeps this scan from hanging: such a child can still block on that mutex later, as it always
+/// could.
+pub(crate) fn poison_inherited() {
+    match files_with_connections() {
+        Some(files) => files.into_iter().for_each(crate::poison::mark_unusable),
+        None => crate::poison::mark_all_unusable(),
+    }
+}
+
+/// The scan of [`poison_inherited`]: the file of every pool that has a connection, idle or checked
+/// out, or whose mutex is locked. `None` if the registry itself is locked. Never waits.
+fn files_with_connections() -> Option<Vec<FileId>> {
+    let pools: Vec<Arc<PoolShared>> = match REGISTRY.try_lock() {
+        Ok(pools) => pools.iter().filter_map(Weak::upgrade).collect(),
+        Err(TryLockError::Poisoned(pools)) => pools.into_inner().iter().filter_map(Weak::upgrade).collect(),
+        Err(TryLockError::WouldBlock) => return None,
+    };
+    let open = |state: &PoolState| !state.idle.is_empty() || state.checked_out > 0;
+    let files = pools
+        .iter()
+        .filter(|pool| match pool.state.try_lock() {
+            Ok(state) => open(&state),
+            Err(TryLockError::Poisoned(state)) => open(&state.into_inner()),
+            Err(TryLockError::WouldBlock) => true,
+        })
+        .map(|pool| pool.file)
+        .collect();
+    // Dropping `pools` closes nothing: a pool whose owner dropped was emptied under the gate, or
+    // (behind a pending fork) leaked a reference so it's never freed.
+    Some(files)
+}
+
+/// Sets a connection that's about to be closed between the fork hooks to skip SQLite's checkpoint
+/// on close, as [`close_idle_all`] does and for the same reason.
+fn close_without_checkpoint(pooled: PooledConn) {
+    let _ = pooled.conn.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true);
+    drop(pooled);
+}
+
 #[derive(Debug)]
 pub struct Pool {
     shared: Arc<PoolShared>,
@@ -159,8 +219,9 @@ pub struct Pool {
 
 impl Pool {
     #[must_use]
-    pub fn new(_gate: &SharedGuard<'_>, max_idle: usize) -> Self {
+    pub fn new(_gate: &SharedGuard<'_>, max_idle: usize, file: FileId) -> Self {
         let shared = Arc::new(PoolShared {
+            file,
             state: Mutex::new(PoolState { idle: Vec::new(), generation: gate::generation(), checked_out: 0 }),
         });
         let mut pools = registry();
@@ -198,9 +259,11 @@ impl Pool {
         }
     }
 
-    /// Returns a connection. A stale one is forgotten; one over the idle limit is closed.
-    pub fn checkin(&self, _gate: &SharedGuard<'_>, pooled: PooledConn) {
+    /// Returns a connection. A stale one is forgotten; one over the idle limit is closed, and so is
+    /// any given back on the forking thread between its fork hooks (see the module docs).
+    pub fn checkin(&self, gate: &SharedGuard<'_>, pooled: PooledConn) {
         let current = gate::generation();
+        let forking = gate::forking_in_parent(gate);
         let surplus = {
             let mut state = self.shared.lock();
             reset_if_stale(&mut state, current);
@@ -209,7 +272,7 @@ impl Pool {
                 return;
             }
             state.checked_out = state.checked_out.saturating_sub(1);
-            if state.idle.len() < self.max_idle.load(Ordering::Relaxed) {
+            if !forking && state.idle.len() < self.max_idle.load(Ordering::Relaxed) {
                 state.idle.push(pooled);
                 None
             } else {
@@ -217,17 +280,22 @@ impl Pool {
             }
         };
         // Closed outside the pool's mutex, still under the caller's gate level.
-        drop(surplus);
+        match surplus {
+            Some(pooled) if forking => close_without_checkpoint(pooled),
+            surplus => drop(surplus),
+        }
     }
 
     /// Takes a connection opened outside the pool (an open sequence's) as idle, without counting it
     /// as checked out, or closes it if the pool already holds `max_idle` idle connections. Not
     /// `checkout` + `checkin`: `checkout` pops an idle connection when there is one, and this one
     /// would be dropped unused. `generation` is the one current when it was opened: the caller holds
-    /// one gate level from the open to here, so no fork came between (asserted).
-    pub fn adopt(&self, _gate: &SharedGuard<'_>, conn: Connection, generation: u64) {
+    /// one gate level from the open to here, so no fork came between (asserted). On the forking
+    /// thread between its fork hooks it's closed, like one checked in there.
+    pub fn adopt(&self, gate: &SharedGuard<'_>, conn: Connection, generation: u64) {
         let current = gate::generation();
         debug_assert_eq!(generation, current, "a connection adopted across a fork");
+        let forking = gate::forking_in_parent(gate);
         let pooled = PooledConn { conn, generation, applied: Applied::default() };
         let surplus = {
             let mut state = self.shared.lock();
@@ -236,7 +304,7 @@ impl Pool {
                 pooled.forget();
                 return;
             }
-            if state.idle.len() < self.max_idle.load(Ordering::Relaxed) {
+            if !forking && state.idle.len() < self.max_idle.load(Ordering::Relaxed) {
                 state.idle.push(pooled);
                 None
             } else {
@@ -244,7 +312,10 @@ impl Pool {
             }
         };
         // Closed outside the pool's mutex, still under the caller's gate level.
-        drop(surplus);
+        match surplus {
+            Some(pooled) if forking => close_without_checkpoint(pooled),
+            surplus => drop(surplus),
+        }
     }
 
     /// Takes back a checked-out connection without pooling it: closes it (or forgets it, if it was
@@ -330,6 +401,9 @@ mod tests {
     // Generations are only bumped by a real fork, which cargo test never does, so the stale paths
     // are exercised through reset_if_stale and hand-tagged connections.
 
+    /// No test here opens a real file, so the pools share a made-up id.
+    const FILE: FileId = (0, 0);
+
     fn memory() -> Result<Connection> {
         crate::sqlite::open_in_memory().map_err(|e| crate::Error::from_sqlite(e, std::time::Duration::ZERO))
     }
@@ -337,7 +411,7 @@ mod tests {
     #[test]
     fn checkout_reuses_idle_connections() {
         let gate = GATE.enter_shared_blocking();
-        let pool = Pool::new(&gate, 2);
+        let pool = Pool::new(&gate, 2, FILE);
         let a = pool.checkout(&gate, memory).unwrap();
         let b = pool.checkout(&gate, memory).unwrap();
         let c = pool.checkout(&gate, memory).unwrap();
@@ -352,7 +426,7 @@ mod tests {
     #[test]
     fn a_raised_idle_limit_keeps_more_connections() {
         let gate = GATE.enter_shared_blocking();
-        let pool = Pool::new(&gate, 1);
+        let pool = Pool::new(&gate, 1, FILE);
         pool.raise_max_idle(3);
         pool.raise_max_idle(2); // Never lowered.
         let conns: Vec<_> = (0..4).map(|_| pool.checkout(&gate, memory).unwrap()).collect();
@@ -365,7 +439,7 @@ mod tests {
     #[test]
     fn a_stale_connection_coming_back_is_forgotten_not_counted() {
         let gate = GATE.enter_shared_blocking();
-        let pool = Pool::new(&gate, 2);
+        let pool = Pool::new(&gate, 2, FILE);
         let pooled = pool.checkout(&gate, memory).unwrap();
         let stale = PooledConn {
             conn: pooled.conn,
@@ -389,10 +463,75 @@ mod tests {
         assert_eq!((state.idle.len(), state.checked_out, state.generation), (0, 0, 8));
     }
 
+    /// The scan's answer for `file`, retried while another test holds the registry for a moment.
+    fn scan_finds(file: FileId) -> bool {
+        loop {
+            if let Some(files) = files_with_connections() {
+                return files.contains(&file);
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn the_scan_finds_a_pool_with_an_idle_or_checked_out_connection_and_no_other() {
+        const IDLE: FileId = (u64::MAX, 1);
+        const OUT: FileId = (u64::MAX, 2);
+        const EMPTY: FileId = (u64::MAX, 3);
+        const LOCKED: FileId = (u64::MAX, 4);
+        let gate = GATE.enter_shared_blocking();
+        let (idle, out, empty, locked) = (
+            Pool::new(&gate, 2, IDLE),
+            Pool::new(&gate, 2, OUT),
+            Pool::new(&gate, 2, EMPTY),
+            Pool::new(&gate, 2, LOCKED),
+        );
+        let pooled = idle.checkout(&gate, memory).unwrap();
+        idle.checkin(&gate, pooled);
+        let leased = out.checkout(&gate, memory).unwrap();
+        let used = empty.checkout(&gate, memory).unwrap();
+        empty.discard(&gate, used);
+        assert!(scan_finds(IDLE), "an idle connection");
+        assert!(scan_finds(OUT), "a checked-out connection");
+        assert!(!scan_finds(EMPTY), "a pool that closed everything it opened");
+        assert!(!scan_finds(LOCKED), "a pool that never opened one");
+        // A mutex inherited locked: the scan can't look, so it assumes the worst, and doesn't wait.
+        let held = locked.shared.lock();
+        assert!(scan_finds(LOCKED));
+        drop(held);
+        // A stale pool is found too: the scan never resets one, which would forget the evidence.
+        idle.shared.lock().generation = gate::generation().wrapping_sub(1);
+        assert!(scan_finds(IDLE));
+        idle.shared.lock().generation = gate::generation();
+        out.checkin(&gate, leased);
+        assert!(scan_finds(OUT), "now idle");
+        out.clear(&gate);
+        assert!(!scan_finds(OUT));
+    }
+
+    #[test]
+    fn a_failed_connect_and_every_way_back_leave_nothing_checked_out() {
+        let gate = GATE.enter_shared_blocking();
+        let pool = Pool::new(&gate, 1, FILE);
+        let refused = pool.checkout(&gate, || Err(crate::Error::Closed));
+        assert!(refused.is_err());
+        assert_eq!(pool.checked_out(&gate), 0, "a failed connect");
+        let (a, b, c) = (
+            pool.checkout(&gate, memory).unwrap(),
+            pool.checkout(&gate, memory).unwrap(),
+            pool.checkout(&gate, memory).unwrap(),
+        );
+        assert_eq!(pool.checked_out(&gate), 3);
+        pool.checkin(&gate, a);
+        pool.checkin(&gate, b); // Over the idle limit: closed.
+        pool.discard(&gate, c);
+        assert_eq!((pool.checked_out(&gate), pool.idle(&gate)), (0, 1));
+    }
+
     #[test]
     fn dropped_pools_leave_the_registry() {
         let gate = GATE.enter_shared_blocking();
-        let pool = Pool::new(&gate, 1);
+        let pool = Pool::new(&gate, 1, FILE);
         let weak = Arc::downgrade(&pool.shared);
         // Dropped under the level: behind another test's pending fork, it would stay in the registry.
         drop(pool);

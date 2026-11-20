@@ -232,7 +232,7 @@ pub struct Gate {
     /// How many [`Gate::enter_shared_until`] calls gave up behind a pending fork. Cold path only.
     fork_timeouts: AtomicU64,
     local: &'static LocalKey<ThreadState>,
-    /// Run when the forking thread enters at depth 0 before its fork has ended (see
+    /// Run when the forking thread enters, at any depth, before its fork has ended (see
     /// [`enter_child_early`]).
     early_child_entry: Option<fn()>,
 }
@@ -244,7 +244,7 @@ impl Gate {
         Self::with_early_child_entry_opt(local, None)
     }
 
-    /// [`Gate::new`], running `early` when the forking thread enters at depth 0 between
+    /// [`Gate::new`], running `early` when the forking thread enters, at any depth, between
     /// [`Gate::begin_fork`] and the end of its fork.
     const fn with_early_child_entry(local: &'static LocalKey<ThreadState>, early: fn()) -> Self {
         Self::with_early_child_entry_opt(local, Some(early))
@@ -267,8 +267,9 @@ impl Gate {
     pub fn try_enter_shared(&self) -> Option<SharedGuard<'_>> {
         self.local.with(|t| {
             let depth = t.depth.get();
-            if depth == 0
-                && t.forking.get()
+            // At any depth: a fork from a hook inside an operation leaves this thread at depth 1 in
+            // the child, and its first entry there must still run the child-side reset first.
+            if t.forking.get()
                 && let Some(early) = self.early_child_entry
             {
                 early();
@@ -618,6 +619,27 @@ impl<'g> SharedGuard<'g> {
     }
 }
 
+impl SharedGuard<'_> {
+    /// Whether the calling thread holds the fork claim: it's between [`Gate::begin_fork`] and the
+    /// end of its fork. `pending` is read first, so outside a fork it's one relaxed load.
+    fn owner_is_forking(&self) -> bool {
+        // Relaxed: only this thread's own claim matters, and it set the flag itself.
+        self.gate.pending.load(Ordering::Relaxed)
+            // try_with: a connection can be given back while this thread's locals are being destroyed.
+            && self.gate.local.try_with(|t| t.forking.get()).unwrap_or(false)
+    }
+}
+
+/// Whether the calling thread is the forking thread of [`GATE`], in the parent, between its
+/// before- and after-fork hooks: code another library's before-fork hook runs. A connection it
+/// gives back there is closed, not kept idle for the child to inherit ([`crate::pool`]).
+///
+/// The pid check keeps it false in the child, where the claim is still set until
+/// [`end_fork_child`] runs: closing a connection there would close one the parent owns.
+pub(crate) fn forking_in_parent(guard: &SharedGuard<'_>) -> bool {
+    guard.owner_is_forking() && std::process::id() == FORKING_PID.load(Ordering::Acquire)
+}
+
 impl Drop for SharedGuard<'_> {
     fn drop(&mut self) {
         // try_with: a guard dropped while this thread's locals are being destroyed still releases.
@@ -715,8 +737,8 @@ impl<'g> HeldShare<'g> {
         let gate = self.gate;
         gate.local.with(|t| {
             let depth = t.depth.get();
-            if depth == 0
-                && t.forking.get()
+            // At any depth, as in `try_enter_shared`.
+            if t.forking.get()
                 && let Some(early) = gate.early_child_entry
             {
                 early();
@@ -821,11 +843,12 @@ static FORKING_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32:
 /// The process [`end_fork_child`] last ran in, so it runs once per child.
 static CHILD_RESET_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-/// [`GATE`]'s early child entry: the forking thread entering at depth 0 before its after-fork hook
-/// ran. In the child that's another library's `after_in_child` hook registered before ours (they
-/// run in registration order) using a cache: run the child-side reset now, so it doesn't see
-/// the parent's connections, write lock or unpoisoned transactions. In the parent (other
-/// libraries' fork hooks around ours) it does nothing.
+/// [`GATE`]'s early child entry: the forking thread entering, at any depth, before its after-fork
+/// hook ran. In the child that's another library's `after_in_child` hook registered before ours
+/// (they run in registration order) using a cache: run the child-side reset now, so it doesn't see
+/// the parent's connections, write lock or unpoisoned transactions, and never opens a connection
+/// on a file the scan is about to mark unusable. In the parent (other libraries' fork hooks around
+/// ours) it does nothing.
 fn enter_child_early() {
     if std::process::id() != FORKING_PID.load(Ordering::Acquire) {
         end_fork_child();
@@ -865,8 +888,15 @@ pub fn end_fork_parent() {
 }
 
 /// The after-fork hook in the child: bumps the process generation, poisons the databases a write
-/// transaction was held on at the fork (D-020, see [`crate::poison`]), then reopens the gate. Runs
-/// once per child: the first gate entry by an earlier `after_in_child` hook may have run it already.
+/// transaction was held on at the fork, and every database a connection was inherited open to
+/// (D-020, see [`crate::poison`] and the scan in [`crate::pool`]), then reopens the gate.
+/// Runs once per child: the first gate entry by an earlier `after_in_child` hook may have run it
+/// already.
+///
+/// The order matters. The scan comes after the generation bump (every connection it finds is then
+/// stale, and nothing can check one out before it), without entering the gate, and before
+/// `resume_after_fork`, which may start the maintenance thread: its connections belong to the
+/// child and must not be counted.
 pub fn end_fork_child() {
     let pid = std::process::id();
     if CHILD_RESET_PID.swap(pid, Ordering::AcqRel) == pid {
@@ -874,6 +904,7 @@ pub fn end_fork_child() {
     }
     GENERATION.fetch_add(1, Ordering::AcqRel);
     crate::poison::poison_live_holds();
+    crate::pool::poison_inherited();
     match HELD_FORK.with(|held| held.borrow_mut().take()) {
         Some(guard) => guard.end_child(),
         // The before-hook didn't run (it can't fail, but CPython ignores before-hook errors). Still

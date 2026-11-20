@@ -232,7 +232,8 @@ impl BackgroundTurn<'_> {
         }
         let lease = match store.lease(&gate, Duration::ZERO) {
             Ok(lease) => lease,
-            Err(Error::Timeout { .. }) => return None,
+            // A store a fork made unusable is skipped, like one that's busy.
+            Err(Error::Timeout { .. } | Error::Unusable) => return None,
             Err(error) => return Some(Err(error)),
         };
         match read(lease.conn()) {
@@ -266,7 +267,7 @@ impl BackgroundTurn<'_> {
             }
             let lease = match store.lease(&gate, Duration::ZERO) {
                 Ok(lease) => lease,
-                Err(Error::Timeout { .. }) => return None,
+                Err(Error::Timeout { .. } | Error::Unusable) => return None,
                 Err(error) => return Some(Err(error)),
             };
             // No AttachedWindow is open, so the busy handler gives up at once.
@@ -622,6 +623,8 @@ impl Store {
             // connection is on another file only if something outside replaced the path twice around
             // the open; a file replaced once fails the checks below.
             let before = file_id_at(&db_path);
+            // Under the level, so a child's after-fork scan has run (plan 32).
+            check_usable_at(&db_path)?;
             let mut conn = open::connect(&options.directory, options.timeout)?;
             let generation = gate::generation();
             let conn_file = file_id_at(&db_path).filter(|opened| before.is_none_or(|b| b == *opened));
@@ -694,7 +697,7 @@ impl Store {
             stats,
             pin: Mutex::new(Some(pin)),
             retired: AtomicBool::new(false),
-            pool: Pool::new(&gate, usize::try_from(options.max_connections).unwrap_or(usize::MAX)),
+            pool: Pool::new(&gate, usize::try_from(options.max_connections).unwrap_or(usize::MAX), file_id),
             write_lock: WriteLock::new(),
             slots: Slots::new(),
             max_connections: AtomicU64::new(options.max_connections),
@@ -746,6 +749,9 @@ impl Store {
         #[cfg(not(windows))]
         let directory = None;
         let gate = enter_until(deadline)?;
+        // Under the level, so a child's after-fork scan has run (plan 32): no handle on a file this
+        // process inherited a connection to.
+        crate::poison::check_usable(id)?;
         let stores = registry(&gate);
         Ok(Self::claim_live(&stores, id, directory, asked))
     }
@@ -1639,7 +1645,8 @@ impl Store {
         }
     }
 
-    /// Whether a fork poisoned this database for good in this process (D-020): no write can succeed.
+    /// Whether a fork poisoned this database for good in this process (D-020): no write can succeed,
+    /// and if it's unusable, no read either.
     pub(crate) fn is_poisoned(&self) -> bool {
         crate::poison::check_writable(self.file_id).is_err()
     }
@@ -1841,9 +1848,23 @@ impl Store {
         &self.stats
     }
 
-    /// Fails with [`Error::Unwritable`] in a child forked inside a transaction on this file (D-020).
+    /// Fails in a process a fork left unable to write this file (D-020): [`Error::Unusable`] if it
+    /// can't use the file at all, else [`Error::Unwritable`].
     pub fn check_writable(&self) -> Result<()> {
         crate::poison::check_writable(self.file_id)
+    }
+
+    /// Fails with [`Error::Unusable`] in a process forked while a connection to this file was open
+    /// (plan 32, D-020), for a call that would otherwise answer without touching the database.
+    pub fn check_usable(&self) -> Result<()> {
+        crate::poison::check_usable(self.file_id)
+    }
+
+    /// Tests only: makes this store's database unusable here, as in a child that inherited an open
+    /// connection to it, until the guard is dropped.
+    #[cfg(test)]
+    pub(crate) fn unusable_for_test(&self) -> crate::poison::HoldGuard<'static> {
+        crate::poison::unusable_for_test(self.file_id)
     }
 
     /// Tests only: makes this store's database unwritable here, as in a child forked inside a
@@ -1888,6 +1909,11 @@ impl Store {
         // level, and a thread inside an operation has depth > 0. So it isn't pinned, and the caller's
         // normal path applies its deadline.
         let gate = GATE.try_enter_shared()?;
+        // An inherited hold's file is unusable (plan 32): that error, not the transaction's own,
+        // since it's what every other call on the file reports here.
+        if let Err(error) = crate::poison::check_usable(self.file_id) {
+            return Some(Err(error));
+        }
         let key = self.key();
         if let Some(pinned) =
             LENT.with(|lent| lent.borrow().iter().rev().find(|(k, _)| *k == key).map(|(_, p)| Rc::clone(p)))
@@ -2051,6 +2077,10 @@ impl Store {
     }
 
     fn lease<'s, 'g>(&'s self, gate: &'g SharedGuard<'g>, timeout: Duration) -> Result<Lease<'s, 'g>> {
+        // The one place every read and write gets its connection, and under a level, so in a child
+        // the after-fork scan has run: never a connection on a file this process inherited one to
+        // (plan 32). The earlier `check_writable` calls only fail sooner.
+        crate::poison::check_usable(self.file_id)?;
         let mut pooled = self.pool.checkout(gate, || open::connect(&self.directory, timeout))?;
         // New connections, and older ones after a handle asked for more, get the store's settings.
         // All three are connection settings that write nothing (D-019). `format!` is safe here:
@@ -2531,6 +2561,34 @@ fn file_id(path: &Path) -> std::io::Result<FileId> {
 /// The id of the file at `path` now, or None if there's none.
 fn file_id_at(path: &Path) -> Option<FileId> {
     file_id(path).ok()
+}
+
+/// Fails with [`Error::Unusable`] if the file at `db_path` is one this process inherited an open
+/// connection to across `fork()` (see [`crate::poison`]). Call it under a gate level, before
+/// connecting outside a store. A path with no file passes.
+pub(crate) fn check_usable_at(db_path: &Path) -> Result<()> {
+    file_id_at(db_path).map_or(Ok(()), crate::poison::check_usable)
+}
+
+/// The directories of the stores this process can't use after a fork, for the after-fork hook's log
+/// line. Empty when it can't tell without waiting (the registry was inherited locked).
+#[must_use]
+pub fn unusable_directories() -> Vec<PathBuf> {
+    let stores = match REGISTRY.try_lock() {
+        Ok(stores) => stores,
+        Err(std::sync::TryLockError::Poisoned(stores)) => stores.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => return Vec::new(),
+    };
+    let mut directories: Vec<PathBuf> = stores
+        .iter()
+        .filter_map(Weak::upgrade)
+        .filter(|store| crate::poison::check_usable(store.file_id).is_err())
+        .map(|store| store.directory.clone())
+        .collect();
+    drop(stores);
+    directories.sort();
+    directories.dedup();
+    directories
 }
 
 /// The directory a live store must also match to serve a database whose file id matches: none on

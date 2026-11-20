@@ -95,6 +95,15 @@ pub enum Error {
     #[error("this database can't be written in a process forked inside a transaction")]
     Unwritable,
 
+    /// Any use of a database this process inherited an open connection to (plan 32, D-020): it was
+    /// forked inside a transaction on it, or from a hook running inside a call on it. SQLite's
+    /// inherited lock record would let it run with no kernel locks, reading stale data and losing
+    /// writes, so every call fails instead, for the life of the process. Python `RuntimeError`.
+    #[error(
+        "this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver"
+    )]
+    Unusable,
+
     /// A call that can't run inside a held transaction, naming the call and why (Python
     /// `RuntimeError`).
     #[error("{0}")]
@@ -244,6 +253,9 @@ impl Error {
             | Self::NoTransaction
             | Self::EndInsideOperation
             | Self::TransactionAborted
+            // Not an outage that may pass: it lasts for the life of the process, and a worker
+            // silently running without its cache forever is what it exists to prevent (plan 32).
+            | Self::Unusable
             // Damage, not an outage: never answered as a miss.
             | Self::CorruptKey(_)
             | Self::InsideTransaction(_) => false,
@@ -319,6 +331,7 @@ mod tests {
             Error::ShardCountMismatch { stored: 8, requested: 16 },
             Error::StoredShardsRefuseSettings { stored: 8, requested: 4, reason: "x".into() },
             Error::NotWal { mode: "delete".into() },
+            Error::Unusable,
             Error::Closed,
             Error::KeyMissing,
             Error::NotNumeric,
