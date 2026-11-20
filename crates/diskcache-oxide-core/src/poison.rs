@@ -96,6 +96,28 @@ pub fn all_unusable() -> bool {
     REGISTRY.all_unusable.load(Ordering::Acquire)
 }
 
+#[cfg(test)]
+std::thread_local! {
+    /// For a test of the opens' wiring: [`refuse_if_nothing_is_usable`] refuses on this thread, as
+    /// it would in a child whose scan failed (the real flag is process-wide and never cleared).
+    pub(crate) static PRETEND_NOTHING_IS_USABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Fails with [`Error::Unusable`] when no database is usable in this process ([`all_unusable`]),
+/// for an open to call before it creates a directory or a file: such a child leaves nothing behind
+/// at a path that didn't exist. Needs no gate level: like `Store::check_usable`, it runs the
+/// child-side reset first when another library's after-fork hook got there before ours. Only the
+/// forking thread is covered that early; any other thread is refused by the check under the gate
+/// that every open makes before it connects (`store::check_usable_at`).
+pub(crate) fn refuse_if_nothing_is_usable() -> Result<()> {
+    crate::gate::catch_up_in_child();
+    #[cfg(test)]
+    if PRETEND_NOTHING_IS_USABLE.get() {
+        return Err(Error::Unusable);
+    }
+    if all_unusable() { Err(Error::Unusable) } else { Ok(()) }
+}
+
 /// The after-fork hook in the child: marks every database a hold was live on at the fork as
 /// unusable. Call it only while the calling thread is the only one in the process.
 pub(crate) fn poison_live_holds() {

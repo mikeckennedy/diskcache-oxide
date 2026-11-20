@@ -292,6 +292,32 @@ def fork_inside_a_nested_transaction(directory: Path) -> list[str]:
     return failures + untouched(directory, {'in-hold': 1})
 
 
+def nested_transaction_whose_outer_ended_before_the_fork(directory: Path) -> list[str]:
+    """A nested block still open at the fork, whose outer transaction had already ended (left out of
+    order). No connection was out, so the child can use the cache, and leaving the inherited inner
+    block there is an ordinary exit, not a fork error."""
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    outer = cache.transact()
+    outer.__enter__()
+    inner = cache.transact()
+    inner.__enter__()
+    outer.__exit__(None, None, None)
+
+    def first() -> None:
+        works_before_the_close(cache)()
+        assert inner.__exit__(None, None, None) is False
+        assert 'Done(committed)' in repr(inner), repr(inner)
+        assert inner.__exit__(None, None, None) is False
+
+    def close() -> None:
+        inner.__exit__(None, None, None)
+        cache.close()
+
+    failures = across_a_parent_close(directory, fork, first, works_after_the_close(cache), close)
+    return failures + nothing_lost(directory)
+
+
 def fork_while_entering_a_transaction(directory: Path) -> list[str]:
     """Another thread is blocked in `tx.__enter__()` (`TxState::Entering`) while the owner thread
     holds an outer transaction and forks. In the child—both in an early after_in_child hook and
@@ -885,6 +911,7 @@ SCENARIOS = {
     'later-before-hook-opens-a-cache': later_before_hook_opens_a_cache,
     'fork-inside-a-transaction': fork_inside_a_transaction,
     'fork-inside-a-nested-transaction': fork_inside_a_nested_transaction,
+    'nested-transaction-whose-outer-ended-before-the-fork': nested_transaction_whose_outer_ended_before_the_fork,
     'fork-while-entering-a-transaction': fork_while_entering_a_transaction,
     'fork-from-a-hook-inside-get': fork_from_a_hook_inside_get,
     'child-returns-from-the-inherited-get': child_returns_from_the_inherited_get,

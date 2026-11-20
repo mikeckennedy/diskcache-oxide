@@ -26,6 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
         'later-before-hook-opens-a-cache',
         'fork-inside-a-transaction',
         'fork-inside-a-nested-transaction',
+        'nested-transaction-whose-outer-ended-before-the-fork',
         'fork-while-entering-a-transaction',
         'fork-from-a-hook-inside-get',
         'child-returns-from-the-inherited-get',

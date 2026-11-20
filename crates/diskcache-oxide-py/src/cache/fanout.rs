@@ -1452,10 +1452,6 @@ fn open(
             ShardRequest::Exactly(wanted) => ShardRequest::ForNewRoot(wanted),
             other => other,
         };
-        diskcache_oxide_core::gate::catch_up_in_child();
-        if diskcache_oxide_core::poison::all_unusable() {
-            return Err(Error::Unusable);
-        }
         let manifest: Manifest = fanout::open_manifest(root, open_request)?;
         let base = base_for(root, manifest.shards());
         if let ShardRequest::Exactly(wanted) | ShardRequest::ForNewRoot(wanted) = request

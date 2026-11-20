@@ -2444,7 +2444,7 @@ impl Transaction {
         } else {
             self.lock_state()
         };
-        if crossed && matches!(*state, TxState::Entering | TxState::Ending | TxState::PassThrough) {
+        if crossed && matches!(*state, TxState::Entering | TxState::Ending) {
             return Err(to_py_err(Error::ForkPoisoned));
         }
         let taken = match &*state {
@@ -2481,6 +2481,13 @@ impl Transaction {
                 };
             }
             TxState::PassThrough => {
+                // A nested block inherited across a fork: if the transaction it joined was still
+                // open at the fork, its connection was too, and the child can't use the cache; this
+                // exit says so rather than report a commit (D-020). If that transaction had ended
+                // before the fork, the cache works here and so does this exit.
+                if crossed {
+                    self.cache.handle().store.check_usable().map_err(to_py_err)?;
+                }
                 *state = TxState::Done { committed: true };
                 return Ok(false);
             }

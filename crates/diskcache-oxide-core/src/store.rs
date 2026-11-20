@@ -573,6 +573,9 @@ impl Store {
             open::ensure_shard_directory(&options.directory)?;
             return Self::open_store(options, deadline);
         }
+        // Before the directory can be created: a child that can use no cache leaves nothing new
+        // behind (a shard's root was refused the same way, in `fanout::open_manifest`).
+        crate::poison::refuse_if_nothing_is_usable()?;
         open::ensure_directory(&options.directory)?;
         crate::fanout::refuse_manifest(&options.directory)?;
         let store = Self::open_store(options, deadline)?;
@@ -2761,6 +2764,20 @@ mod tests {
             default_size_limit: crate::schema::DEFAULT_SIZE_LIMIT,
             maintenance: crate::background::Maintenance::OFF,
         }
+    }
+
+    #[test]
+    fn a_process_that_can_use_no_cache_creates_no_directory_for_a_new_one() {
+        let tmp = TempDir::new("no-dir-when-unusable");
+        let dir = tmp.path().join("missing").join("cache");
+        crate::poison::PRETEND_NOTHING_IS_USABLE.set(true);
+        let refused = Store::open(&options(&dir)).map(|_| ());
+        let resolving = Store::open_resolving(&options(&dir)).map(|_| ());
+        crate::poison::PRETEND_NOTHING_IS_USABLE.set(false);
+        assert!(matches!(refused, Err(Error::Unusable)), "{refused:?}");
+        assert!(matches!(resolving, Err(Error::Unusable)), "{resolving:?}");
+        assert!(!tmp.path().join("missing").exists(), "the refused open created a directory");
+        assert!(Store::open(&options(&dir)).is_ok());
     }
 
     fn put(store: &Store, key: &str, value: &[u8]) {
