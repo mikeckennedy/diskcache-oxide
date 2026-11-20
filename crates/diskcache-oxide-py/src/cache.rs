@@ -2444,7 +2444,7 @@ impl Transaction {
         } else {
             self.lock_state()
         };
-        if crossed && matches!(*state, TxState::Entering | TxState::Ending) {
+        if crossed && matches!(*state, TxState::Entering | TxState::Ending | TxState::PassThrough) {
             return Err(to_py_err(Error::ForkPoisoned));
         }
         let taken = match &*state {

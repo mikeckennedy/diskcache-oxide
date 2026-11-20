@@ -242,6 +242,56 @@ def fork_inside_a_transaction(directory: Path) -> list[str]:
     return failures + untouched(directory, {'in-hold': 1})
 
 
+def fork_inside_a_nested_transaction(directory: Path) -> list[str]:
+    """`os.fork()` inside a nested `with cache.transact():` (PassThrough). Leaving the inner
+    transaction in the child—normally, with an exception, or from an early after_in_child hook—must
+    raise ForkedInsideTransactionError rather than silently succeeding as Done(committed)."""
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    outer = cache.transact()
+    outer.__enter__()
+    cache.set('in-hold', 1)
+    inner = cache.transact()
+    inner.__enter__()
+    inner_exc = cache.transact()
+    inner_exc.__enter__()
+    early_inner = cache.transact()
+    early_inner.__enter__()
+    in_hook: list[str] = []
+
+    def early() -> None:
+        fails_fast('leaving nested tx in early hook', lambda: early_inner.__exit__(None, None, None))
+        in_hook.append('ok')
+
+    def fork_behind_an_early_hook(child: Body) -> int:
+        EARLY_CHILD.append(early)
+        try:
+            return fork(child)
+        finally:
+            EARLY_CHILD.clear()
+
+    def first() -> None:
+        assert in_hook == ['ok'], in_hook
+        fails_fast('leaving nested tx', lambda: inner.__exit__(None, None, None))
+        fails_fast('leaving nested tx with exception', lambda: inner_exc.__exit__(ValueError, ValueError('x'), None))
+        fails_fast('leaving outer tx', lambda: outer.__exit__(None, None, None))
+        refuses_everything(cache, directory)()
+
+    def close() -> None:
+        early_inner.__exit__(None, None, None)
+        inner_exc.__exit__(None, None, None)
+        inner.__exit__(None, None, None)
+        outer.__exit__(None, None, None)
+        cache.close()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        failures = across_a_parent_close(
+            directory, fork_behind_an_early_hook, first, refuses_everything(cache, directory), close
+        )
+    return failures + untouched(directory, {'in-hold': 1})
+
+
 def fork_from_a_hook_inside_get(directory: Path) -> list[str]:
     """`os.fork()` from a decoder running inside `get()`, whose connection is leased across the
     fork. Nothing poisoned that child before plan 32: its sets returned True and were lost. Now it
@@ -760,6 +810,7 @@ SCENARIOS = {
     'later-before-hook-uses-the-cache': later_before_hook_uses_the_cache,
     'later-before-hook-opens-a-cache': later_before_hook_opens_a_cache,
     'fork-inside-a-transaction': fork_inside_a_transaction,
+    'fork-inside-a-nested-transaction': fork_inside_a_nested_transaction,
     'fork-from-a-hook-inside-get': fork_from_a_hook_inside_get,
     'child-returns-from-the-inherited-get': child_returns_from_the_inherited_get,
     'early-child-hook-inside-an-operation': early_child_hook_inside_an_operation,
