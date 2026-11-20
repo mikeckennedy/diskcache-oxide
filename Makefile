@@ -1,6 +1,6 @@
 PY ?= venv/bin/python
 
-.PHONY: docs docs-serve demo check test wheels wheels-mac wheels-linux wheels-local wheels-windows
+.PHONY: docs docs-serve demo check test wheels wheels-mac wheels-linux wheels-local wheels-windows sdist
 
 docs:
 	$(PY) scripts/build_docs.py
@@ -19,7 +19,12 @@ check:
 	./scripts/check.sh
 
 # PGO release wheels into dist/, niced so the machine stays usable (profile counts do not depend on timing).
-wheels: wheels-mac wheels-linux
+# The sdist goes first: it takes seconds, and a release without it is incomplete.
+wheels: sdist wheels-mac wheels-linux
+
+# The source distribution into dist/, with its contents checked (scripts/build_sdist.sh).
+sdist:
+	./scripts/build_sdist.sh
 
 wheels-mac:
 	nice -n 20 ./scripts/build_pgo.sh 3.14 3.14t 3.15 3.15t

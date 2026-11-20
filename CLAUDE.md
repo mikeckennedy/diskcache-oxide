@@ -74,7 +74,8 @@ make docs-serve
 # Release artifacts and gates
 scripts/build_pgo.sh [3.14 3.14t 3.15 3.15t]   # PGO wheels into dist/
 scripts/build_linux.sh [--arch aarch64,x86_64] [python ...]   # the same in manylinux_2_28 Docker (x86_64 via Rosetta)
-make wheels                                     # all four Pythons: macOS arm64, then Linux aarch64 and x86_64
+make wheels                                     # the sdist, then all four Pythons: macOS arm64, then Linux aarch64 and x86_64
+make sdist                                      # the source distribution alone, contents checked (scripts/build_sdist.sh)
 make wheels-mac / make wheels-linux             # one platform
 make wheels-local                               # macOS, 3.15 only, for a quick local wheel
 scripts/sanitize.sh [--lanes A,B,C,D,E] [--quick]   # Miri, TSan, ASan lanes; results in sanitize-results/
