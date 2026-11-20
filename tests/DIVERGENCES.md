@@ -518,6 +518,14 @@ A divergence is a deliberate decision. It is never a way to skip a failing test.
 - Why: Michael's decision (2026-11-18, plan 31's step 6 review). Such ints are rare, Python's error says what happened, and an error that isn't about what the format can represent shouldn't be papered over by pickle.
 - Tests: `test_values.py` (`test_an_int_past_the_digit_limit_is_stored_with_pickle`, a strict xfail on oxide), `tests/unit/test_codec.py` (`test_mutation_errors_never_fall_back_to_pickle`).
 
+## D-064 `incr` and `decr` refuse an infinity or a NaN
+
+- Kind: test-visible
+- diskcache: `incr('k', float('nan'))`, `incr('k', 1, default=float('nan'))` and `incr('k', float('inf'))` followed by `incr('k', float('-inf'))` all return `nan` and store it. SQLite binds a NaN as NULL, so the key then reads back as `None` (D-008's bug) and the next `incr` raises `TypeError: unsupported operand type(s) for +=: 'NoneType' and 'int'`. An infinity alone is stored and read back.
+- oxide: a `delta` or `default` that is an infinity or a NaN raises `ValueError` before anything is read or written, on `incr` and `decr`, `Cache` and `FanoutCache`, durable or not. A counter can then never reach NaN: a sum of finite numbers that overflows is an infinity, which is stored as one, and an infinity plus a finite number stays that infinity. A top-level NaN stored with `set` still round-trips (D-008).
+- Why: the stored NULL is a row with a numeric mode and no value. On oxide `get` raised `CorruptValueError` for it (or removed it as a miss) and a later `incr` raised `TypeError`: a counter broken for good by one bad argument. Refusing the argument is the fix that can't lose data; Michael took it into plan 32 (2026-11-19). A row an earlier version already left NULL stays unreadable until it's overwritten or removed as a miss.
+- Tests: `test_add_incr.py` (`test_incr_and_decr_take_an_infinity_or_a_nan`, a strict xfail on oxide; `test_incr_and_decr_refuse_an_infinity_or_a_nan`, oxide only), `tests/unit/test_incr_non_finite.py` (every kind of handle, and inside a transaction).
+
 # Community fork differences
 
 How [diskcache-community](https://github.com/secondwindoss/diskcache-community) 5.8.1 (`--backend=community`) differs from 5.6.3 on this suite. Where the fork fails a test written against 5.6.3, the test is listed in `KNOWN_COMMUNITY_DIFFERENCES` in `backends.py` and runs as a strict xfail on the community backend only, so the community run is green and a fork release that changes the behavior fails it. `test_registry.py` checks that every D-number listed there appears in this section.

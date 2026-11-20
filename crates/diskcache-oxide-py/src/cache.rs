@@ -2865,13 +2865,22 @@ fn pull_backoff(py: Python<'_>, losses: u32, left: Duration) -> PyResult<()> {
     Ok(())
 }
 
-/// An `incr`/`decr` operand: an exact int (fits 64 bits) or a float.
+/// An `incr`/`decr` operand: an exact int (fits 64 bits) or a finite float.
+///
+/// An infinity or a NaN is refused (D-064). With them a counter could reach NaN (`inf` then `-inf`,
+/// or a NaN operand), which SQLite stores as NULL: a row with no value, unreadable from then on.
+/// With finite operands it can't: a sum that overflows is an infinity, and an infinity plus a
+/// finite number stays that infinity.
 fn number(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Number> {
     if value.is_exact_instance_of::<PyInt>() {
         return value.extract::<i64>().map(Number::Int);
     }
     if value.is_exact_instance_of::<PyFloat>() {
-        return value.extract::<f64>().map(Number::Real);
+        let real = value.extract::<f64>()?;
+        if !real.is_finite() {
+            return Err(PyValueError::new_err(format!("{name} must be a finite number, not {real}")));
+        }
+        return Ok(Number::Real(real));
     }
     Err(PyTypeError::new_err(format!("{name} must be an int or float, not {}", value.get_type().name()?)))
 }
