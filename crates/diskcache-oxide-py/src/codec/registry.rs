@@ -347,12 +347,37 @@ impl Snapshot {
         self.local.as_ref().is_none_or(|m| m.by_type.is_empty()) && self.global.by_type.is_empty()
     }
 
-    pub fn by_type(&self, ty: &Bound<'_, PyType>) -> Option<&Arc<Entry>> {
+    /// The registration to encode a `ty` with: the handle's own, else the global one.
+    ///
+    /// A global one is refused with `TypeError` when the handle's registry uses its name for
+    /// another class. Decoding looks names up in the handle's registry first, so the value would
+    /// be written as one class and read back as the other (`Money(5)` stored, `Token(cents=5)`
+    /// returned), with no error anywhere. Checked here, not at registration: either registration
+    /// can come first, and the two registries don't know of each other.
+    pub fn by_type(&self, ty: &Bound<'_, PyType>) -> PyResult<Option<&Arc<Entry>>> {
         if self.is_empty() {
-            return None;
+            return Ok(None);
         }
         let addr = TypeAddr::of(ty);
-        self.local.as_ref().and_then(|m| m.by_type.get(&addr)).or_else(|| self.global.by_type.get(&addr))
+        let local = self.local.as_ref();
+        if let Some(entry) = local.and_then(|m| m.by_type.get(&addr)) {
+            return Ok(Some(entry));
+        }
+        let Some(entry) = self.global.by_type.get(&addr) else { return Ok(None) };
+        if let Some(shadow) = local.and_then(|m| m.by_name.get(&entry.name)) {
+            // Never pickled instead: the type was registered to stay off pickle.
+            self.note_hit();
+            let py = ty.py();
+            return Err(PyTypeError::new_err(format!(
+                "can't store a {stored} in this cache: it is registered as {name:?}, and this cache's own types= \
+                 registry uses that name for {other}, which is what it would be read back as; register one of \
+                 them under another name",
+                stored = ty.qualname()?,
+                name = entry.name,
+                other = shadow.ty.bind(py).qualname()?,
+            )));
+        }
+        Ok(Some(entry))
     }
 
     pub fn by_name(&self, name: &str) -> Option<&Arc<Entry>> {
