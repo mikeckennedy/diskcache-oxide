@@ -65,6 +65,13 @@ pub fn check_usable(id: FileId) -> Result<()> {
     REGISTRY.check_usable(id)
 }
 
+/// Like [`check_usable`], for a path whose file may not exist yet (`None`): a nonexistent file
+/// passes unless every database in this process is unusable ([`all_unusable`]).
+#[inline]
+pub(crate) fn check_usable_opt(id: Option<FileId>) -> Result<()> {
+    REGISTRY.check_usable_opt(id)
+}
+
 /// The after-fork hook in the child: `id` had a connection open at the fork. Call it only while
 /// the calling thread is the only one in the process.
 pub(crate) fn mark_unusable(id: FileId) {
@@ -153,6 +160,18 @@ impl Registry {
         // thread synchronizes with it.
         if self.any_unusable.load(Ordering::Relaxed) {
             return self.check_usable_cold(id);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub(crate) fn check_usable_opt(&self, id: Option<FileId>) -> Result<()> {
+        if self.any_unusable.load(Ordering::Relaxed) {
+            return match id {
+                Some(id) => self.check_usable_cold(id),
+                None if self.all_unusable.load(Ordering::Relaxed) => Err(Error::Unusable),
+                None => Ok(()),
+            };
         }
         Ok(())
     }
@@ -384,9 +403,16 @@ mod tests {
     #[test]
     fn all_unusable_fails_every_file() {
         let registry = Registry::new();
+        registry.mark_unusable(A);
+        assert!(registry.check_usable_opt(None).is_ok(), "a nonexistent file is still allowed for per-file poisoning");
         registry.mark_all_unusable();
         for id in [A, B, C] {
             assert!(matches!(registry.check_usable(id), Err(Error::Unusable)));
+            assert!(matches!(registry.check_usable_opt(Some(id)), Err(Error::Unusable)));
         }
+        assert!(
+            matches!(registry.check_usable_opt(None), Err(Error::Unusable)),
+            "when all databases are unusable, even a nonexistent path must be refused"
+        );
     }
 }

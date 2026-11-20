@@ -2593,10 +2593,11 @@ fn file_id_at(path: &Path) -> Option<FileId> {
 }
 
 /// Fails with [`Error::Unusable`] if the file at `db_path` is one this process inherited an open
-/// connection to across `fork()` (see [`crate::poison`]). Call it under a gate level, before
-/// connecting outside a store. A path with no file passes.
+/// connection to across `fork()` (see [`crate::poison`]), or if every database in this process is
+/// unusable (`all_unusable`). Call it under a gate level, before connecting outside a store. A path
+/// with no file passes unless `all_unusable` is set.
 pub(crate) fn check_usable_at(db_path: &Path) -> Result<()> {
-    file_id_at(db_path).map_or(Ok(()), crate::poison::check_usable)
+    crate::poison::check_usable_opt(file_id_at(db_path))
 }
 
 /// The directories of the stores this process can't use after a fork, for the after-fork hook's log
