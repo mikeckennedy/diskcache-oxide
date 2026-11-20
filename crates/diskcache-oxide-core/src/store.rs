@@ -114,7 +114,8 @@ pub(crate) fn reset_held_in_child() {
 #[cfg(test)]
 thread_local! {
     /// Tests only: the row the next background PASSIVE checkpoint on this thread reports, in place
-    /// of SQLite's (it still runs), since only another process can hold the checkpoint lock.
+    /// of SQLite's (it still runs). A real holder of the checkpoint lock makes the TRUNCATE that
+    /// the old logic went on to busy as well, so only a row put in by hand tells the two apart.
     pub(crate) static PASSIVE_ROW: Cell<Option<(i64, i64, i64)>> = const { Cell::new(None) };
 }
 
@@ -1727,7 +1728,8 @@ impl Store {
                 Some(_token) => {
                     let truncate = turn.read(|conn| {
                         // `open` caps the window at ATTACHED_WINDOW: enough for our readers, whose
-                        // transactions take microseconds. Nothing is left to copy.
+                        // transactions take microseconds. Little is left to copy: only frames
+                        // committed since PASSIVE read the WAL's header.
                         let _window = lockwait::AttachedWindow::open(Instant::now() + Duration::from_secs(1));
                         conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0))
                             .map_err(|e| Error::from_sqlite(e, Duration::ZERO))

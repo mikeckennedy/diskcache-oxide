@@ -476,9 +476,10 @@ fn a_passive_checkpoint_that_found_the_lock_taken_is_busy_not_all_copied() {
     let tmp = TempDir::new("turn-checkpoint-busy");
     let (store, wal) = grown_wal(tmp.path(), DEFAULT_MAX_CONNECTIONS);
     let turn = store.begin_background_turn().unwrap();
-    // What PASSIVE answers while another connection holds the checkpoint lock. Only another
-    // process can hold it against this one, so the row is put in by hand; the two frame counts are
-    // equal, and reading them alone sent the turn on to TRUNCATE under the write lock.
+    // What PASSIVE answers while another connection holds the checkpoint lock (the next test gets
+    // it from SQLite). Put in by hand here, with the lock free, because that is the only way the
+    // old logic shows: the two frame counts are equal, reading them alone sent the turn on to
+    // TRUNCATE under the write lock, and with a real holder that TRUNCATE is busy too.
     crate::store::PASSIVE_ROW.with(|row| row.set(Some((1, -1, -1))));
     assert!(matches!(store.background_checkpoint(&turn), Some(Outcome::Busy)), "it went on to TRUNCATE");
     assert!(wal_size(&wal) > 0, "the WAL was reset by a TRUNCATE under the write lock");
@@ -487,6 +488,48 @@ fn a_passive_checkpoint_that_found_the_lock_taken_is_busy_not_all_copied() {
     assert!(matches!(store.background_checkpoint(&turn), Some(Outcome::Done)));
     assert_eq!(wal_size(&wal), 0);
     drop(turn);
+    store.release_handle();
+}
+
+#[test]
+fn sqlite_answers_busy_with_equal_counts_while_another_connection_checkpoints() {
+    use crate::wal::Outcome;
+    let _forks = one_global_fork_at_a_time();
+    let tmp = TempDir::new("turn-checkpoint-held");
+    let (store, wal) = grown_wal(tmp.path(), DEFAULT_MAX_CONNECTIONS);
+    // A reader pins a snapshot from before one more write, so a FULL checkpoint on another
+    // connection takes the checkpoint lock and then waits in its busy handler for that reader.
+    let reader = peer(tmp.path());
+    reader.execute_batch("BEGIN; SELECT COUNT(*) FROM cache;").unwrap();
+    put(&store, "after", 50_000, None);
+    let size = wal_size(&wal);
+    let checkpointer = peer(tmp.path());
+    checkpointer.busy_timeout(Duration::from_secs(10)).unwrap();
+    let probe = peer(tmp.path());
+    let passive = || -> (i64, i64, i64) {
+        probe.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap()
+    };
+    std::thread::scope(|s| {
+        let full =
+            s.spawn(move || checkpointer.query_row("PRAGMA wal_checkpoint(FULL)", [], |r| r.get::<_, i64>(0)).unwrap());
+        // The row this build's SQLite gives a PASSIVE that finds the lock taken: the premise of
+        // `passive_copied_everything`, pinned here against the next SQLite upgrade.
+        let deadline = Instant::now() + T;
+        let mut row = passive();
+        while row.0 == 0 {
+            assert!(Instant::now() < deadline, "the FULL checkpoint never took the lock: {row:?}");
+            std::thread::sleep(Duration::from_millis(2));
+            row = passive();
+        }
+        assert_eq!(row, (1, -1, -1));
+        assert!(!crate::wal::passive_copied_everything(row.0, row.1, row.2));
+        let turn = store.begin_background_turn().unwrap();
+        assert!(matches!(store.background_checkpoint(&turn), Some(Outcome::Busy)));
+        drop(turn);
+        assert_eq!(wal_size(&wal), size, "the WAL was reset beside another checkpointer");
+        reader.execute_batch("COMMIT").unwrap();
+        assert_eq!(full.join().unwrap(), 0, "the FULL checkpoint finished once the reader let go");
+    });
     store.release_handle();
 }
 
