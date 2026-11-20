@@ -139,7 +139,13 @@ impl Store {
                 let problem = match spill::value_path(self.directory(), &name) {
                     None => Some(Finding::BadFilename { name, fixed: false }),
                     Some(path) => match std::fs::metadata(&path) {
-                        Err(_) => Some(Finding::MissingFile { path, fixed: false }),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                            Some(Finding::MissingFile { path, fixed: false })
+                        }
+                        // Only a file that isn't there is missing, as a read has it (`spill::read`):
+                        // one that can't be looked at (a folder without permission, an I/O error) may
+                        // be whole, so `fix` mustn't remove its row. The check stops with the error.
+                        Err(e) => return Err(Error::Io { path, source: e }),
                         Ok(meta) if i64::try_from(meta.len()).ok() != Some(size) => {
                             Some(Finding::WrongSize { path, expected: size, actual: meta.len(), fixed: false })
                         }
@@ -418,6 +424,29 @@ mod tests {
         assert!(fixed.contains(&Finding::MissingFile { path: gone, fixed: true }), "{fixed:?}");
         assert_eq!(len(&s), 0, "both rows went, never 'corrected' to the short file's size");
         assert_eq!(run(&s, false), []);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_value_file_that_cant_be_looked_at_is_an_error_and_fix_keeps_its_row() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new("check-no-permission");
+        let s = store(tmp.path());
+        let file = put_big(&s, "kept");
+        let folder = file.parent().unwrap();
+        let mode = |bits| std::fs::set_permissions(folder, std::fs::Permissions::from_mode(bits)).unwrap();
+        mode(0o000);
+        // Root looks through any folder: then there is nothing to test.
+        if std::fs::metadata(&file).is_ok() {
+            mode(0o700);
+            return;
+        }
+        let mut found = Vec::new();
+        let refused = s.check(true, T, &mut found);
+        mode(0o700);
+        assert!(matches!(&refused, Err(Error::Io { path, .. }) if *path == file), "{refused:?} {found:?}");
+        assert_eq!(len(&s), 1, "the row stays: its file is whole");
+        assert_eq!(run(&s, true), []);
     }
 
     #[test]

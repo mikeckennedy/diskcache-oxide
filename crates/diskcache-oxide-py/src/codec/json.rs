@@ -144,7 +144,10 @@ impl Serialize for StrMap<'_, '_> {
     }
 }
 
-/// A dict with non-str keys, as `[[k, v], ...]`.
+/// A dict with non-str keys, as `[[k, v], ...]`. Inside its `$dict` wrapper that puts each key and
+/// value three containers down (the wrapper, the list, the pair), so three is what they're charged:
+/// charged less, a deep enough value passed the encoder's limit and then failed `serde_json`'s on
+/// the way back, a row that could be written and never read.
 struct Pairs<'a, 'py> {
     parent: &'a Enc<'a, 'py>,
     dict: &'a common::DictEntries<'py>,
@@ -154,7 +157,7 @@ impl Serialize for Pairs<'_, '_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let mut seq = s.serialize_seq(Some(self.dict.len()))?;
         for (k, v) in self.dict.iter() {
-            seq.serialize_element(&(self.parent.child(&k, 2), self.parent.child(&v, 2)))?;
+            seq.serialize_element(&(self.parent.child(&k, 3), self.parent.child(&v, 3)))?;
         }
         seq.end()
     }

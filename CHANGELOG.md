@@ -4,6 +4,18 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-11-19
+
+No format change: caches made by 0.3.5 and later open as they are. Fixes from a bug, race and security review of 0.4.6.
+
+### Fixed
+
+- `DjangoCache.delete_many` under `durable=True` no longer stops at a missing key once the batch has run for half a lock wait, which left every key after it undeleted on a healthy cache (with the default 1.0 s lock wait, any missing key after the first half second of a long batch; with a lock wait of 0, the first missing key). `set_many` had the same flaw for a key that failed at once: it and every key after it were returned as not stored without being tried. Both now stop only at a call that itself waited half a lock wait, which is what a held lock looks like, and with a lock wait of 0 they try every key.
+- `pull()` on a `timeout=0` handle with `on_decode_error='miss'` raised `Timeout` after removing an unreadable item from the front of the queue, although nothing held the lock, and so did any handle whose timeout ran out just as the item was removed. It now goes on to the next item, as documented; only a puller that loses a race with no time left raises `Timeout`.
+- `check(fix=True)` removed the row of a value whose file it couldn't look at, as if the file were missing: a value folder without permission, or any other error from the file system, cost a whole entry and left its file behind as an orphan. Only a file that isn't there counts as missing now, as for a read; any other error ends the check with that `OSError`, and nothing is removed.
+- `remove_old_formats()` on an old `FanoutCache` root removed a shard's database when it couldn't tell its format: an empty file (which a process creating the shard holds for a moment), a database with no format stamp, or a file that isn't a database. It now leaves and reports them, as it always has for a plain cache, and as its documentation said.
+- With `serializer='json'`, a dict with non-`str` keys nested 43 or more deep (each inside the last) was stored by `set` and then couldn't be read back: `get` raised `CorruptValueError`, or with `on_decode_error='miss'` deleted it as a miss. `set` now raises `TypeError` for it, as for any value nested too deep, from 41 levels. msgpack was never affected.
+
 ## [0.4.6] - 2026-11-19
 
 No format change: caches made by 0.3.5 open as they are.
@@ -127,7 +139,8 @@ The first release: diskcache's `Cache` API on a Rust engine and SQLite storage, 
 
 Development before this release, including the `0.1.0.dev` builds (`0.1.0.dev1` was yanked from PyPI), is in the git history. A `0.1.0` and a `0.1.1` were built and verified but never published: new tests found two bugs just before the first upload and a third (a size-limited cache evicting entries it had room for) just before the second, each fixed first, so `0.1.2` is the first release on PyPI. `0.1.1` ran in production at Talk Python in the meantime. The `0.0.1` on PyPI is a name placeholder with no code.
 
-[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.4.6...HEAD
+[Unreleased]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.4.7...HEAD
+[0.4.7]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.3.5...v0.4.6
 [0.3.5]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.2.3...v0.3.5
 [0.2.3]: https://github.com/mikeckennedy/diskcache-oxide/compare/v0.1.2...v0.2.3

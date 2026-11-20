@@ -1586,11 +1586,14 @@ impl HandleConfig {
                     }
                 },
             };
-            if left().is_zero() {
-                self.pull_attempt(py, store, now, Err::<(), _>(Error::Timeout { seconds: 0.0 }))?;
-                return Ok(None);
-            }
             if lost {
+                // Only a lost race is out of time: after removing an unreadable head the next item
+                // is tried even with nothing left (a `timeout` of 0 always has nothing left), since
+                // each store call still makes its one attempt and every such round removes a row.
+                if left().is_zero() {
+                    self.pull_attempt(py, store, now, Err::<(), _>(Error::Timeout { seconds: 0.0 }))?;
+                    return Ok(None);
+                }
                 losses += 1;
                 if losses > PULL_QUICK_LOSSES {
                     pull_backoff(py, losses, left())?;

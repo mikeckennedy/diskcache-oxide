@@ -232,6 +232,14 @@ fn remove_fanout(
                     complete = false;
                     continue;
                 }
+                // Nor is one whose database can't be told to be older, as at a plain root: an empty
+                // file (a creator may hold it), one with no stamp, or one that can't be read.
+                // `older` reports each as left. A shard with no database is what a cleanup cut short
+                // leaves, and goes.
+                if is_real_file(&db_path(shard)) && older(shard, false, timeout, deadline, cleanup) != Some(true) {
+                    complete = false;
+                    continue;
+                }
                 // Shard 0's database is what tells a later call this root is old, so shard 0 goes
                 // whole or not at all: never its database alone, with something foreign left.
                 if *index == 0
@@ -575,6 +583,29 @@ mod tests {
         let cleanup = clean(tmp.path());
         assert!(db_path(&tmp.path().join(shard_dirname(1))).exists(), "{cleanup:?}");
         assert!(manifest_path(tmp.path()).exists(), "the manifest stays while a shard does");
+    }
+
+    #[test]
+    fn a_shard_whose_format_cant_be_told_is_kept_in_an_old_root() {
+        let replace = |shard: &Path, bytes: &[u8]| {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", db_path(shard).display()));
+            }
+            std::fs::write(db_path(shard), bytes).unwrap();
+        };
+        let tmp = TempDir::new("cleanup-unjudged-shards");
+        let root = tmp.path();
+        fanout(root, 4, 2);
+        // Empty (a creator may hold it), not a database, and a database with no format stamp.
+        replace(&root.join(shard_dirname(1)), b"");
+        replace(&root.join(shard_dirname(2)), &b"not a database".repeat(100));
+        stamp(&root.join(shard_dirname(3)), 0);
+        let cleanup = clean(root);
+        for shard in 1..4 {
+            assert!(db_path(&root.join(shard_dirname(shard))).exists(), "shard {shard}: {cleanup:?}");
+        }
+        assert!(!root.join(shard_dirname(0)).exists(), "the old shard still goes: {cleanup:?}");
+        assert!(manifest_path(root).exists(), "the manifest stays while a shard does");
     }
 
     #[test]

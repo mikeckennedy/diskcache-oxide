@@ -505,7 +505,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="../diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="../index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.6</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.7</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -2347,7 +2347,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 </div>
 <div class="doc-usage-source">
 <p>Usage</p>
-<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/djangocache.py#L389-L408" target="_blank" rel="noopener">Source</a></p>
+<p><a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/python/diskcache_oxide/djangocache.py#L389-L411" target="_blank" rel="noopener">Source</a></p>
 </div>
 <div class="doc-signature doc-Kind.FUNCTION">
 <div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="sig-class">DjangoCache</span><span class="op">.</span><span class="sig-name">set_many</span>(
@@ -2357,7 +2357,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 )</span></code></pre></div>
 </div>
 <div class="doc-text">
-<p>session, run a query), which mustn’t run holding the cache’s write lock. Returns the keys that weren’t stored, which only a <code>durable=True</code> cache can have. A durable <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> behind a held lock waits out the lock wait and returns False, so once one returns False after half a lock wait has passed, it and every key after it are returned untried: one wait, not one per key. A failure that comes at once (one value that can’t be written) only fails that key.</p>
+<p>session, run a query), which mustn’t run holding the cache’s write lock. Returns the keys that weren’t stored, which only a <code>durable=True</code> cache can have. A durable <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> behind a held lock waits out the lock wait and returns False, so once one <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> returns False having itself taken half a lock wait, every key after it is returned untried: one wait, not one per key. A failure that comes at once (one value that can’t be written) only fails that key, however long the batch has run. With a lock wait of 0 no <a href="Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> waits, so every key is tried.</p>
 </div>
 
 

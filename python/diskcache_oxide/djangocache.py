@@ -390,19 +390,22 @@ class DjangoCache(BaseCache):
         """A `set` per key, not one transaction: a value's pickling can run arbitrary code (load a
         session, run a query), which mustn't run holding the cache's write lock. Returns the keys
         that weren't stored, which only a `durable=True` cache can have. A durable `set` behind a held
-        lock waits out the lock wait and returns False, so once one returns False after half a lock wait
-        has passed, it and every key after it are returned untried: one wait, not one per key.
-        A failure that comes at once (one value that can't be written) only fails that key.
+        lock waits out the lock wait and returns False, so once one `set` returns False having itself
+        taken half a lock wait, every key after it is returned untried: one wait, not one per key.
+        A failure that comes at once (one value that can't be written) only fails that key, however
+        long the batch has run. With a lock wait of 0 no `set` waits, so every key is tried.
         """
         expire = self.get_backend_timeout(timeout)
         cache = self.cache
-        deadline = time.monotonic() + self.options['timeout'] / 2
+        half_wait = self.options['timeout'] / 2
         failed = []
         items = iter(data.items())
         for key, value in items:
-            if cache.set(self.make_and_validate_key(key, version=version), value, expire) is False:
+            made = self.make_and_validate_key(key, version=version)
+            started = time.monotonic()
+            if cache.set(made, value, expire) is False:
                 failed.append(key)
-                if time.monotonic() >= deadline:
+                if 0 < half_wait <= time.monotonic() - started:
                     failed.extend(rest for rest, _ in items)
                     break
         return failed
@@ -416,14 +419,17 @@ class DjangoCache(BaseCache):
 
         Under `durable=True`, single deletes, which durable covers and a transaction doesn't. A durable
         delete that can't get the lock returns False after the lock wait, as a miss does at once, so
-        the batch stops at the first False past half a lock wait: one wait, not one per key.
+        the batch stops at the first delete that returns False having itself taken half a lock wait:
+        one wait, not one per key. A missing key never stops it, however long the batch has run, and
+        with a lock wait of 0 no delete waits, so every key is tried.
         """
         made = [self.make_and_validate_key(key, version=version) for key in keys]
         cache = self.cache
         if self.options['durable']:
-            deadline = time.monotonic() + self.options['timeout'] / 2
+            half_wait = self.options['timeout'] / 2
             for key in made:
-                if not cache.delete(key) and time.monotonic() >= deadline:
+                started = time.monotonic()
+                if not cache.delete(key) and 0 < half_wait <= time.monotonic() - started:
                     return
             return
         fanout = cache if isinstance(cache, FanoutCache) else None

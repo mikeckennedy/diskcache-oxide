@@ -763,7 +763,65 @@ def test_a_durable_delete_many_behind_a_held_lock_waits_once(tmp_path: Path) -> 
     finally:
         release.set()
         thread.join()
-    assert elapsed < 0.7  # at most two lock waits (the deadline is checked after each False), not six
+    assert elapsed < 0.7  # one lock wait (the first False that took half of one ends the batch), not six
+
+
+class SlowCache:
+    """Takes `pause` seconds over each call that works, and fails the key `failing` at once."""
+
+    def __init__(self, failing: str, pause: float) -> None:
+        self.failing = failing
+        self.pause = pause
+        self.tried: list[str] = []
+
+    def call(self, key: str) -> bool:
+        self.tried.append(key)
+        if key == self.failing:
+            return False
+        time.sleep(self.pause)
+        return True
+
+    def set(self, key: str, value: Any, expire: Any = None) -> bool:
+        return self.call(key)
+
+    def delete(self, key: str) -> bool:
+        return self.call(key)
+
+
+def test_a_durable_delete_many_goes_on_past_a_missing_key_late_in_a_long_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The batch runs for several half lock waits before the miss: only a delete that itself waited ends it.
+    backend = make(tmp_path, OPTIONS={'durable': True, 'timeout': 0.02})
+    slow = SlowCache(backend.make_key('missing'), pause=0.005)
+    monkeypatch.setitem(djangocache.handles, backend.directory, slow)
+    keys = ['a', 'b', 'c', 'd', 'missing', 'e', 'f']
+    backend.delete_many(keys)
+    assert slow.tried == [backend.make_key(key) for key in keys]
+
+
+def test_a_durable_set_many_fails_only_the_key_that_fails_at_once_late_in_a_long_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = make(tmp_path, OPTIONS={'durable': True, 'timeout': 0.02})
+    slow = SlowCache(backend.make_key('unwritable'), pause=0.005)
+    monkeypatch.setitem(djangocache.handles, backend.directory, slow)
+    keys = ['a', 'b', 'c', 'd', 'unwritable', 'e', 'f']
+    assert backend.set_many(dict.fromkeys(keys, 1)) == ['unwritable']
+    assert slow.tried == [backend.make_key(key) for key in keys]
+
+
+def test_a_durable_batch_with_no_lock_wait_tries_every_key(tmp_path: Path) -> None:
+    backend = make(tmp_path, OPTIONS={'durable': True, 'timeout': 0})
+    backend.set_many({'a': 1, 'b': 2})
+    backend.delete_many(['missing', 'a', 'b'])
+    assert backend.get_many(['a', 'b']) == {}
+    release, thread = held_lock(backend)
+    try:
+        assert backend.set_many({'a': 1, 'b': 2}) == ['a', 'b']
+    finally:
+        release.set()
+        thread.join()
 
 
 # Beyond Django's API.

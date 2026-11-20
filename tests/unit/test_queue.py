@@ -67,6 +67,18 @@ def test_an_unreadable_head_is_removed_and_the_pull_goes_on(tmp_path: Path) -> N
         assert cache.peek(prefix='r') == (None, None), 'removed before it was raised'
 
 
+def test_an_unreadable_head_is_removed_and_the_pull_goes_on_with_no_lock_wait(tmp_path: Path) -> None:
+    # With `timeout=0` there is never time left, which must not turn a removed head into a Timeout.
+    with Cache(tmp_path) as cache:
+        bad = [cache.push({'a': 1}, prefix='q'), cache.push({'b': 2}, prefix='q')]
+        cache.push({'c': 3}, prefix='q')
+    for key in bad:
+        damage(tmp_path, key, "UPDATE cache SET value = X'C1' WHERE key = ?")
+    with Cache(tmp_path, on_decode_error='miss', timeout=0) as cache:
+        assert cache.pull(prefix='q') == ('q-500000000000002', {'c': 3})
+        assert len(cache) == 0
+
+
 def test_a_head_whose_file_is_gone_is_passed_over(tmp_path: Path) -> None:
     with Cache(tmp_path) as cache:
         cache.push(b'x' * 200_000)

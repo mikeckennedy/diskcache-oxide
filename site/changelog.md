@@ -3,6 +3,22 @@
 This changelog is generated automatically from [GitHub Releases](https://github.com/mikeckennedy/diskcache-oxide/releases).
 
 
+# v0.4.7
+
+*2026-11-19* · [GitHub](https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.4.7)
+
+No format change: caches made by 0.3.5 and later open as they are. Fixes from a bug, race and security review of 0.4.6.
+
+
+### Fixed
+
+- [DjangoCache.delete_many](reference/DjangoCache.delete_many.html#diskcache_oxide.DjangoCache.delete_many) under `durable=True` no longer stops at a missing key once the batch has run for half a lock wait, which left every key after it undeleted on a healthy cache (with the default 1.0 s lock wait, any missing key after the first half second of a long batch; with a lock wait of 0, the first missing key). [set_many](reference/DjangoCache.set_many.html#diskcache_oxide.DjangoCache.set_many) had the same flaw for a key that failed at once: it and every key after it were returned as not stored without being tried. Both now stop only at a call that itself waited half a lock wait, which is what a held lock looks like, and with a lock wait of 0 they try every key.
+- [pull()](reference/Cache.pull.html#diskcache_oxide.Cache.pull) on a `timeout=0` handle with `on_decode_error='miss'` raised [Timeout](reference/Timeout.html#diskcache_oxide.Timeout) after removing an unreadable item from the front of the queue, although nothing held the lock, and so did any handle whose timeout ran out just as the item was removed. It now goes on to the next item, as documented; only a puller that loses a race with no time left raises [Timeout](reference/Timeout.html#diskcache_oxide.Timeout).
+- `check(fix=True)` removed the row of a value whose file it couldn't look at, as if the file were missing: a value folder without permission, or any other error from the file system, cost a whole entry and left its file behind as an orphan. Only a file that isn't there counts as missing now, as for a read; any other error ends the check with that `OSError`, and nothing is removed.
+- [remove_old_formats()](reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats) on an old [FanoutCache](reference/FanoutCache.html#diskcache_oxide.FanoutCache) root removed a shard's database when it couldn't tell its format: an empty file (which a process creating the shard holds for a moment), a database with no format stamp, or a file that isn't a database. It now leaves and reports them, as it always has for a plain cache, and as its documentation said.
+- With `serializer='json'`, a dict with non-`str` keys nested 43 or more deep (each inside the last) was stored by [set](reference/Cache.set.html#diskcache_oxide.Cache.set) and then couldn't be read back: [get](reference/Cache.get.html#diskcache_oxide.Cache.get) raised [CorruptValueError](reference/CorruptValueError.html#diskcache_oxide.CorruptValueError), or with `on_decode_error='miss'` deleted it as a miss. [set](reference/Cache.set.html#diskcache_oxide.Cache.set) now raises `TypeError` for it, as for any value nested too deep, from 41 levels. msgpack was never affected.
+
+
 # v0.4.6
 
 *2026-11-19* · [GitHub](https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.4.6)

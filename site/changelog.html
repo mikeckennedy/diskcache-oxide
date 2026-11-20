@@ -442,7 +442,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <img src="./diskcache-oxide-logo.png" alt="diskcache-oxide" class="navbar-logo dark-content">
     </a>
     <a class="navbar-brand" href="./index.html">
-    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.6</span></span>
+    <span class="navbar-title">diskcache-oxide <span class="version-badge" title="Released 2026-11-19">v0.4.7</span></span>
     </a>
   </div>
           <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
@@ -494,7 +494,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
     <h2 id="toc-title">On this page</h2>
    
   <ul class="collapse">
-  <li><a href="#v0.4.6" id="toc-v0.4.6" class="nav-link active" data-scroll-target="#v0.4.6">v0.4.6</a></li>
+  <li><a href="#v0.4.7" id="toc-v0.4.7" class="nav-link active" data-scroll-target="#v0.4.7">v0.4.7</a></li>
+  <li><a href="#v0.4.6" id="toc-v0.4.6" class="nav-link" data-scroll-target="#v0.4.6">v0.4.6</a></li>
   <li><a href="#v0.3.5" id="toc-v0.3.5" class="nav-link" data-scroll-target="#v0.3.5">v0.3.5</a></li>
   <li><a href="#v0.2.3" id="toc-v0.2.3" class="nav-link" data-scroll-target="#v0.2.3">v0.2.3</a></li>
   <li><a href="#v0.1.2" id="toc-v0.1.2" class="nav-link" data-scroll-target="#v0.1.2">v0.1.2</a></li>
@@ -524,6 +525,21 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 
 
 <p>This changelog is the repository's <a href="https://github.com/mikeckennedy/diskcache-oxide/blob/main/CHANGELOG.md">CHANGELOG.md</a>, rendered at build time.</p>
+<section id="v0.4.7" class="level1 changelog-version">
+<h1 class="changelog-version">v0.4.7</h1>
+<p><em>2026-11-19</em> · <a href="https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.4.7">GitHub</a></p>
+<p>No format change: caches made by 0.3.5 and later open as they are. Fixes from a bug, race and security review of 0.4.6.</p>
+<section id="fixed" class="level3">
+<h3 class="anchored" data-anchor-id="fixed">Fixed</h3>
+<ul>
+<li><a href="reference/DjangoCache.delete_many.html#diskcache_oxide.DjangoCache.delete_many" class="gdls-link gdls-code">DjangoCache.delete_many</a> under <code>durable=True</code> no longer stops at a missing key once the batch has run for half a lock wait, which left every key after it undeleted on a healthy cache (with the default 1.0 s lock wait, any missing key after the first half second of a long batch; with a lock wait of 0, the first missing key). <a href="reference/DjangoCache.set_many.html#diskcache_oxide.DjangoCache.set_many" class="gdls-link gdls-code">set_many</a> had the same flaw for a key that failed at once: it and every key after it were returned as not stored without being tried. Both now stop only at a call that itself waited half a lock wait, which is what a held lock looks like, and with a lock wait of 0 they try every key.</li>
+<li><a href="reference/Cache.pull.html#diskcache_oxide.Cache.pull" class="gdls-link gdls-code">pull()</a> on a <code>timeout=0</code> handle with <code>on_decode_error='miss'</code> raised <a href="reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a> after removing an unreadable item from the front of the queue, although nothing held the lock, and so did any handle whose timeout ran out just as the item was removed. It now goes on to the next item, as documented; only a puller that loses a race with no time left raises <a href="reference/Timeout.html#diskcache_oxide.Timeout" class="gdls-link gdls-code">Timeout</a>.</li>
+<li><code>check(fix=True)</code> removed the row of a value whose file it couldn’t look at, as if the file were missing: a value folder without permission, or any other error from the file system, cost a whole entry and left its file behind as an orphan. Only a file that isn’t there counts as missing now, as for a read; any other error ends the check with that <code>OSError</code>, and nothing is removed.</li>
+<li><a href="reference/Cache.remove_old_formats.html#diskcache_oxide.Cache.remove_old_formats" class="gdls-link gdls-code">remove_old_formats()</a> on an old <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> root removed a shard’s database when it couldn’t tell its format: an empty file (which a process creating the shard holds for a moment), a database with no format stamp, or a file that isn’t a database. It now leaves and reports them, as it always has for a plain cache, and as its documentation said.</li>
+<li>With <code>serializer='json'</code>, a dict with non-<code>str</code> keys nested 43 or more deep (each inside the last) was stored by <a href="reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> and then couldn’t be read back: <a href="reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> raised <a href="reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a>, or with <code>on_decode_error='miss'</code> deleted it as a miss. <a href="reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a> now raises <code>TypeError</code> for it, as for any value nested too deep, from 41 levels. msgpack was never affected.</li>
+</ul>
+</section>
+</section>
 <section id="v0.4.6" class="level1 changelog-version">
 <h1 class="changelog-version">v0.4.6</h1>
 <p><em>2026-11-19</em> · <a href="https://github.com/mikeckennedy/diskcache-oxide/releases/tag/v0.4.6">GitHub</a></p>
@@ -537,8 +553,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><code>examples/django/</code>, a Django project on two aliases (pages durable, sessions and counters plain) under gunicorn, with its tests.</li>
 </ul>
 </section>
-<section id="fixed" class="level3">
-<h3 class="anchored" data-anchor-id="fixed">Fixed</h3>
+<section id="fixed-1" class="level3">
+<h3 class="anchored" data-anchor-id="fixed-1">Fixed</h3>
 <ul>
 <li>A value holding a lone surrogate inside it, such as <code>{'q': '\ud800'}</code> (one can arrive in a JSON body and end up in a session), is now pickled under <code>pickle=True</code>, as diskcache stores it, instead of raising <code>UnicodeEncodeError</code> at <a href="reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set</a>. Without pickle it still raises, and a lone surrogate in a top-level <code>str</code> still raises either way, as it does in diskcache. Values the serializer could already store are written exactly as before.</li>
 </ul>
@@ -579,8 +595,8 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <li><p><code>len()</code>, <a href="reference/Cache.iterkeys.html#diskcache_oxide.Cache.iterkeys" class="gdls-link gdls-code">iterkeys()</a>, <code>iter()</code> and <code>reversed()</code> leave out an entry the moment it expires, as <a href="reference/Cache.get.html#diskcache_oxide.Cache.get" class="gdls-link gdls-code">get</a> and <code>in</code> already did, on <a href="reference/Cache.html#diskcache_oxide.Cache" class="gdls-link gdls-code">Cache</a> and <a href="reference/FanoutCache.html#diskcache_oxide.FanoutCache" class="gdls-link gdls-code">FanoutCache</a> (D-060). Before, an expired entry was counted and listed until a <a href="reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>, <a href="reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or <a href="reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a> removed its row, so a cache that’s mostly read could report entries nobody could read. Nothing is written by the check; the rows and their space, in <a href="reference/Cache.volume.html#diskcache_oxide.Cache.volume" class="gdls-link gdls-code">volume()</a>, stay until something removes them: a <a href="reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a>, <a href="reference/Cache.expire.html#diskcache_oxide.Cache.expire" class="gdls-link gdls-code">expire()</a> or <a href="reference/Cache.cull.html#diskcache_oxide.Cache.cull" class="gdls-link gdls-code">cull()</a>, or background maintenance, which frees a mostly-read cache’s space within its interval (D-061). <code>len()</code> now also counts the expired rows not yet removed, through the expiry index, so it costs a little more while such rows are waiting.</p></li>
 </ul>
 </section>
-<section id="fixed-1" class="level3">
-<h3 class="anchored" data-anchor-id="fixed-1">Fixed</h3>
+<section id="fixed-2" class="level3">
+<h3 class="anchored" data-anchor-id="fixed-2">Fixed</h3>
 <ul>
 <li><code>import diskcache_oxide</code> no longer calls <code>os.register_at_fork</code> where it doesn’t exist.</li>
 <li>A value file that hits a full quota (<code>EDQUOT</code>) now raises <code>OSError</code> with <code>errno.ENOSPC</code>, as a full disk does, since a full disk is recognized by the error’s kind rather than one Unix error number.</li>

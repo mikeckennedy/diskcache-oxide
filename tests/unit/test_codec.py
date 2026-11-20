@@ -284,6 +284,42 @@ def test_rejected_without_pickle(serializer: str, name: str) -> None:
         _encode(REJECTED[name], serializer)
 
 
+NESTINGS = {
+    'list': lambda v: [v],
+    'tuple': lambda v: (v,),
+    'str-key': lambda v: {'k': v},
+    'dollar-key': lambda v: {'$k': v},
+    'int-key': lambda v: {1: v},
+    'tuple-key': lambda v: {(1, 'a'): v},
+    'int-key-in-list': lambda v: [{1: v}],
+    'mix': lambda v: {1: [(v,)]},
+}
+# What each nested value is stored as: itself, or (it's hashable when nested in tuples) a dict's key.
+STORED_AS = {'itself': lambda v: v, 'a-key': lambda v: {(v,): 1} if isinstance(v, tuple) else v}
+
+
+@pytest.mark.parametrize('serializer', SERIALIZERS)
+@pytest.mark.parametrize('stored', STORED_AS)
+@pytest.mark.parametrize('shape', NESTINGS)
+def test_a_value_nested_deep_enough_to_encode_decodes(serializer: str, shape: str, stored: str) -> None:
+    # The encoder's depth limit is what keeps a row readable: at every depth, a value is either
+    # refused at encode or comes back whole.
+    wrap = NESTINGS[shape]
+    value: Any = 'leaf'
+    refused = False
+    for depth in range(1, 140):
+        value = wrap(value)
+        whole = STORED_AS[stored](value)
+        try:
+            mode, payload = _encode(whole, serializer)
+        except TypeError:
+            refused = True
+            continue
+        assert not refused, f'depth {depth} encodes though a shallower one was refused'
+        assert exact_equal(_decode(mode, payload), whole), f'depth {depth}'
+    assert refused, 'the depth limit was never reached'
+
+
 PICKLABLE = [n for n in REJECTED if n not in ('memoryview', 'zoneinfo-from-file')]
 
 
