@@ -122,11 +122,11 @@ thread_local! {
 #[cfg(test)]
 static ABANDONS: AtomicUsize = AtomicUsize::new(0);
 
-// `DEFERRED_ENDS` is a static, which needs `Sync`, and its entries move between threads, which needs
-// `Send`; `TakeAllStack` is each only when its values are.
+// `DEFERRED_ENDS` is a static, which needs `Sync`, and its entries move between threads:
+// `TakeAllStack` is `Sync` (and `Send`) exactly when its values are `Send`.
 const _: () = {
-    const fn send_and_sync<T: Send + Sync>() {}
-    send_and_sync::<HeldTransaction>();
+    const fn send<T: Send>() {}
+    send::<HeldTransaction>();
 };
 
 /// How a handle wants its store opened.
@@ -1574,7 +1574,9 @@ impl Store {
         });
         drop(token);
         result?;
-        self.checkpoint(timeout).map(drop)
+        // What's left of the one budget, not a fresh `timeout`: `check(fix=True)` waited up to twice
+        // its timeout otherwise. Past the deadline it still makes one round, as a checkpoint does.
+        self.checkpoint_until(deadline).map(drop)
     }
 
     /// The `-wal` file's size in bytes (0 if it doesn't exist).

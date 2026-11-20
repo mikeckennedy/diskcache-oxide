@@ -1531,3 +1531,36 @@ fn a_connection_given_back_between_the_fork_hooks_is_closed_not_kept_idle() {
         2
     );
 }
+
+// Plan 32, D5: VACUUM and the checkpoint after it share one budget.
+
+#[test]
+fn vacuum_gives_its_checkpoint_what_is_left_of_the_one_budget() {
+    let tmp = TempDir::new("vacuum-budget");
+    let store = Store::open(&options(tmp.path(), T)).unwrap();
+    put(&store, "k");
+    let budget = Duration::from_millis(800);
+    let held_for = Duration::from_millis(450);
+    // Another process's write transaction makes VACUUM wait for over half the budget.
+    let writer = open::connect(tmp.path(), T).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    // And a reader's snapshot keeps the checkpoint after it busy until its deadline.
+    let reader = open::connect(tmp.path(), T).unwrap();
+    reader.execute_batch("BEGIN; SELECT COUNT(*) FROM cache;").unwrap();
+    let started = Instant::now();
+    let took = std::thread::scope(|s| {
+        s.spawn(move || {
+            std::thread::sleep(held_for);
+            writer.execute_batch("COMMIT").unwrap();
+        });
+        let result = store.vacuum(budget);
+        (result, started.elapsed())
+    });
+    reader.execute_batch("COMMIT").unwrap();
+    let (result, took) = took;
+    result.unwrap();
+    assert!(took >= held_for, "VACUUM didn't wait for the other writer: {took:?}");
+    // A fresh budget for the checkpoint would end at `held_for + budget`, 1.25 s.
+    assert!(took < budget + Duration::from_millis(250), "the checkpoint got a budget of its own: {took:?}");
+    store.release_handle();
+}
