@@ -510,6 +510,14 @@ mod tests {
     }
 
     #[test]
+    fn the_scan_gives_up_without_waiting_when_the_registry_is_locked() {
+        // As a child inherits it from a thread it doesn't have, after a fork no before-hook saw.
+        let held = registry();
+        assert_eq!(files_with_connections(), None, "every file is then unusable");
+        drop(held);
+    }
+
+    #[test]
     fn a_failed_connect_and_every_way_back_leave_nothing_checked_out() {
         let gate = GATE.enter_shared_blocking();
         let pool = Pool::new(&gate, 1, FILE);

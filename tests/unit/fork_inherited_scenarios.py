@@ -271,6 +271,53 @@ def fork_from_a_hook_inside_get(directory: Path) -> list[str]:
     return failures + untouched(directory)
 
 
+def child_returns_from_the_inherited_get(directory: Path) -> list[str]:
+    """The same fork from a decoder inside `get()`, but the child returns from the decoder instead of
+    exiting inside it: the inherited `get` finishes on the parent's connection (the row was already
+    read), hands back the value, and gives the connection back without closing it. Every call after
+    that raises, the child exits normally, and the parent's data is untouched."""
+    register_type(ForkOnDecode, name='tests.ForkOnDecode', encode=lambda v: v.n, decode=fork_on_decode)
+    cache = Cache(directory, timeout=TIMEOUT)
+    cache.set('before', 'parent')
+    cache.set('forker', ForkOnDecode(7))
+    ready_r, ready_w = os.pipe()
+    go_r, go_w = os.pipe()
+    pids: list[int] = []
+    ForkOnDecode.hook = lambda: pids.append(os.fork())
+    got = cache.get('forker')
+    if pids[0] == 0:
+        code = 0
+        try:
+            assert isinstance(got, ForkOnDecode) and got.n == 7, got
+            refuses_everything(cache, directory)()
+            os.write(ready_w, b'r')
+            assert os.read(go_r, 1) == b'g'
+            refuses_everything(cache, directory)()
+            still_answers(cache, directory)
+        except BaseException:
+            traceback.print_exc()
+            code = 1
+        finally:
+            os._exit(code)
+    os.close(ready_w)
+    failures = []
+    if os.read(ready_r, 1) != b'r':
+        failures.append("the child failed before the parent's close")
+    cache.close()
+    third_process(directory)
+    try:
+        os.write(go_w, b'g')
+    except BrokenPipeError:
+        pass
+    code = wait(pids[0])
+    if code != 0:
+        failures.append(f'child exit code {code}')
+    unregister_type(ForkOnDecode)
+    if not (isinstance(got, ForkOnDecode) and got.n == 7):
+        failures.append(f"the parent's own get returned {got!r}")
+    return failures + untouched(directory)
+
+
 def early_child_hook_inside_an_operation(directory: Path) -> list[str]:
     """Another library's `after_in_child` hook, running before diskcache-oxide's, uses the cache in
     a child forked from a decoder inside `get()`. The forking thread is one gate level deep there,
@@ -349,6 +396,10 @@ def fanout_with_one_shard_held(directory: Path) -> list[str]:
             'clear': cache.clear,
             'check': cache.check,
             'checkpoint': cache.checkpoint,
+            'evict': lambda: cache.evict('tag'),
+            'reset': lambda: cache.reset('cull_limit'),
+            'iterkeys': lambda: list(cache.iterkeys()),
+            'reversed': lambda: list(reversed(cache)),
             'a fresh FanoutCache': lambda: FanoutCache(directory, shards=4, timeout=TIMEOUT),
         }
         for name, call in whole.items():
@@ -381,6 +432,7 @@ SCENARIOS = {
     'later-before-hook-opens-a-cache': later_before_hook_opens_a_cache,
     'fork-inside-a-transaction': fork_inside_a_transaction,
     'fork-from-a-hook-inside-get': fork_from_a_hook_inside_get,
+    'child-returns-from-the-inherited-get': child_returns_from_the_inherited_get,
     'early-child-hook-inside-an-operation': early_child_hook_inside_an_operation,
     'fanout-with-one-shard-held': fanout_with_one_shard_held,
 }

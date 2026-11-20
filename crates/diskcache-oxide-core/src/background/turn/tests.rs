@@ -533,7 +533,10 @@ fn a_whole_turn_on_a_native_thread_never_goes_through_the_blocker() {
     for i in 0..12 {
         put(&store, &format!("big{i}"), spill::THRESHOLD * 2, Some(1.0));
     }
-    let folder = old_empty_folder(tmp.path(), "ef");
+    // A folder none of the twelve value files landed in (their names are random): expiry unlinking
+    // one from it would refresh its mtime, and the sweep leaves a folder touched that recently.
+    let unused = (0..=u8::MAX).map(|n| format!("{n:02x}")).find(|name| !tmp.path().join(name).exists()).unwrap();
+    let folder = old_empty_folder(tmp.path(), &unused);
     let _ = gate::set_blocker(|work| work());
     let (report, calls) = std::thread::scope(|s| {
         s.spawn(|| {
