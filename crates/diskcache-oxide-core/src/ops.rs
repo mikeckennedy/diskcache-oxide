@@ -572,11 +572,13 @@ impl Store {
                         } else {
                             None
                         };
-                        let filename: Option<String> = row.get(2).map_err(|e| Error::from_sqlite(e, timeout))?;
+                        let filename =
+                            crate::rows::lenient_filename(row.get_ref(2).map_err(|e| Error::from_sqlite(e, timeout))?);
                         if let Some(relative) = filename {
                             // Under the write lock nothing can replace the file, so read it here. A
                             // missing file acts missing (D-013); the row goes below.
-                            let size: i64 = row.get(3).map_err(|e| Error::from_sqlite(e, timeout))?;
+                            let size =
+                                crate::rows::file_size(row.get_ref(3).map_err(|e| Error::from_sqlite(e, timeout))?);
                             spill::read(self.directory(), &relative, size)?.map(|bytes| Popped {
                                 mode,
                                 value: SqlValue::Blob(bytes),
@@ -871,8 +873,8 @@ pub(crate) fn found_from_row<T>(
     let expire_time: Option<f64> = row.get(2).map_err(sqlite)?;
     let version = Version { id: row.get(5).map_err(sqlite)?, store_seq: row.get(6).map_err(sqlite)? };
     let tag = if with_tag { stored_tag(row.get(7).map_err(sqlite)?, row.get_ref(8).map_err(sqlite)?)? } else { None };
-    if let Some(relative) = row.get::<_, Option<String>>(3).map_err(sqlite)? {
-        let size = row.get(4).map_err(sqlite)?;
+    if let Some(relative) = crate::rows::lenient_filename(row.get_ref(3).map_err(sqlite)?) {
+        let size = crate::rows::file_size(row.get_ref(4).map_err(sqlite)?);
         Ok(Found::File(FileRow { version, mode, relative, size, expire_time, tag, key }))
     } else {
         let value = decode(mode, row.get_ref(1).map_err(sqlite)?)?;
@@ -968,7 +970,9 @@ fn prelude(conn: &Connection, key: Key<'_>, now: f64, timeout: Duration) -> Resu
             stmt.query_row((key.key_type(), key, now), |r| {
                 let size: i64 = r.get(2)?;
                 let stored = match r.get::<_, Option<i64>>(5)? {
-                    Some(_) => Some((r.get::<_, i64>(6)?, r.get::<_, Option<String>>(7)?)),
+                    Some(_) => {
+                        Some((crate::rows::lenient_size(r.get_ref(6)?), crate::rows::lenient_filename(r.get_ref(7)?)))
+                    }
                     None => None,
                 };
                 let expire_time: Option<f64> = r.get(10)?;

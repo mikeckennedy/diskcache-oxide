@@ -399,7 +399,7 @@ fn count(rows: usize) -> u64 {
 }
 
 fn row_removed(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Option<String>)> {
-    Ok((row.get(0)?, row.get(1)?))
+    crate::rows::size_and_file(row)
 }
 
 fn collect_removed(

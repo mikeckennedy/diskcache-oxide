@@ -12,6 +12,7 @@
 
 use std::time::Duration;
 
+use rusqlite::types::ValueRef;
 use rusqlite::types::{ToSqlOutput, Value};
 use rusqlite::{Connection, OptionalExtension, ToSql};
 
@@ -95,6 +96,46 @@ pub struct RowWriter<'t> {
     timeout: Duration,
 }
 
+/// What a `filename` column that isn't TEXT reads as: a name no value file can have
+/// (`spill::value_path` refuses it), so every caller's existing path for a damaged name runs. A read
+/// finds no file and reports a miss (D-013), a delete unlinks nothing, and `check` reports the row.
+pub(crate) const NOT_A_NAME: &str = "<not text>";
+
+/// A row's `filename` column, whatever SQLite has in it. The schema says TEXT or NULL, but a
+/// damaged page, or a hand that edited the file, can leave any type there, and a typed read would
+/// turn that one row into an error on every `get`, `delete`, `clear()` and eviction that reaches it.
+pub(crate) fn lenient_filename(value: ValueRef<'_>) -> Option<String> {
+    match value {
+        ValueRef::Null => None,
+        ValueRef::Text(bytes) => Some(std::str::from_utf8(bytes).map_or_else(|_| NOT_A_NAME.to_owned(), str::to_owned)),
+        _ => Some(NOT_A_NAME.to_owned()),
+    }
+}
+
+/// A row's `size` column for the cache's totals: 0 when it isn't an integer, so a damaged size
+/// never reaches `state.size`. `check` counts it the same way.
+pub(crate) fn lenient_size(value: ValueRef<'_>) -> i64 {
+    match value {
+        ValueRef::Integer(size) => size,
+        _ => 0,
+    }
+}
+
+/// A row's `size` column for reading its value file: a size no file has when it isn't an integer,
+/// so the read finds a damaged row, not a short one.
+pub(crate) fn file_size(value: ValueRef<'_>) -> i64 {
+    match value {
+        ValueRef::Integer(size) => size,
+        _ => -1,
+    }
+}
+
+/// The `size, filename` a `DELETE ... RETURNING` or a lookup of the row being replaced gives, read
+/// leniently (see [`lenient_filename`], [`lenient_size`]).
+pub(crate) fn size_and_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Option<String>)> {
+    Ok((lenient_size(row.get_ref(0)?), lenient_filename(row.get_ref(1)?)))
+}
+
 impl<'t> RowWriter<'t> {
     #[must_use]
     pub fn new(tx: &'t Connection, timeout: Duration) -> Self {
@@ -114,7 +155,7 @@ impl<'t> RowWriter<'t> {
         let key = key.into();
         self.tx
             .prepare_cached("SELECT size, filename FROM cache WHERE key_type = ?1 AND key = ?2")
-            .and_then(|mut stmt| stmt.query_row((key.key_type(), key), |r| Ok((r.get(0)?, r.get(1)?))).optional())
+            .and_then(|mut stmt| stmt.query_row((key.key_type(), key), size_and_file).optional())
             .map_err(|e| self.sqlite(e))
     }
 
@@ -191,7 +232,7 @@ impl<'t> RowWriter<'t> {
         let removed = self
             .tx
             .prepare_cached("DELETE FROM cache WHERE key_type = ?1 AND key = ?2 RETURNING size, filename")
-            .and_then(|mut stmt| stmt.query_row((key.key_type(), key), |r| Ok((r.get(0)?, r.get(1)?))).optional())
+            .and_then(|mut stmt| stmt.query_row((key.key_type(), key), size_and_file).optional())
             .map_err(|e| self.sqlite(e))?;
         self.finish_delete(removed)
     }
@@ -204,7 +245,19 @@ impl<'t> RowWriter<'t> {
         let removed = self
             .tx
             .prepare_cached("DELETE FROM cache WHERE id = ?1 AND store_seq = ?2 RETURNING size, filename")
-            .and_then(|mut stmt| stmt.query_row((id, store_seq), |r| Ok((r.get(0)?, r.get(1)?))).optional())
+            .and_then(|mut stmt| stmt.query_row((id, store_seq), size_and_file).optional())
+            .map_err(|e| self.sqlite(e))?;
+        self.finish_delete(removed)
+    }
+
+    /// Deletes the row `id`, whatever is in it: for `check(fix=True)` on a row with a damaged
+    /// column, whose `store_seq` may be the damaged one.
+    pub fn delete_id(&self, id: i64) -> Result<Option<Removed>> {
+        self.raise_seq_floor()?;
+        let removed = self
+            .tx
+            .prepare_cached("DELETE FROM cache WHERE id = ?1 RETURNING size, filename")
+            .and_then(|mut stmt| stmt.query_row([id], size_and_file).optional())
             .map_err(|e| self.sqlite(e))?;
         self.finish_delete(removed)
     }
@@ -272,10 +325,7 @@ impl<'t> RowWriter<'t> {
         let rows = self
             .tx
             .prepare_cached(sql)
-            .and_then(|mut stmt| {
-                stmt.query_map(params, |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)))?
-                    .collect::<rusqlite::Result<Vec<_>>>()
-            })
+            .and_then(|mut stmt| stmt.query_map(params, size_and_file)?.collect::<rusqlite::Result<Vec<_>>>())
             .map_err(|e| self.sqlite(e))?
             .into_iter()
             .map(|(row_size, filename)| {
@@ -460,5 +510,59 @@ mod tests {
             }
         }
         assert_eq!(totals(&conn), actual(&conn));
+    }
+
+    /// Plan 32, D1. `filename` is read through `lenient_filename` everywhere: a typed read of an
+    /// optional text column turns one damaged row into an error on every call that reaches it.
+    /// No other column in the schema is optional text read back as a `String`, so the typed forms
+    /// are banned outright.
+    #[test]
+    fn no_column_is_read_as_typed_optional_text() {
+        fn scan(dir: &std::path::Path, banned: &[String], found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    scan(&path, banned, found);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    for (n, line) in text.lines().enumerate() {
+                        if banned.iter().any(|b| line.contains(b.as_str())) && !line.trim_start().starts_with("//") {
+                            found.push(format!("{}:{}", path.display(), n + 1));
+                        }
+                    }
+                }
+            }
+        }
+        // Spelled in pieces, so this file passes its own scan.
+        let optional_text = ["Option<", "String>"].concat();
+        let banned = [
+            format!("get::<_, {optional_text}>"),
+            format!("{optional_text} = row.get"),
+            format!("{optional_text} = r.get"),
+        ];
+        let mut found = Vec::new();
+        scan(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &banned, &mut found);
+        assert!(found.is_empty(), "a typed read of an optional text column (use rows::lenient_filename): {found:?}");
+    }
+
+    #[test]
+    fn the_lenient_readers_take_any_type() {
+        use rusqlite::types::ValueRef;
+        assert_eq!(lenient_filename(ValueRef::Null), None);
+        assert_eq!(lenient_filename(ValueRef::Text(b"ab/cd.val")), Some("ab/cd.val".to_owned()));
+        for damaged in
+            [ValueRef::Blob(b"ab/cd.val"), ValueRef::Integer(7), ValueRef::Real(1.5), ValueRef::Text(b"\xff\xfe")]
+        {
+            assert_eq!(lenient_filename(damaged), Some(NOT_A_NAME.to_owned()), "{damaged:?}");
+        }
+        assert!(
+            crate::spill::value_path(std::path::Path::new("/cache"), NOT_A_NAME).is_none(),
+            "it must never be a path"
+        );
+        assert_eq!((lenient_size(ValueRef::Integer(9)), file_size(ValueRef::Integer(9))), (9, 9));
+        for damaged in [ValueRef::Null, ValueRef::Text(b"9"), ValueRef::Real(9.0), ValueRef::Blob(b"9")] {
+            assert_eq!(lenient_size(damaged), 0, "{damaged:?}: nothing for the totals");
+            assert_eq!(file_size(damaged), -1, "{damaged:?}: a size no file has");
+        }
     }
 }

@@ -4,6 +4,10 @@
 //! a gate level across a scan, so writers and forks aren't stalled. Only `PRAGMA integrity_check`
 //! and, with `fix`, `VACUUM` are long single steps.
 //!
+//! 0. **Column types:** a row whose `mode`, `size`, `store_seq`, `expire_time` or `filename` holds a
+//!    value of the wrong SQLite type (a damaged page, or a hand that edited the file) is reported,
+//!    and with `fix` removed, before anything below reads those columns as the types the schema
+//!    gives them. The later steps leave such rows out, so they neither raise nor loop on one.
 //! 1. **Rows against files:** page through the spilled rows by `id`; stat each file with nothing
 //!    held. A missing file, a file of the wrong size (a crash cut it short: nothing is fsynced, and
 //!    the read path already treats it as missing), or a name that isn't one `spill` writes is
@@ -55,6 +59,14 @@ pub enum Finding {
         name: String,
         fixed: bool,
     },
+    /// A row with a column of the wrong SQLite type (a damaged row): `column` holds a `found`
+    /// (`typeof()`'s word for it) where the schema stores something else.
+    BadColumn {
+        id: i64,
+        column: &'static str,
+        found: String,
+        fixed: bool,
+    },
     UnknownFile {
         path: PathBuf,
         fixed: bool,
@@ -103,6 +115,7 @@ impl Store {
                 merge(found, Finding::Integrity(line));
             }
         }
+        self.check_column_types(fix, timeout, found)?;
         self.check_rows(fix, timeout, found)?;
         self.check_files(fix, timeout, found)?;
         if fix {
@@ -116,6 +129,54 @@ impl Store {
         Ok(())
     }
 
+    /// Step 0: rows with a column of the wrong type. A scan of the table, a page at a time by `id`
+    /// (the rowid, which can't hold another type), reading only `typeof()` of each column, so
+    /// nothing here can fail on what it finds. With `fix` the row goes, by `id` alone: its
+    /// `store_seq` may be the damaged column.
+    fn check_column_types(&self, fix: bool, timeout: Duration, found: &mut Vec<Finding>) -> Result<()> {
+        const COLUMNS: [(&str, &[&str]); 5] = [
+            ("mode", &["integer"]),
+            ("size", &["integer"]),
+            ("store_seq", &["integer"]),
+            ("expire_time", &["real", "integer", "null"]),
+            ("filename", &["text", "null"]),
+        ];
+        let mut after = 0_i64;
+        loop {
+            let rows: Vec<(i64, [String; 5])> = self.read(timeout, |conn| {
+                conn.prepare_cached(
+                    "SELECT id, typeof(mode), typeof(size), typeof(store_seq), typeof(expire_time), typeof(filename)
+                     FROM cache
+                     WHERE id > ?1 AND (typeof(mode) != 'integer' OR typeof(size) != 'integer'
+                         OR typeof(store_seq) != 'integer' OR typeof(expire_time) NOT IN ('real', 'integer', 'null')
+                         OR typeof(filename) NOT IN ('text', 'null'))
+                     ORDER BY id LIMIT ?2",
+                )
+                .and_then(|mut stmt| {
+                    stmt.query_map((after, PAGE), |r| {
+                        Ok((r.get(0)?, [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?]))
+                    })?
+                    .collect()
+                })
+                .map_err(|e| Error::from_sqlite(e, timeout))
+            })?;
+            let Some((last, _)) = rows.last() else { return Ok(()) };
+            after = *last;
+            for (id, kinds) in rows {
+                let fixed = fix
+                    && self.write_files(timeout, crate::store::LockPriority::Normal, |writer, _| {
+                        let removed = writer.delete_id(id)?;
+                        Ok(crate::store::Changed::removing(removed.is_some(), removed))
+                    })?;
+                for ((column, allowed), kind) in COLUMNS.into_iter().zip(kinds) {
+                    if !allowed.contains(&kind.as_str()) {
+                        merge(found, Finding::BadColumn { id, column, found: kind, fixed });
+                    }
+                }
+            }
+        }
+    }
+
     fn check_rows(&self, fix: bool, timeout: Duration, found: &mut Vec<Finding>) -> Result<()> {
         let sqlite = |e| Error::from_sqlite(e, timeout);
         // Paged on the partial index over spilled rows, by name, so a cache of mostly inline values
@@ -124,8 +185,13 @@ impl Store {
         loop {
             let rows: Vec<(i64, i64, String, i64)> = self.read(timeout, |conn| {
                 conn.prepare_cached(
+                    // Only rows whose columns hold what the schema says: the others are step 0's,
+                    // and a `filename` of another type would sort after every text one and come
+                    // back on every page.
                     "SELECT id, store_seq, filename, size FROM cache
-                     WHERE filename IS NOT NULL AND filename > ?1 ORDER BY filename LIMIT ?2",
+                     WHERE filename IS NOT NULL AND filename > ?1 AND typeof(filename) = 'text'
+                       AND typeof(size) = 'integer' AND typeof(store_seq) = 'integer'
+                     ORDER BY filename LIMIT ?2",
                 )
                 .and_then(|mut stmt| {
                     stmt.query_map((&after, PAGE), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect()
@@ -291,7 +357,10 @@ impl Store {
         // commit, and a write landing between them would look like drift.
         let (count, size, rows, sum): (i64, i64, i64, i64) = self.read(timeout, |conn| {
             conn.query_row(
-                "SELECT count, size, (SELECT COUNT(*) FROM cache), (SELECT COALESCE(SUM(size), 0) FROM cache)
+                // A size that isn't an integer counts as 0, as it does when its row is removed
+                // (`rows::lenient_size`); summed as it is, it would make the total a REAL.
+                "SELECT count, size, (SELECT COUNT(*) FROM cache),
+                        (SELECT COALESCE(SUM(CASE typeof(size) WHEN 'integer' THEN size ELSE 0 END), 0) FROM cache)
                  FROM state WHERE only = 1",
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
@@ -305,7 +374,9 @@ impl Store {
             self.write(timeout, |_, tx| {
                 tx.execute(
                     "UPDATE state SET count = (SELECT COUNT(*) FROM cache),
-                                       size = (SELECT COALESCE(SUM(size), 0) FROM cache) WHERE only = 1",
+                                       size = (SELECT COALESCE(SUM(CASE typeof(size) WHEN 'integer' THEN size ELSE 0 END), 0)
+                                               FROM cache)
+                     WHERE only = 1",
                     [],
                 )
                 .map(drop)
@@ -354,6 +425,7 @@ fn is_fixed(finding: &Finding) -> bool {
         Finding::MissingFile { fixed, .. }
         | Finding::WrongSize { fixed, .. }
         | Finding::BadFilename { fixed, .. }
+        | Finding::BadColumn { fixed, .. }
         | Finding::UnknownFile { fixed, .. }
         | Finding::Count { fixed, .. }
         | Finding::Size { fixed, .. } => *fixed,
@@ -366,6 +438,7 @@ fn set_fixed(finding: &mut Finding, value: bool) {
         Finding::MissingFile { fixed, .. }
         | Finding::WrongSize { fixed, .. }
         | Finding::BadFilename { fixed, .. }
+        | Finding::BadColumn { fixed, .. }
         | Finding::UnknownFile { fixed, .. }
         | Finding::Count { fixed, .. }
         | Finding::Size { fixed, .. } => *fixed = value,
@@ -596,5 +669,146 @@ mod tests {
         // The row reads its value from the file the transaction wrote.
         assert_eq!(len(&s), 1);
         assert!(run(&s, false).iter().all(|f| !matches!(f, Finding::MissingFile { .. })));
+    }
+
+    // -- plan 32, D1: damaged columns ----------------------------------------------------------------
+
+    fn read_of(s: &Store, key: &str) -> Result<bool> {
+        s.get_with(T, key, NOW, |_| false, |_, _| Ok(())).map(|hit| hit.is_some())
+    }
+
+    /// One spilled value under `k`, one inline under `a`, and `column` of `k`'s row set to `value`
+    /// (an SQL expression), as a damaged page or an edit by hand leaves it.
+    fn damaged(name: &str, column: &str, value: &str) -> (TempDir, Arc<Store>, PathBuf) {
+        let tmp = TempDir::new(name);
+        let s = store(tmp.path());
+        let file = put_big(&s, "k");
+        s.set(T, "a", Value::Bytes { mode: MODE_BYTES, data: b"inline" }, None, NOW).unwrap();
+        raw(&s, &format!("UPDATE cache SET {column} = {value} WHERE filename IS NOT NULL"));
+        (tmp, s, file)
+    }
+
+    /// A `filename` and a `size` of each wrong type the column can hold. (A number put in
+    /// `filename` is stored as text by the column's affinity: a name `spill` never writes.)
+    const BAD_FILE_COLUMNS: [(&str, &str); 4] =
+        [("filename", "x'fffe'"), ("filename", "42"), ("size", "'big'"), ("size", "1.5")];
+
+    /// The totals agree with the rows, unless a damaged `size` was in play: what that row really
+    /// weighed is lost, so `state.size` stays off by it until `fix` recomputes it.
+    #[track_caller]
+    fn totals_right_unless_a_size_was_damaged(s: &Store, column: &str, value: &str) {
+        let found = run(s, false);
+        assert!(!found.iter().any(|f| matches!(f, Finding::Count { .. })), "{column} = {value}: {found:?}");
+        if column == "filename" {
+            assert!(!found.iter().any(|f| matches!(f, Finding::Size { .. })), "{column} = {value}: {found:?}");
+        }
+        run(s, true);
+        let after = run(s, false);
+        assert!(!after.iter().any(|f| matches!(f, Finding::Count { .. } | Finding::Size { .. })), "{after:?}");
+    }
+
+    #[test]
+    fn a_damaged_filename_or_size_reads_as_a_miss_and_never_blocks_a_delete() {
+        for (column, value) in BAD_FILE_COLUMNS {
+            let (_tmp, s, file) = damaged("check-lenient-read", column, value);
+            // D-013: a damaged row is a miss, and the read removes it when that needs no waiting.
+            assert!(!read_of(&s, "k").unwrap(), "{column} = {value}: a hit");
+            assert!(read_of(&s, "a").unwrap(), "{column} = {value}: the other row");
+            assert!(!s.delete(T, "k", NOW).unwrap(), "{column} = {value}: the miss left the row");
+            assert_eq!(len(&s), 1, "{column} = {value}");
+            // A name that isn't text is never made into a path, so the file it once named stays
+            // for `check` to find; a row with a good name and a bad size takes its file with it.
+            assert_eq!(file.exists(), column == "filename", "{column} = {value}");
+            totals_right_unless_a_size_was_damaged(&s, column, value);
+        }
+    }
+
+    #[test]
+    fn a_damaged_filename_or_size_doesnt_stop_a_delete_a_set_a_clear_or_an_eviction() {
+        for (column, value) in BAD_FILE_COLUMNS {
+            // A delete of the damaged row itself, and an overwrite of it.
+            let (_tmp, s, _) = damaged("check-lenient-delete", column, value);
+            assert!(s.delete(T, "k", NOW).unwrap(), "{column} = {value}: delete");
+            let (_tmp, s, _) = damaged("check-lenient-set", column, value);
+            s.set(T, "k", Value::Bytes { mode: MODE_BYTES, data: b"new" }, None, NOW).unwrap();
+            assert!(read_of(&s, "k").unwrap(), "{column} = {value}: the overwrite reads back");
+            totals_right_unless_a_size_was_damaged(&s, column, value);
+            // The batch deletes that reach it: `clear()`, and the eviction a `set` over the limit runs.
+            let (_tmp, s, _) = damaged("check-lenient-clear", column, value);
+            assert_eq!(s.clear(T).unwrap(), 2, "{column} = {value}: clear");
+            assert_eq!(len(&s), 0);
+            let (_tmp, s, _) = damaged("check-lenient-cull", column, value);
+            s.set_limits(T, Requested { size_limit: Some(crate::schema::MIN_SIZE_LIMIT), ..Requested::default() })
+                .unwrap();
+            let big = vec![1u8; usize::try_from(crate::schema::MIN_SIZE_LIMIT).unwrap()];
+            s.set(T, "fills", Value::Bytes { mode: MODE_BYTES, data: &big }, None, NOW).unwrap();
+            assert!(!read_of(&s, "k").unwrap(), "{column} = {value}: the damaged row, the oldest, was evicted");
+        }
+    }
+
+    #[test]
+    fn check_reports_a_column_of_the_wrong_type_and_fix_removes_the_row() {
+        let cases = [
+            ("filename", "x'fffe'", "blob"),
+            ("size", "'big'", "text"),
+            ("size", "1.5", "real"),
+            ("mode", "'two'", "text"),
+            ("store_seq", "x'00'", "blob"),
+            ("expire_time", "'soon'", "text"),
+        ];
+        for (column, value, kind) in cases {
+            let (_tmp, s, file) = damaged("check-bad-column", column, value);
+            let id: i64 = s
+                .read(T, |c| {
+                    c.query_row(
+                        "SELECT id FROM cache WHERE filename IS NOT NULL OR typeof(filename) != 'null' LIMIT 1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .map_err(|e| Error::from_sqlite(e, T))
+                })
+                .unwrap();
+            let found = run(&s, false);
+            let expected = Finding::BadColumn { id, column, found: kind.to_owned(), fixed: false };
+            assert!(found.contains(&expected), "{column} = {value}: {found:?}");
+            assert_eq!(len(&s), 2, "a check without fix removes nothing");
+            // Twice over: paging by a column that sorts past every good value must still end.
+            assert!(run(&s, false).contains(&expected));
+
+            let fixed = run(&s, true);
+            assert!(
+                fixed.contains(&Finding::BadColumn { id, column, found: kind.to_owned(), fixed: true }),
+                "{fixed:?}"
+            );
+            assert_eq!(len(&s), 1, "{column} = {value}: the damaged row is gone, the other stays");
+            assert!(read_of(&s, "a").unwrap());
+            assert!(!read_of(&s, "k").unwrap());
+            // Its value file went with it (as its row's, or as an old file no row names).
+            let _ = file;
+            assert_eq!(run(&s, false), Vec::new(), "{column} = {value}: clean afterwards");
+        }
+    }
+
+    #[test]
+    fn an_inline_row_with_a_damaged_size_is_reported_and_fixed_too() {
+        // The spilled-rows index never visits it, so only the column pass can.
+        let tmp = TempDir::new("check-bad-inline-size");
+        let s = store(tmp.path());
+        s.set(T, "a", Value::Bytes { mode: MODE_BYTES, data: b"inline" }, None, NOW).unwrap();
+        s.set(T, "b", Value::Bytes { mode: MODE_BYTES, data: b"inline" }, None, NOW).unwrap();
+        raw(&s, "UPDATE cache SET size = 'six' WHERE key = (SELECT key FROM cache ORDER BY id LIMIT 1)");
+        let found = run(&s, false);
+        assert!(
+            found.iter().any(|f| matches!(f, Finding::BadColumn { column: "size", fixed: false, .. })),
+            "{found:?}"
+        );
+        // An inline row weighs nothing in `state.size`, and the damaged size counts as 0: no drift.
+        assert!(!found.iter().any(|f| matches!(f, Finding::Size { .. } | Finding::Count { .. })), "{found:?}");
+        run(&s, true);
+        assert_eq!(len(&s), 1);
+        assert_eq!(run(&s, false), Vec::new());
+        // Deleting what's left brings the totals to zero: nothing was miscounted on the way.
+        assert_eq!(s.clear(T).unwrap(), 1);
+        assert_eq!((len(&s), s.volume(T).is_ok()), (0, true));
     }
 }

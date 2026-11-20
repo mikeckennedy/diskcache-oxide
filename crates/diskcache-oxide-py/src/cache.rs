@@ -2096,6 +2096,9 @@ pub(crate) fn findings_to_warnings(
                 (format!("wrong file size: {}, {actual} != {expected}", path.display()), &user)
             }
             Finding::BadFilename { name, .. } => (format!("damaged file name in a row: {name:?}"), &user),
+            Finding::BadColumn { id, column, found, .. } => {
+                (format!("damaged row {id}: its {column} is stored as {found}"), &user)
+            }
             Finding::UnknownFile { path, .. } => (format!("unknown file: {}", path.display()), &unknown),
             Finding::Count { stored, actual, .. } => {
                 (format!("Settings.count != COUNT(Cache.key); {stored} != {actual}"), &user)

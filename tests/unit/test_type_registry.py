@@ -324,7 +324,7 @@ def test_a_global_type_whose_name_the_handles_registry_gives_another_class_is_re
         with pytest.raises(TypeError, match='uses that name for Entry'):
             cache.set('k', Point(5, 6))
         # What the check can't reach: a row written before the name was taken reads as the name says now.
-        assert cache.get('k') == Entry(3, 4)
+        assert tuple(cache.get('k')) == (3, 4) and type(cache.get('k')) is Entry
 
 
 def test_the_own_types_are_refused() -> None:
