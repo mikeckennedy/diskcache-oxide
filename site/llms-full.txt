@@ -281,9 +281,9 @@ keeps its existing expiry.
 
 Args:
     key: The key.
-    delta: The amount to add (default 1).
-    default: The starting value for a missing or expired key (default 0). Pass None to
-        raise `KeyError` instead.
+    delta: The amount to add (default 1). An int or a finite float.
+    default: The starting value for a missing or expired key (default 0), an int or a
+        finite float. Pass None to raise `KeyError` instead.
     retry: On a `Timeout`, try again until the call gets through, each round with the
         whole `timeout`, a `durable=True` handle included. Only `Timeout` is retried.
 
@@ -296,6 +296,7 @@ Raises:
     KeyError: The key is missing and `default` is None, or with `durable=True`, the call
         failed and `default` is None.
     TypeError: The stored value isn't a number.
+    ValueError: `delta` or `default` is an infinity or a NaN. Nothing is read or written.
     Timeout: Another process held the write lock for longer than `timeout`.
 
 Examples:
@@ -311,6 +312,9 @@ Subtract `delta` from the number stored under `key`, atomically. See `incr()`.
 
 Returns:
     The new value.
+
+Raises:
+    ValueError: `delta` or `default` is an infinity or a NaN, as for `incr()`.
 
 memoize(self, name: 'Optional[str]' = None, typed: 'bool' = False, expire: 'Optional[float]' = None, tag: 'Key' = None, ignore: 'Iterable[int | str]' = ()) -> 'Memoizer'
 
@@ -378,22 +382,26 @@ Reports, as a list of `warnings.WarningMessage` (nothing is issued through `warn
 of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size
 (`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache
 directory, that no entry names and that is over an hour old (`unknown file: ...`, an
-`UnknownFileWarning`; a younger one may be a writer's in flight); and stored totals that
-don't match the rows. Empty value folders aren't reported: they're normal on an open cache.
-Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and
-`VACUUM`.
+`UnknownFileWarning`; a younger one may be a writer's in flight); an entry with a column of
+the wrong SQLite type, as a damaged page leaves it (`damaged row N: its COLUMN is stored as
+TYPE`); and stored totals that don't match the rows. Empty value folders aren't reported:
+they're normal on an open cache. Runs in short steps, so writers and forks aren't held up,
+apart from `integrity_check` and `VACUUM`.
 
 Args:
-    fix: Also repair: remove an entry whose file is missing or the wrong size (it reads as a
-        miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
-        value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
+    fix: Also repair: remove an entry whose file is missing or the wrong size, or with a
+        damaged column (it reads as a miss anyway), remove unknown files in value folders
+        (never elsewhere; each under the write lock, so it waits for an open transaction, whose
+        uncommitted entry may be the one naming the file), sweep empty value folders, correct
+        the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
         whole database through the write-ahead log and needs a temporary copy of it in
         `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`; forks and writers wait for it.
     retry: On a `Timeout`, start again until it gets through.
 
 Raises:
     RuntimeError: Inside this thread's own `transact()` block.
-    Timeout: A step waited longer than `timeout` (and `retry` is False).
+    Timeout: A step waited longer than `timeout` (and `retry` is False): with `fix`, that
+        includes a transaction held open elsewhere for the whole of it.
 
 maintenance_stats(self) -> 'MaintenanceStats'
 
@@ -1194,22 +1202,26 @@ Reports, as a list of `warnings.WarningMessage` (nothing is issued through `warn
 of SQLite's `integrity_check`; a spilled entry whose value file is missing or the wrong size
 (`file not found: ...`, `wrong file size: ...`); a file in a value folder, or the cache
 directory, that no entry names and that is over an hour old (`unknown file: ...`, an
-`UnknownFileWarning`; a younger one may be a writer's in flight); and stored totals that
-don't match the rows. Empty value folders aren't reported: they're normal on an open cache.
-Runs in short steps, so writers and forks aren't held up, apart from `integrity_check` and
-`VACUUM`.
+`UnknownFileWarning`; a younger one may be a writer's in flight); an entry with a column of
+the wrong SQLite type, as a damaged page leaves it (`damaged row N: its COLUMN is stored as
+TYPE`); and stored totals that don't match the rows. Empty value folders aren't reported:
+they're normal on an open cache. Runs in short steps, so writers and forks aren't held up,
+apart from `integrity_check` and `VACUUM`.
 
 Args:
-    fix: Also repair: remove an entry whose file is missing or the wrong size (it reads as a
-        miss anyway), remove unknown files in value folders (never elsewhere), sweep empty
-        value folders, correct the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
+    fix: Also repair: remove an entry whose file is missing or the wrong size, or with a
+        damaged column (it reads as a miss anyway), remove unknown files in value folders
+        (never elsewhere; each under the write lock, so it waits for an open transaction, whose
+        uncommitted entry may be the one naming the file), sweep empty value folders, correct
+        the totals, then `VACUUM` and checkpoint. `VACUUM` writes the
         whole database through the write-ahead log and needs a temporary copy of it in
         `SQLITE_TMPDIR`, `TMPDIR` or `/tmp`; forks and writers wait for it.
     retry: On a `Timeout`, start again until it gets through.
 
 Raises:
     RuntimeError: Inside this thread's own `transact()` block.
-    Timeout: A step waited longer than `timeout` (and `retry` is False).
+    Timeout: A step waited longer than `timeout` (and `retry` is False): with `fix`, that
+        includes a transaction held open elsewhere for the whole of it.
 
 maintenance_stats(self) -> 'MaintenanceStats'
 
@@ -1854,11 +1866,11 @@ validate_key(self, key: 'str') -> 'None'
 
 Warn (`CacheKeyWarning`) about a key memcached couldn't store, as every Django backend does.
 
-get_backend_timeout(self, timeout: 'Any' = <object object at 0x11649a570>) -> 'Optional[float]'
+get_backend_timeout(self, timeout: 'Any' = <object object at 0x113f7e570>) -> 'Optional[float]'
 
 Seconds from now, or None for forever. Zero or less means "don't store it", as in Django.
 
-add(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11649a570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+add(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
 
 Django's `add`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
 
@@ -1866,11 +1878,11 @@ get(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) ->
 
 The value, or `default` on a miss (a stored None is returned as None).
 
-set(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11649a570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+set(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
 
 Django's `set`, plus `tag=`: an entry tagged here can be removed with `evict(tag)`.
 
-touch(self, key: 'Any', timeout: 'Any' = <object object at 0x11649a570>, version: 'Optional[int]' = None) -> 'bool'
+touch(self, key: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None) -> 'bool'
 
 Give the key a new timeout. Returns whether it was there.
 
@@ -1898,7 +1910,7 @@ get_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]'
 
 The keys that are there, with their values; a stored None is returned.
 
-set_many(self, data: 'Any', timeout: 'Any' = <object object at 0x11649a570>, version: 'Optional[int]' = None) -> 'list[Any]'
+set_many(self, data: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None) -> 'list[Any]'
 
 A `set` per key, not one transaction: a value's pickling can run arbitrary code (load a
 session, run a query), which mustn't run holding the cache's write lock. Returns the keys
@@ -1958,7 +1970,7 @@ check(self, fix: 'bool' = False) -> 'list[Any]'
 
 Check the cache's consistency, returning the problems as warnings; see `Cache.check`.
 
-aadd(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11649a570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
+aadd(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'bool'
 
 `add`, run in one `sync_to_async` call.
 
@@ -1966,11 +1978,11 @@ aget(self, key: 'Any', default: 'Any' = None, version: 'Optional[int]' = None) -
 
 `get`, run in one `sync_to_async` call.
 
-aset(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x11649a570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
+aset(self, key: 'Any', value: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None, tag: 'Key' = None) -> 'None'
 
 `set`, run in one `sync_to_async` call.
 
-atouch(self, key: 'Any', timeout: 'Any' = <object object at 0x11649a570>, version: 'Optional[int]' = None) -> 'bool'
+atouch(self, key: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None) -> 'bool'
 
 `touch`, run in one `sync_to_async` call.
 
@@ -1994,7 +2006,7 @@ aget_many(self, keys: 'Any', version: 'Optional[int]' = None) -> 'dict[Any, Any]
 
 `get_many`, run in one `sync_to_async` call.
 
-aset_many(self, data: 'Any', timeout: 'Any' = <object object at 0x11649a570>, version: 'Optional[int]' = None) -> 'list[Any]'
+aset_many(self, data: 'Any', timeout: 'Any' = <object object at 0x113f7e570>, version: 'Optional[int]' = None) -> 'list[Any]'
 
 `set_many`, run in one `sync_to_async` call.
 
@@ -2860,7 +2872,7 @@ page = cache.get('homepage')  # None if the cache is locked, full, broken or the
 
 "Durable" here means the cache keeps your app running. It doesn't mean what it means in a database, where a durable write survives a crash. This option does the opposite: it can drop writes. It's off by default.
 
-An operational failure is a `Timeout`, an `OSError` (disk full, I/O), a SQLite error including a damaged database, or a child forked inside a transaction that can't write. On a single-key call it's answered like this:
+An operational failure is a `Timeout`, an `OSError` (disk full, I/O), or a SQLite error including a damaged database. (A child process that [can't use the cache after a fork](errors.qmd#runtimeerror-a-cache-that-cant-be-used-after-a-fork) is not one: that never passes, so it raises.) On a single-key call it's answered like this:
 
 - `get`, `pop`: the default; `get(key, expire_time=True)` gives `(default, None)`
 - `key in cache`: `False`
@@ -3086,7 +3098,7 @@ Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples 
 - **Another thread may end it.** Its commit or rollback runs within the transaction's `timeout`, and the owner's own exit then raises `TransactionAborted` (a `RuntimeError`) unless it committed (D-031). The object `transact()` returns can be entered once.
 - **A block that didn't commit raises at its exit** with `TransactionAborted`, a `RuntimeError`, for example after a write inside it failed on a full disk.
 - **`durable=True`**, which diskcache doesn't have, still raises when a transaction can't begin and for any failure inside one (D-028).
-- **Forking inside your own transaction** poisons the child's copy, whose writes raise `RuntimeError` at once, instead of stalling for the timeout (D-020).
+- **Forking inside your own transaction** leaves the child unable to use that cache: every call on it there raises `RuntimeError` at once, instead of stalling for the timeout (D-020).
 - **It belongs to a thread, not an asyncio task**, as in diskcache: don't `await` inside the block.
 
 ## `FanoutCache`
@@ -3235,13 +3247,21 @@ This one comes from the block's exit, when the transaction had already ended wit
 
 Either way nothing in the block was kept. Treat it as you would the original failure: log it, and run the block again if the work is idempotent. `TransactionAborted` is a `RuntimeError`, so an `except RuntimeError` you already have still catches it; catch `TransactionAborted` to handle this case alone.
 
-## `RuntimeError` from a transaction
+## `RuntimeError`: a cache that can't be used after a fork
 
 ```text
-RuntimeError: this database can't be written in a process forked inside a transaction
+RuntimeError: this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver
 ```
 
-A process forked while the forking thread itself held a `transact()` block, and this is the child. The parent's transaction carries on and commits; the child's copy is poisoned, and its writes to that database raise this instead of stalling for a minute. Don't fork from inside a transaction: start worker processes before the block, or after it. See [Forking from inside your own transaction](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction).
+This process is the child of a fork that happened while the forking thread had a connection to this cache open: inside its own `transact()` block, or from code running inside a cache call, such as a pickle hook or a registered type's `decode`. The parent is fine, and its transaction carries on and commits. In the child, every call on that cache raises this, reads included, for as long as the process lives, on a `durable=True` handle too. Other caches work, and `close()` still does.
+
+It's raised because the alternative is silent: a child like that holds none of the locks SQLite thinks it holds, so its reads could go stale and its writes could vanish. Don't fork from inside a transaction or a cache call: start worker processes before the block, or after it, or use the `spawn` or `forkserver` start method. See [Forking from inside your own transaction](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction).
+
+```text
+RuntimeError: this transaction was inherited across fork() and can't be used in the child
+```
+
+The same child, leaving the `with cache.transact():` block it was forked inside. Nothing in the block commits there; the parent's copy is the real one.
 
 ## `UnsafeValueError`: a pickled value, read without `pickle=True`
 
@@ -3354,7 +3374,7 @@ SQLite refused write-ahead logging, which diskcache-oxide requires for readers a
 
 ## `UnknownFileWarning` and `EmptyDirWarning`
 
-`check()` returns what it found as a list of `warnings.WarningMessage` and issues nothing through `warnings`, so these never show up as warnings on their own. A file in the cache directory or a value folder that no entry names, and that's over an hour old, is reported as `unknown file: ...` with the category `UnknownFileWarning`; `check(fix=True)` removes it when it's in a value folder. `EmptyDirWarning` is diskcache's warning for an empty folder. It's exported so code that imports it keeps working, but `check()` never reports one: empty value folders are normal on an open cache, and `check(fix=True)` sweeps them.
+`check()` returns what it found as a list of `warnings.WarningMessage` and issues nothing through `warnings`, so these never show up as warnings on their own. A file in the cache directory or a value folder that no entry names, and that's over an hour old, is reported as `unknown file: ...` with the category `UnknownFileWarning`; `check(fix=True)` removes it when it's in a value folder, under the write lock, so it waits for any open transaction (whose uncommitted entry may be the one that names the file) and raises `Timeout` if that transaction outlasts the timeout. An entry with a damaged column is reported as `damaged row N: its COLUMN is stored as TYPE`, and removed by `check(fix=True)`; until then it reads as a miss. `EmptyDirWarning` is diskcache's warning for an empty folder. It's exported so code that imports it keeps working, but `check()` never reports one: empty value folders are normal on an open cache, and `check(fix=True)` sweeps them.
 
 ## `KeyError`
 
@@ -3689,6 +3709,8 @@ reg = diskcache_oxide.TypeRegistry()
 reg.register(ObjectId, name='bson.ObjectId', encode=lambda o: o.binary, decode=ObjectId)
 cache = Cache('/var/cache/my-app-binary-ids', types=reg)
 ```
+
+Give a class its own name in that registry. If it uses a name the global registry has for a different class, a value of the global class can't be stored through that cache: it would be written under the shared name and read back as the other class, so `set()` raises `TypeError` and names both.
 
 Two processes with different registrations on one directory write rows the other can't read, the same way two processes with different `serializer=` settings would. Register at import time, the same way everywhere.
 
@@ -4558,7 +4580,7 @@ The calls that join a transaction are the ones made on the thread that entered t
 
 ## Transactions and forks
 
-A fork waits for every transaction other threads hold, with no timeout, so the child never inherits half of one (D-012). A long transaction holds up every fork in the process while it's open, and calls behind that fork time out (see [How long a call waits for a fork](concurrency-and-forks.qmd#how-long-a-call-waits-for-a-fork)). Forking from inside your own transaction can't be waited for: the child's copy is poisoned and raises `RuntimeError` (see [Forking from inside your own transaction](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction)).
+A fork waits for every transaction other threads hold, with no timeout, so the child never inherits half of one (D-012). A long transaction holds up every fork in the process while it's open, and calls behind that fork time out (see [How long a call waits for a fork](concurrency-and-forks.qmd#how-long-a-call-waits-for-a-fork)). Forking from inside your own transaction can't be waited for: the child can't use that cache at all, and every call on it there raises `RuntimeError` (see [Forking from inside your own transaction](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction)).
 
 ## Typing: `TransactionalCacheLike`
 
@@ -4701,13 +4723,13 @@ diskcache-oxide prevents it with a **fork barrier**, a crossing guard installed 
 
 1. **Before the fork,** the barrier waits for any write transactions already running in other threads to commit, and holds off new ones. It waits with the interpreter released, so the threads it waits for can finish. Then it closes the idle pooled connections, so the child doesn't inherit SQLite's lock bookkeeping for those files.
 2. **In the parent,** it lets the held-off writes continue.
-3. **In the child,** it drops any connection still inherited without closing it (closing a connection inherited across a fork is unsafe in SQLite), and opens fresh ones on first use.
+3. **In the child,** it opens fresh connections on first use. If a connection was still open at the fork, it's dropped without being closed (closing a connection inherited across a fork is unsafe in SQLite), and the child can't use that cache; [the two ways that happens](#forking-from-inside-your-own-transaction) are below.
 
 The result: whatever other threads were doing at the moment of the fork, the child is born with no locks and no debts, and can read and write right away. The barrier covers every `Cache` in the process, not just the one you're holding. Your own `os.register_at_fork(after_in_child=...)` hooks can use a cache too, whether they were registered before or after `diskcache_oxide` was imported.
 
 Closing the idle connections matters for more than file descriptors. SQLite keeps one lock record per database file per process, and a new connection that finds a record saying the process already holds a shared lock takes no lock of its own. A child that inherited such a record would run with no real locks, and once the parent closed its cache, another process's last close could delete the write-ahead log under the child and lose its writes. The cost is that the parent reopens connections after each fork.
 
-The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds (see below), or an operation it forked from inside, such as from a callback. The child leaves those file descriptors open by design.
+The only connections a child can still inherit are the ones the forking thread itself was using: a transaction it holds, or an operation it forked from inside, such as from a callback. The child leaves those file descriptors open by design, and treats that cache as unusable (see below). Another library's before-fork hook that reads or writes a cache is fine: the connection it used is closed when it's given back, not kept for the child to inherit.
 
 ### The maintenance thread
 
@@ -4729,7 +4751,23 @@ With [`durable=True`](getting-started.qmd#a-cache-that-cant-take-a-request-down)
 
 ### Forking from inside your own transaction
 
-CPython won't let a library refuse a fork, so the barrier can't wait for a [transaction](transactions.qmd) held by the very thread that is forking. The child's copy of that transaction is poisoned: anything done inside it raises `RuntimeError` and nothing commits, and the child's writes to that database raise `RuntimeError` straight away instead of stalling for a minute. A `transact()` in the child doesn't join the inherited transaction either: it raises `RuntimeError` too. The parent's block carries on and commits as usual, and the parent gets a `RuntimeWarning`. A clear error at the call site beats a mysterious 60-second hang in a fresh worker.
+CPython won't let a library refuse a fork, so the barrier can't wait for a [transaction](transactions.qmd) held by the very thread that is forking. That transaction's connection is open when the child is born, and the child can't use it: closing or committing it there would damage the parent's transaction.
+
+It can't safely open a new connection either. This is the lock record from above: SQLite's record for the file, inherited with the open connection, says the process already holds its locks, so a new connection takes none from the kernel. The child would run unlocked. Once the parent closed its cache, the child's reads would go stale and its writes would return `True` and be lost.
+
+So in that child the cache is off limits. Every call on it raises `RuntimeError` at once, reads included, through the inherited handle or a new one, for as long as the process lives:
+
+```text
+RuntimeError: this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver
+```
+
+Leaving the inherited `with` block raises `RuntimeError` too, and nothing commits. The parent's block carries on and commits as usual, and the parent gets a `RuntimeWarning` for forking inside it. The child logs one warning on the `diskcache_oxide` logger naming the directories it can't use. `close()` still works there, so cleanup code runs, and every other cache is unaffected. A `durable=True` handle raises as well: this never passes, and a worker quietly running without its cache for good is worse than an error. A clear error at the call site beats a mysterious 60-second hang in a fresh worker, and beats a write that silently vanishes.
+
+The same holds for a fork from code that runs inside a cache call: a pickle hook, or a registered type's `decode`, that calls `os.fork()` or starts a `multiprocessing` worker with the fork start method. That call's connection is open at the fork, so its child can't use that cache.
+
+On a `FanoutCache` only the shard involved is refused. Keys on the other shards work in the child, and a call that covers every shard (`len`, `clear`, `check`, iteration) raises before it touches any.
+
+The fix is the same in every case: fork before the block or after it, never inside, or start workers with `spawn` or `forkserver`.
 
 ## Free-threaded performance today
 
@@ -5211,7 +5249,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-017 | Connections and fds | One connection per thread | A bounded pool |
 | D-018 | `close()` | Closes only the calling thread's connection | Closes every connection |
 | D-019 | Opening an existing cache, and reading | Opening writes to the database | Neither writes, unless the open changes settings; background maintenance writes when it has work, and hourly (`maintenance_interval=0` for none) |
-| D-020 | Forking inside your own transaction | Child stalls for the timeout | Fails fast with `RuntimeError` |
+| D-020 | Forking inside your own transaction, or a cache call | Child stalls for the timeout | The child can't use that cache: every call raises `RuntimeError` at once |
 | D-021 | `directory` | Optional (temp dir) | Required |
 | D-022 | `disk=`, `eviction_policy=` | Supported | No `disk=`; least-recently-stored or `'none'`, read on every write; LRU and LFU refused |
 | D-023 | SQLite memory | 32 MiB cache + 64 MiB mmap per thread | 1 MiB per pooled connection |
@@ -5254,6 +5292,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-060 | `len()` and iteration | Count and list expired entries until something removes them | Leave them out the moment they expire |
 | D-061 | Between calls | Nothing happens: expired rows, an over-limit cache and stray files wait for a call | Background maintenance looks after every open cache, every 5 minutes by default |
 | D-063 | An int past 4,300 digits, `pickle=True` | Pickled and stored | `ValueError` from Python's digit limit |
+| D-064 | `incr` or `decr` with an infinity or a NaN | Adds it; a NaN result reads back as `None` and breaks the counter | `ValueError` |
 
 ## Safety
 
@@ -5301,7 +5340,7 @@ When a process forks while another of its threads is in a write transaction, dis
 
 ### D-020: forking inside your own transaction
 
-CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide, the child's copy of the transaction is poisoned and its writes to that database raise `RuntimeError` immediately, and the parent gets a `RuntimeWarning`.
+CPython won't let a library stop a fork, and a transaction held by the forking thread itself can't be waited for. In diskcache the child stalls behind it. In diskcache-oxide the child can't use that cache at all: every call on it raises `RuntimeError` immediately, reads included, and the parent gets a `RuntimeWarning`. The same goes for a fork from code running inside a cache call, such as a pickle hook. A child like that would otherwise run without the locks SQLite thinks it holds, reading stale data and losing its writes; [Concurrency and forks](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction) has the details.
 
 ## Transactions
 
@@ -5366,6 +5405,7 @@ With readers in other processes, a burst of writes makes SQLite's write-ahead lo
 - **D-061:** one thread per process removes expired entries, trims a cache left over its size limit, checkpoints a grown write-ahead log and clears stray temporary files, every `maintenance_interval` (default 5 minutes, 0 for off), with the caches and the processes taking turns. It never waits for a lock and holds the write lock only for short chunks, so a request in the same process waits at most one chunk (about 130 µs for 100 small rows); a writer in another process can wait for a few chunks, never past the turn's 50 ms. So an explicit `expire()` or `cull()` can return less than diskcache's would, `volume()` changes between calls, and a cache held open for an hour is written once to coordinate, even with nothing to do. See [Background maintenance](storage-and-wal.qmd#background-maintenance).
 - **D-062:** the Django backend is diskcache-oxide's own, not a port of `diskcache.DjangoCache`: `'BACKEND': 'diskcache_oxide.DjangoCache'` with `OPTIONS` in `Cache`'s keyword names, a plain `Cache` unless `OPTIONS['shards']`, a 1.0 s lock wait and errors that raise unless `durable` (diskcache's is always a `FanoutCache`, 8 shards by default, and its writes retry a 10 ms wait silently, for as long as the lock is held), `close()` a no-op, `MAX_ENTRIES` refused rather than ignored, `pickle=True` by default (Django caches responses and model instances), and `incr` the engine's atomic one, so a `bool`, `Decimal`, `IntEnum` or an int past 64 bits raises `TypeError` where Django's locmem backend adds it. No `read=`, `deque()`, `index()`, `cache(name)`, `memoize` or tag-index calls. See [Django cache backend](django.qmd).
 - **D-063:** an int past Python's int-to-str digit limit (4,300 digits by default, `sys.get_int_max_str_digits()`), top-level or nested, raises `ValueError` at `set` even with `pickle=True`, where diskcache pickles it. Big ints are stored as decimal text, and only a type the format can't hold or a lone surrogate inside a value falls back to pickle. Raising the interpreter's limit lifts it.
+- **D-064:** `incr` and `decr` raise `ValueError` for a `delta` or `default` that is an infinity or a NaN. diskcache adds it, and a counter that reaches NaN that way is stored as NULL: it reads back as `None`, and the next `incr` raises `TypeError`. A counter that overflows still becomes an infinity, and stays readable.
 - **D-025:** `iter(cache)` and `iterkeys()` return a native iterator, not a generator. Two threads calling `next()` on the same one at once get `ValueError` at once, as with a shared generator.
 
 ### FanoutCache (D-032 to D-040)

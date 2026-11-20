@@ -123,7 +123,7 @@ configured: dict[str, dict[str, Any]] = {}
 
 # A durable alias whose directory couldn't be opened: when to try again, and the NullCache served
 # until then. `Timeout` is an `OSError`; `RuntimeError` covers a directory holding the other kind of
-# cache (`LayoutMismatchError`) and a child forked mid-transaction. Bad settings still raise.
+# cache (`LayoutMismatchError`) and a child a fork left unable to use the cache (D-020). Bad settings still raise.
 unavailable: dict[str, tuple[float, NullCache]] = {}
 RETRY_OPEN_AFTER = 10.0
 RETRY_AFTER_BUSY = 1.0  # a Timeout at open means busy (a fork, a peer holding the lock), not broken

@@ -215,7 +215,7 @@ page = cache.get('homepage')  # None if the cache is locked, full, broken or the
 
 "Durable" here means the cache keeps your app running. It doesn't mean what it means in a database, where a durable write survives a crash. This option does the opposite: it can drop writes. It's off by default.
 
-An operational failure is a [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), an `OSError` (disk full, I/O), a SQLite error including a damaged database, or a child forked inside a transaction that can't write. On a single-key call it's answered like this:
+An operational failure is a [Timeout](../reference/Timeout.md#diskcache_oxide.Timeout), an `OSError` (disk full, I/O), or a SQLite error including a damaged database. (A child process that [can't use the cache after a fork](errors.md#runtimeerror-a-cache-that-cant-be-used-after-a-fork) is not one: that never passes, so it raises.) On a single-key call it's answered like this:
 
 - [get](../reference/Cache.get.md#diskcache_oxide.Cache.get), [pop](../reference/Cache.pop.md#diskcache_oxide.Cache.pop): the default; `get(key, expire_time=True)` gives `(default, None)`
 - `key in cache`: `False`

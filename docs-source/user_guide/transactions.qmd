@@ -79,7 +79,7 @@ The calls that join a transaction are the ones made on the thread that entered t
 
 ## Transactions and forks
 
-A fork waits for every transaction other threads hold, with no timeout, so the child never inherits half of one (D-012). A long transaction holds up every fork in the process while it's open, and calls behind that fork time out (see [How long a call waits for a fork](concurrency-and-forks.qmd#how-long-a-call-waits-for-a-fork)). Forking from inside your own transaction can't be waited for: the child's copy is poisoned and raises `RuntimeError` (see [Forking from inside your own transaction](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction)).
+A fork waits for every transaction other threads hold, with no timeout, so the child never inherits half of one (D-012). A long transaction holds up every fork in the process while it's open, and calls behind that fork time out (see [How long a call waits for a fork](concurrency-and-forks.qmd#how-long-a-call-waits-for-a-fork)). Forking from inside your own transaction can't be waited for: the child can't use that cache at all, and every call on it there raises `RuntimeError` (see [Forking from inside your own transaction](concurrency-and-forks.qmd#forking-from-inside-your-own-transaction)).
 
 ## Typing: `TransactionalCacheLike`
 

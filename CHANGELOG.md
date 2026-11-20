@@ -4,6 +4,24 @@ All notable changes to diskcache-oxide are recorded here. The format follows [Ke
 
 ## [Unreleased]
 
+No format change: caches made by 0.3.5 and later open as they are. One behavior change, for a child process forked at the wrong moment, and fixes from the same review as 0.4.7 that touch the engine's core.
+
+### Changed
+
+- **A child forked inside a transaction, or from inside a cache call, can't use that cache at all.** Every call on it in that child raises `RuntimeError` at once, reads included, for the life of the process, on a `durable=True` handle too; `close()` still works, other caches are unaffected, and on a `FanoutCache` only the shard involved is refused. Before, a child forked inside `with cache.transact():` could still read, and one forked from a pickle hook or a `decode` function inside a call could read and write. Both were unsafe: such a child holds none of the file locks SQLite believes it holds, so once the parent closed, its reads went stale and its `set` calls returned `True` and were lost, with no error and nothing for `check()` to find. Fork before or after the block, or start workers with `spawn` or `forkserver` (D-020; see [Concurrency and forks](https://mkennedy.codes/docs/diskcache-oxide/user-guide/concurrency-and-forks.html#forking-from-inside-your-own-transaction)). The child logs one warning on the `diskcache_oxide` logger naming the directories.
+- `incr` and `decr` raise `ValueError` for a `delta` or `default` that is an infinity or a NaN (D-064). A counter that reached NaN was stored with no value, so `get` raised `CorruptValueError` and the next `incr` raised `TypeError`. A counter left that way by an earlier version stays unreadable until it's overwritten or deleted.
+- The error `this database can't be written in a process forked inside a transaction` is gone: that child now gets the error above for every call.
+
+### Fixed
+
+- Another library's before-fork hook that used a cache (one registered before `diskcache_oxide` was imported, so it runs after ours) left its connection open across the fork, and the child then lost its writes once the parent closed. A connection given back between the fork hooks is closed now, and that child works.
+- A child forked while another thread was leaving the forking thread's transaction (`__exit__` called from a second thread) kept a lock level nothing could release: `os.fork()` from another thread of that child hung, and leaving the block there waited out the timeout. It raises `RuntimeError` at once now, and later forks go ahead.
+- One row with a damaged `filename` or `size` column (the wrong SQLite type, as a bad page or an edit by hand leaves it) made every `get`, `delete`, `clear()` and `check(fix=True)` that reached it raise `OSError: Invalid column type`, and once it was the oldest row, every `set` that had to evict. Such a row reads as a miss and is removed like any other, and `check()` reports a row with a wrong-typed `mode`, `size`, `store_seq`, `expire_time` or `filename` (`damaged row N: its COLUMN is stored as TYPE`), which `fix=True` removes.
+- `check(fix=True)` could remove the value file of a transaction held open for over an hour in another process, which then committed an entry with no file. It removes a file no entry names only under the write lock now, so it waits for that transaction (and raises `Timeout` if it outlasts the timeout).
+- With a `types=` registry on a handle, a value of a class registered only in the global registry was stored under the global name and read back through the handle's own registration of that name, as another class. `set` raises `TypeError` for it now.
+- Background maintenance's checkpoint read "another connection is checkpointing" as "everything is copied" and went on to reset the write-ahead log under the write lock, where the whole copy could then run and hold up writers.
+- `check(fix=True)` could wait about twice its `timeout`: the `VACUUM` at its end and the checkpoint after it each got the full time.
+
 ## [0.4.7] - 2026-11-19
 
 No format change: caches made by 0.3.5 and later open as they are. Fixes from a bug, race and security review of 0.4.6.

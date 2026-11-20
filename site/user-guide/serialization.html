@@ -804,6 +804,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>reg <span class="op">=</span> diskcache_oxide.TypeRegistry()</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>reg.register(ObjectId, name<span class="op">=</span><span class="st">'bson.ObjectId'</span>, encode<span class="op">=</span><span class="kw">lambda</span> o: o.binary, decode<span class="op">=</span>ObjectId)</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>cache <span class="op">=</span> Cache(<span class="st">'/var/cache/my-app-binary-ids'</span>, types<span class="op">=</span>reg)</span></code></pre></div>
+<p>Give a class its own name in that registry. If it uses a name the global registry has for a different class, a value of the global class can’t be stored through that cache: it would be written under the shared name and read back as the other class, so <a href="../reference/Cache.set.html#diskcache_oxide.Cache.set" class="gdls-link gdls-code">set()</a> raises <code>TypeError</code> and names both.</p>
 <p>Two processes with different registrations on one directory write rows the other can’t read, the same way two processes with different <code>serializer=</code> settings would. Register at import time, the same way everywhere.</p>
 </section>
 <section id="why-pickle-is-off-by-default" class="level1">
