@@ -511,7 +511,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
             <ul class="navbar-nav navbar-nav-scroll ms-auto">
   <li class="nav-item">
     <span class="nav-link">
-<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="19" data-forks="0"></div>
+<div id="github-widget" data-owner="mikeckennedy" data-repo="diskcache-oxide" data-stars="20" data-forks="0"></div>
     </span>
   </li>  
 </ul>
@@ -685,7 +685,7 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
   <li><a href="#timeout-a-lock-or-a-fork-outlasted-timeout" id="toc-timeout-a-lock-or-a-fork-outlasted-timeout" class="nav-link" data-scroll-target="#timeout-a-lock-or-a-fork-outlasted-timeout"><code>Timeout</code>: a lock or a fork outlasted <a href="../reference/Cache.timeout.html#diskcache_oxide.Cache.timeout" class="gdls-link gdls-code">timeout</a></a></li>
   <li><a href="#transactionbusy-two-caches-in-one-transaction" id="toc-transactionbusy-two-caches-in-one-transaction" class="nav-link" data-scroll-target="#transactionbusy-two-caches-in-one-transaction"><code>TransactionBusy</code>: two caches in one transaction</a></li>
   <li><a href="#transactionaborted-a-block-that-didnt-commit" id="toc-transactionaborted-a-block-that-didnt-commit" class="nav-link" data-scroll-target="#transactionaborted-a-block-that-didnt-commit"><code>TransactionAborted</code>: a block that didn’t commit</a></li>
-  <li><a href="#runtimeerror-a-cache-that-cant-be-used-after-a-fork" id="toc-runtimeerror-a-cache-that-cant-be-used-after-a-fork" class="nav-link" data-scroll-target="#runtimeerror-a-cache-that-cant-be-used-after-a-fork"><code>RuntimeError</code>: a cache that can’t be used after a fork</a></li>
+  <li><a href="#runtimeerror-a-cache-that-cant-be-used-after-a-fork" id="toc-runtimeerror-a-cache-that-cant-be-used-after-a-fork" class="nav-link" data-scroll-target="#runtimeerror-a-cache-that-cant-be-used-after-a-fork"><a href="../reference/ForkedInsideTransactionError.html#diskcache_oxide.ForkedInsideTransactionError" class="gdls-link gdls-code">ForkedInsideTransactionError</a>: a cache that can’t be used after a fork</a></li>
   <li><a href="#unsafevalueerror-a-pickled-value-read-without-pickletrue" id="toc-unsafevalueerror-a-pickled-value-read-without-pickletrue" class="nav-link" data-scroll-target="#unsafevalueerror-a-pickled-value-read-without-pickletrue"><a href="../reference/UnsafeValueError.html#diskcache_oxide.UnsafeValueError" class="gdls-link gdls-code">UnsafeValueError</a>: a pickled value, read without <code>pickle=True</code></a></li>
   <li><a href="#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" id="toc-corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded" class="nav-link" data-scroll-target="#corruptvalueerror-and-foreignvalueerror-a-value-that-cant-be-decoded"><a href="../reference/CorruptValueError.html#diskcache_oxide.CorruptValueError" class="gdls-link gdls-code">CorruptValueError</a> and <a href="../reference/ForeignValueError.html#diskcache_oxide.ForeignValueError" class="gdls-link gdls-code">ForeignValueError</a>: a value that can’t be decoded</a></li>
   <li><a href="#reading-damaged-values" id="toc-reading-damaged-values" class="nav-link" data-scroll-target="#reading-damaged-values">Reading damaged values</a></li>
@@ -788,16 +788,21 @@ body.quarto-dark .dco-chart{--dco-s1:#3987e5;--dco-s2:#d95926;--dco-s3:#199e70;-
 <td>opening a directory as the wrong kind of cache</td>
 </tr>
 <tr class="even">
+<td><a href="../reference/ForkedInsideTransactionError.html#diskcache_oxide.ForkedInsideTransactionError" class="gdls-link gdls-code">ForkedInsideTransactionError</a></td>
+<td><code>RuntimeError</code></td>
+<td>any call on a cache in a child process forked while a connection to it was open</td>
+</tr>
+<tr class="odd">
 <td><code>TypeError</code>, <code>ValueError</code>, <code>KeyError</code>, <code>RuntimeError</code>, <code>OSError</code>, <code>OverflowError</code>, <code>AssertionError</code>, <code>MemoryError</code></td>
 <td>built-in</td>
 <td>described below</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><a href="../reference/UnknownFileWarning.html#diskcache_oxide.UnknownFileWarning" class="gdls-link gdls-code">UnknownFileWarning</a></td>
 <td><code>UserWarning</code></td>
 <td>a <a href="../reference/Cache.check.html#diskcache_oxide.Cache.check" class="gdls-link gdls-code">check()</a> finding, returned rather than issued (see below)</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td><a href="../reference/EmptyDirWarning.html#diskcache_oxide.EmptyDirWarning" class="gdls-link gdls-code">EmptyDirWarning</a></td>
 <td><code>UserWarning</code></td>
 <td>never raised or issued; kept for code that imports diskcache’s name</td>
@@ -856,11 +861,11 @@ TypeError: expire must be a number of seconds or None, not bool</code></pre>
 <p>Either way nothing in the block was kept. Treat it as you would the original failure: log it, and run the block again if the work is idempotent. <a href="../reference/TransactionAborted.html#diskcache_oxide.TransactionAborted" class="gdls-link gdls-code">TransactionAborted</a> is a <code>RuntimeError</code>, so an <code>except RuntimeError</code> you already have still catches it; catch <a href="../reference/TransactionAborted.html#diskcache_oxide.TransactionAborted" class="gdls-link gdls-code">TransactionAborted</a> to handle this case alone.</p>
 </section>
 <section id="runtimeerror-a-cache-that-cant-be-used-after-a-fork" class="level1">
-<h1><code>RuntimeError</code>: a cache that can’t be used after a fork</h1>
-<pre class="text"><code>RuntimeError: this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver</code></pre>
-<p>This process is the child of a fork that happened while the forking thread had a connection to this cache open: inside its own <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block, or from code running inside a cache call while that call had its connection out, such as a pickle hook or a registered type’s <code>decode</code> reading a small value. It also happens to the child of a plain <code>os.fork()</code> on one thread while another thread, inside its own transaction, was waiting to fork too. The parent is fine, and its transaction carries on and commits. In the child, every call on that cache raises this, reads included, for as long as the process lives, on a <code>durable=True</code> handle too. Other caches work, and <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> still does.</p>
+<h1><a href="../reference/ForkedInsideTransactionError.html#diskcache_oxide.ForkedInsideTransactionError" class="gdls-link gdls-code">ForkedInsideTransactionError</a>: a cache that can’t be used after a fork</h1>
+<pre class="text"><code>diskcache_oxide.ForkedInsideTransactionError: this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver</code></pre>
+<p>This process is the child of a fork that happened while the forking thread had a connection to this cache open: inside its own <a href="../reference/Cache.transact.html#diskcache_oxide.Cache.transact" class="gdls-link gdls-code">transact()</a> block, or from code running inside a cache call while that call had its connection out, such as a pickle hook or a registered type’s <code>decode</code> reading a small value. It also happens to the child of a plain <code>os.fork()</code> on one thread while another thread, inside its own transaction, was waiting to fork too. The parent is fine, and its transaction carries on and commits. In the child, every call on that cache raises this, reads included, for as long as the process lives, on a <code>durable=True</code> handle too. Other caches work, and <a href="../reference/Cache.close.html#diskcache_oxide.Cache.close" class="gdls-link gdls-code">close()</a> still does. It’s a <code>RuntimeError</code>, so code that caught that keeps working. A <a href="../user-guide/caches.html"><code>Caches</code></a> lookup and a <a href="../reference/Cache.durable.html#diskcache_oxide.Cache.durable" class="gdls-link gdls-code">durable</a> Django alias raise it too when they’d have to open the cache in that child: no retry can help, so there’s no <a href="../reference/NullCache.html#diskcache_oxide.NullCache" class="gdls-link gdls-code">NullCache</a> to fall back on.</p>
 <p>It’s raised because the alternative is silent: a child like that holds none of the locks SQLite thinks it holds, so its reads could go stale and its writes could vanish. Don’t fork from inside a transaction or a cache call: start worker processes before the block, or after it, or use the <code>spawn</code> or <code>forkserver</code> start method. See <a href="../user-guide/concurrency-and-forks.html#forking-from-inside-your-own-transaction">Forking from inside your own transaction</a>.</p>
-<pre class="text"><code>RuntimeError: this transaction was inherited across fork() and can't be used in the child</code></pre>
+<pre class="text"><code>diskcache_oxide.ForkedInsideTransactionError: this transaction was inherited across fork() and can't be used in the child</code></pre>
 <p>The same child, leaving the <code>with cache.transact():</code> block it was forked inside. Nothing in the block commits there; the parent’s copy is the real one.</p>
 </section>
 <section id="unsafevalueerror-a-pickled-value-read-without-pickletrue" class="level1">

@@ -125,3 +125,35 @@ def test_check_reports_a_filename_that_isnt_utf8_and_fix_removes_the_row(tmp_pat
         assert any('damaged file name in a row' in line for line in text), text
         cache.check(fix=True)
         assert len(cache) == 1 and cache.check() == []
+
+
+DAMAGED_SEQS = ["'abc'", "x'00'", '1e300', '1500.5', '9223372036854775807']
+
+
+@pytest.mark.parametrize('value', DAMAGED_SEQS)
+def test_a_damaged_store_seq_disturbs_no_other_key(tmp_path: Path, value: str) -> None:
+    """Plan 32, step 8. One row's damaged `store_seq` used to decide every later sequence number: text or
+    a BLOB gave each later write the same one, so `clear()` returned 0 and left rows behind, and a large
+    REAL made every `set` on any key raise."""
+    with damaged(tmp_path / 'c', 'store_seq', value) as cache:
+        assert cache.set('b', 1) is True
+        assert cache.set('c', 2) is True
+        assert cache.incr('n') == 1
+        assert cache.incr('n') == 2
+        assert (cache.get('a'), cache.get('b'), cache.get('c')) == ('inline', 1, 2)
+        first = cache.push('x')
+        second = cache.push('y')
+        assert cache.pull() == (first, 'x')
+        assert cache.pull() == (second, 'y')
+        assert cache.pull() == (None, None), 'each pushed value came back exactly once'
+        assert cache.expire() == 0
+        assert cache.cull() == 0
+        assert cache.set('a', 'again') is True, 'an overwrite'
+        # The entries stored before it started all go: 'a', 'b', 'c' and 'n'. The damaged row goes
+        # too when its number still compares below the bound (a REAL in the integer range).
+        assert cache.clear() in (4, 5)
+        assert [key for key in ('a', 'b', 'c', 'n') if key in cache] == []
+        assert cache.set('d', 1) is True
+        cache.check(fix=True)
+        assert cache.check() == []
+        assert cache.get('d') == 1

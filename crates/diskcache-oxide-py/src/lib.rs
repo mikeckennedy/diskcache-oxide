@@ -59,6 +59,13 @@ create_exception!(
 );
 create_exception!(
     diskcache_oxide,
+    ForkedInsideTransactionError,
+    PyRuntimeError,
+    "This process was forked while a connection to the cache was open (inside a transaction, or from a hook \
+     running inside a cache call), so it can't use that cache: every call on it raises this."
+);
+create_exception!(
+    diskcache_oxide,
     CorruptValueError,
     PyValueError,
     "A stored value couldn't be decoded: an unknown mode, or bytes that don't parse."
@@ -146,12 +153,10 @@ pub(crate) fn to_py_err(error: Error) -> PyErr {
             Some(code) => os_error(code, message),
             None => PyOSError::new_err(message),
         },
-        Error::Unusable
-        | Error::ForkPoisoned
-        | Error::NestedTransaction
-        | Error::InsideTransaction(_)
-        | Error::NoTransaction
-        | Error::EndInsideOperation => PyRuntimeError::new_err(message),
+        Error::Unusable | Error::ForkPoisoned => ForkedInsideTransactionError::new_err(message),
+        Error::NestedTransaction | Error::InsideTransaction(_) | Error::NoTransaction | Error::EndInsideOperation => {
+            PyRuntimeError::new_err(message)
+        }
         Error::TransactionAborted => TransactionAborted::new_err(message),
         Error::FormatMismatch { .. } | Error::ManifestInvalid { .. } => FormatMismatchError::new_err(message),
         Error::RoleMismatch { .. } | Error::ShardCountMismatch { .. } | Error::StoredShardsRefuseSettings { .. } => {
@@ -523,6 +528,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_sqlite_mutex_status, m)?)?;
     m.add("FormatMismatchError", py.get_type::<FormatMismatchError>())?;
     m.add("LayoutMismatchError", layout_mismatch_type(py)?)?;
+    m.add("ForkedInsideTransactionError", py.get_type::<ForkedInsideTransactionError>())?;
     m.add_class::<cache::Cache>()?;
     m.add_class::<cache::FanoutCache>()?;
     m.add_class::<cache::Transaction>()?;

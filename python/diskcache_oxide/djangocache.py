@@ -69,7 +69,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.signals import setting_changed
 from django.utils.module_loading import import_string
 
-from diskcache_oxide._core import Cache, FanoutCache, Timeout
+from diskcache_oxide._core import Cache, FanoutCache, ForkedInsideTransactionError, Timeout
 from diskcache_oxide._types import Key, MaintenanceStats
 from diskcache_oxide.null import NullCache
 
@@ -123,7 +123,8 @@ configured: dict[str, dict[str, Any]] = {}
 
 # A durable alias whose directory couldn't be opened: when to try again, and the NullCache served
 # until then. `Timeout` is an `OSError`; `RuntimeError` covers a directory holding the other kind of
-# cache (`LayoutMismatchError`) and a child a fork left unable to use the cache (D-020). Bad settings still raise.
+# cache (`LayoutMismatchError`). Bad settings still raise, and so does a child a fork left unable to
+# use the cache (`ForkedInsideTransactionError`, D-020): no retry can help it.
 unavailable: dict[str, tuple[float, NullCache]] = {}
 RETRY_OPEN_AFTER = 10.0
 RETRY_AFTER_BUSY = 1.0  # a Timeout at open means busy (a fork, a peer holding the lock), not broken
@@ -567,6 +568,8 @@ class DjangoCache(BaseCache):
             unavailable[self.directory] = (now + RETRY_AFTER_BUSY, down[1])
         try:
             new = (FanoutCache if self.sharded else Cache)(self.directory, **self.options)
+        except ForkedInsideTransactionError:
+            raise
         except OPEN_ERRORS as error:
             if not durable:
                 raise

@@ -320,9 +320,11 @@ impl Store {
     /// The next `store_seq` to be handed out: every row stored before now has a smaller one.
     pub(crate) fn seq_snapshot(&self, timeout: Duration) -> Result<i64> {
         self.read(timeout, |conn| {
-            conn.prepare_cached(
-                "SELECT MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1, next_seq) FROM state WHERE only = 1",
-            )
+            conn.prepare_cached(concat!(
+                "SELECT MAX(",
+                crate::rows::max_store_seq!(),
+                " + 1, next_seq) FROM state WHERE only = 1"
+            ))
             .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
             .map_err(|e| Error::from_sqlite(e, timeout))
         })

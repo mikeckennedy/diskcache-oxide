@@ -28,7 +28,7 @@ A divergence is never a way to skip a failing test. The full record, including t
 | D-017 | Connections and fds | One connection per thread | A bounded pool |
 | D-018 | [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) | Closes only the calling thread's connection | Closes every connection |
 | D-019 | Opening an existing cache, and reading | Opening writes to the database | Neither writes, unless the open changes settings; background maintenance writes when it has work, and hourly (`maintenance_interval=0` for none) |
-| D-020 | Forking inside your own transaction, or a cache call | Child stalls for the timeout | The child can't use that cache: every call raises `RuntimeError` at once |
+| D-020 | Forking inside your own transaction, or a cache call | Child stalls for the timeout | The child can't use that cache: every call raises [ForkedInsideTransactionError](../reference/ForkedInsideTransactionError.md#diskcache_oxide.ForkedInsideTransactionError) (a `RuntimeError`) at once |
 | D-021 | [directory](../reference/Cache.directory.md#diskcache_oxide.Cache.directory) | Optional (temp dir) | Required |
 | D-022 | `disk=`, `eviction_policy=` | Supported | No `disk=`; least-recently-stored or `'none'`, read on every write; LRU and LFU refused |
 | D-023 | SQLite memory | 32 MiB cache + 64 MiB mmap per thread | 1 MiB per pooled connection |

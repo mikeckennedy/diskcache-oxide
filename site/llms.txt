@@ -308,6 +308,7 @@ Measured against the defunct python-diskcache 5.6.3 (last release August 2023), 
 - [ForeignValueError](https://mkennedy.codes/docs/diskcache-oxide/reference/ForeignValueError.html): A stored value this build can't read but another might: an unknown mode, tag or extension (a newer version wrote
 - [FormatMismatchError](https://mkennedy.codes/docs/diskcache-oxide/reference/FormatMismatchError.html): A database or manifest in a format this version doesn't support, where opening the cache's
 - [LayoutMismatchError](https://mkennedy.codes/docs/diskcache-oxide/reference/LayoutMismatchError.html): The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
+- [ForkedInsideTransactionError](https://mkennedy.codes/docs/diskcache-oxide/reference/ForkedInsideTransactionError.html): This process can't use the cache: it's the child of a fork that happened while a connection to
 - [TransactionAborted](https://mkennedy.codes/docs/diskcache-oxide/reference/TransactionAborted.html): A held transaction didn't commit and can't: it was rolled back (after an error inside it, or by another thread
 - [CorruptKeyError](https://mkennedy.codes/docs/diskcache-oxide/reference/CorruptKeyError.html): A stored key couldn't be read: its bytes aren't a key this build wrote (a damaged page or file). Raised by
 - [UnknownFileWarning](https://mkennedy.codes/docs/diskcache-oxide/reference/UnknownFileWarning.html): `check()` found a file in a cache directory that no entry names (removed with `fix=True` when

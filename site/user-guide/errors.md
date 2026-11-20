@@ -15,6 +15,7 @@ If you're starting from a symptom rather than an exception (every lookup misses,
 | [CorruptKeyError](../reference/CorruptKeyError.md#diskcache_oxide.CorruptKeyError) | [CorruptValueError](../reference/CorruptValueError.md#diskcache_oxide.CorruptValueError) | iterating over a stored key that can't be read |
 | [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError) | `RuntimeError` | a database or manifest this version can't read, where the versioned subdirectory can't help |
 | [LayoutMismatchError](../reference/LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError) | [FormatMismatchError](../reference/FormatMismatchError.md#diskcache_oxide.FormatMismatchError), `ValueError` | opening a directory as the wrong kind of cache |
+| [ForkedInsideTransactionError](../reference/ForkedInsideTransactionError.md#diskcache_oxide.ForkedInsideTransactionError) | `RuntimeError` | any call on a cache in a child process forked while a connection to it was open |
 | `TypeError`, `ValueError`, `KeyError`, `RuntimeError`, `OSError`, `OverflowError`, `AssertionError`, `MemoryError` | built-in | described below |
 | [UnknownFileWarning](../reference/UnknownFileWarning.md#diskcache_oxide.UnknownFileWarning) | `UserWarning` | a [check()](../reference/Cache.check.md#diskcache_oxide.Cache.check) finding, returned rather than issued (see below) |
 | [EmptyDirWarning](../reference/EmptyDirWarning.md#diskcache_oxide.EmptyDirWarning) | `UserWarning` | never raised or issued; kept for code that imports diskcache's name |
@@ -95,18 +96,18 @@ This one comes from the block's exit, when the transaction had already ended wit
 Either way nothing in the block was kept. Treat it as you would the original failure: log it, and run the block again if the work is idempotent. [TransactionAborted](../reference/TransactionAborted.md#diskcache_oxide.TransactionAborted) is a `RuntimeError`, so an `except RuntimeError` you already have still catches it; catch [TransactionAborted](../reference/TransactionAborted.md#diskcache_oxide.TransactionAborted) to handle this case alone.
 
 
-# `RuntimeError`: a cache that can't be used after a fork
+# [ForkedInsideTransactionError](../reference/ForkedInsideTransactionError.md#diskcache_oxide.ForkedInsideTransactionError): a cache that can't be used after a fork
 
 ``` text
-RuntimeError: this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver
+diskcache_oxide.ForkedInsideTransactionError: this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver
 ```
 
-This process is the child of a fork that happened while the forking thread had a connection to this cache open: inside its own [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) block, or from code running inside a cache call while that call had its connection out, such as a pickle hook or a registered type's `decode` reading a small value. It also happens to the child of a plain `os.fork()` on one thread while another thread, inside its own transaction, was waiting to fork too. The parent is fine, and its transaction carries on and commits. In the child, every call on that cache raises this, reads included, for as long as the process lives, on a `durable=True` handle too. Other caches work, and [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) still does.
+This process is the child of a fork that happened while the forking thread had a connection to this cache open: inside its own [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) block, or from code running inside a cache call while that call had its connection out, such as a pickle hook or a registered type's `decode` reading a small value. It also happens to the child of a plain `os.fork()` on one thread while another thread, inside its own transaction, was waiting to fork too. The parent is fine, and its transaction carries on and commits. In the child, every call on that cache raises this, reads included, for as long as the process lives, on a `durable=True` handle too. Other caches work, and [close()](../reference/Cache.close.md#diskcache_oxide.Cache.close) still does. It's a `RuntimeError`, so code that caught that keeps working. A [`Caches`](caches.md) lookup and a [durable](../reference/Cache.durable.md#diskcache_oxide.Cache.durable) Django alias raise it too when they'd have to open the cache in that child: no retry can help, so there's no [NullCache](../reference/NullCache.md#diskcache_oxide.NullCache) to fall back on.
 
 It's raised because the alternative is silent: a child like that holds none of the locks SQLite thinks it holds, so its reads could go stale and its writes could vanish. Don't fork from inside a transaction or a cache call: start worker processes before the block, or after it, or use the `spawn` or `forkserver` start method. See [Forking from inside your own transaction](concurrency-and-forks.md#forking-from-inside-your-own-transaction).
 
 ``` text
-RuntimeError: this transaction was inherited across fork() and can't be used in the child
+diskcache_oxide.ForkedInsideTransactionError: this transaction was inherited across fork() and can't be used in the child
 ```
 
 The same child, leaving the `with cache.transact():` block it was forked inside. Nothing in the block commits there; the parent's copy is the real one.

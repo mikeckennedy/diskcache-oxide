@@ -822,6 +822,9 @@ A database or manifest in a format this version doesn't support, where opening t
 [LayoutMismatchError](LayoutMismatchError.md#diskcache_oxide.LayoutMismatchError)  
 The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
 
+[ForkedInsideTransactionError](ForkedInsideTransactionError.md#diskcache_oxide.ForkedInsideTransactionError)  
+This process can't use the cache: it's the child of a fork that happened while a connection to
+
 [TransactionAborted](TransactionAborted.md#diskcache_oxide.TransactionAborted)  
 A held transaction didn't commit and can't: it was rolled back (after an error inside it, or by another thread
 

@@ -62,12 +62,15 @@ def wait(pid: int, deadline: float = CHILD_DEADLINE) -> Optional[int]:
 
 
 def fails_fast(what: str, call: Callable[[], object]) -> None:
-    """`call()` raises RuntimeError well before the cache's timeout (D-020)."""
+    """`call()` raises `ForkedInsideTransactionError`, a RuntimeError, well before the cache's timeout (D-020)."""
+    from diskcache_oxide import ForkedInsideTransactionError
+
     start = time.monotonic()
     try:
         call()
-    except RuntimeError:
+    except RuntimeError as ex:
         elapsed = time.monotonic() - start
+        assert type(ex) is ForkedInsideTransactionError, f'{what}: {type(ex).__name__}: {ex}'
         assert elapsed < FAST, f'{what}: RuntimeError only after {elapsed:.2f}s'
     else:
         raise AssertionError(f'{what}: expected RuntimeError')
@@ -77,12 +80,16 @@ UNUSABLE = "can't be used in this process"
 
 
 def unusable(what: str, call: Callable[[], object]) -> None:
-    """`call()` raises the "unusable after fork" RuntimeError (D-020, plan 32), at once."""
+    """`call()` raises the "unusable after fork" error, `ForkedInsideTransactionError`, a RuntimeError
+    (D-020, plan 32), at once."""
+    from diskcache_oxide import ForkedInsideTransactionError
+
     start = time.monotonic()
     try:
         got = call()
     except RuntimeError as ex:
         elapsed = time.monotonic() - start
+        assert type(ex) is ForkedInsideTransactionError, f'{what}: {type(ex).__name__}: {ex}'
         assert UNUSABLE in str(ex), f'{what}: a different RuntimeError: {ex}'
         assert elapsed < FAST, f'{what}: RuntimeError only after {elapsed:.2f}s'
     else:
@@ -117,6 +124,13 @@ def d020(directory: Path) -> list[str]:
     hold = cache.transact()
     hold.__enter__()
     cache.set('in-hold', 1)
+
+    from diskcache_oxide import Caches
+
+    reported: list[object] = []
+    registry: Caches[str] = Caches(directory.parent, on_open_error=lambda name, error: reported.append((name, error)))
+    registry.register('held', directory=directory, timeout=TIMEOUT)
+    registry.register('elsewhere', directory=other, timeout=TIMEOUT)
 
     def grandchild() -> None:
         unusable('grandchild, a fresh Cache', lambda: Cache(directory, timeout=TIMEOUT))
@@ -154,9 +168,15 @@ def d020(directory: Path) -> list[str]:
             'checkpoint': cache.checkpoint,
             'transact': lambda: cache.transact().__enter__(),
             'a fresh Cache': lambda: Cache(directory, timeout=TIMEOUT),
+            # A registry's first lookup raises too, rather than serve a NullCache it could never replace.
+            'a Caches lookup': lambda: registry['held'],
+            'a Caches lookup, again': lambda: registry['held'],
+            'a Caches lookup by get': lambda: registry.get('held'),
         }
         for name, call in calls.items():
             unusable(name, call)
+        assert reported == [], f'on_open_error ran for an error no retry can help: {reported}'
+        assert registry['elsewhere'].set('registry', 1) is True, 'another cache in the same registry works'
         with Cache(other, timeout=TIMEOUT) as elsewhere:
             assert elsewhere.set('child', 1) is True and elsewhere.get('child') == 1
         code = wait(fork(grandchild))

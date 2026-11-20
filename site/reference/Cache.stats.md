@@ -20,5 +20,5 @@ Returns the counts as they were, then resets them if [reset](Cache.reset.md#disk
 ## Raises
 
 
-`RuntimeError`  
+`ForkedInsideTransactionError`  
 This process is a child that a fork left unable to use this cache (D-020).

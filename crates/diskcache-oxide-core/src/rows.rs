@@ -9,6 +9,10 @@
 //! running `clear()` could then delete a write made after it started. So every delete first raises
 //! `state.next_seq` (the floor) past the current maximum. Overwrites never touch `state` unless
 //! the count or size changes, which keeps a plain `set` to the same WAL pages as diskcache's.
+//!
+//! The maximum is taken over sound numbers only (`max_store_seq!`): a row whose `store_seq` is
+//! damaged (text, a BLOB, a REAL or the largest integer, as a bad page leaves it) would otherwise be
+//! the maximum, and every later write would get the same number, or one that isn't an integer.
 
 use std::time::Duration;
 
@@ -42,11 +46,30 @@ impl ToSql for Stored<'_> {
     }
 }
 
+/// The SQL for the largest sound `store_seq` in the table, or 0 for none: an expression every
+/// statement that hands out or bounds a sequence number shares.
+///
+/// In SQLite's order text and BLOBs sort above every number, so the range leaves them out, along
+/// with a REAL too large for an integer and `i64::MAX` itself, whose `+ 1` is a REAL. A REAL inside
+/// the range is cut to the integer below it, and the next number is still above it. Without this a
+/// row with a damaged `store_seq` made `MAX(store_seq) + 1` come out as 1 for every later write
+/// (text or a BLOB), or as a REAL that the next statement couldn't read (plan 32, step 8). The
+/// range is one seek on the `cache_store_seq` index, as the bare `MAX` was.
+macro_rules! max_store_seq {
+    () => {
+        "COALESCE(CAST((SELECT MAX(store_seq) FROM cache WHERE store_seq < 9223372036854775807) AS INTEGER), 0)"
+    };
+}
+pub(crate) use max_store_seq;
+
 /// The in-place update of a number's row (see [`RowWriter::update_number_in_place`]).
-pub(crate) const UPDATE_NUMBER_SQL: &str = "UPDATE cache SET mode = ?1, value = ?2, store_time = ?3,
-         store_seq = MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1,
-                         (SELECT next_seq FROM state WHERE only = 1))
-     WHERE id = ?4";
+pub(crate) const UPDATE_NUMBER_SQL: &str = concat!(
+    "UPDATE cache SET mode = ?1, value = ?2, store_time = ?3,
+         store_seq = MAX(",
+    max_store_seq!(),
+    " + 1, (SELECT next_seq FROM state WHERE only = 1))
+     WHERE id = ?4"
+);
 
 /// An entry's tag: a key value (D-052), in its own type so it can't be passed where a key belongs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,18 +196,20 @@ impl<'t> RowWriter<'t> {
         };
         let seq: i64 = self
             .tx
-            .prepare_cached(
+            .prepare_cached(concat!(
                 "INSERT INTO cache (key_type, key, mode, value, filename, size, store_time, expire_time, tag_type, tag,
                                     store_seq)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                         (SELECT MAX(COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1, next_seq) FROM state WHERE only = 1))
+                         (SELECT MAX(",
+                max_store_seq!(),
+                " + 1, next_seq) FROM state WHERE only = 1))
                  ON CONFLICT (key_type, key) DO UPDATE SET
                      mode = excluded.mode, value = excluded.value, filename = excluded.filename,
                      size = excluded.size, store_time = excluded.store_time,
                      expire_time = excluded.expire_time, tag_type = excluded.tag_type, tag = excluded.tag,
                      store_seq = excluded.store_seq
-                 RETURNING store_seq",
-            )
+                 RETURNING store_seq"
+            ))
             .and_then(|mut stmt| {
                 let (tag_type, tag) = match row.tag {
                     Some(Tag(tag)) => (tag.key_type(), Some(tag)),
@@ -317,10 +342,11 @@ impl<'t> RowWriter<'t> {
     /// change writes anyway.
     pub fn raise_seq_floor(&self) -> Result<()> {
         self.tx
-            .prepare_cached(
-                "UPDATE state SET next_seq = MAX(next_seq, COALESCE((SELECT MAX(store_seq) FROM cache), 0) + 1)
-                 WHERE only = 1",
-            )
+            .prepare_cached(concat!(
+                "UPDATE state SET next_seq = MAX(next_seq, ",
+                max_store_seq!(),
+                " + 1) WHERE only = 1"
+            ))
             .and_then(|mut stmt| stmt.execute([]))
             .map(|_| ())
             .map_err(|e| self.sqlite(e))
@@ -571,5 +597,92 @@ mod tests {
             assert_eq!(lenient_size(damaged), 0, "{damaged:?}: nothing for the totals");
             assert_eq!(file_size(damaged), -1, "{damaged:?}: a size no file has");
         }
+    }
+
+    /// Every `store_seq` in the table that is an integer, in order.
+    fn sound_seqs(conn: &Connection) -> Vec<i64> {
+        let mut stmt =
+            conn.prepare("SELECT store_seq FROM cache WHERE typeof(store_seq) = 'integer' ORDER BY store_seq").unwrap();
+        stmt.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+    }
+
+    /// Plan 32, step 8: one row with a damaged `store_seq` no longer decides every later number.
+    /// Text and BLOBs sort above every number, so `MAX(store_seq) + 1` was 1 for each write after
+    /// it; a large REAL or `i64::MAX` made it a REAL, which the statement's own `RETURNING` then
+    /// failed to read.
+    #[test]
+    fn a_damaged_store_seq_is_left_out_of_the_next_number() {
+        for damage in ["'abc'", "x'0102'", "1e300", "9223372036854775807", "9223372036854775808.0"] {
+            let tmp = TempDir::new("rows-damaged-seq");
+            let mut conn = new_db(&tmp);
+            for key in ["a", "b", "c"] {
+                write(&mut conn, |w| w.upsert(&row(key, b"1")).unwrap());
+            }
+            conn.execute(&format!("UPDATE cache SET store_seq = {damage} WHERE key = 'b'"), []).unwrap();
+            let highest = *sound_seqs(&conn).iter().filter(|seq| **seq < i64::MAX).max().unwrap();
+
+            // New rows, an overwrite and a number updated in place each take a number of their own.
+            let (d, _) = write(&mut conn, |w| w.upsert(&row("d", b"1")).unwrap());
+            let (e, _) = write(&mut conn, |w| w.upsert(&row("e", b"1")).unwrap());
+            let (a, _) = write(&mut conn, |w| w.upsert(&row("a", b"2")).unwrap());
+            assert!(highest < d && d < e && e < a, "{damage}: {highest}, then {d}, {e}, {a}");
+            let id: i64 = conn.query_row("SELECT id FROM cache WHERE key = 'd'", [], |r| r.get(0)).unwrap();
+            conn.execute(UPDATE_NUMBER_SQL, (6, 7, 1.0, id)).unwrap();
+            let in_place: i64 =
+                conn.query_row("SELECT store_seq FROM cache WHERE id = ?1", [id], |r| r.get(0)).unwrap();
+            assert!(in_place > a, "{damage}: the in-place update took {in_place} after {a}");
+
+            // A delete raises the floor to an integer past them all, and the next write is above it.
+            write(&mut conn, |w| w.delete_key("e").unwrap());
+            let floor: i64 = conn.query_row("SELECT next_seq FROM state", [], |r| r.get(0)).unwrap();
+            assert!(floor > in_place, "{damage}: the floor is {floor} after {in_place}");
+            let (f, _) = write(&mut conn, |w| w.upsert(&row("f", b"1")).unwrap());
+            assert!(f >= floor, "{damage}: {f} is under the floor {floor}");
+        }
+    }
+
+    /// A REAL inside the integer range counts as the integer below it, so the next number is above it.
+    #[test]
+    fn a_fractional_store_seq_still_bounds_the_next_number() {
+        let tmp = TempDir::new("rows-fractional-seq");
+        let mut conn = new_db(&tmp);
+        write(&mut conn, |w| w.upsert(&row("a", b"1")).unwrap());
+        conn.execute("UPDATE cache SET store_seq = 1500.5 WHERE key = 'a'", []).unwrap();
+        let (b, _) = write(&mut conn, |w| w.upsert(&row("b", b"1")).unwrap());
+        assert_eq!(b, 1501);
+    }
+
+    /// The range keeps the lookup to one seek on the `store_seq` index: its cost doesn't grow with
+    /// the table, nor with how many damaged rows sort above the sound ones. Counted in VM steps,
+    /// which unlike a time can't flake.
+    #[test]
+    fn the_largest_sound_store_seq_is_one_index_seek() {
+        fn steps(conn: &Connection) -> i32 {
+            let mut stmt = conn.prepare(concat!("SELECT ", max_store_seq!())).unwrap();
+            let _: i64 = stmt.query_row([], |r| r.get(0)).unwrap();
+            stmt.get_status(rusqlite::StatementStatus::VmStep)
+        }
+        let tmp = TempDir::new("rows-seq-seek");
+        let mut conn = new_db(&tmp);
+        write(&mut conn, |w| w.upsert(&row("first", b"1")).unwrap());
+        let small = steps(&conn);
+        write(&mut conn, |w| {
+            for n in 0..3000 {
+                w.upsert(&row(&format!("k{n}"), b"1")).unwrap();
+            }
+        });
+        conn.execute("UPDATE cache SET store_seq = 'damaged' || id WHERE id % 3 = 0", []).unwrap();
+        let plan: Vec<String> = conn
+            .prepare(concat!("EXPLAIN QUERY PLAN SELECT ", max_store_seq!()))
+            .unwrap()
+            .query_map([], |r| r.get(3))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(
+            plan.iter().any(|line| line.contains("USING COVERING INDEX cache_store_seq (store_seq<?)")),
+            "{plan:?}"
+        );
+        assert_eq!(steps(&conn), small, "the lookup's cost grew with the table");
     }
 }

@@ -20,8 +20,8 @@ survives restarts. The entry points:
 - `register_type(cls, name=..., encode=..., decode=...)`: store your own types without pickle; a
   dataclass needs only a name. `registry` is the process-wide `TypeRegistry` behind it.
 - Exceptions: `Timeout` (a `TimeoutError`), `TransactionBusy` (a `Timeout`), `TransactionAborted`,
-  `FormatMismatchError` and `LayoutMismatchError` (`RuntimeError`s), `UnsafeValueError` (a
-  `TypeError`), `CorruptValueError`, `CorruptKeyError` and `ForeignValueError` (`ValueError`s). A
+  `FormatMismatchError`, `LayoutMismatchError` and `ForkedInsideTransactionError` (`RuntimeError`s),
+  `UnsafeValueError` (a `TypeError`), `CorruptValueError`, `CorruptKeyError` and `ForeignValueError` (`ValueError`s). A
   cache directory holding another on-disk format isn't an error: the cache opens in its
   `diskcache-oxide-format-N` subdirectory and `remove_old_formats()` cleans up later.
 
@@ -53,6 +53,7 @@ from diskcache_oxide._core import (
     CorruptValueError,
     FanoutCache,
     ForeignValueError,
+    ForkedInsideTransactionError,
     FormatMismatchError,
     LayoutMismatchError,
     Timeout,
@@ -145,6 +146,7 @@ __all__ = [
     'EmptyDirWarning',
     'FanoutCache',
     'ForeignValueError',
+    'ForkedInsideTransactionError',
     'FormatMismatchError',
     'Key',
     'LayoutMismatchError',

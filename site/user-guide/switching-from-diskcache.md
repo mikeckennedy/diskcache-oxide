@@ -145,7 +145,7 @@ Keys can be `str`, `bytes`, `int` (64-bit), `float`, `bool`, `None`, and tuples 
 - **Another thread may end it.** Its commit or rollback runs within the transaction's [timeout](../reference/Cache.timeout.md#diskcache_oxide.Cache.timeout), and the owner's own exit then raises [TransactionAborted](../reference/TransactionAborted.md#diskcache_oxide.TransactionAborted) (a `RuntimeError`) unless it committed (D-031). The object [transact()](../reference/Cache.transact.md#diskcache_oxide.Cache.transact) returns can be entered once.
 - **A block that didn't commit raises at its exit** with [TransactionAborted](../reference/TransactionAborted.md#diskcache_oxide.TransactionAborted), a `RuntimeError`, for example after a write inside it failed on a full disk.
 - **`durable=True`**, which diskcache doesn't have, still raises when a transaction can't begin and for any failure inside one (D-028).
-- **Forking inside your own transaction** leaves the child unable to use that cache: every call on it there raises `RuntimeError` at once, instead of stalling for the timeout (D-020).
+- **Forking inside your own transaction** leaves the child unable to use that cache: every call on it there raises [ForkedInsideTransactionError](../reference/ForkedInsideTransactionError.md#diskcache_oxide.ForkedInsideTransactionError) (a `RuntimeError`) at once, instead of stalling for the timeout (D-020).
 - **It belongs to a thread, not an asyncio task**, as in diskcache: don't `await` inside the block.
 
 

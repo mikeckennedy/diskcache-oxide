@@ -36,6 +36,7 @@ __all__ = [  # noqa: RUF022 (PyO3's order, checked by test_stubs.py)
     '_sqlite_mutex_status',
     'FormatMismatchError',
     'LayoutMismatchError',
+    'ForkedInsideTransactionError',
     'Cache',
     'FanoutCache',
     'Transaction',
@@ -86,6 +87,13 @@ class LayoutMismatchError(FormatMismatchError, ValueError):
     """The directory's layout doesn't match how it was opened: a plain `Cache` on a `FanoutCache` root or shard, a
     `FanoutCache` on a plain `Cache`'s directory, a shard opened as another index or count than it records, or a
     `shards=` that differs from the stored count. Also a `ValueError`, which is what these raised before."""
+
+class ForkedInsideTransactionError(RuntimeError):
+    """This process can't use the cache: it's the child of a fork that happened while a connection to
+    the cache was open, inside a `transact()` block or from a hook running inside a cache call. Every
+    call on that cache raises this in the child, reads included, for the life of the process, on a
+    `durable=True` handle too, and so does leaving the inherited `transact()` block. The parent is
+    unaffected. Fork outside the transaction, or start the process with spawn or forkserver (D-020)."""
 
 def sqlite_version() -> str:
     """The SQLite version reported at runtime by `sqlite3_libversion()`.
@@ -732,7 +740,8 @@ class Cache:
         counts as nothing. A `FanoutCache` sums its shards.
 
         Raises:
-            RuntimeError: This process is a child that a fork left unable to use this cache (D-020).
+            ForkedInsideTransactionError: This process is a child that a fork left unable to use this
+                cache (D-020).
         """
     @property
     def durable(self) -> bool:
@@ -1589,7 +1598,8 @@ class FanoutCache:
         counts as nothing. A `FanoutCache` sums its shards.
 
         Raises:
-            RuntimeError: This process is a child that a fork left unable to use this cache (D-020).
+            ForkedInsideTransactionError: This process is a child that a fork left unable to use this
+                cache (D-020).
         """
     @property
     def durable(self) -> bool:
@@ -1740,9 +1750,9 @@ class Transaction[C]:
         Raises:
             TransactionAborted: With no exception, the transaction didn't commit: another thread
                 or an earlier exit ended it, or it was rolled back after an error inside it.
-            RuntimeError: It was never entered, or is still being entered on another thread. Or this
-                process is a child forked while the transaction was open: it was inherited across
-                `fork()`, and nothing commits here.
+            RuntimeError: It was never entered, or is still being entered on another thread.
+            ForkedInsideTransactionError: This process is a child forked while the transaction was
+                open: it was inherited across `fork()`, and nothing commits here.
             Timeout: The commit couldn't run within `timeout`; it rolled back. Or another thread's
                 end was still running after `timeout`, and whether it committed is unknown.
         """

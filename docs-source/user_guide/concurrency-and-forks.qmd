@@ -78,10 +78,10 @@ CPython won't let a library refuse a fork, so the barrier can't wait for a [tran
 
 It can't safely open a new connection either. This is the lock record from above: SQLite's record for the file, inherited with the open connection, says the process already holds its locks, so a new connection takes none from the kernel. The child would run unlocked. Once the parent closed its cache, the child's reads would go stale and its writes would return `True` and be lost.
 
-So in that child the cache is off limits. Every call on it raises `RuntimeError` at once, reads included, through the inherited handle or a new one, for as long as the process lives:
+So in that child the cache is off limits. Every call on it raises `ForkedInsideTransactionError` (a `RuntimeError`) at once, reads included, through the inherited handle or a new one, for as long as the process lives:
 
 ```text
-RuntimeError: this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver
+diskcache_oxide.ForkedInsideTransactionError: this cache can't be used in this process: it was forked while a connection to it was open (inside a transaction, or from a hook running inside a cache call); fork outside the transaction, or start the process with spawn or forkserver
 ```
 
 Leaving the inherited `with` block raises `RuntimeError` too, and nothing commits. The parent's block carries on and commits as usual, and the parent gets a `RuntimeWarning` for forking inside it. The child logs one warning on the `diskcache_oxide` logger naming the directories it can't use. `close()` still works there, so cleanup code runs, and every other cache is unaffected. A `durable=True` handle raises as well: this never passes, and a worker quietly running without its cache for good is worse than an error. A clear error at the call site beats a mysterious 60-second hang in a fresh worker, and beats a write that silently vanishes.
