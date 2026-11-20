@@ -32,10 +32,39 @@ use crate::sync::atomic::AtomicPtr;
 /// See the module docs. Values come back newest first.
 pub(crate) struct TakeAllStack<T> {
     head: AtomicPtr<Node<T>>,
-    /// Owns the values, for the drop check, and makes the stack `Send` and `Sync` only when `T` is
-    /// (`AtomicPtr` is both for any `T`).
-    _owns: PhantomData<T>,
+    /// Owns the values, for the drop check, and makes the stack `Send` only when `T` is. The `Cell`
+    /// keeps it from being `Sync` by itself (`AtomicPtr` is both for any `T`): see the impl below.
+    _owns: PhantomData<(T, std::cell::Cell<()>)>,
 }
+
+// SAFETY: sharing the stack moves values between threads: one thread pushes a `T` through `&self`
+// and another takes it out through `&self` and drops it. That is `Send`'s contract, so `T: Send` is
+// what sharing needs. It hands out no `&T` (`take_all` returns the values by value), so `T: Sync`
+// is neither needed nor enough: a `Sync` type that isn't `Send` (a `MutexGuard`) must not get
+// through, which the derived `T: Sync` bound would have let it. The head is an `AtomicPtr`, and
+// every node is reached only by the thread that swapped the list out (module docs).
+unsafe impl<T: Send> Sync for TakeAllStack<T> {}
+
+// The bounds, pinned at compile time: a stack of a `Send + !Sync` type can be shared, and one of a
+// `Sync + !Send` type can't.
+const _: fn() = || {
+    fn sync<S: Sync>() {}
+    // Each resolves only if exactly one impl applies: only while the type lacks the trait.
+    trait NotSync<A> {
+        fn check() {}
+    }
+    impl<S: ?Sized> NotSync<()> for S {}
+    impl<S: ?Sized + Sync> NotSync<u8> for S {}
+    trait NotSend<A> {
+        fn check() {}
+    }
+    impl<S: ?Sized> NotSend<()> for S {}
+    impl<S: ?Sized + Send> NotSend<u8> for S {}
+
+    sync::<TakeAllStack<std::cell::Cell<u8>>>();
+    let _ = <TakeAllStack<std::sync::MutexGuard<'static, ()>> as NotSync<_>>::check;
+    let _ = <TakeAllStack<std::sync::MutexGuard<'static, ()>> as NotSend<_>>::check;
+};
 
 struct Node<T> {
     value: T,
