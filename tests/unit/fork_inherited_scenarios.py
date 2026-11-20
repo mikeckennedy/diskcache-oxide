@@ -370,8 +370,16 @@ def early_child_hook_inside_an_operation(directory: Path) -> list[str]:
 
 
 def holders() -> int:
-    """How many fork-gate levels are held in this process (the test hook `_gate_stats`)."""
-    return _core._gate_stats()['holders']
+    """How many fork-gate levels stay held in this process (the test hook `_gate_stats`): the lowest
+    count seen within a second, returning at the first 0. The maintenance thread, restarted after
+    every fork in the parent and in the child, holds a level for a moment at the start of each pass
+    (ThreadSanitizer's lane caught one, 2026-11-20). A stranded level never goes away."""
+    deadline = time.monotonic() + 1.0
+    lowest = _core._gate_stats()['holders']
+    while lowest != 0 and time.monotonic() < deadline:
+        time.sleep(0.001)
+        lowest = min(lowest, _core._gate_stats()['holders'])
+    return lowest
 
 
 def a_child_with_no_stranded_level(cache: Cache, hold: object, directory: Path, other: Path) -> None:

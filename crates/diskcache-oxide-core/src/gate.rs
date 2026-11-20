@@ -1084,10 +1084,9 @@ mod tests {
     #[test]
     fn a_share_stranded_on_a_thread_the_child_doesnt_have_counts_for_nothing() {
         let gate = test_gate!(G);
-        let stranded = gate.try_enter_shared().unwrap().into_held();
+        // The ender's stack, as the child sees it: not unwound while the child works.
+        let stranded = std::mem::ManuallyDrop::new(gate.try_enter_shared().unwrap().into_held());
         let fork = gate.begin_fork();
-        // The ender's stack, as the child sees it: never unwound.
-        std::mem::forget(stranded);
         fork.end_child();
         assert_eq!((gate.holders(), gate.own_depth()), (0, 0));
         // A fork from another thread of the child isn't held up.
@@ -1102,6 +1101,10 @@ mod tests {
         let fresh = gate.try_enter_shared().unwrap().into_held();
         assert_eq!((gate.holders(), gate.own_depth()), (1, 1));
         drop(fresh);
+        assert_eq!((gate.holders(), gate.own_depth()), (0, 0));
+        // Dropped after all, so the test leaks nothing (Miri and LeakSanitizer check): an inherited
+        // share's drop takes nothing off either count.
+        drop(std::mem::ManuallyDrop::into_inner(stranded));
         assert_eq!((gate.holders(), gate.own_depth()), (0, 0));
     }
 
